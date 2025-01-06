@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "runinator",
+    "runinator-models",
+    "runinator-dynamic-linking",
+    "runinator-config",
+    "runinator-database",
+    "runinator-scheduler",
+    "runinator-ws",
+    
+    "runinator-interfaces",
+    "runinator-plugin-aws",
+    "runinator-plugin-powershell",
+    "runinator-plugin-sql"
+]

@@ -1,0 +1,12 @@
+[package]
+name = "runinator-scheduler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+
+runinator-config = { path = "../runinator-config" }
+runinator-models = { path = "../runinator-models" }

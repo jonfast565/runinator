@@ -1,0 +1,10 @@
+[package]
+name = "runinator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+fern = "0.7"
+colored = "2.2"
+humantime = "2.1.0"
