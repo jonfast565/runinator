@@ -1,7 +1,7 @@
 use log::{debug, error, info, trace, warn};
 use std::time::SystemTime;
 
-fn setup_logger() -> Result<(), fern::InitError> {
+fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -19,6 +19,9 @@ fn setup_logger() -> Result<(), fern::InitError> {
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    setup_logger()?;
     info!("Hello, world!");
+    Ok(())
 }

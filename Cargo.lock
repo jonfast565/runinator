@@ -1241,6 +1241,7 @@ dependencies = [
  "fern",
  "humantime",
  "log",
+ "tokio",
 ]
 
 [[package]]
