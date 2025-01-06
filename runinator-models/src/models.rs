@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,7 +9,7 @@ pub struct ScheduledTask {
     pub action_name: String,        // Name of the action in the DLL
     pub action_configuration: Vec<u8>, // Serialized binary data to be passed to the DLL
     pub timeout: i64,               // Timeout in minutes
-    pub next_execution: Option<NaiveDateTime>, // Next execution time
+    pub next_execution: Option<DateTime<Utc>>, // Next execution time
 }
 
 #[derive(Debug, Serialize)]
