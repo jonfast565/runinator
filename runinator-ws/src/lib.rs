@@ -1,7 +1,7 @@
 use axum::Router;
 use sqlx::SqlitePool;
 
-pub async fn run_webserver(pool: SqlitePool, port: u16) {
+pub async fn run_webserver(_pool: SqlitePool, port: u16) {
     let app = Router::new();
         //.route("/tasks", post(add_task.layer(axum::extract::Extension(pool.clone()))))
         //.route("/tasks", patch(update_task.layer(axum::extract::Extension(pool.clone()))))

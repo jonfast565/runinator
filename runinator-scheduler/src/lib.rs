@@ -10,31 +10,34 @@ use uuid::Uuid;
 use runinator_config::Config;
 use runinator_database::{fetch_all_tasks, log_task_run, update_task_next_execution};
 use runinator_models::models::ScheduledTask;
+use runinator_plugin::plugin::Plugin;
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
 
 async fn process_one_task(
     pool: &SqlitePool,
-    libraries: &HashMap<String, String>,
+    libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
     task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>>,
-    config: &Config,
+    _config: &Config,
 ) {
     let now = Local::now().to_utc();
     if let Some(next_execution) = task.next_execution {
         if next_execution <= now {
-            if let Some(library_path) = libraries.get(&task.action_name) {
+            info!("Running task {}", &task.action_name);
+            if let Some(plugin) = libraries.get(&task.action_name).cloned() {
                 let task_clone = task.clone();
                 let pool_clone = pool.clone();
                 let timeout_duration: time::Duration =
                     Duration::seconds((task.timeout * 60) as i64)
                         .to_std()
                         .unwrap();
+                let action_name = (&task.action_name).clone();
+                let action_configuration = (&task.action_configuration).clone();
                 let handle = tokio::spawn(async move {
                     let start_time = Local::now().to_utc();
                     let start: time::Instant = time::Instant::now();
-                    // do something here
-
+                    plugin_call(&plugin, action_name, action_configuration);
                     let duration_ms = start.elapsed().as_millis() as i64;
                     log_task_run(&pool_clone, &task_clone.name, start_time, duration_ms).await;
                 });
@@ -63,9 +66,14 @@ async fn process_one_task(
     }
 }
 
+fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: Vec<u8>) {
+    let action_length = action_configuration.len();
+    plugin.interface.lock().unwrap().call_service(action_name, action_configuration, action_length);
+}
+
 pub async fn scheduler_loop(
     pool: &SqlitePool,
-    libraries: &HashMap<String, String>,
+    libraries: &HashMap<String, Plugin>,
     notify: Arc<Notify>,
     config: &Config,
 ) {
