@@ -1261,17 +1261,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-dynamic-linking"
-version = "0.1.0"
-dependencies = [
- "libloading",
-]
-
-[[package]]
-name = "runinator-interfaces"
-version = "0.1.0"
-
-[[package]]
 name = "runinator-models"
 version = "0.1.0"
 dependencies = [
@@ -1280,16 +1269,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-plugin"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "runinator-plugin-aws"
 version = "0.1.0"
+dependencies = [
+ "runinator-plugin",
+]
 
 [[package]]
 name = "runinator-plugin-powershell"
 version = "0.1.0"
+dependencies = [
+ "runinator-plugin",
+]
 
 [[package]]
 name = "runinator-plugin-sql"
 version = "0.1.0"
+dependencies = [
+ "runinator-plugin",
+]
 
 [[package]]
 name = "runinator-scheduler"
@@ -1300,6 +1305,7 @@ dependencies = [
  "runinator-config",
  "runinator-database",
  "runinator-models",
+ "runinator-plugin",
  "serde",
  "sqlx",
  "tokio",

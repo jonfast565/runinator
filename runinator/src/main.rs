@@ -1,4 +1,4 @@
-use log::{info};
+use log::info;
 use std::time::SystemTime;
 
 fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
