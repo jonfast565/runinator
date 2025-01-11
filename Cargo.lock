@@ -1317,6 +1317,7 @@ name = "runinator-ws"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "runinator-database",
  "sqlx",
 ]
 

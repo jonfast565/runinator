@@ -1,5 +1,6 @@
 use chrono::{Duration, Local};
 use log::{error, info};
+use runinator_database::interfaces::DatabaseImpl;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -8,14 +9,12 @@ use std::{
 use uuid::Uuid;
 
 use runinator_config::Config;
-use runinator_database::{fetch_all_tasks, log_task_run, update_task_next_execution};
 use runinator_models::models::ScheduledTask;
 use runinator_plugin::plugin::Plugin;
-use sqlx::SqlitePool;
 use tokio::sync::Notify;
 
 async fn process_one_task(
-    pool: &SqlitePool,
+    pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
     task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>>,
@@ -24,22 +23,18 @@ async fn process_one_task(
     let now = Local::now().to_utc();
     if let Some(next_execution) = task.next_execution {
         if next_execution <= now {
-            info!("Running task {}", &task.action_name);
+            info!("Running action {}", &task.action_name);
             if let Some(plugin) = libraries.get(&task.action_name).cloned() {
-                let task_clone = task.clone();
-                let pool_clone = pool.clone();
                 let timeout_duration: time::Duration =
                     Duration::seconds((task.timeout * 60) as i64)
                         .to_std()
                         .unwrap();
                 let action_name = (&task.action_name).clone();
                 let action_configuration = (&task.action_configuration).clone();
+                let task_clone = task.clone();
+                let pool_clone = pool.clone();
                 let handle = tokio::spawn(async move {
-                    let start_time = Local::now().to_utc();
-                    let start: time::Instant = time::Instant::now();
-                    plugin_call(&plugin, action_name, action_configuration);
-                    let duration_ms = start.elapsed().as_millis() as i64;
-                    log_task_run(&pool_clone, &task_clone.name, start_time, duration_ms).await;
+                    process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await
                 });
 
                 let handle_index = {
@@ -58,12 +53,20 @@ async fn process_one_task(
                     }
                 });
             } else {
-                error!("Library '{}' not found", task.action_name);
+                error!("Action '{}' not found", task.action_name);
             }
 
-            update_task_next_execution(&pool, &task).await;
+            pool.update_task_next_execution(&task).await;
         }
     }
+}
+
+async fn process_plugin_task(action_name: String, action_configuration: Vec<u8>, task_clone: ScheduledTask, pool_clone: Arc<impl DatabaseImpl>, plugin: Plugin) {
+    let start_time = Local::now().to_utc();
+    let start: time::Instant = time::Instant::now();
+    plugin_call(&plugin, action_name, action_configuration);
+    let duration_ms = start.elapsed().as_millis() as i64;
+    pool_clone.log_task_run(&task_clone.name, start_time, duration_ms).await;
 }
 
 fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: Vec<u8>) {
@@ -72,7 +75,7 @@ fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: Vec<u
 }
 
 pub async fn scheduler_loop(
-    pool: &SqlitePool,
+    pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
     notify: Arc<Notify>,
     config: &Config,
@@ -93,7 +96,7 @@ pub async fn scheduler_loop(
             }
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
                 info!("Fetching tasks");
-                let tasks = fetch_all_tasks(pool).await;
+                let tasks = pool.fetch_all_tasks().await;
 
                 info!("Running tasks...");
                 for task in tasks {
