@@ -1,5 +1,5 @@
 [package]
-name = "runinator-plugin-powershell"
+name = "runinator-plugin-console"
 version = "0.1.0"
 edition = "2021"
 

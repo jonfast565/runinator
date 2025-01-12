@@ -11,6 +11,6 @@ members = [
     
     "runinator-plugin",
     "runinator-plugin-aws",
-    "runinator-plugin-powershell",
+    "runinator-plugin-console",
     "runinator-plugin-sql"
 ]
