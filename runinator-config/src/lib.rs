@@ -1,23 +1,24 @@
 use clap::Parser;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct Config {
     #[clap(long, default_value = "tasks.db")]
-    database: String,
+    pub database: String,
 
     #[clap(long, default_value = "3000")]
-    port: u16,
+    pub port: u16,
 
-    #[clap(long, default_value = "get_library_name")]
-    marker_function: String,
+    #[clap(long, default_value = "new_service")]
+    pub marker_function: String,
 
     #[clap(long, default_value = "get_action_name")]
-    action_name_function: String,
+    pub action_name_function: String,
 
     #[clap(long, default_value = "./dlls")]
-    dll_path: String,
+    pub dll_path: String,
 }
 
-pub fn parse_config() {
-
+pub fn parse_config() -> Result<Config, Box<dyn std::error::Error>> {
+    let results = Config::try_parse()?;
+    Ok(results)
 }

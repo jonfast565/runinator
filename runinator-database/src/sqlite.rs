@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use runinator_models::models::{ScheduledTask, TaskRun};
-use sqlx::{Executor, Row, SqlitePool};
+use runinator_models::core::{ScheduledTask, TaskRun};
+use sqlx::{sqlite::SqliteConnectOptions, Executor, Row, SqlitePool};
 
 use crate::interfaces::DatabaseImpl;
 
@@ -8,8 +8,17 @@ pub struct SqliteDb {
     pub pool: SqlitePool,
 }
 
+impl SqliteDb {
+    pub async fn new(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let options = SqliteConnectOptions::new().filename(filename);
+        let connection = SqlitePool::connect_with(options).await?;
+        let result = SqliteDb { pool: connection };
+        Ok(result)
+    }
+}
+
 impl DatabaseImpl for SqliteDb {
-    async fn create_scheduled_tasks_table(&self) {
+    async fn create_scheduled_tasks_table(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(
                 "CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -22,11 +31,11 @@ impl DatabaseImpl for SqliteDb {
             next_execution INTEGER
         )",
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
-    async fn create_task_runs_table(&self) {
+    async fn create_task_runs_table(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(
                 "CREATE TABLE IF NOT EXISTS task_runs (
@@ -36,11 +45,11 @@ impl DatabaseImpl for SqliteDb {
                 duration_ms INTEGER NOT NULL
             )",
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
-    async fn upsert_task(&self, task: &ScheduledTask) {
+    async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
         self.pool.execute(sqlx::query(
             "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_configuration, timeout, next_execution)
              VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -59,18 +68,18 @@ impl DatabaseImpl for SqliteDb {
         .bind(&task.action_configuration)
         .bind(task.timeout)
         .bind(task.next_execution.map(|dt| dt.timestamp())))
-        .await
-        .unwrap();
+        .await?;
+        Ok(())
     }
 
-    async fn delete_task(&self, task_id: i64) {
+    async fn delete_task(&self, task_id: i64) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(sqlx::query("DELETE FROM scheduled_tasks WHERE id = ?").bind(task_id))
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
-    async fn fetch_all_tasks(&self) -> Vec<ScheduledTask> {
+    async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
             "SELECT id, name, cron_schedule, action_name, action_configuration, timeout, next_execution FROM scheduled_tasks",
         )
@@ -78,7 +87,8 @@ impl DatabaseImpl for SqliteDb {
         .await
         .unwrap();
 
-        rows.into_iter()
+        let result = rows
+            .into_iter()
             .map(|row| ScheduledTask {
                 id: row.get("id"),
                 name: row.get("name"),
@@ -91,10 +101,15 @@ impl DatabaseImpl for SqliteDb {
                     .map(|ts| DateTime::from_timestamp(ts, 0))
                     .unwrap(),
             })
-            .collect()
+            .collect();
+        Ok(result)
     }
 
-    async fn fetch_task_runs(&self, start: i64, end: i64) -> Vec<TaskRun> {
+    async fn fetch_task_runs(
+        &self,
+        start: i64,
+        end: i64,
+    ) -> Result<Vec<TaskRun>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
             "SELECT id, task_name, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",
         )
@@ -104,28 +119,38 @@ impl DatabaseImpl for SqliteDb {
         .await
         .unwrap();
 
-        rows.into_iter()
+        let result = rows
+            .into_iter()
             .map(|row| TaskRun {
                 id: row.get("id"),
                 task_name: row.get("task_name"),
                 start_time: row.get("start_time"),
                 duration_ms: row.get("duration_ms"),
             })
-            .collect()
+            .collect();
+        Ok(result)
     }
 
-    async fn update_task_next_execution(&self, task: &ScheduledTask) {
+    async fn update_task_next_execution(
+        &self,
+        task: &ScheduledTask,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(
                 sqlx::query("UPDATE scheduled_tasks SET next_execution = ? WHERE id = ?")
                     .bind(task.next_execution.map(|dt| dt.timestamp()))
                     .bind(task.id),
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
-    async fn log_task_run(&self, task_name: &str, start_time: DateTime<Utc>, duration_ms: i64) {
+    async fn log_task_run(
+        &self,
+        task_name: &str,
+        start_time: DateTime<Utc>,
+        duration_ms: i64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(
                 sqlx::query(
@@ -135,7 +160,7 @@ impl DatabaseImpl for SqliteDb {
                 .bind(start_time.timestamp())
                 .bind(duration_ms),
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 }

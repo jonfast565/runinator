@@ -9,3 +9,9 @@ fern = "0.7"
 colored = "2.2"
 humantime = "2.1.0"
 tokio = { version = "1", features = ["full"] }
+
+runinator-config = { path = "../runinator-config" }
+runinator-database = { path = "../runinator-database" }
+runinator-plugin = { path = "../runinator-plugin" }
+runinator-scheduler = { path = "../runinator-scheduler" }
+runinator-ws = { path = "../runinator-ws" }

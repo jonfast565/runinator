@@ -1,5 +1,10 @@
 use log::info;
-use std::time::SystemTime;
+use runinator_config::parse_config;
+use runinator_database::sqlite::SqliteDb;
+use runinator_scheduler::scheduler_loop;
+use runinator_ws::run_webserver;
+use tokio::sync::Notify;
+use std::{sync::Arc, time::SystemTime};
 
 fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
     fern::Dispatch::new()
@@ -21,7 +26,41 @@ fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    info!("--- Runinator ---");
+    info!("--- Version 1 ---");
+
     setup_logger()?;
-    info!("Hello, world!");
+    let config = parse_config()?;
+
+    // Initialize the SQLite connection pool
+    let pool = Arc::new(SqliteDb::new(&config.database).await?);
+    let notify = Arc::new(Notify::new());
+
+    // Start the scheduler in a separate task
+    let notify_scheduler = notify.clone();
+    let scheduler_config = (&config).clone();
+    let scheduler_pool = pool.clone();
+    let scheduler_task = tokio::spawn(async move {
+        scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await.expect("scheduler does not fail");
+    });
+
+    // Start the web server in a separate task
+    let ws_config = (&config).clone();
+    let ws_notify = notify.clone();
+    let web_server_task = tokio::spawn(async move {
+        run_webserver(&pool.clone(), ws_notify, ws_config.port).await;
+    });
+
+    // Handle termination signals for graceful shutdown
+    tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    println!("Received shutdown signal. Shutting down...");
+    notify.notify_waiters();
+
+    // Wait for the tasks to complete
+    if let Err(e) = tokio::try_join!(scheduler_task, web_server_task) {
+        eprintln!("Error while shutting down: {:?}", e);
+    }
+
+    println!("Application shutdown complete.");
     Ok(())
 }

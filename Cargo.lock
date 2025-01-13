@@ -1241,6 +1241,11 @@ dependencies = [
  "fern",
  "humantime",
  "log",
+ "runinator-config",
+ "runinator-database",
+ "runinator-plugin",
+ "runinator-scheduler",
+ "runinator-ws",
  "tokio",
 ]
 
@@ -1283,7 +1288,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-plugin-powershell"
+name = "runinator-plugin-console"
 version = "0.1.0"
 dependencies = [
  "runinator-plugin",
@@ -1317,8 +1322,11 @@ name = "runinator-ws"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "log",
  "runinator-database",
+ "runinator-models",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]
