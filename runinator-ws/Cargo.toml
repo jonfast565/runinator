@@ -7,7 +7,7 @@ edition = "2021"
 log = "0.4"
 axum = "0.6"
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
 
 runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }

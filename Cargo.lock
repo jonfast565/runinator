@@ -1325,7 +1325,7 @@ dependencies = [
  "log",
  "runinator-database",
  "runinator-models",
- "sqlx",
+ "serde",
  "tokio",
 ]
 

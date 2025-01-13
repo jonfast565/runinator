@@ -1,69 +1,89 @@
+mod models;
 mod repository;
 
 use axum::{
+    http::StatusCode,
     routing::{delete, get, patch, post},
     Extension, Json, Router,
 };
 use log::info;
+use models::{ApiError, ApiResponse};
 use runinator_database::sqlite::SqliteDb;
-use runinator_models::{
-    core::{ScheduledTask, TaskRun},
-    web::TaskResponse,
-};
+use runinator_models::core::ScheduledTask;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
 async fn add_task(
     Extension(db): Extension<Arc<SqliteDb>>,
     Json(task_input): Json<ScheduledTask>,
-) -> Json<TaskResponse> {
+) -> (StatusCode, Json<ApiResponse>) {
     let r = repository::add_task(db.as_ref(), &task_input).await;
     match r {
-        Ok(r) => Json(r),
-        Err(_) => panic!("Failed"),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
     }
 }
 
 async fn update_task(
     Extension(db): Extension<Arc<SqliteDb>>,
     Json(task_input): Json<ScheduledTask>,
-) -> Json<TaskResponse> {
+) -> (StatusCode, Json<ApiResponse>) {
     info!("Updating task: {:?}", task_input);
     let r = repository::update_task(db.as_ref(), &task_input).await;
     match r {
-        Ok(r) => Json(r),
-        Err(_) => panic!("Failed"),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
     }
 }
 
 async fn delete_task(
     Extension(db): Extension<Arc<SqliteDb>>,
     axum::extract::Path(task_id): axum::extract::Path<i64>,
-) -> Json<TaskResponse> {
+) -> (StatusCode, Json<ApiResponse>) {
     info!("Deleting task with ID: {}", task_id);
     let r = repository::delete_task(db.as_ref(), task_id).await;
     match r {
-        Ok(r) => Json(r),
-        Err(_) => panic!("Failed"),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
     }
 }
 
 async fn get_tasks(
     Extension(db): Extension<Arc<SqliteDb>>,
     //axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Json<Vec<ScheduledTask>> {
+) -> (StatusCode, Json<ApiResponse>) {
     println!("Fetching all tasks");
     let r = repository::fetch_tasks(db.as_ref()).await;
     match r {
-        Ok(r) => Json(r),
-        Err(_) => panic!("Failed"),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduledTaskList(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
     }
 }
 
 async fn get_task_runs(
     Extension(db): Extension<Arc<SqliteDb>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Json<Vec<TaskRun>> {
+) -> (StatusCode, Json<ApiResponse>) {
     let start_time = params
         .get("start_time")
         .and_then(|v| v.parse::<i64>().ok())
@@ -77,8 +97,13 @@ async fn get_task_runs(
     println!("Fetching task runs between {} and {}", start_time, end_time);
     let result = repository::fetch_task_runs(db.as_ref(), start_time, end_time).await;
     match result {
-        Ok(r) => Json(r),
-        Err(_) => panic!("Failed"),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduleTaskRuns(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
     }
 }
 
