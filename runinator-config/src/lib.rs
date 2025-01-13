@@ -16,6 +16,9 @@ pub struct Config {
 
     #[clap(long, default_value = "./dlls")]
     pub dll_path: String,
+
+    #[clap(long, default_value = "5")]
+    pub scheduler_frequency_seconds: u64
 }
 
 pub fn parse_config() -> Result<Config, Box<dyn std::error::Error>> {

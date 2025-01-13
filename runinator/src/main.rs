@@ -17,7 +17,7 @@ fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
                 message
             ))
         })
-        .level(log::LevelFilter::Debug)
+        .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         .apply()?;
@@ -53,14 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle termination signals for graceful shutdown
     tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-    println!("Received shutdown signal. Shutting down...");
+    info!("Received shutdown signal. Shutting down...");
     notify.notify_waiters();
 
     // Wait for the tasks to complete
     if let Err(e) = tokio::try_join!(scheduler_task, web_server_task) {
-        eprintln!("Error while shutting down: {:?}", e);
+        log::error!("Error while shutting down: {:?}", e);
     }
 
-    println!("Application shutdown complete.");
+    info!("Application shutdown complete.");
     Ok(())
 }

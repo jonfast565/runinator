@@ -67,7 +67,7 @@ async fn get_tasks(
     Extension(db): Extension<Arc<SqliteDb>>,
     //axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    println!("Fetching all tasks");
+    info!("Fetching all tasks");
     let r = repository::fetch_tasks(db.as_ref()).await;
     match r {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduledTaskList(r))),
@@ -94,7 +94,7 @@ async fn get_task_runs(
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(i64::MAX);
 
-    println!("Fetching task runs between {} and {}", start_time, end_time);
+    info!("Fetching task runs between {} and {}", start_time, end_time);
     let result = repository::fetch_task_runs(db.as_ref(), start_time, end_time).await;
     match result {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduleTaskRuns(r))),
@@ -127,11 +127,11 @@ pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16)
     tokio::select! {
         result = server => {
             if let Err(err) = result {
-                eprintln!("Webserver error: {}", err);
+                log::error!("Webserver error: {}", err);
             }
         }
         _ = notify.notified() => {
-            println!("Shutting down web server...");
+            info!("Shutting down web server...");
         }
     }
 }

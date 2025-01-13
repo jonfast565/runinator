@@ -1261,6 +1261,7 @@ name = "runinator-database"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "log",
  "runinator-models",
  "sqlx",
 ]
@@ -1278,6 +1279,7 @@ name = "runinator-plugin"
 version = "0.1.0"
 dependencies = [
  "libloading",
+ "log",
 ]
 
 [[package]]

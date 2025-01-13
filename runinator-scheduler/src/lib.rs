@@ -1,3 +1,5 @@
+mod repository;
+
 use chrono::{Duration, Local};
 use log::{error, info};
 use runinator_database::interfaces::DatabaseImpl;
@@ -10,7 +12,7 @@ use uuid::Uuid;
 
 use runinator_config::Config;
 use runinator_models::core::ScheduledTask;
-use runinator_plugin::{load_libraries_from_path, plugin::Plugin};
+use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
 use tokio::sync::{Notify, Mutex};
 
 async fn process_one_task(
@@ -82,10 +84,13 @@ pub async fn scheduler_loop(
     notify: Arc<Notify>,
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    repository::initialize_database(pool.as_ref()).await?;
     let libraries = load_libraries_from_path(config.dll_path.as_str(), config.marker_function.as_str());
+    print_libs(&libraries);
     let task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     loop {
+        let start: time::Instant = time::Instant::now();
         let notified = notify.notified();
         let map_clone = Arc::clone(&task_handles);
         tokio::select! {
@@ -97,7 +102,7 @@ pub async fn scheduler_loop(
                 }
                 break;
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(config.scheduler_frequency_seconds)) => {
                 info!("Fetching tasks");
                 let tasks = pool.fetch_all_tasks().await?;
 
@@ -125,6 +130,8 @@ pub async fn scheduler_loop(
                 }
             }
         }
+        let duration_s = start.elapsed().as_secs() as i64;
+        info!("Scheduler took {} seconds to run", duration_s);
     }
     Ok(())
 }

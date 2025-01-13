@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use runinator_models::core::{ScheduledTask, TaskRun};
-use sqlx::{sqlite::SqliteConnectOptions, Executor, Row, SqlitePool};
+use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Executor, Row, SqlitePool};
 
 use crate::interfaces::DatabaseImpl;
 
@@ -10,8 +10,14 @@ pub struct SqliteDb {
 
 impl SqliteDb {
     pub async fn new(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let options = SqliteConnectOptions::new().filename(filename);
-        let connection = SqlitePool::connect_with(options).await?;
+        let mut options = SqliteConnectOptions::new()
+        .filename(filename)
+        .create_if_missing(true);
+        let options_with_logs = options
+            .log_statements(log::LevelFilter::Debug)
+            .log_slow_statements(log::LevelFilter::Warn, Duration::seconds(1).to_std().unwrap());
+        let unmutable_options = options_with_logs.clone();
+        let connection = SqlitePool::connect_with(unmutable_options).await?;
         let result = SqliteDb { pool: connection };
         Ok(result)
     }

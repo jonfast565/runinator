@@ -2,10 +2,12 @@ mod utilities;
 pub mod plugin;
 
 use std::{collections::HashMap, fs, sync::{Arc, Mutex}};
+use log::info;
 use plugin::Plugin;
 use utilities::{get_library_extension, get_library_interface};
 
 pub fn load_libraries_from_path(path: &str, marker_function: &str) -> HashMap<String, Plugin> {
+    info!("Loading libraries from {} using marker function {}", path, marker_function);
     let mut libraries = HashMap::new();
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
@@ -26,4 +28,11 @@ pub fn load_libraries_from_path(path: &str, marker_function: &str) -> HashMap<St
         }
     }
     libraries
+}
+
+pub fn print_libs(libs_list: &HashMap<String, Plugin>) {
+    info!("{} libraries loaded", libs_list.len());
+    for (i, p) in libs_list.iter() {
+        info!("Library {} <- `{}`", i, p.file_name)
+    }
 }
