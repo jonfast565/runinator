@@ -75,14 +75,10 @@ async fn process_plugin_task(action_name: String, action_configuration: String, 
 -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Local::now().to_utc();
     let start: time::Instant = time::Instant::now();
-    plugin_call(&plugin, action_name, action_configuration);
+    plugin.plugin_service_call(action_name, action_configuration)?;
     let duration_ms = start.elapsed().as_millis() as i64;
     pool_clone.log_task_run(&task_clone.name, start_time, duration_ms).await?;
     Ok(())
-}
-
-fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: String) {
-    plugin.interface.lock().unwrap().call_service(action_name, action_configuration);
 }
 
 pub async fn scheduler_loop(
@@ -91,7 +87,7 @@ pub async fn scheduler_loop(
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     repository::initialize_database(pool.as_ref()).await?;
-    let libraries = load_libraries_from_path(config.dll_path.as_str(), config.marker_function.as_str());
+    let libraries = load_libraries_from_path(config.dll_path.as_str(), config.marker_function.as_str())?;
     print_libs(&libraries);
     let task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
