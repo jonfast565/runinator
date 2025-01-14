@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use runinator_models::core::{ScheduledTask, TaskRun};
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Executor, Row, SqlitePool};
+use sqlx::{sqlite::{SqliteConnectOptions, SqliteRow}, ConnectOptions, Executor, Row, SqlitePool};
 
 use crate::interfaces::DatabaseImpl;
 
@@ -58,7 +58,7 @@ impl DatabaseImpl for SqliteDb {
     async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
         self.pool.execute(sqlx::query(
             "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_configuration, timeout, next_execution)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()))
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 cron_schedule = excluded.cron_schedule,
@@ -95,18 +95,7 @@ impl DatabaseImpl for SqliteDb {
 
         let result = rows
             .into_iter()
-            .map(|row| ScheduledTask {
-                id: row.get("id"),
-                name: row.get("name"),
-                cron_schedule: row.get("cron_schedule"),
-                action_name: row.get("action_name"),
-                action_configuration: row.get("action_configuration"),
-                timeout: row.get("timeout"),
-                next_execution: row
-                    .get::<Option<i64>, _>("next_execution")
-                    .map(|ts| DateTime::from_timestamp(ts, 0))
-                    .unwrap(),
-            })
+            .map(|row| row_to_scheduled_task(&row))
             .collect();
         Ok(result)
     }
@@ -168,5 +157,25 @@ impl DatabaseImpl for SqliteDb {
             )
             .await?;
         Ok(())
+    }
+}
+
+fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
+    let next_execution = row
+    .get::<Option<i64>, _>("next_execution")
+    .map(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+    let next_execution_part = match next_execution {
+        Some(x) => x,
+        None => None
+    };
+
+    ScheduledTask {
+        id: row.get::<Option<i64>, _>("id"),
+        name: row.get::<String, _>("name"),
+        cron_schedule: row.get::<String, _>("cron_schedule"),
+        action_name: row.get::<String, _>("action_name"),
+        action_configuration: row.get::<String, _>("action_configuration"),
+        timeout: row.get::<i64, _>("timeout"),
+        next_execution: next_execution_part,
     }
 }

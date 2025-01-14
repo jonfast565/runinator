@@ -1,6 +1,6 @@
 mod repository;
 
-use chrono::{Duration, Local};
+use chrono::{Duration, Local, Utc};
 use log::{error, info};
 use runinator_database::interfaces::DatabaseImpl;
 use std::{
@@ -23,43 +23,50 @@ async fn process_one_task(
     _config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = Local::now().to_utc();
-    if let Some(next_execution) = task.next_execution {
-        if next_execution <= now {
-            info!("Running action {}", &task.action_name);
-            if let Some(plugin) = libraries.get(&task.action_name).cloned() {
-                let timeout_duration: time::Duration =
-                    Duration::seconds((task.timeout * 60) as i64)
-                        .to_std()
-                        .unwrap();
-                let action_name = (&task.action_name).clone();
-                let action_configuration = (&task.action_configuration).clone();
-                let task_clone = task.clone();
-                let pool_clone = pool.clone();
-                let handle = tokio::spawn(async move {
-                    process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await.expect("plugin task failed");
-                });
+    match task.next_execution {
+        Some(next_execution) => {
+            if next_execution <= now {
+                    info!("Running action {}", &task.action_name);
+                    if let Some(plugin) = libraries.get(&task.action_name).cloned() {
+                        let timeout_duration: time::Duration =
+                            Duration::seconds((task.timeout * 60) as i64)
+                                .to_std()
+                                .unwrap();
+                        let action_name = (&task.action_name).clone();
+                        let action_configuration = (&task.action_configuration).clone();
+                        let task_clone = task.clone();
+                        let pool_clone = pool.clone();
+                        let handle = tokio::spawn(async move {
+                            process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await.expect("plugin task failed");
+                        });
 
-                let handle_index = {
-                    let handle_uuid = Uuid::new_v4();
-                    let mut handles = task_handles.lock().await;
-                    handles.insert(handle_uuid.clone(), handle);
-                    handle_uuid
-                };
+                        let handle_index = {
+                            let handle_uuid = Uuid::new_v4();
+                            let mut handles = task_handles.lock().await;
+                            handles.insert(handle_uuid.clone(), handle);
+                            handle_uuid
+                        };
 
-                let task_handles_clone = task_handles.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(timeout_duration).await;
-                    let handles = task_handles_clone.lock().await;
-                    if let Some(handle) = handles.get(&handle_index) {
-                        handle.abort();
+                        let task_handles_clone = task_handles.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(timeout_duration).await;
+                            let handles = task_handles_clone.lock().await;
+                            if let Some(handle) = handles.get(&handle_index) {
+                                handle.abort();
+                            }
+                        });
+                    } else {
+                        error!("Action '{}' not found", task.action_name);
                     }
-                });
-            } else {
-                error!("Action '{}' not found", task.action_name);
-            }
 
-            pool.update_task_next_execution(&task).await?;
+                    pool.update_task_next_execution(&task).await?;
+                }
         }
+        _ => {
+            let mut task_clone = task.clone();
+            task_clone.next_execution = Some(Utc::now());
+            pool.update_task_next_execution(&task_clone).await?;
+        },
     }
     Ok(())
 }

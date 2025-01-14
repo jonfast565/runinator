@@ -1286,6 +1286,7 @@ dependencies = [
 name = "runinator-plugin-aws"
 version = "0.1.0"
 dependencies = [
+ "log",
  "runinator-plugin",
 ]
 
@@ -1293,6 +1294,7 @@ dependencies = [
 name = "runinator-plugin-console"
 version = "0.1.0"
 dependencies = [
+ "log",
  "runinator-plugin",
 ]
 
@@ -1300,6 +1302,7 @@ dependencies = [
 name = "runinator-plugin-sql"
 version = "0.1.0"
 dependencies = [
+ "log",
  "runinator-plugin",
 ]
 
