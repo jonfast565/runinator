@@ -9,7 +9,7 @@ pub struct Plugin {
 
 pub trait PluginInterface : Send + Sync {
     fn name(&self) -> String;
-    fn call_service(&self, name: String, args: Vec<u8>, args_length: usize);
+    fn call_service(&self, name: String, args: String);
 }
 
 #[derive(Debug)]

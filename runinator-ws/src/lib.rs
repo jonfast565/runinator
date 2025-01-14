@@ -123,6 +123,7 @@ pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16)
 
     let addr = format!("0.0.0.0:{}", port).parse().unwrap();
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
+    info!("Webserver started at {}:{}", addr.ip(), addr.port());
 
     tokio::select! {
         result = server => {

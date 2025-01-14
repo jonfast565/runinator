@@ -1,3 +1,4 @@
+use log::info;
 use runinator_plugin::plugin::PluginInterface;
 
 struct AwsPlugin;
@@ -22,7 +23,7 @@ impl PluginInterface for AwsPlugin {
         "Amazon Web Services".to_string()
     }
 
-    fn call_service(&self, _name: String, _args: Vec<u8>, _args_length: usize) {
-        todo!()
+    fn call_service(&self, name: String, args: String) {
+        info!("{} -> {}", name, args);
     }
 }

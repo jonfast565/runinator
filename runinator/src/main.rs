@@ -32,6 +32,7 @@ fn print_env() -> std::io::Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env::set_var("RUST_BACKTRACE", "1");
     setup_logger()?;
 
     info!("--- Runinator ---");

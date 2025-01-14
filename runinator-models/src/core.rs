@@ -7,7 +7,7 @@ pub struct ScheduledTask {
     pub name: String, 
     pub cron_schedule: String, 
     pub action_name: String, 
-    pub action_configuration: Vec<u8>, 
+    pub action_configuration: String, 
     pub timeout: i64, 
     pub next_execution: Option<DateTime<Utc>>,
 }

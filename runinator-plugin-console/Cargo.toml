@@ -8,4 +8,6 @@ crate-type = ["cdylib"]
 bench = false
 
 [dependencies]
+log = "0.4"
+
 runinator-plugin = { path = "../runinator-plugin" }

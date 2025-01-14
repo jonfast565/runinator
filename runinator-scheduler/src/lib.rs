@@ -64,7 +64,7 @@ async fn process_one_task(
     Ok(())
 }
 
-async fn process_plugin_task(action_name: String, action_configuration: Vec<u8>, task_clone: ScheduledTask, pool_clone: Arc<impl DatabaseImpl>, plugin: Plugin) 
+async fn process_plugin_task(action_name: String, action_configuration: String, task_clone: ScheduledTask, pool_clone: Arc<impl DatabaseImpl>, plugin: Plugin) 
 -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Local::now().to_utc();
     let start: time::Instant = time::Instant::now();
@@ -74,9 +74,8 @@ async fn process_plugin_task(action_name: String, action_configuration: Vec<u8>,
     Ok(())
 }
 
-fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: Vec<u8>) {
-    let action_length = action_configuration.len();
-    plugin.interface.lock().unwrap().call_service(action_name, action_configuration, action_length);
+fn plugin_call(plugin: &Plugin, action_name: String, action_configuration: String) {
+    plugin.interface.lock().unwrap().call_service(action_name, action_configuration);
 }
 
 pub async fn scheduler_loop(
