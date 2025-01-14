@@ -3,7 +3,7 @@ use runinator_plugin::plugin::PluginInterface;
 struct AwsPlugin;
 
 impl AwsPlugin {
-    pub fn new() -> Self {
+    pub fn new() -> AwsPlugin {
         AwsPlugin {}
     }
 

@@ -2,9 +2,12 @@ mod utilities;
 pub mod plugin;
 
 use std::{collections::HashMap, fs, path::PathBuf, sync::{Arc, Mutex}};
+use libloading::{Library, Symbol};
 use log::info;
-use plugin::Plugin;
-use utilities::{get_library_extension, get_library_interface};
+use plugin::{Plugin, PluginInterface};
+use utilities::get_library_extension;
+
+type PluginInterfaceFn = unsafe extern "Rust" fn() -> Box<dyn PluginInterface>;
 
 pub fn load_libraries_from_path(path: &str, marker_function: &str) -> HashMap<String, Plugin> {
     let path_dir = PathBuf::from(path);
@@ -18,16 +21,21 @@ pub fn load_libraries_from_path(path: &str, marker_function: &str) -> HashMap<St
             if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
                 if let Some(library_path) = path.to_str() {
                     info!("Found library {}", path.as_os_str().to_str().unwrap());
-                    if let Ok(interface) = get_library_interface(library_path, marker_function) {
-                        info!("Plugin interface found");
-                        let name = (&interface).name();
-                        info!("Name retrieved!");
-                        let plugin = Plugin {
-                            interface: Arc::new(Mutex::new(interface)),
-                            name: name.clone(),
-                            file_name: library_path.to_string()
-                        };
-                        libraries.insert(name, plugin);
+                    let null_termd_marker = marker_function.to_string() + "\0";
+                    let marker_function_bytes = null_termd_marker.as_bytes();
+                    let lib = unsafe { Library::new(library_path) };
+                    if let Ok(lib) = lib {
+                        let new_service_call: Result<Symbol<PluginInterfaceFn>, _> = unsafe { lib.get(marker_function_bytes) };
+                        if let Ok(service_interface) = new_service_call {
+                            let plugin_interface: Box<dyn PluginInterface> = unsafe { service_interface() };
+                            let name = plugin_interface.name();
+                            let plugin = Plugin {
+                                interface: Arc::new(Mutex::new(plugin_interface)),
+                                name: name.clone(),
+                                file_name: library_path.to_string()
+                            };
+                            libraries.insert(name, plugin);
+                        }
                     }
                 }
             }
