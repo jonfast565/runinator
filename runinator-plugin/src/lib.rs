@@ -1,21 +1,27 @@
 mod utilities;
 pub mod plugin;
 
-use std::{collections::HashMap, fs, sync::{Arc, Mutex}};
+use std::{collections::HashMap, fs, path::PathBuf, sync::{Arc, Mutex}};
 use log::info;
 use plugin::Plugin;
 use utilities::{get_library_extension, get_library_interface};
 
 pub fn load_libraries_from_path(path: &str, marker_function: &str) -> HashMap<String, Plugin> {
-    info!("Loading libraries from {} using marker function {}", path, marker_function);
+    let path_dir = PathBuf::from(path);
+    let canonical_dir = fs::canonicalize(path_dir).expect("path not valid");
+    info!("Loading libraries from {} using marker function {}", canonical_dir.as_os_str().to_str().unwrap(), marker_function);
     let mut libraries = HashMap::new();
-    if let Ok(entries) = fs::read_dir(path) {
+    let extension = get_library_extension();
+    if let Ok(entries) = fs::read_dir(canonical_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some(&get_library_extension()) {
+            if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
                 if let Some(library_path) = path.to_str() {
+                    info!("Found library {}", path.as_os_str().to_str().unwrap());
                     if let Ok(interface) = get_library_interface(library_path, marker_function) {
+                        info!("Plugin interface found");
                         let name = (&interface).name();
+                        info!("Name retrieved!");
                         let plugin = Plugin {
                             interface: Arc::new(Mutex::new(interface)),
                             name: name.clone(),

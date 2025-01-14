@@ -15,7 +15,7 @@ pub extern "Rust" fn new_service() -> Box<dyn PluginInterface> {
 
 impl PluginInterface for SqlPlugin {
     fn name(&self) -> String {
-        todo!()
+        "SQL".to_string()
     }
 
     fn call_service(&self, _name: String, _args: Vec<u8>, _args_length: usize) {

@@ -14,7 +14,7 @@ pub struct Config {
     #[clap(long, default_value = "get_action_name")]
     pub action_name_function: String,
 
-    #[clap(long, default_value = "./dlls")]
+    #[clap(long, default_value = "./target/debug")]
     pub dll_path: String,
 
     #[clap(long, default_value = "5")]

@@ -19,7 +19,7 @@ pub extern "Rust" fn new_service() -> Box<dyn PluginInterface> {
 
 impl PluginInterface for AwsPlugin {
     fn name(&self) -> String {
-        todo!()
+        "Amazon Web Services".to_string()
     }
 
     fn call_service(&self, _name: String, _args: Vec<u8>, _args_length: usize) {
