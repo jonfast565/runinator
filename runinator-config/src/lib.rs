@@ -8,12 +8,6 @@ pub struct Config {
     #[clap(long, default_value = "3000")]
     pub port: u16,
 
-    #[clap(long, default_value = "new_service")]
-    pub marker_function: String,
-
-    #[clap(long, default_value = "get_action_name")]
-    pub action_name_function: String,
-
     #[clap(long, default_value = "./target/debug")]
     pub dll_path: String,
 

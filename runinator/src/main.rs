@@ -2,42 +2,19 @@ use log::info;
 use runinator_config::parse_config;
 use runinator_database::sqlite::SqliteDb;
 use runinator_scheduler::scheduler_loop;
+use runinator_utilities::logger;
 use runinator_ws::run_webserver;
 use tokio::sync::Notify;
-use std::{env, sync::Arc, time::SystemTime};
-
-fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{} {} {}] {}",
-                humantime::format_rfc3339_seconds(SystemTime::now()),
-                record.level(),
-                record.target(),
-                message
-            ))
-        })
-        .level(log::LevelFilter::Info)
-        .chain(std::io::stdout())
-        .chain(fern::log_file("output.log")?)
-        .apply()?;
-    Ok(())
-}
-
-fn print_env() -> std::io::Result<()> {
-    let path = env::current_dir()?;
-    info!("The current directory is {}", path.display());
-    Ok(())
-}
+use std::{env, sync::Arc};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_var("RUST_BACKTRACE", "1");
-    setup_logger()?;
+    logger::setup_logger()?;
 
     info!("--- Runinator ---");
     info!("--- Version 1 ---");
-    print_env()?;
+    logger::print_env()?;
 
     info!("Parse config");
     let config = parse_config()?;

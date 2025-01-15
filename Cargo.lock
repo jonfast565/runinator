@@ -1237,14 +1237,12 @@ dependencies = [
 name = "runinator"
 version = "0.1.0"
 dependencies = [
- "colored",
- "fern",
- "humantime",
  "log",
  "runinator-config",
  "runinator-database",
  "runinator-plugin",
  "runinator-scheduler",
+ "runinator-utilities",
  "runinator-ws",
  "tokio",
 ]
@@ -1296,6 +1294,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "runinator-plugin",
+ "runinator-utilities",
 ]
 
 [[package]]
@@ -1320,6 +1319,17 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "runinator-utilities"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "fern",
+ "humantime",
+ "log",
+ "tokio",
 ]
 
 [[package]]

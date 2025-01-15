@@ -87,7 +87,7 @@ pub async fn scheduler_loop(
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     repository::initialize_database(pool.as_ref()).await?;
-    let libraries = load_libraries_from_path(config.dll_path.as_str(), config.marker_function.as_str())?;
+    let libraries = load_libraries_from_path(config.dll_path.as_str())?;
     print_libs(&libraries);
     let task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));

@@ -6,17 +6,17 @@ use log::info;
 use plugin::Plugin;
 use utilities::get_library_extension;
 
-pub fn load_libraries_from_path(path: &str, marker_function: &str) -> Result<HashMap<String, Plugin>, Box<dyn std::error::Error>> {
+pub fn load_libraries_from_path(path: &str) -> Result<HashMap<String, Plugin>, Box<dyn std::error::Error>> {
     let path_dir = PathBuf::from(path);
     let canonical_dir = fs::canonicalize(path_dir).expect("path not valid");
-    info!("Loading libraries from {} using marker function {}", canonical_dir.as_os_str().to_str().unwrap(), marker_function);
+    info!("Loading libraries from {}", canonical_dir.as_os_str().to_str().unwrap());
     let mut libraries = HashMap::new();
     let extension = get_library_extension();
     if let Ok(entries) = fs::read_dir(canonical_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
-                let plugin = Plugin::new(&path, marker_function)?;
+                let plugin = Plugin::new(&path)?;
                 libraries.insert(plugin.name.clone(), plugin);
             }
         }
