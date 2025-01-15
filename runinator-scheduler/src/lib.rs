@@ -1,6 +1,6 @@
 mod repository;
 
-use chrono::{DateTime, Duration, Local, TimeDelta, Utc};
+use chrono::{Duration, Local, TimeDelta, Utc};
 use cron::Schedule;
 use log::{error, info};
 use runinator_database::interfaces::DatabaseImpl;
@@ -39,7 +39,11 @@ async fn process_one_task(
                         let task_clone = task.clone();
                         let pool_clone = pool.clone();
                         let handle = tokio::spawn(async move {
-                            process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await.expect("plugin task failed");
+                            let result = process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await;
+                            match result {
+                                Ok(_) => (),
+                                Err(x) => panic!("{}", x)
+                            }
                         });
 
                         let handle_index = {

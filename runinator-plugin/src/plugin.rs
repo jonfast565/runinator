@@ -1,4 +1,4 @@
-use std::{ffi::{c_char, c_int, CStr, CString}, fmt, path::PathBuf};
+use std::{ffi::{c_char, c_int, CStr, CString}, path::PathBuf};
 use libloading::{Library, Symbol};
 
 use crate::errors::PluginError;
