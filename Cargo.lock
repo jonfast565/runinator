@@ -1298,6 +1298,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "runinator-plugin",
+ "runinator-utilities",
 ]
 
 [[package]]
@@ -1315,6 +1316,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "runinator-plugin",
+ "runinator-utilities",
 ]
 
 [[package]]
