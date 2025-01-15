@@ -1,5 +1,6 @@
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{c_char, c_int};
 use log::info;
+use runinator_utilities::{ffiutils, logger};
 
 const NAME: &str = "AWS\0";
 
@@ -10,19 +11,17 @@ extern "C" fn runinator_marker() -> c_int {
 
 #[no_mangle]
 extern "C" fn name() -> *const c_char {
-    NAME.as_ptr() as *const c_char
+    ffiutils::str_to_c_string(NAME)
 }
 
 #[no_mangle]
-extern "C" fn call_service(call: *const c_char, args: *const c_char) -> c_int {
-    let call_c_str: &CStr = unsafe { CStr::from_ptr(call) };
-    let call_str_slice: &str = call_c_str.to_str().unwrap();
-    let call_str_buf: String = call_str_slice.to_owned();
+extern "C" fn call_service(action_function: *const c_char, args: *const c_char) -> c_int {
+    logger::setup_logger().unwrap();
+    
+    let call_str: String = ffiutils::cstr_to_rust_string(action_function);
+    let args_str: String = ffiutils::cstr_to_rust_string(args);
 
-    let args_c_str: &CStr = unsafe { CStr::from_ptr(args) };
-    let args_str_slice: &str = args_c_str.to_str().unwrap();
-    let args_str_buf: String = args_str_slice.to_owned();
+    info!("Running action '{}' w/ args `{}`", call_str, args_str);
 
-    info!("{} -> {}", call_str_buf, args_str_buf);
     0
 }

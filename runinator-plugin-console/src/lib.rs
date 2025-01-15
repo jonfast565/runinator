@@ -15,13 +15,13 @@ extern "C" fn name() -> *const c_char {
 }
 
 #[no_mangle]
-extern "C" fn call_service(call: *const c_char, args: *const c_char) -> c_int {
+extern "C" fn call_service(action_function: *const c_char, args: *const c_char) -> c_int {
     logger::setup_logger().unwrap();
     
-    let call_str: String = ffiutils::cstr_to_rust_string(call);
+    let call_str: String = ffiutils::cstr_to_rust_string(action_function);
     let args_str: String = ffiutils::cstr_to_rust_string(args);
 
-    info!("{} -> {}", call_str, args_str);
+    info!("Running action '{}' w/ args `{}`", call_str, args_str);
 
     0
 }
