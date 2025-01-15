@@ -52,6 +52,7 @@ async fn process_one_task(
 
     let handle = tokio::spawn(async move {
         if let Err(e) = process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await {
+            // TODO: I don't want to panic here
             panic!("{}", e);
         }
     });
