@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
-
+runinator-models = { path = "../runinator-models" }
 runinator-config = { path = "../runinator-config" }
 runinator-database = { path = "../runinator-database" }
 runinator-plugin = { path = "../runinator-plugin" }

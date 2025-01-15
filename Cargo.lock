@@ -366,6 +366,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
+name = "cron"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee7e5cc3c6b73959cef3412d3a185225eefd926286b4ea55be8bea0bd27d10f"
+dependencies = [
+ "chrono",
+ "nom",
+ "once_cell",
+]
+
+[[package]]
 name = "crossbeam-queue"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1240,6 +1251,7 @@ dependencies = [
  "log",
  "runinator-config",
  "runinator-database",
+ "runinator-models",
  "runinator-plugin",
  "runinator-scheduler",
  "runinator-utilities",
@@ -1310,6 +1322,7 @@ name = "runinator-scheduler"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cron",
  "log",
  "runinator-config",
  "runinator-database",

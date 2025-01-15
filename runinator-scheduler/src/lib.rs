@@ -1,12 +1,14 @@
 mod repository;
 
-use chrono::{Duration, Local, Utc};
+use chrono::{DateTime, Duration, Local, TimeDelta, Utc};
+use cron::Schedule;
 use log::{error, info};
 use runinator_database::interfaces::DatabaseImpl;
 use std::{
     collections::HashMap,
     sync::Arc,
     time,
+    str::FromStr
 };
 use uuid::Uuid;
 
@@ -58,16 +60,36 @@ async fn process_one_task(
                     } else {
                         error!("Action '{}' not found", task.action_name);
                     }
-
-                    pool.update_task_next_execution(&task).await?;
+                    set_next_execution_with_cron_statement(pool, task).await?;
                 }
         }
         _ => {
-            let mut task_clone = task.clone();
-            task_clone.next_execution = Some(Utc::now());
-            pool.update_task_next_execution(&task_clone).await?;
+            set_initial_execution(pool, task).await?;
         },
     }
+    Ok(())
+}
+
+async fn set_next_execution_with_cron_statement(pool: &Arc<impl DatabaseImpl>, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
+    let mut task_next_execution = task.clone();
+    let schedule_str = task_next_execution.cron_schedule.as_str();
+    let schedule = Schedule::from_str(schedule_str)?;
+    dbg!(&schedule);
+    let next_upcoming = schedule.upcoming(Utc).take(1).next();
+    dbg!(next_upcoming);
+    let upcoming = match next_upcoming {
+        Some(x) => x,
+        None => Utc::now() + Duration::from(TimeDelta::seconds(60))
+    };
+    task_next_execution.next_execution = Some(upcoming);
+    pool.update_task_next_execution(&task_next_execution).await?;
+    Ok(())
+}
+
+async fn set_initial_execution(pool: &Arc<impl DatabaseImpl>, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
+    let mut task_clone = task.clone();
+    task_clone.next_execution = Some(Utc::now());
+    pool.update_task_next_execution(&task_clone).await?;
     Ok(())
 }
 

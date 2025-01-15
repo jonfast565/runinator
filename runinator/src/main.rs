@@ -1,6 +1,7 @@
 use log::info;
 use runinator_config::parse_config;
 use runinator_database::sqlite::SqliteDb;
+use runinator_models::errors::RuntimeError;
 use runinator_scheduler::scheduler_loop;
 use runinator_utilities::logger;
 use runinator_ws::run_webserver;
@@ -30,7 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheduler_config = (&config).clone();
     let scheduler_pool = pool.clone();
     let scheduler_task = tokio::spawn(async move {
-        scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await.expect("scheduler does not fail");
+        let result = scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(x) => Err(x)
+        }
     });
 
     // Start the web server in a separate task

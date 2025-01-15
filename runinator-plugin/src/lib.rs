@@ -1,4 +1,5 @@
 mod utilities;
+mod errors;
 pub mod plugin;
 
 use std::{collections::HashMap, fs, path::PathBuf};

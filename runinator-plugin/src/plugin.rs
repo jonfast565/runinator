@@ -1,6 +1,8 @@
 use std::{ffi::{c_char, c_int, CStr, CString}, fmt, path::PathBuf};
 use libloading::{Library, Symbol};
 
+use crate::errors::PluginError;
+
 const PLUGIN_MARKER_FN_NAME: &str = "runinator_marker\0";
 const PLUGIN_SERVICE_CALL_FN_NAME: &str = "call_service\0";
 const PLUGIN_NAME_FN_NAME: &str = "name\0";
@@ -56,32 +58,5 @@ impl Plugin {
             }
             Ok(())
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct PluginError {
-    code: String,
-    message: String
-}
-
-impl PluginError {
-    pub fn new(code: String, message: String) -> Self {
-        Self {
-            code,
-            message
-        }
-    }
-}
-
-impl fmt::Display for PluginError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for PluginError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
     }
 }
