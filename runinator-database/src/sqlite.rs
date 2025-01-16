@@ -1,6 +1,13 @@
+use std::{fs, path::PathBuf};
+
 use chrono::{DateTime, Duration, Utc};
+use log::debug;
 use runinator_models::core::{ScheduledTask, TaskRun};
-use sqlx::{sqlite::{SqliteConnectOptions, SqliteRow}, ConnectOptions, Executor, Row, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteRow},
+    ConnectOptions, Executor, Row, SqlitePool,
+};
+use futures_util::stream::StreamExt;
 
 use crate::interfaces::DatabaseImpl;
 
@@ -11,11 +18,14 @@ pub struct SqliteDb {
 impl SqliteDb {
     pub async fn new(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut options = SqliteConnectOptions::new()
-        .filename(filename)
-        .create_if_missing(true);
+            .filename(filename)
+            .create_if_missing(true);
         let options_with_logs = options
             .log_statements(log::LevelFilter::Debug)
-            .log_slow_statements(log::LevelFilter::Warn, Duration::seconds(1).to_std().unwrap());
+            .log_slow_statements(
+                log::LevelFilter::Warn,
+                Duration::seconds(1).to_std().unwrap(),
+            );
         let unmutable_options = options_with_logs.clone();
         let connection = SqlitePool::connect_with(unmutable_options).await?;
         let result = SqliteDb { pool: connection };
@@ -32,9 +42,11 @@ impl DatabaseImpl for SqliteDb {
             name TEXT NOT NULL,
             cron_schedule TEXT NOT NULL,
             action_name TEXT NOT NULL,
+            action_function TEXT NOT NULL,
             action_configuration BLOB NOT NULL,
             timeout INTEGER NOT NULL,
-            next_execution INTEGER
+            next_execution INTEGER NULL,
+            enabled BOOL NOT NULL
         )",
             )
             .await?;
@@ -45,10 +57,11 @@ impl DatabaseImpl for SqliteDb {
         self.pool
             .execute(
                 "CREATE TABLE IF NOT EXISTS task_runs (
-                id INTEGER PRIMARY KEY,
-                task_name TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                task_id INTEGER NOT NULL,
                 start_time INTEGER NOT NULL,
-                duration_ms INTEGER NOT NULL
+                duration_ms INTEGER NOT NULL,
+                PRIMARY KEY (id, task_id)
             )",
             )
             .await?;
@@ -158,15 +171,34 @@ impl DatabaseImpl for SqliteDb {
             .await?;
         Ok(())
     }
+    
+    async fn run_init_scripts(
+        &self,
+        paths: &Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for path in paths.iter() {
+            let path_info = PathBuf::from(path);
+            if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
+                let script = fs::read_to_string(path_info.as_path())?;
+                let mut stream = self.pool.execute_many(sqlx::query(&script));
+                while let Some(result) = stream.next().await {
+                    let query_result = result?;
+                    debug!("Init scripts: {} row(s) affected", query_result.rows_affected());
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
     let next_execution = row
-    .get::<Option<i64>, _>("next_execution")
-    .map(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+        .get::<Option<i64>, _>("next_execution")
+        .map(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
     let next_execution_part = match next_execution {
         Some(x) => x,
-        None => None
+        None => None,
     };
 
     ScheduledTask {

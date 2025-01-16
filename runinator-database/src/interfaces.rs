@@ -6,6 +6,7 @@ use runinator_models::core::{ScheduledTask, TaskRun};
 // NOTE: Ensure anything that implements this trait cannot contain a reference
 // otherwise, this is breaking major rules
 pub trait DatabaseImpl : Send + Sync + 'static {
+    fn run_init_scripts(&self, paths: &Vec<String>) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
     fn create_scheduled_tasks_table(&self) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
     fn create_task_runs_table(&self) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
     fn upsert_task(&self, task: &ScheduledTask) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
