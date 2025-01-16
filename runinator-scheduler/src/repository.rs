@@ -3,7 +3,7 @@ use runinator_plugin::provider::Provider;
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_sql::SqlProvider;
 
-pub(crate) type StaticProvider = Box<dyn Provider + Send + Sync + 'static>;
+pub(crate) type StaticProvider = Box<dyn Provider + Send + Sync>;
 
 pub async fn initialize_database<T: DatabaseImpl>(
     db: &T,
