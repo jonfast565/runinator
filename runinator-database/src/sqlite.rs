@@ -34,44 +34,10 @@ impl SqliteDb {
 }
 
 impl DatabaseImpl for SqliteDb {
-    async fn create_scheduled_tasks_table(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS scheduled_tasks (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            cron_schedule TEXT NOT NULL,
-            action_name TEXT NOT NULL,
-            action_function TEXT NOT NULL,
-            action_configuration BLOB NOT NULL,
-            timeout INTEGER NOT NULL,
-            next_execution INTEGER NULL,
-            enabled BOOL NOT NULL
-        )",
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn create_task_runs_table(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS task_runs (
-                id INTEGER NOT NULL,
-                task_id INTEGER NOT NULL,
-                start_time INTEGER NOT NULL,
-                duration_ms INTEGER NOT NULL,
-                PRIMARY KEY (id, task_id)
-            )",
-            )
-            .await?;
-        Ok(())
-    }
-
     async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
         self.pool.execute(sqlx::query(
-            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_configuration, timeout, next_execution)
-             VALUES (?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()))
+            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()), ?)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 cron_schedule = excluded.cron_schedule,
@@ -84,9 +50,11 @@ impl DatabaseImpl for SqliteDb {
         .bind(&task.name)
         .bind(&task.cron_schedule)
         .bind(&task.action_name)
+        .bind(&task.action_function)
         .bind(&task.action_configuration)
         .bind(task.timeout)
-        .bind(task.next_execution.map(|dt| dt.timestamp())))
+        .bind(task.next_execution.map(|dt| dt.timestamp()))
+        .bind(task.enabled))
         .await?;
         Ok(())
     }
@@ -100,7 +68,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, Box<dyn std::error::Error>> {
         let rows = sqlx::query(
-            "SELECT id, name, cron_schedule, action_name, action_configuration, timeout, next_execution FROM scheduled_tasks",
+            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled FROM scheduled_tasks",
         )
         .fetch_all(&self.pool)
         .await
@@ -131,7 +99,7 @@ impl DatabaseImpl for SqliteDb {
             .into_iter()
             .map(|row| TaskRun {
                 id: row.get("id"),
-                task_name: row.get("task_name"),
+                task_id: row.get("task_id"),
                 start_time: row.get("start_time"),
                 duration_ms: row.get("duration_ms"),
             })
@@ -155,16 +123,16 @@ impl DatabaseImpl for SqliteDb {
 
     async fn log_task_run(
         &self,
-        task_name: &str,
+        task_id: i64,
         start_time: DateTime<Utc>,
         duration_ms: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.pool
             .execute(
                 sqlx::query(
-                    "INSERT INTO task_runs (task_name, start_time, duration_ms) VALUES (?, ?, ?)",
+                    "INSERT INTO task_runs (task_id, start_time, duration_ms) VALUES (?, ?, ?)",
                 )
-                .bind(task_name)
+                .bind(task_id)
                 .bind(start_time.timestamp())
                 .bind(duration_ms),
             )
@@ -206,8 +174,10 @@ fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
         name: row.get::<String, _>("name"),
         cron_schedule: row.get::<String, _>("cron_schedule"),
         action_name: row.get::<String, _>("action_name"),
+        action_function: row.get::<String, _>("action_function"),
         action_configuration: row.get::<String, _>("action_configuration"),
         timeout: row.get::<i64, _>("timeout"),
         next_execution: next_execution_part,
+        enabled: row.get::<bool, _>("enabled")
     }
 }

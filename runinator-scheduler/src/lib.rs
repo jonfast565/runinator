@@ -1,15 +1,14 @@
-mod repository;
+mod provider_repository;
+mod db_extensions;
 
 use chrono::{Duration, Local, Utc};
-use croner::Cron;
 use log::{debug, error, info};
-use repository::StaticProvider;
 use runinator_database::interfaces::DatabaseImpl;
 use std::{collections::HashMap, sync::Arc, time};
 use uuid::Uuid;
 
 use runinator_config::Config;
-use runinator_models::{core::ScheduledTask, errors::RuntimeError};
+use runinator_models::core::ScheduledTask;
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
 use tokio::sync::{Mutex, Notify};
 
@@ -25,7 +24,7 @@ async fn process_one_task(
     let now = Utc::now();
 
     if task.next_execution.is_none() {
-        set_initial_execution(pool, task).await?;
+        db_extensions::set_initial_execution(pool, task).await?;
         return Ok(());
     }
 
@@ -35,7 +34,13 @@ async fn process_one_task(
 
     debug!("Running action {}", &task.action_name);
 
-    let plugin = get_plugin_or_provider(pool, libraries, task).await?;
+    let provider = provider_repository::get_plugin_or_provider(libraries, task).await;
+    if let Err(plugin) = provider {
+        db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
+        return Err(plugin);
+    }
+    let resolved_provider = provider.expect("cannot happen");
+
     let timeout_duration = Duration::seconds((task.timeout * 60) as i64)
         .to_std()
         .unwrap();
@@ -45,12 +50,12 @@ async fn process_one_task(
     let pool_clone = pool.clone();
 
     let handle = tokio::spawn(async move {
-        if let Err(e) = process_plugin_task(
+        if let Err(e) = process_provider_task(
             action_name,
             action_configuration,
             task_clone,
             pool_clone,
-            plugin,
+            resolved_provider,
         )
         .await
         {
@@ -74,64 +79,11 @@ async fn process_one_task(
         }
     });
 
-    set_next_execution_with_cron_statement(pool, task).await?;
+    db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
     Ok(())
 }
 
-async fn get_plugin_or_provider(
-    pool: &Arc<impl DatabaseImpl>,
-    libraries: &HashMap<String, Plugin>,
-    task: &ScheduledTask,
-) -> Result<StaticProvider, Box<dyn std::error::Error>> {
-    if let Some(plugin) = libraries.get(&task.action_name) {
-        return Ok(Box::new(plugin.clone()));
-    }
-
-    let providers = repository::get_providers();
-    let match_provider: Option<StaticProvider> = providers
-        .into_iter()
-        .find(|provider| provider.name() == task.action_name)
-        .map(|provider| provider);
-
-    if let Some(provider) = match_provider {
-        return Ok(provider);
-    }
-
-    set_next_execution_with_cron_statement(pool, task).await?;
-    Err(Box::new(RuntimeError::new(
-        "2".to_string(),
-        format!("Cannot find plugin/provider {}", task.action_name),
-    )))
-}
-
-async fn set_next_execution_with_cron_statement(
-    pool: &Arc<impl DatabaseImpl>,
-    task: &ScheduledTask,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut task_next_execution = task.clone();
-    let schedule_str = task_next_execution.cron_schedule.as_str();
-    let cron = Cron::new(schedule_str)
-      .parse()
-      .expect("Couldn't parse cron string");
-    let now = Utc::now();
-    let next_upcoming = cron.find_next_occurrence(&now, false).unwrap();
-    task_next_execution.next_execution = Some(next_upcoming);
-    pool.update_task_next_execution(&task_next_execution)
-        .await?;
-    Ok(())
-}
-
-async fn set_initial_execution(
-    pool: &Arc<impl DatabaseImpl>,
-    task: &ScheduledTask,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut task_clone = task.clone();
-    task_clone.next_execution = Some(Utc::now());
-    pool.update_task_next_execution(&task_clone).await?;
-    Ok(())
-}
-
-async fn process_plugin_task(
+async fn process_provider_task(
     action_name: String,
     action_configuration: String,
     task_clone: ScheduledTask,
@@ -143,7 +95,7 @@ async fn process_plugin_task(
     plugin.call_service(action_name, action_configuration)?;
     let duration_ms = start.elapsed().as_millis() as i64;
     pool_clone
-        .log_task_run(&task_clone.name, start_time, duration_ms)
+        .log_task_run(task_clone.id.unwrap(), start_time, duration_ms)
         .await?;
     Ok(())
 }
@@ -153,7 +105,8 @@ pub async fn scheduler_loop(
     notify: Arc<Notify>,
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    repository::initialize_database(pool.as_ref()).await?;
+    db_extensions::initialize_database(pool).await?;
+
     let libraries = load_libraries_from_path(&config.dll_path)?;
     print_libs(&libraries);
 
