@@ -5,7 +5,7 @@ use runinator_provider_sql::SqlProvider;
 
 pub(crate) type StaticProvider = Box<dyn Provider + Send + Sync>;
 
-pub async fn initialize_database<T: DatabaseImpl>(
+pub(crate) async fn initialize_database<T: DatabaseImpl>(
     db: &T,
 ) -> Result<(), Box<dyn std::error::Error>> {
     db.create_scheduled_tasks_table().await?;
@@ -13,7 +13,7 @@ pub async fn initialize_database<T: DatabaseImpl>(
     Ok(())
 }
 
-pub fn get_providers() -> Vec<StaticProvider> {
+pub(crate) fn get_providers() -> Vec<StaticProvider> {
     let mut result = Vec::new();
     result.push(Box::new(AwsProvider {}) as StaticProvider);
     result.push(Box::new(SqlProvider {}) as StaticProvider);

@@ -1,11 +1,11 @@
 mod repository;
 
-use chrono::{Duration, Local, TimeDelta, Utc};
-use cron::Schedule;
+use chrono::{DateTime, Duration, Local, TimeDelta, Utc};
+use croner::Cron;
 use log::{debug, error, info};
 use repository::StaticProvider;
 use runinator_database::interfaces::DatabaseImpl;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time};
+use std::{collections::HashMap, sync::Arc, time};
 use uuid::Uuid;
 
 use runinator_config::Config;
@@ -31,8 +31,7 @@ async fn process_one_task(
 
     debug!("Running action {}", &task.action_name);
 
-    let plugin = get_plugin_or_provider(libraries, task)?;
-
+    let plugin = get_plugin_or_provider(pool, libraries, task).await?;
     let timeout_duration = Duration::seconds((task.timeout * 60) as i64)
         .to_std()
         .unwrap();
@@ -51,7 +50,6 @@ async fn process_one_task(
         )
         .await
         {
-            // TODO: I don't want to panic here
             panic!("{}", e);
         }
     });
@@ -76,7 +74,8 @@ async fn process_one_task(
     Ok(())
 }
 
-fn get_plugin_or_provider(
+async fn get_plugin_or_provider(
+    pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
 ) -> Result<StaticProvider, Box<dyn std::error::Error>> {
@@ -94,6 +93,7 @@ fn get_plugin_or_provider(
         return Ok(provider);
     }
 
+    set_next_execution_with_cron_statement(pool, task).await?;
     Err(Box::new(RuntimeError::new(
         "2".to_string(),
         format!("Cannot find plugin/provider {}", task.action_name),
@@ -106,13 +106,12 @@ async fn set_next_execution_with_cron_statement(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut task_next_execution = task.clone();
     let schedule_str = task_next_execution.cron_schedule.as_str();
-    let schedule = Schedule::from_str(schedule_str)?;
-    let next_upcoming = schedule.upcoming(Utc).take(1).next();
-    let upcoming = match next_upcoming {
-        Some(x) => x,
-        None => Utc::now() + Duration::from(TimeDelta::seconds(60)),
-    };
-    task_next_execution.next_execution = Some(upcoming);
+    let cron = Cron::new(schedule_str)
+      .parse()
+      .expect("Couldn't parse cron string");
+    let now = Utc::now();
+    let next_upcoming = cron.find_next_occurrence(&now, false).unwrap();
+    task_next_execution.next_execution = Some(next_upcoming);
     pool.update_task_next_execution(&task_next_execution)
         .await?;
     Ok(())
@@ -133,7 +132,7 @@ async fn process_plugin_task(
     action_configuration: String,
     task_clone: ScheduledTask,
     pool_clone: Arc<impl DatabaseImpl>,
-    plugin: Box<dyn Provider>
+    plugin: Box<dyn Provider>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Local::now().to_utc();
     let start: time::Instant = time::Instant::now();
@@ -151,52 +150,70 @@ pub async fn scheduler_loop(
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     repository::initialize_database(pool.as_ref()).await?;
-    let libraries = load_libraries_from_path(config.dll_path.as_str())?;
+    let libraries = load_libraries_from_path(&config.dll_path)?;
     print_libs(&libraries);
+
     let task_handles: TaskHandleMap = Arc::new(Mutex::new(HashMap::new()));
     loop {
-        let start: time::Instant = time::Instant::now();
-        let notified = notify.notified();
-        let map_clone = Arc::clone(&task_handles);
+        let start = time::Instant::now();
         tokio::select! {
-            _ = notified => {
-                info!("Scheduler received shutdown signal.");
-                let mut handles = map_clone.lock().await;
-                for (_, handle) in handles.drain() {
-                    handle.abort();
-                }
+            _ = notify.notified() => {
+                handle_shutdown(task_handles.clone()).await;
                 break;
             }
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(config.scheduler_frequency_seconds)) => {
-                debug!("Fetching tasks");
-                let tasks = pool.fetch_all_tasks().await?;
-
-                debug!("Running tasks...");
-                for task in tasks {
-                    process_one_task(pool, &libraries, &task, task_handles.clone(), config).await?;
-                }
-
-                debug!("Waiting for completed tasks!");
-                let mut completed_tasks = vec![];
-                let mut guard = task_handles.lock().await;
-                for (uuid, handle) in guard.drain() {
-                    match handle.await {
-                        Ok(_) => {
-                            completed_tasks.push(uuid);
-                        }
-                        Err(e) => {
-                            error!("Task {:?} failed: {:?}", uuid, e);
-                        }
-                    }
-                }
-
-                for uuid in completed_tasks {
-                    guard.remove(&uuid);
-                }
+                run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await?;
             }
         }
-        let duration_s = start.elapsed().as_secs_f64();
-        info!("Scheduler took {} seconds to run", duration_s);
+        info!("Scheduler took {} seconds to run", start.elapsed().as_secs_f64());
     }
+
     Ok(())
+}
+
+
+async fn handle_shutdown(task_handles: TaskHandleMap) {
+    info!("Scheduler received shutdown signal.");
+
+    let mut handles = task_handles.lock().await;
+    for (_, handle) in handles.drain() {
+        handle.abort();
+    }
+}
+
+async fn run_scheduler_iteration(
+    pool: &Arc<impl DatabaseImpl>,
+    libraries: &HashMap<String, Plugin>,
+    task_handles: TaskHandleMap,
+    config: &Config,
+) -> Result<(), Box<dyn std::error::Error>> {
+    debug!("Fetching tasks");
+    let tasks = pool.fetch_all_tasks().await?;
+
+    debug!("Running tasks...");
+    for task in tasks {
+        process_one_task(pool, libraries, &task, task_handles.clone(), config).await?;
+    }
+
+    debug!("Waiting for completed tasks!");
+    clean_up_finished_tasks(task_handles).await;
+
+    Ok(())
+}
+
+async fn clean_up_finished_tasks(task_handles: TaskHandleMap) {
+    let mut completed_tasks = Vec::new();
+    let mut guard = task_handles.lock().await;
+    for (uuid, handle) in guard.drain() {
+        match handle.await {
+            Ok(_) => completed_tasks.push(uuid),
+            Err(e) => {
+                error!("Task {:?} failed: {:?}", uuid, e);
+            }
+        }
+    }
+
+    for uuid in completed_tasks {
+        guard.remove(&uuid);
+    }
 }

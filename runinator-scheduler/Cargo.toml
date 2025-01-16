@@ -5,9 +5,8 @@ edition = "2021"
 
 [dependencies]
 log = "0.4"
-cron = "0.10"
+croner = "2.0.6"
 either = "1.13"
-lazy_static = "1.5.0"
 
 sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
 tokio = { version = "1", features = ["full"] }
