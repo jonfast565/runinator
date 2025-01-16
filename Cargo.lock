@@ -1298,6 +1298,7 @@ dependencies = [
  "log",
  "runinator-plugin",
  "runinator-utilities",
+ "serde",
 ]
 
 [[package]]
