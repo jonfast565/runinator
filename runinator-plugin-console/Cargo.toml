@@ -9,6 +9,7 @@ bench = false
 
 [dependencies]
 log = "0.4"
+ctor = "0.2.9"
 serde = { version = "1.0", features = ["derive"] }
 
 runinator-plugin = { path = "../runinator-plugin" }

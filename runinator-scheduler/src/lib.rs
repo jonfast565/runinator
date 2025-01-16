@@ -1,6 +1,6 @@
 mod repository;
 
-use chrono::{DateTime, Duration, Local, TimeDelta, Utc};
+use chrono::{Duration, Local, Utc};
 use croner::Cron;
 use log::{debug, error, info};
 use repository::StaticProvider;
@@ -22,10 +22,14 @@ async fn process_one_task(
     task_handles: TaskHandleMap,
     _config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let now = Local::now().to_utc();
+    let now = Utc::now();
 
-    if task.next_execution.is_none() || task.next_execution.unwrap() > now {
+    if task.next_execution.is_none() {
         set_initial_execution(pool, task).await?;
+        return Ok(());
+    }
+
+    if !task.next_execution.is_some() && task.next_execution.unwrap() > now {
         return Ok(());
     }
 

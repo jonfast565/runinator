@@ -1,4 +1,5 @@
 mod model;
+use ctor::ctor;
 use log::{error, info, warn};
 use runinator_utilities::{ffiutils, logger};
 use std::ffi::{c_char, c_int};
@@ -13,6 +14,11 @@ use std::{thread, time::Duration};
 
 const NAME: &str = "Console\0";
 
+#[ctor]
+fn constructor() {
+    logger::setup_logger().expect("logger not set up");
+}
+
 #[no_mangle]
 extern "C" fn runinator_marker() -> c_int {
     1
@@ -25,8 +31,6 @@ extern "C" fn name() -> *const c_char {
 
 #[no_mangle]
 extern "C" fn call_service(action_function: *const c_char, args: *const c_char) -> c_int {
-    logger::setup_logger().expect("logger not set up");
-
     let call_str = ffiutils::cstr_to_rust_string(action_function);
     let args_str = ffiutils::cstr_to_rust_string(args);
 
