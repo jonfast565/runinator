@@ -1,6 +1,7 @@
 mod utilities;
 mod errors;
 pub mod plugin;
+pub mod provider;
 
 use std::{collections::HashMap, fs, path::PathBuf};
 use log::info;

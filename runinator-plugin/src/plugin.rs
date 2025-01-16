@@ -1,7 +1,8 @@
-use std::{ffi::{c_char, c_int, CStr, CString}, path::PathBuf};
+use std::{ffi::{c_char, c_int, CString}, path::PathBuf};
 use libloading::{Library, Symbol};
+use runinator_utilities::ffiutils;
 
-use crate::errors::PluginError;
+use crate::{errors::PluginError, provider::Provider};
 
 const PLUGIN_MARKER_FN_NAME: &str = "runinator_marker\0";
 const PLUGIN_SERVICE_CALL_FN_NAME: &str = "call_service\0";
@@ -15,6 +16,17 @@ type PluginNameFn = unsafe extern "C" fn() -> *const c_char;
 pub struct Plugin {
     pub file_name: PathBuf,
     pub name: String
+}
+
+impl Provider for Plugin {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn call_service(&self, call: String, args: String) -> Result<i32, Box<dyn std::error::Error>> {
+        self.plugin_service_call(call, args)?;
+        Ok(0)
+    }
 }
 
 impl Plugin {
@@ -37,9 +49,8 @@ impl Plugin {
         }
 
         let name = unsafe { name_symbol() };
-        let name_cstr: &CStr = unsafe { CStr::from_ptr(name) };
-        let name_str_slice: &str = name_cstr.to_str().unwrap();
-        let name_str_buf: String = name_str_slice.to_owned();
+        let name_str_buf = ffiutils::cstr_to_rust_string(name);
+
         Ok(Plugin {
             name: name_str_buf,
             file_name: path.clone()

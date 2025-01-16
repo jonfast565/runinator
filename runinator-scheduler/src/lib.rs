@@ -3,25 +3,23 @@ mod repository;
 use chrono::{Duration, Local, TimeDelta, Utc};
 use cron::Schedule;
 use log::{debug, error, info};
+use repository::StaticProvider;
 use runinator_database::interfaces::DatabaseImpl;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time,
-    str::FromStr
-};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time};
 use uuid::Uuid;
 
 use runinator_config::Config;
-use runinator_models::core::ScheduledTask;
-use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
-use tokio::sync::{Notify, Mutex};
+use runinator_models::{core::ScheduledTask, errors::RuntimeError};
+use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
+use tokio::sync::{Mutex, Notify};
+
+type TaskHandleMap = Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>>;
 
 async fn process_one_task(
     pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
-    task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>>,
+    task_handles: TaskHandleMap,
     _config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = Local::now().to_utc();
@@ -33,14 +31,7 @@ async fn process_one_task(
 
     debug!("Running action {}", &task.action_name);
 
-    let plugin = match libraries.get(&task.action_name).cloned() {
-        Some(plugin) => plugin,
-        None => {
-            error!("Action '{}' not found", task.action_name);
-            set_next_execution_with_cron_statement(pool, task).await?;
-            return Ok(());
-        }
-    };
+    let plugin = get_plugin_or_provider(libraries, task)?;
 
     let timeout_duration = Duration::seconds((task.timeout * 60) as i64)
         .to_std()
@@ -51,7 +42,15 @@ async fn process_one_task(
     let pool_clone = pool.clone();
 
     let handle = tokio::spawn(async move {
-        if let Err(e) = process_plugin_task(action_name, action_configuration, task_clone, pool_clone, plugin).await {
+        if let Err(e) = process_plugin_task(
+            action_name,
+            action_configuration,
+            task_clone,
+            pool_clone,
+            plugin,
+        )
+        .await
+        {
             // TODO: I don't want to panic here
             panic!("{}", e);
         }
@@ -77,35 +76,72 @@ async fn process_one_task(
     Ok(())
 }
 
+fn get_plugin_or_provider(
+    libraries: &HashMap<String, Plugin>,
+    task: &ScheduledTask,
+) -> Result<StaticProvider, Box<dyn std::error::Error>> {
+    if let Some(plugin) = libraries.get(&task.action_name) {
+        return Ok(Box::new(plugin.clone()));
+    }
 
-async fn set_next_execution_with_cron_statement(pool: &Arc<impl DatabaseImpl>, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
+    let providers = repository::get_providers();
+    let match_provider: Option<StaticProvider> = providers
+        .into_iter()
+        .find(|provider| provider.name() == task.action_name)
+        .map(|provider| provider);
+
+    if let Some(provider) = match_provider {
+        return Ok(provider);
+    }
+
+    Err(Box::new(RuntimeError::new(
+        "2".to_string(),
+        format!("Cannot find plugin/provider {}", task.action_name),
+    )))
+}
+
+async fn set_next_execution_with_cron_statement(
+    pool: &Arc<impl DatabaseImpl>,
+    task: &ScheduledTask,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut task_next_execution = task.clone();
     let schedule_str = task_next_execution.cron_schedule.as_str();
     let schedule = Schedule::from_str(schedule_str)?;
     let next_upcoming = schedule.upcoming(Utc).take(1).next();
     let upcoming = match next_upcoming {
         Some(x) => x,
-        None => Utc::now() + Duration::from(TimeDelta::seconds(60))
+        None => Utc::now() + Duration::from(TimeDelta::seconds(60)),
     };
     task_next_execution.next_execution = Some(upcoming);
-    pool.update_task_next_execution(&task_next_execution).await?;
+    pool.update_task_next_execution(&task_next_execution)
+        .await?;
     Ok(())
 }
 
-async fn set_initial_execution(pool: &Arc<impl DatabaseImpl>, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
+async fn set_initial_execution(
+    pool: &Arc<impl DatabaseImpl>,
+    task: &ScheduledTask,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut task_clone = task.clone();
     task_clone.next_execution = Some(Utc::now());
     pool.update_task_next_execution(&task_clone).await?;
     Ok(())
 }
 
-async fn process_plugin_task(action_name: String, action_configuration: String, task_clone: ScheduledTask, pool_clone: Arc<impl DatabaseImpl>, plugin: Plugin) 
--> Result<(), Box<dyn std::error::Error>> {
+async fn process_plugin_task(
+    action_name: String,
+    action_configuration: String,
+    task_clone: ScheduledTask,
+    pool_clone: Arc<impl DatabaseImpl>,
+    plugin: Box<dyn Provider>
+) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Local::now().to_utc();
     let start: time::Instant = time::Instant::now();
-    plugin.plugin_service_call(action_name, action_configuration)?;
+    plugin.call_service(action_name, action_configuration)?;
     let duration_ms = start.elapsed().as_millis() as i64;
-    pool_clone.log_task_run(&task_clone.name, start_time, duration_ms).await?;
+    pool_clone
+        .log_task_run(&task_clone.name, start_time, duration_ms)
+        .await?;
     Ok(())
 }
 
@@ -117,8 +153,7 @@ pub async fn scheduler_loop(
     repository::initialize_database(pool.as_ref()).await?;
     let libraries = load_libraries_from_path(config.dll_path.as_str())?;
     print_libs(&libraries);
-    let task_handles: Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let task_handles: TaskHandleMap = Arc::new(Mutex::new(HashMap::new()));
     loop {
         let start: time::Instant = time::Instant::now();
         let notified = notify.notified();

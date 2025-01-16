@@ -1290,14 +1290,6 @@ version = "0.1.0"
 dependencies = [
  "libloading",
  "log",
-]
-
-[[package]]
-name = "runinator-plugin-aws"
-version = "0.1.0"
-dependencies = [
- "log",
- "runinator-plugin",
  "runinator-utilities",
 ]
 
@@ -1311,7 +1303,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-plugin-sql"
+name = "runinator-provider-aws"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "runinator-plugin",
+ "runinator-utilities",
+]
+
+[[package]]
+name = "runinator-provider-sql"
 version = "0.1.0"
 dependencies = [
  "log",
@@ -1325,11 +1326,15 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cron",
+ "either",
+ "lazy_static",
  "log",
  "runinator-config",
  "runinator-database",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-aws",
+ "runinator-provider-sql",
  "serde",
  "sqlx",
  "tokio",

@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 log = "0.4"
 cron = "0.10"
+either = "1.13"
+lazy_static = "1.5.0"
+
 sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -16,3 +19,5 @@ runinator-plugin = { path = "../runinator-plugin" }
 runinator-config = { path = "../runinator-config" }
 runinator-models = { path = "../runinator-models" }
 runinator-database = { path = "../runinator-database" }
+runinator-provider-aws = { path = "../runinator-provider-aws" }
+runinator-provider-sql = { path = "../runinator-provider-sql" }

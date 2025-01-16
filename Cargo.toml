@@ -10,8 +10,8 @@ members = [
     "runinator-ws",
     
     "runinator-plugin",
-    "runinator-plugin-aws",
+    "runinator-provider-aws",
+    "runinator-provider-sql",
     "runinator-plugin-console",
-    "runinator-plugin-sql",
     "runinator-utilities"
 ]
