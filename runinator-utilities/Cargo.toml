@@ -9,3 +9,5 @@ fern = "0.7"
 colored = "2.2"
 humantime = "2.1.0"
 tokio = { version = "1", features = ["full"] }
+
+runinator-models = { path = "../runinator-models" }

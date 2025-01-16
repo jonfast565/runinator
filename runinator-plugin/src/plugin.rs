@@ -1,5 +1,6 @@
 use std::{ffi::{c_char, c_int, CString}, path::PathBuf};
 use libloading::{Library, Symbol};
+use runinator_models::errors::SendableError;
 use runinator_utilities::ffiutils;
 
 use crate::{errors::PluginError, provider::Provider};
@@ -23,14 +24,14 @@ impl Provider for Plugin {
         self.name.clone()
     }
 
-    fn call_service(&self, call: String, args: String) -> Result<i32, Box<dyn std::error::Error>> {
+    fn call_service(&self, call: String, args: String) -> Result<i32, SendableError> {
         self.plugin_service_call(call, args)?;
         Ok(0)
     }
 }
 
 impl Plugin {
-    pub fn new(path: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(path: &PathBuf) -> Result<Self, SendableError> {
         let lib = unsafe { 
             Library::new(path)? 
         };
@@ -57,7 +58,7 @@ impl Plugin {
         })
     }
 
-    pub fn plugin_service_call(&self, name: String, args: String) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn plugin_service_call(&self, name: String, args: String) -> Result<(), SendableError> {
         unsafe {
             let lib = { Library::new(self.file_name.clone())? };
             let service_call_symbol: Symbol<PluginServiceCallFn> = lib.get(PLUGIN_SERVICE_CALL_FN_NAME.as_bytes())?;

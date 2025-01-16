@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use log::debug;
-use runinator_models::core::{ScheduledTask, TaskRun};
+use runinator_models::{core::{ScheduledTask, TaskRun}, errors::SendableError};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteRow},
     ConnectOptions, Executor, Row, SqlitePool,
@@ -16,7 +16,7 @@ pub struct SqliteDb {
 }
 
 impl SqliteDb {
-    pub async fn new(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(filename: &str) -> Result<Self, SendableError> {
         let mut options = SqliteConnectOptions::new()
             .filename(filename)
             .create_if_missing(true);
@@ -34,7 +34,7 @@ impl SqliteDb {
 }
 
 impl DatabaseImpl for SqliteDb {
-    async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), Box<dyn std::error::Error>> {
+    async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), SendableError> {
         self.pool.execute(sqlx::query(
             "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled)
              VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()), ?)
@@ -59,14 +59,14 @@ impl DatabaseImpl for SqliteDb {
         Ok(())
     }
 
-    async fn delete_task(&self, task_id: i64) -> Result<(), Box<dyn std::error::Error>> {
+    async fn delete_task(&self, task_id: i64) -> Result<(), SendableError> {
         self.pool
             .execute(sqlx::query("DELETE FROM scheduled_tasks WHERE id = ?").bind(task_id))
             .await?;
         Ok(())
     }
 
-    async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, Box<dyn std::error::Error>> {
+    async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
         let rows = sqlx::query(
             "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled FROM scheduled_tasks",
         )
@@ -85,7 +85,7 @@ impl DatabaseImpl for SqliteDb {
         &self,
         start: i64,
         end: i64,
-    ) -> Result<Vec<TaskRun>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<TaskRun>, SendableError> {
         let rows = sqlx::query(
             "SELECT id, task_name, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",
         )
@@ -110,7 +110,7 @@ impl DatabaseImpl for SqliteDb {
     async fn update_task_next_execution(
         &self,
         task: &ScheduledTask,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), SendableError> {
         self.pool
             .execute(
                 sqlx::query("UPDATE scheduled_tasks SET next_execution = ? WHERE id = ?")
@@ -126,7 +126,7 @@ impl DatabaseImpl for SqliteDb {
         task_id: i64,
         start_time: DateTime<Utc>,
         duration_ms: i64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), SendableError> {
         self.pool
             .execute(
                 sqlx::query(
@@ -143,7 +143,7 @@ impl DatabaseImpl for SqliteDb {
     async fn run_init_scripts(
         &self,
         paths: &Vec<String>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), SendableError> {
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {

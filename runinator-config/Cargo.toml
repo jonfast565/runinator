@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.1", features = ["derive"] }
+
+runinator-models = { path = "../runinator-models" }

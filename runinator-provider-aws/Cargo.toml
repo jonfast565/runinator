@@ -8,3 +8,4 @@ log = "0.4"
 
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-models = { path = "../runinator-models" }

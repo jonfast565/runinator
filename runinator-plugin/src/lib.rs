@@ -6,9 +6,10 @@ pub mod provider;
 use std::{collections::HashMap, fs, path::PathBuf};
 use log::info;
 use plugin::Plugin;
+use runinator_models::errors::SendableError;
 use utilities::get_library_extension;
 
-pub fn load_libraries_from_path(path: &str) -> Result<HashMap<String, Plugin>, Box<dyn std::error::Error>> {
+pub fn load_libraries_from_path(path: &str) -> Result<HashMap<String, Plugin>, SendableError> {
     let path_dir = PathBuf::from(path);
     let canonical_dir = fs::canonicalize(path_dir).expect("path not valid");
     info!("Loading libraries from {}", canonical_dir.as_os_str().to_str().unwrap());

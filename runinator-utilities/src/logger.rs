@@ -1,7 +1,8 @@
 use std::{env, time::SystemTime};
 use log::info;
+use runinator_models::errors::SendableError;
 
-pub fn setup_logger() -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup_logger() -> Result<(), SendableError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(

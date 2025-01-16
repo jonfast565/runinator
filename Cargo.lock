@@ -1284,6 +1284,7 @@ name = "runinator-config"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "runinator-models",
 ]
 
 [[package]]
@@ -1311,6 +1312,7 @@ version = "0.1.0"
 dependencies = [
  "libloading",
  "log",
+ "runinator-models",
  "runinator-utilities",
 ]
 
@@ -1330,6 +1332,7 @@ name = "runinator-provider-aws"
 version = "0.1.0"
 dependencies = [
  "log",
+ "runinator-models",
  "runinator-plugin",
  "runinator-utilities",
 ]
@@ -1339,6 +1342,7 @@ name = "runinator-provider-sql"
 version = "0.1.0"
 dependencies = [
  "log",
+ "runinator-models",
  "runinator-plugin",
  "runinator-utilities",
 ]
@@ -1371,6 +1375,7 @@ dependencies = [
  "fern",
  "humantime",
  "log",
+ "runinator-models",
  "tokio",
 ]
 

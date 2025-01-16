@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc, time};
 use uuid::Uuid;
 
 use runinator_config::Config;
-use runinator_models::core::ScheduledTask;
+use runinator_models::{core::ScheduledTask, errors::{RuntimeError, SendableError}};
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
 use tokio::sync::{Mutex, Notify};
 
@@ -20,7 +20,7 @@ async fn process_one_task(
     task: &ScheduledTask,
     task_handles: TaskHandleMap,
     _config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), SendableError> {
     let now = Utc::now();
 
     if task.next_execution.is_none() {
@@ -35,9 +35,9 @@ async fn process_one_task(
     debug!("Running action {}", &task.action_name);
 
     let provider = provider_repository::get_plugin_or_provider(libraries, task).await;
-    if let Err(plugin) = provider {
+    if let Err(_) = provider {
         db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
-        return Err(plugin);
+        return Err(Box::new(RuntimeError::new("1".to_string(), "An error occurred".to_string())));
     }
     let resolved_provider = provider.expect("cannot happen");
 
@@ -89,7 +89,7 @@ async fn process_provider_task(
     task_clone: ScheduledTask,
     pool_clone: Arc<impl DatabaseImpl>,
     plugin: Box<dyn Provider>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), SendableError> {
     let start_time = Local::now().to_utc();
     let start: time::Instant = time::Instant::now();
     plugin.call_service(action_name, action_configuration)?;
@@ -104,7 +104,7 @@ pub async fn scheduler_loop(
     pool: &Arc<impl DatabaseImpl>,
     notify: Arc<Notify>,
     config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), SendableError> {
     db_extensions::initialize_database(pool).await?;
 
     let libraries = load_libraries_from_path(&config.dll_path)?;
@@ -143,7 +143,7 @@ async fn run_scheduler_iteration(
     libraries: &HashMap<String, Plugin>,
     task_handles: TaskHandleMap,
     config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), SendableError> {
     debug!("Fetching tasks");
     let tasks = pool.fetch_all_tasks().await?;
 

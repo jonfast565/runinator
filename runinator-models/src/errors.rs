@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub type SendableError = Box<dyn std::error::Error + Send + Sync>;
+
 #[derive(Debug)]
 pub struct RuntimeError {
     code: String,

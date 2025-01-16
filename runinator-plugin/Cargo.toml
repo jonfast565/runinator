@@ -8,3 +8,4 @@ log = "0.4"
 libloading = "0.7"
 
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-models = { path = "../runinator-models" }

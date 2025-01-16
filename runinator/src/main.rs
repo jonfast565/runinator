@@ -1,6 +1,7 @@
 use log::info;
 use runinator_config::parse_config;
 use runinator_database::sqlite::SqliteDb;
+use runinator_models::errors::SendableError;
 // use runinator_models::errors::RuntimeError;
 use runinator_scheduler::scheduler_loop;
 use runinator_utilities::logger;
@@ -9,7 +10,7 @@ use tokio::{sync::Notify, task::JoinHandle};
 use std::{env, sync::Arc};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), SendableError> {
     env::set_var("RUST_BACKTRACE", "1");
     logger::setup_logger()?;
 
@@ -30,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notify_scheduler = notify.clone();
     let scheduler_config = (&config).clone();
     let scheduler_pool = pool.clone();
-    let scheduler_task: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn(async move {
+    let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         let result = scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
         match result {
             Ok(_) => Ok(()),
@@ -42,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Initialize web server");
     let ws_config = (&config).clone();
     let ws_notify = notify.clone();
-    let web_server_task: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn(async move {
+    let web_server_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         run_webserver(&pool.clone(), ws_notify, ws_config.port).await;
         Ok(())
     });

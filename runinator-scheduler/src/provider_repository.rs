@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use runinator_models::{core::ScheduledTask, errors::RuntimeError};
+use runinator_models::{core::ScheduledTask, errors::{RuntimeError, SendableError}};
 use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_sql::SqlProvider;
@@ -17,7 +17,7 @@ pub(crate) fn get_providers() -> Vec<StaticProvider> {
 pub(crate) async fn get_plugin_or_provider(
     libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
-) -> Result<StaticProvider, Box<dyn std::error::Error>> {
+) -> Result<StaticProvider, SendableError> {
     if let Some(plugin) = libraries.get(&task.action_name) {
         return Ok(Box::new(plugin.clone()));
     }
