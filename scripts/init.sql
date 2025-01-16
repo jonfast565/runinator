@@ -1,3 +1,8 @@
+DELETE FROM task_runs;
+
+DELETE FROM scheduled_tasks
+WHERE name = 'Test: Hello World';
+
 INSERT INTO
     scheduled_tasks (
         name,
@@ -20,6 +25,9 @@ VALUES
         1737008700,
         1
     );
+
+DELETE FROM scheduled_tasks
+WHERE name = 'AWS Login';
 
 INSERT INTO
     scheduled_tasks (

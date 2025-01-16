@@ -1,5 +1,5 @@
-mod provider_repository;
 mod db_extensions;
+mod provider_repository;
 
 use chrono::{Duration, Local, Utc};
 use log::{debug, error, info};
@@ -8,7 +8,10 @@ use std::{collections::HashMap, sync::Arc, time};
 use uuid::Uuid;
 
 use runinator_config::Config;
-use runinator_models::{core::ScheduledTask, errors::{RuntimeError, SendableError}};
+use runinator_models::{
+    core::ScheduledTask,
+    errors::{RuntimeError, SendableError},
+};
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
 use tokio::sync::{Mutex, Notify};
 
@@ -28,18 +31,25 @@ async fn process_one_task(
         return Ok(());
     }
 
-    if !task.next_execution.is_some() && task.next_execution.unwrap() > now {
-        return Ok(());
+    if task.next_execution.is_some() {
+        let next_execution = task.next_execution.unwrap();
+        let results: bool = next_execution <= now;
+        if !results {
+            return Ok(())
+        }
     }
 
     debug!("Running action {}", &task.action_name);
 
     let provider = provider_repository::get_plugin_or_provider(libraries, task).await;
-    if let Err(_) = provider {
+    if let Err(_x) = provider {
         db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
-        return Err(Box::new(RuntimeError::new("1".to_string(), "An error occurred".to_string())));
+        return Err(Box::new(RuntimeError::new(
+            "1".to_string(),
+            "An error occurred".to_string(),
+        )));
     }
-    let resolved_provider = provider.expect("cannot happen");
+    let resolved_provider = provider?;
 
     let timeout_duration = Duration::seconds((task.timeout * 60) as i64)
         .to_std()
@@ -59,7 +69,10 @@ async fn process_one_task(
         )
         .await
         {
-            panic!("{}", e);
+            error!("Join error {}", e);
+            ()
+        } else {
+            ()
         }
     });
 
@@ -100,6 +113,13 @@ async fn process_provider_task(
     Ok(())
 }
 
+async fn schedule_sleep_seconds(config: &Config) {
+    tokio::time::sleep(tokio::time::Duration::from_secs(
+        config.scheduler_frequency_seconds,
+    ))
+    .await;
+}
+
 pub async fn scheduler_loop(
     pool: &Arc<impl DatabaseImpl>,
     notify: Arc<Notify>,
@@ -116,16 +136,18 @@ pub async fn scheduler_loop(
                 handle_shutdown(task_handles.clone()).await;
                 break;
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(config.scheduler_frequency_seconds)) => {
+            _ = schedule_sleep_seconds(config) => {
                 run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await?;
             }
         }
-        info!("Scheduler took {} seconds to run", start.elapsed().as_secs_f64());
+        info!(
+            "Scheduler took {} seconds to run",
+            start.elapsed().as_secs_f64()
+        );
     }
 
     Ok(())
 }
-
 
 async fn handle_shutdown(task_handles: TaskHandleMap) {
     info!("Scheduler received shutdown signal.");
