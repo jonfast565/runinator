@@ -1,9 +1,9 @@
 use std::{ffi::{c_char, c_int, CString}, path::PathBuf};
 use libloading::{Library, Symbol};
-use runinator_models::errors::SendableError;
+use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_utilities::ffiutils;
 
-use crate::{errors::PluginError, provider::Provider};
+use crate::provider::Provider;
 
 const PLUGIN_MARKER_FN_NAME: &str = "runinator_marker\0";
 const PLUGIN_SERVICE_CALL_FN_NAME: &str = "call_service\0";
@@ -46,7 +46,7 @@ impl Plugin {
 
         let marker_result = unsafe { (marker_symbol)() };
         if marker_result != 1 {
-            return Err(Box::new(PluginError::new("1".to_string(), "Marker function did not return expected value".to_string())));
+            return Err(Box::new(RuntimeError::new("1".to_string(), "Marker function did not return expected value".to_string())));
         }
 
         let name = unsafe { name_symbol() };
@@ -66,7 +66,7 @@ impl Plugin {
             let args_cstr = CString::new(args).unwrap();
             let plugin_interface = (service_call_symbol)(name_cstr.as_ptr(), args_cstr.as_ptr());
             if plugin_interface != 0 {
-                return Err(Box::new(PluginError::new("2".to_string(), "Plugin execution failed".to_string())))
+                return Err(Box::new(RuntimeError::new("2".to_string(), "Plugin execution failed".to_string())))
             }
             Ok(())
         }

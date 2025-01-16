@@ -1,6 +1,5 @@
 INSERT INTO
     scheduled_tasks (
-        id,
         name,
         cron_schedule,
         action_name,
@@ -12,7 +11,6 @@ INSERT INTO
     )
 VALUES
     (
-        1,
         'Test: Hello World',
         '*/1 * * * *',
         'Console',
@@ -25,7 +23,6 @@ VALUES
 
 INSERT INTO
     scheduled_tasks (
-        id,
         name,
         cron_schedule,
         action_name,
@@ -37,7 +34,6 @@ INSERT INTO
     )
 VALUES
     (
-        2,
         'AWS Login',
         '0 0,9,12,15,18,21 * * *',
         'Console',

@@ -5,18 +5,6 @@ use croner::Cron;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{core::ScheduledTask, errors::SendableError};
 
-pub(crate) async fn initialize_database(
-    pool: &Arc<impl DatabaseImpl>,
-) -> Result<(), SendableError> {
-    let file_vec = [
-        "./scripts/table_init.sql".to_string(),
-        "./scripts/init.sql".to_string(),
-    ]
-    .to_vec();
-    pool.run_init_scripts(&file_vec).await?;
-    Ok(())
-}
-
 pub(crate) async fn set_next_execution_with_cron_statement(
     pool: &Arc<impl DatabaseImpl>,
     task: &ScheduledTask,

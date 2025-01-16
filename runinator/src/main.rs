@@ -1,6 +1,6 @@
 use log::info;
 use runinator_config::parse_config;
-use runinator_database::sqlite::SqliteDb;
+use runinator_database::{initialize_database, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
 use runinator_scheduler::scheduler_loop;
 use runinator_utilities::logger;
@@ -25,17 +25,18 @@ async fn main() -> Result<(), SendableError> {
     let pool = Arc::new(SqliteDb::new(&config.database).await?);
     let notify = Arc::new(Notify::new());
 
+    info!("Initialize database schema");
+    initialize_database(&pool).await?;
+
     // Start the scheduler in a separate task
     info!("Initialize scheduler");
     let notify_scheduler = notify.clone();
     let scheduler_config = (&config).clone();
     let scheduler_pool = pool.clone();
     let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
-        let result = scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
-        match result {
-            Ok(_) => Ok(()),
-            Err(x) => panic!("{}", x)
-        }
+        info!("Run scheduler");
+        let _ = scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
+        Ok(())
     });
 
     // Start the web server in a separate task
@@ -43,6 +44,7 @@ async fn main() -> Result<(), SendableError> {
     let ws_config = (&config).clone();
     let ws_notify = notify.clone();
     let web_server_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
+        info!("Run web server");
         run_webserver(&pool.clone(), ws_notify, ws_config.port).await;
         Ok(())
     });

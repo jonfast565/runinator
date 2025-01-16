@@ -105,8 +105,6 @@ pub async fn scheduler_loop(
     notify: Arc<Notify>,
     config: &Config,
 ) -> Result<(), SendableError> {
-    db_extensions::initialize_database(pool).await?;
-
     let libraries = load_libraries_from_path(&config.dll_path)?;
     print_libs(&libraries);
 

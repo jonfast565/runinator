@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
-use log::debug;
+use log::{debug, info};
 use runinator_models::{core::{ScheduledTask, TaskRun}, errors::SendableError};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteRow},
@@ -147,6 +147,7 @@ impl DatabaseImpl for SqliteDb {
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
+                info!("Running {}", path_info.to_str().unwrap());
                 let script = fs::read_to_string(path_info.as_path())?;
                 let mut stream = self.pool.execute_many(sqlx::query(&script));
                 while let Some(result) = stream.next().await {

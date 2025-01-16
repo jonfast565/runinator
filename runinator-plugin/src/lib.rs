@@ -1,5 +1,4 @@
 mod utilities;
-mod errors;
 pub mod plugin;
 pub mod provider;
 
@@ -11,7 +10,7 @@ use utilities::get_library_extension;
 
 pub fn load_libraries_from_path(path: &str) -> Result<HashMap<String, Plugin>, SendableError> {
     let path_dir = PathBuf::from(path);
-    let canonical_dir = fs::canonicalize(path_dir).expect("path not valid");
+    let canonical_dir: PathBuf = fs::canonicalize(path_dir).expect("path not valid");
     info!("Loading libraries from {}", canonical_dir.as_os_str().to_str().unwrap());
     let mut libraries = HashMap::new();
     let extension = get_library_extension();

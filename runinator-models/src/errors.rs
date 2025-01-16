@@ -8,6 +8,9 @@ pub struct RuntimeError {
     message: String
 }
 
+unsafe impl Sync for RuntimeError {}
+unsafe impl Send for RuntimeError {}
+
 impl RuntimeError {
     pub fn new(code: String, message: String) -> Self {
         Self {
