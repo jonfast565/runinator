@@ -2,7 +2,6 @@ use log::info;
 use runinator_config::parse_config;
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::errors::SendableError;
-// use runinator_models::errors::RuntimeError;
 use runinator_scheduler::scheduler_loop;
 use runinator_utilities::logger;
 use runinator_ws::run_webserver;
