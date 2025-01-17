@@ -1,11 +1,14 @@
+mod model;
 mod db_extensions;
 mod provider_repository;
 
 use chrono::{Duration, Local, Utc};
 use log::{debug, error, info};
+use model::SchedulerTaskFuture;
 use runinator_database::interfaces::DatabaseImpl;
-use std::{collections::HashMap, sync::Arc, time};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time};
 use uuid::Uuid;
+use futures_util::FutureExt;
 
 use runinator_config::Config;
 use runinator_models::{
@@ -15,8 +18,7 @@ use runinator_models::{
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
 use tokio::sync::{Mutex, Notify};
 
-type TaskHandleMap = Arc<Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>>;
-
+type TaskHandleMap = Arc<Mutex<HashMap<Uuid, SchedulerTaskFuture>>>;
 async fn process_one_task(
     pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
@@ -31,11 +33,10 @@ async fn process_one_task(
         return Ok(());
     }
 
-    if task.next_execution.is_some() {
-        let next_execution = task.next_execution.unwrap();
+    if let Some(next_execution) = task.next_execution {
         let results: bool = next_execution <= now;
         if !results {
-            return Ok(())
+            return Ok(());
         }
     }
 
@@ -51,9 +52,7 @@ async fn process_one_task(
     }
     let resolved_provider = provider?;
 
-    let timeout_duration = Duration::seconds((task.timeout * 60) as i64)
-        .to_std()
-        .unwrap();
+    let timeout_duration = Duration::seconds((task.timeout * 60) as i64).to_std()?;
     let action_name = task.action_name.clone();
     let action_configuration = task.action_configuration.clone();
     let task_clone = task.clone();
@@ -70,24 +69,21 @@ async fn process_one_task(
         .await
         {
             error!("Join error {}", e);
-            ()
-        } else {
-            ()
         }
     });
 
-    let handle_index = {
-        let handle_uuid = Uuid::new_v4();
+    let handle_uuid = Uuid::new_v4();
+    {
         let mut handles = task_handles.lock().await;
-        handles.insert(handle_uuid.clone(), handle);
-        handle_uuid
-    };
+        handles.insert(handle_uuid.clone(), SchedulerTaskFuture::new(handle));
+    }
 
     let task_handles_clone = task_handles.clone();
     tokio::spawn(async move {
         tokio::time::sleep(timeout_duration).await;
         let mut handles = task_handles_clone.lock().await;
-        if let Some(handle) = handles.remove(&handle_index) {
+        if let Some(task_future) = handles.remove(&handle_uuid) {
+            let handle = Pin::into_inner(task_future.future);
             handle.abort();
         }
     });
@@ -145,7 +141,6 @@ pub async fn scheduler_loop(
             start.elapsed().as_secs_f64()
         );
     }
-
     Ok(())
 }
 
@@ -153,7 +148,8 @@ async fn handle_shutdown(task_handles: TaskHandleMap) {
     info!("Scheduler received shutdown signal.");
 
     let mut handles = task_handles.lock().await;
-    for (_, handle) in handles.drain() {
+    for (_, task_future) in handles.drain() {
+        let handle = Pin::into_inner(task_future.future);
         handle.abort();
     }
 }
@@ -172,25 +168,35 @@ async fn run_scheduler_iteration(
         process_one_task(pool, libraries, &task, task_handles.clone(), config).await?;
     }
 
-    debug!("Waiting for completed tasks!");
+    debug!("Attempting to clean up finished tasks...");
     clean_up_finished_tasks(task_handles).await;
 
     Ok(())
 }
 
 async fn clean_up_finished_tasks(task_handles: TaskHandleMap) {
-    let mut completed_tasks = Vec::new();
     let mut guard = task_handles.lock().await;
-    for (uuid, handle) in guard.drain() {
-        match handle.await {
-            Ok(_) => completed_tasks.push(uuid),
-            Err(e) => {
-                error!("Task {:?} failed: {:?}", uuid, e);
+    let mut still_running = Vec::new();
+
+    for (uuid, mut pinned_task) in guard.drain() {
+        match pinned_task.future.as_mut().now_or_never() {
+            Some(join_result) => {
+                match join_result {
+                    Ok(_) => {
+                        debug!("Task {uuid} finished successfully.");
+                    }
+                    Err(e) => {
+                        error!("Task {uuid} failed: {e:?}");
+                    }
+                }
+            }
+            None => {
+                still_running.push((uuid, pinned_task));
             }
         }
     }
 
-    for uuid in completed_tasks {
-        guard.remove(&uuid);
+    for (uuid, pinned_task) in still_running {
+        guard.insert(uuid, pinned_task);
     }
 }

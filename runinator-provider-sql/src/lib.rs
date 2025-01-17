@@ -7,7 +7,7 @@ pub struct SqlProvider;
 
 impl Provider for SqlProvider {
     fn name(&self) -> String {
-        "AWS".to_string()
+        "SQL".to_string()
     }
 
     fn call_service(&self, call: String, args: String) -> Result<i32, SendableError> {

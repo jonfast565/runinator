@@ -3,7 +3,7 @@ use runinator_config::parse_config;
 use runinator_database::{initialize_database, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
 use runinator_scheduler::scheduler_loop;
-use runinator_utilities::logger;
+use runinator_utilities::{dirutils, logger};
 use runinator_ws::run_webserver;
 use tokio::{sync::Notify, task::JoinHandle};
 use std::{env, sync::Arc};
@@ -11,6 +11,7 @@ use std::{env, sync::Arc};
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
     env::set_var("RUST_BACKTRACE", "1");
+    dirutils::set_exe_dir_as_cwd()?;
     logger::setup_logger()?;
 
     info!("--- Runinator ---");

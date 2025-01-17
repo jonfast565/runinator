@@ -1354,6 +1354,7 @@ dependencies = [
  "chrono",
  "croner",
  "either",
+ "futures-util",
  "log",
  "runinator-config",
  "runinator-database",
