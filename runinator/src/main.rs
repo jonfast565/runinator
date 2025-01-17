@@ -6,7 +6,7 @@ use runinator_scheduler::scheduler_loop;
 use runinator_utilities::logger;
 use runinator_ws::run_webserver;
 use tokio::{sync::Notify, task::JoinHandle};
-use std::{env, /*fs,*/ sync::Arc};
+use std::{env, sync::Arc};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
@@ -22,11 +22,6 @@ async fn main() -> Result<(), SendableError> {
 
     // Initialize the SQLite connection pool
     info!("Initialize database pool");
-    /*
-    if fs::exists(&config.database)? {
-        fs::remove_file(&config.database)?;
-    }
-    */
     let pool = Arc::new(SqliteDb::new(&config.database).await?);
     let notify = Arc::new(Notify::new());
 
@@ -40,7 +35,7 @@ async fn main() -> Result<(), SendableError> {
     let scheduler_pool = pool.clone();
     let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         info!("Run scheduler");
-        let _ = scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
+        scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await?;
         Ok(())
     });
 
@@ -50,7 +45,7 @@ async fn main() -> Result<(), SendableError> {
     let ws_notify = notify.clone();
     let web_server_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         info!("Run web server");
-        run_webserver(&pool.clone(), ws_notify, ws_config.port).await;
+        run_webserver(&pool.clone(), ws_notify, ws_config.port).await?;
         Ok(())
     });
 

@@ -9,7 +9,7 @@ use axum::{
 use log::info;
 use models::{ApiError, ApiResponse};
 use runinator_database::sqlite::SqliteDb;
-use runinator_models::core::ScheduledTask;
+use runinator_models::{core::ScheduledTask, errors::SendableError};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -107,7 +107,7 @@ async fn get_task_runs(
     }
 }
 
-pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16) {
+pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16) -> Result<(), SendableError> {
     let app = Router::new()
         .route("/tasks", get(get_tasks).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task).layer(Extension(pool.clone())))
@@ -129,10 +129,13 @@ pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16)
         result = server => {
             if let Err(err) = result {
                 log::error!("Webserver error: {}", err);
+                return Err(Box::new(err));
             }
+            return Ok(());
         }
         _ = notify.notified() => {
             info!("Shutting down web server...");
+            return Ok(());
         }
     }
 }
