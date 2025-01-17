@@ -4,12 +4,12 @@ use chrono::{DateTime, Duration, Utc};
 use log::{debug, info};
 use runinator_models::{core::{ScheduledTask, TaskRun}, errors::SendableError};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteRow},
+    sqlite::SqliteConnectOptions,
     ConnectOptions, Executor, Row, SqlitePool,
 };
 use futures_util::stream::StreamExt;
 
-use crate::interfaces::DatabaseImpl;
+use crate::{interfaces::DatabaseImpl, mappers};
 
 pub struct SqliteDb {
     pub pool: SqlitePool,
@@ -76,7 +76,7 @@ impl DatabaseImpl for SqliteDb {
 
         let result = rows
             .into_iter()
-            .map(|row| row_to_scheduled_task(&row))
+            .map(|row| mappers::row_to_scheduled_task(&row))
             .collect();
         Ok(result)
     }
@@ -159,26 +159,5 @@ impl DatabaseImpl for SqliteDb {
 
         Ok(())
     }
-}
 
-fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
-    let next_execution = row
-        .get::<Option<i64>, _>("next_execution")
-        .map(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
-    let next_execution_part = match next_execution {
-        Some(x) => x,
-        None => None,
-    };
-
-    ScheduledTask {
-        id: row.get::<Option<i64>, _>("id"),
-        name: row.get::<String, _>("name"),
-        cron_schedule: row.get::<String, _>("cron_schedule"),
-        action_name: row.get::<String, _>("action_name"),
-        action_function: row.get::<String, _>("action_function"),
-        action_configuration: row.get::<String, _>("action_configuration"),
-        timeout: row.get::<i64, _>("timeout"),
-        next_execution: next_execution_part,
-        enabled: row.get::<bool, _>("enabled")
-    }
 }

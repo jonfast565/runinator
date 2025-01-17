@@ -9,7 +9,7 @@ pub struct Config {
     #[clap(long, default_value = "3000")]
     pub port: u16,
 
-    #[clap(long, default_value = "./target/debug")]
+    #[clap(long, default_value = "./")]
     pub dll_path: String,
 
     #[clap(long, default_value = "5")]

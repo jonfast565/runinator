@@ -1,10 +1,8 @@
 DELETE FROM task_runs;
 
-DELETE FROM scheduled_tasks
-WHERE name = 'Test: Hello World';
-
-INSERT INTO
+INSERT OR IGNORE INTO
     scheduled_tasks (
+        id,
         name,
         cron_schedule,
         action_name,
@@ -16,6 +14,7 @@ INSERT INTO
     )
 VALUES
     (
+        1,
         'Test: Hello World',
         '*/1 * * * *',
         'Console',
@@ -26,10 +25,7 @@ VALUES
         1
     );
 
-DELETE FROM scheduled_tasks
-WHERE name = 'AWS Login';
-
-INSERT INTO
+INSERT OR IGNORE INTO
     scheduled_tasks (
         name,
         cron_schedule,
@@ -42,7 +38,7 @@ INSERT INTO
     )
 VALUES
     (
-        'AWS Login',
+        2,
         '0 0,9,12,15,18,21 * * *',
         'Console',
         'run_console',

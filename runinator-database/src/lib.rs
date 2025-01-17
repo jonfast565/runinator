@@ -5,6 +5,7 @@ use log::info;
 use runinator_models::errors::SendableError;
 
 pub mod interfaces;
+mod mappers;
 pub mod sqlite;
 
 pub async fn initialize_database(

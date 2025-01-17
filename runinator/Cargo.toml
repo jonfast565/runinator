@@ -3,6 +3,16 @@ name = "runinator"
 version = "0.1.0"
 edition = "2021"
 
+[build]
+build = "build.rs"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+debug=false
+
 [dependencies]
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
