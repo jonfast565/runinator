@@ -366,6 +366,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
+name = "croner"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38fd53511eaf0b00a185613875fee58b208dfce016577d0ad4bb548e1c4fb3ee"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "crossbeam-queue"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,6 +397,16 @@ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.94",
 ]
 
 [[package]]
@@ -535,6 +554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-macro"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.94",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -553,6 +583,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-core",
+ "futures-macro",
  "futures-sink",
  "futures-task",
  "pin-project-lite",
@@ -1237,10 +1268,14 @@ dependencies = [
 name = "runinator"
 version = "0.1.0"
 dependencies = [
- "colored",
- "fern",
- "humantime",
  "log",
+ "runinator-config",
+ "runinator-database",
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-scheduler",
+ "runinator-utilities",
+ "runinator-ws",
  "tokio",
 ]
 
@@ -1249,6 +1284,7 @@ name = "runinator-config"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "runinator-models",
 ]
 
 [[package]]
@@ -1256,20 +1292,11 @@ name = "runinator-database"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures-util",
+ "log",
  "runinator-models",
  "sqlx",
 ]
-
-[[package]]
-name = "runinator-dynamic-linking"
-version = "0.1.0"
-dependencies = [
- "libloading",
-]
-
-[[package]]
-name = "runinator-interfaces"
-version = "0.1.0"
 
 [[package]]
 name = "runinator-models"
@@ -1280,26 +1307,61 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-plugin-aws"
+name = "runinator-plugin"
 version = "0.1.0"
+dependencies = [
+ "libloading",
+ "log",
+ "runinator-models",
+ "runinator-utilities",
+]
 
 [[package]]
-name = "runinator-plugin-powershell"
+name = "runinator-plugin-console"
 version = "0.1.0"
+dependencies = [
+ "ctor",
+ "log",
+ "runinator-plugin",
+ "runinator-utilities",
+ "serde",
+]
 
 [[package]]
-name = "runinator-plugin-sql"
+name = "runinator-provider-aws"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-utilities",
+]
+
+[[package]]
+name = "runinator-provider-sql"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-utilities",
+]
 
 [[package]]
 name = "runinator-scheduler"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "croner",
+ "either",
+ "futures-util",
  "log",
  "runinator-config",
  "runinator-database",
  "runinator-models",
+ "runinator-plugin",
+ "runinator-provider-aws",
+ "runinator-provider-sql",
  "serde",
  "sqlx",
  "tokio",
@@ -1307,11 +1369,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-utilities"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "fern",
+ "humantime",
+ "log",
+ "runinator-models",
+ "tokio",
+]
+
+[[package]]
 name = "runinator-ws"
 version = "0.1.0"
 dependencies = [
  "axum",
- "sqlx",
+ "log",
+ "runinator-database",
+ "runinator-models",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

@@ -1,23 +1,22 @@
 use clap::Parser;
+use runinator_models::errors::SendableError;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct Config {
     #[clap(long, default_value = "tasks.db")]
-    database: String,
+    pub database: String,
 
     #[clap(long, default_value = "3000")]
-    port: u16,
+    pub port: u16,
 
-    #[clap(long, default_value = "get_library_name")]
-    marker_function: String,
+    #[clap(long, default_value = "./")]
+    pub dll_path: String,
 
-    #[clap(long, default_value = "get_action_name")]
-    action_name_function: String,
-
-    #[clap(long, default_value = "./dlls")]
-    dll_path: String,
+    #[clap(long, default_value = "5")]
+    pub scheduler_frequency_seconds: u64
 }
 
-pub fn parse_config() {
-
+pub fn parse_config() -> Result<Config, SendableError> {
+    let results = Config::try_parse()?;
+    Ok(results)
 }

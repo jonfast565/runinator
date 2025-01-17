@@ -4,14 +4,14 @@ resolver = "2"
 members = [
     "runinator",
     "runinator-models",
-    "runinator-dynamic-linking",
     "runinator-config",
     "runinator-database",
     "runinator-scheduler",
     "runinator-ws",
     
-    "runinator-interfaces",
-    "runinator-plugin-aws",
-    "runinator-plugin-powershell",
-    "runinator-plugin-sql"
+    "runinator-plugin",
+    "runinator-provider-aws",
+    "runinator-provider-sql",
+    "runinator-plugin-console",
+    "runinator-utilities"
 ]

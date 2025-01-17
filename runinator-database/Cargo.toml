@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-runinator-models = { path = "../runinator-models" }
-
 chrono = "0.4"
+log = "0.4"
+futures-util = "0.3.31"
 sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+
+runinator-models = { path = "../runinator-models" }
