@@ -3,6 +3,10 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 use runinator_models::{core::{ScheduledTask, TaskRun}, errors::SendableError};
 
+// doing something like this would make the code look more readable:
+// but alas Rust kills us every time
+// pub type DatabaseAsyncReturn<T> = impl Future<Output = Result<T, SendableError>> + Send;
+
 // NOTE: Ensure anything that implements this trait cannot contain a reference
 // otherwise, this is breaking major rules
 pub trait DatabaseImpl : Send + Sync + 'static {

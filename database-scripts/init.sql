@@ -27,6 +27,7 @@ VALUES
 
 INSERT OR IGNORE INTO
     scheduled_tasks (
+        id,
         name,
         cron_schedule,
         action_name,
@@ -39,6 +40,7 @@ INSERT OR IGNORE INTO
 VALUES
     (
         2,
+        'AWS Login',
         '0 0,9,12,15,18,21 * * *',
         'Console',
         'run_console',
