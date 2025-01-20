@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/runinator-config/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-database/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-models/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-plugin-console/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-plugin/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-aws/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-sql/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-scheduler/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-utilities/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-ws/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
