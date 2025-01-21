@@ -13,6 +13,7 @@ async fn main() -> Result<(), SendableError> {
     env::set_var("RUST_BACKTRACE", "1");
     dirutils::set_exe_dir_as_cwd()?;
     logger::setup_logger()?;
+    log_panics::init();
 
     info!("--- Runinator ---");
     info!("--- Version 1 ---");
