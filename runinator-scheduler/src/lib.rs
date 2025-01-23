@@ -136,7 +136,7 @@ pub async fn scheduler_loop(
                 run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await?;
             }
         }
-        info!(
+        debug!(
             "Scheduler took {} seconds to run",
             start.elapsed().as_secs_f64()
         );
