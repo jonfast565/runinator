@@ -1336,6 +1336,7 @@ dependencies = [
  "runinator-plugin",
  "runinator-utilities",
  "serde",
+ "winapi",
 ]
 
 [[package]]
