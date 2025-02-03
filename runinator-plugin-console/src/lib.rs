@@ -1,4 +1,7 @@
 mod model;
+mod windows;
+mod linux;
+
 use ctor::ctor;
 use log::{error, info, warn};
 use runinator_utilities::{ffiutils, logger};
@@ -36,7 +39,7 @@ extern "C" fn call_service(action_function: *const c_char, args: *const c_char) 
 
     info!("Running action '{}' w/ args `{}`", call_str, args_str);
 
-    const TIMEOUT_SECONDS: u64 = 5;
+    const TIMEOUT_SECONDS: u64 = 30;
 
     let mut command = Command::new("cmd");
     command
@@ -49,16 +52,13 @@ extern "C" fn call_service(action_function: *const c_char, args: *const c_char) 
     let child_stdout = child.stdout.take().unwrap();
     let child_stderr = child.stderr.take().unwrap();
 
-    // We'll use this to tell the reader threads to stop if we time out and kill the child
     let stop_reading = Arc::new(AtomicBool::new(false));
     let stop_reading_stdout = stop_reading.clone();
     let stop_reading_stderr = stop_reading.clone();
 
-    // Spawn thread to read stdout
     let stdout_thread = thread::spawn(move || {
         let reader = BufReader::new(child_stdout);
         for line in reader.lines() {
-            // Break if we've been signaled to stop
             if stop_reading_stdout.load(Ordering::Relaxed) {
                 break;
             }
@@ -72,11 +72,9 @@ extern "C" fn call_service(action_function: *const c_char, args: *const c_char) 
         }
     });
 
-    // Spawn thread to read stderr
     let stderr_thread = thread::spawn(move || {
         let reader = BufReader::new(child_stderr);
         for line in reader.lines() {
-            // Break if we've been signaled to stop
             if stop_reading_stderr.load(Ordering::Relaxed) {
                 break;
             }
@@ -90,23 +88,25 @@ extern "C" fn call_service(action_function: *const c_char, args: *const c_char) 
         }
     });
 
-    // Timeout logic in the current (main) thread
     let start = std::time::Instant::now();
     let mut child_exit_status = None;
 
     loop {
-        // Check if the child has exited
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Child finished naturally
                 child_exit_status = Some(status);
                 break;
             }
             Ok(None) => {
-                // Still running; check for timeout
                 if start.elapsed() >= Duration::from_secs(TIMEOUT_SECONDS) {
                     warn!("Child exceeded timeout! Killing.");
-                    let _ = child.kill().expect("command couldn't be killed");
+                    
+                    #[cfg(target_os = "windows")]
+                    windows::kill_console_windows(&mut child);
+                
+                    #[cfg(not(target_os = "windows"))]
+                    linux::kill_console_other(&mut child);
+
                     // Wait to reap the actual exit code
                     // child_exit_status = child.wait().ok();
                     child_exit_status = None;
@@ -121,10 +121,8 @@ extern "C" fn call_service(action_function: *const c_char, args: *const c_char) 
         thread::sleep(Duration::from_millis(100));
     }
 
-    // Once the child is done or we timed out and killed it, signal the reading threads to stop
+    // signal threads to stop and join them
     stop_reading.store(true, Ordering::Relaxed);
-
-    // Join both reading threads so we don't leak them
     let _ = stdout_thread.join();
     let _ = stderr_thread.join();
 
