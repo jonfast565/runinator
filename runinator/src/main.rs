@@ -37,7 +37,7 @@ async fn main() -> Result<(), SendableError> {
     let scheduler_pool = pool.clone();
     let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         info!("Run scheduler");
-        scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await?;
+        scheduler_loop(&scheduler_pool, notify_scheduler, &scheduler_config).await;
         Ok(())
     });
 
