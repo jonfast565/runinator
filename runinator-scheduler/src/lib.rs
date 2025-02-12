@@ -19,6 +19,7 @@ use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, pro
 use tokio::sync::{Mutex, Notify};
 
 type TaskHandleMap = Arc<Mutex<HashMap<Uuid, SchedulerTaskFuture>>>;
+
 async fn process_one_task(
     pool: &Arc<impl DatabaseImpl>,
     libraries: &HashMap<String, Plugin>,
@@ -34,8 +35,7 @@ async fn process_one_task(
     }
 
     if let Some(next_execution) = task.next_execution {
-        let results: bool = next_execution <= now;
-        if !results {
+        if next_execution > now {
             return Ok(());
         }
     }
@@ -43,14 +43,18 @@ async fn process_one_task(
     debug!("Running action {}", &task.action_name);
 
     let provider = provider_repository::get_plugin_or_provider(libraries, task).await;
-    if let Err(_x) = provider {
-        db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
-        return Err(Box::new(RuntimeError::new(
-            "1".to_string(),
-            "An error occurred".to_string(),
-        )));
-    }
-    let resolved_provider = provider?;
+    let resolved_provider = match provider {
+        Ok(provider) => provider,
+        Err(e) => {
+            // Log error and schedule the next execution even if provider resolution fails.
+            error!("Error getting provider: {}", e);
+            db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
+            return Err(Box::new(RuntimeError::new(
+                "1".to_string(),
+                "An error occurred".to_string(),
+            )));
+        }
+    };
 
     let timeout_duration = Duration::seconds((task.timeout * 60) as i64).to_std()?;
     let action_name = task.action_name.clone();
@@ -68,7 +72,7 @@ async fn process_one_task(
         )
         .await
         {
-            error!("Join error {}", e);
+            error!("Error running provider task: {}", e);
         }
     });
 
@@ -100,7 +104,7 @@ async fn process_provider_task(
     plugin: Box<dyn Provider>,
 ) -> Result<(), SendableError> {
     let start_time = Local::now().to_utc();
-    let start: time::Instant = time::Instant::now();
+    let start = time::Instant::now();
     plugin.call_service(action_name, action_configuration)?;
     let duration_ms = start.elapsed().as_millis() as i64;
     pool_clone
@@ -116,41 +120,49 @@ async fn schedule_sleep_seconds(config: &Config) {
     .await;
 }
 
+
 pub async fn scheduler_loop(
     pool: &Arc<impl DatabaseImpl>,
     notify: Arc<Notify>,
     config: &Config,
-) -> Result<(), SendableError> {
-    let libraries = load_libraries_from_path(&config.dll_path)?;
+) {
+    // Attempt to load libraries; if it fails, log the error, sleep briefly, and retry.
+    let libraries = loop {
+        match load_libraries_from_path(&config.dll_path) {
+            Ok(libs) => break libs,
+            Err(e) => {
+                error!("Failed to load libraries: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    };
+
     print_libs(&libraries);
 
     let task_handles: TaskHandleMap = Arc::new(Mutex::new(HashMap::new()));
+
     loop {
         let start = time::Instant::now();
+
         tokio::select! {
+            // Only exit when a shutdown notification is received.
             _ = notify.notified() => {
+                info!("Shutdown signal received. Cleaning up tasks...");
                 handle_shutdown(task_handles.clone()).await;
                 break;
             }
+            // Run one scheduler iteration after sleeping.
             _ = schedule_sleep_seconds(config) => {
-                run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await?;
+                if let Err(e) = run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await {
+                    error!("Error during scheduler iteration: {}", e);
+                }
             }
         }
+
         debug!(
-            "Scheduler took {} seconds to run",
+            "Scheduler iteration took {} seconds",
             start.elapsed().as_secs_f64()
         );
-    }
-    Ok(())
-}
-
-async fn handle_shutdown(task_handles: TaskHandleMap) {
-    info!("Scheduler received shutdown signal.");
-
-    let mut handles = task_handles.lock().await;
-    for (_, task_future) in handles.drain() {
-        let handle = Pin::into_inner(task_future.future);
-        handle.abort();
     }
 }
 
@@ -162,10 +174,16 @@ async fn run_scheduler_iteration(
 ) -> Result<(), SendableError> {
     debug!("Fetching tasks");
     let tasks = pool.fetch_all_tasks().await?;
-
     debug!("Running tasks...");
+
     for task in tasks {
-        process_one_task(pool, libraries, &task, task_handles.clone(), config).await?;
+        if let Err(e) = process_one_task(pool, libraries, &task, task_handles.clone(), config).await {
+            error!(
+                "Error processing task {}: {}",
+                task.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                e
+            );
+        }
     }
 
     debug!("Attempting to clean up finished tasks...");
@@ -180,23 +198,31 @@ async fn clean_up_finished_tasks(task_handles: TaskHandleMap) {
 
     for (uuid, mut pinned_task) in guard.drain() {
         match pinned_task.future.as_mut().now_or_never() {
-            Some(join_result) => {
-                match join_result {
-                    Ok(_) => {
-                        debug!("Task {uuid} finished successfully.");
-                    }
-                    Err(e) => {
-                        error!("Task {uuid} failed: {e:?}");
-                    }
+            Some(join_result) => match join_result {
+                Ok(_) => {
+                    debug!("Task {uuid} finished successfully.");
                 }
-            }
+                Err(e) => {
+                    error!("Task {uuid} failed: {e:?}");
+                }
+            },
             None => {
                 still_running.push((uuid, pinned_task));
             }
         }
     }
 
+    // Reinsert still running tasks back into the handles.
     for (uuid, pinned_task) in still_running {
         guard.insert(uuid, pinned_task);
+    }
+}
+
+async fn handle_shutdown(task_handles: TaskHandleMap) {
+    info!("Scheduler received shutdown signal. Aborting all tasks...");
+    let mut handles = task_handles.lock().await;
+    for (_, task_future) in handles.drain() {
+        let handle = Pin::into_inner(task_future.future);
+        handle.abort();
     }
 }
