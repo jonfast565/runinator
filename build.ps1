@@ -24,6 +24,8 @@ try {
     $ArtifactsFolder = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts"
     $DbScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "database-scripts"
     $DbScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\scripts"
+    $TaskScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "task-scripts"
+    $TaskScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\task-scripts"
 
     Write-Host "Switching to workspace: $WorkspacePath"
     Set-Location -Path $WorkspacePath
@@ -50,6 +52,12 @@ try {
 
     Write-Host "Copying database scripts from $DbScriptsSourceDir to $DbScriptsTargetDir"
     Copy-Item -Path $DbScriptsSourceDir\* -Destination $DbScriptsTargetDir -Recurse -Force
+
+    Write-Host "Ensuring task scripts target directory exists: $TaskScriptsTargetDir"
+    Ensure-Directory -Path $TaskScriptsSourceDir
+
+    Write-Host "Copying task scripts from $TaskScriptsSourceDir to $TaskScriptsTargetDir"
+    Copy-Item -Path $TaskScriptsSourceDir\* -Destination $TaskScriptsTargetDir -Recurse -Force
 
     Write-Host "Build and copy operations completed successfully."
 
