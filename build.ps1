@@ -54,7 +54,7 @@ try {
     Copy-Item -Path $DbScriptsSourceDir\* -Destination $DbScriptsTargetDir -Recurse -Force
 
     Write-Host "Ensuring task scripts target directory exists: $TaskScriptsTargetDir"
-    Ensure-Directory -Path $TaskScriptsSourceDir
+    Ensure-Directory -Path $TaskScriptsTargetDir
 
     Write-Host "Copying task scripts from $TaskScriptsSourceDir to $TaskScriptsTargetDir"
     Copy-Item -Path $TaskScriptsSourceDir\* -Destination $TaskScriptsTargetDir -Recurse -Force
