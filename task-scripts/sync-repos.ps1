@@ -56,7 +56,7 @@ function Search-AndSyncRepositories {
                           Where-Object { $_.Name -notmatch '^\.' }
         }
         catch {
-            Write-Host "Error accessing folder $currentFolder: $_"
+            Write-Host "Error accessing folder ${currentFolder}: $_"
             continue
         }
 
