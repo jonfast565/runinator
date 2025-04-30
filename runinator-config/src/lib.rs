@@ -6,7 +6,7 @@ pub struct Config {
     #[clap(long, default_value = "tasks.db")]
     pub database: String,
 
-    #[clap(long, default_value = "3000")]
+    #[clap(long, default_value = "3001")]
     pub port: u16,
 
     #[clap(long, default_value = "./")]
