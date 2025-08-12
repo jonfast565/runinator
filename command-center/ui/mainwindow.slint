@@ -1,0 +1,75 @@
+export component MainWindow inherits Window {
+    width: 500px;
+    height: 380px;
+    title: "Command Center";
+
+    // Data + control surface exposed to Rust
+    in-out property <[TaskItem]> tasks;
+    in-out property <string> status;
+    in-out property <string> error;
+
+    callback refresh();        // Rust implements
+    callback run_now(id: int); // Rust implements
+
+    // A simple row type (mirrors your struct)
+    struct TaskItem { id: int, name: string, enabled: bool }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "Refresh";
+                clicked => { root.refresh(); }
+            }
+
+            if (error != "") {
+                Text {
+                    wrap: word-wrap;
+                    color: red;
+                    text: error;
+                }
+            } else if (status != "") {
+                Text {
+                    wrap: word-wrap;
+                    text: status;
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #DDD; }
+
+        Text {
+            font-weight: 600;
+            text: "Scheduled Tasks";
+        }
+
+        // Empty state
+        if (tasks.length == 0 && error == "") {
+            Text { text: "No tasks found."; }
+        }
+
+        // List of tasks
+        ListView {
+            // model is a list of TaskItem
+            model: tasks;
+            viewport-height: 1fr;
+
+            for task in model : HorizontalLayout {
+                spacing: 10px;
+                Text { text: task.name; vertical-alignment: center; }
+                if (!task.enabled) {
+                    Text { text: "(disabled)"; color: #666; vertical-alignment: center; }
+                } else {
+                    Button {
+                        text: "Run Now";
+                        enabled: task.enabled;
+                        clicked => { root.run_now(task.id); }
+                    }
+                }
+            }
+        }
+    }
+}

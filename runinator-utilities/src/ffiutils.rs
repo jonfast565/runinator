@@ -1,4 +1,4 @@
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 pub fn str_to_c_string(some_str: &str) -> *const c_char {
     some_str.as_ptr() as *const c_char

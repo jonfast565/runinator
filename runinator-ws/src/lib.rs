@@ -2,14 +2,12 @@ mod models;
 mod repository;
 
 use axum::{
-    http::StatusCode,
-    routing::{delete, get, patch, post},
-    Extension, Json, Router,
+    extract::Path, http::StatusCode, routing::{delete, get, patch, post}, Extension, Json, Router
 };
 use log::info;
 use models::{ApiError, ApiResponse};
 use runinator_database::sqlite::SqliteDb;
-use runinator_models::{core::ScheduledTask, errors::SendableError};
+use runinator_models::{core::ScheduledTask, errors::SendableError, web::TaskResponse};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -107,7 +105,26 @@ async fn get_task_runs(
     }
 }
 
-pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16) -> Result<(), SendableError> {
+async fn request_run(
+    Extension(db): Extension<Arc<SqliteDb>>,
+    Path(task_id): Path<i64>,
+) -> (StatusCode, Json<TaskResponse>) {
+    info!("Requesting run of task {}", task_id);
+    match repository::request_run(db.as_ref(), task_id).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(TaskResponse { success: false, message: err.to_string() }),
+        ),
+    }
+}
+
+
+pub async fn run_webserver(
+    pool: &Arc<SqliteDb>,
+    notify: Arc<Notify>,
+    port: u16,
+) -> Result<(), SendableError> {
     let app = Router::new()
         .route("/tasks", get(get_tasks).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task).layer(Extension(pool.clone())))
@@ -119,7 +136,8 @@ pub async fn run_webserver(pool: &Arc<SqliteDb>, notify: Arc<Notify>, port: u16)
         .route(
             "/task_runs",
             get(get_task_runs).layer(Extension(pool.clone())),
-        );
+        )
+        .route("/tasks/:id/request_run", post(request_run).layer(Extension(pool.clone())));
 
     let addr = format!("0.0.0.0:{}", port).parse().unwrap();
     let server = axum::Server::bind(&addr).serve(app.into_make_service());

@@ -5,12 +5,14 @@ use runinator_models::errors::SendableError;
 use runinator_scheduler::scheduler_loop;
 use runinator_utilities::{dirutils, logger};
 use runinator_ws::run_webserver;
-use tokio::{sync::Notify, task::JoinHandle};
 use std::{env, sync::Arc};
+use tokio::{sync::Notify, task::JoinHandle};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    unsafe { env::set_var("RUST_BACKTRACE", "1"); }
+    unsafe {
+        env::set_var("RUST_BACKTRACE", "1");
+    }
     dirutils::set_exe_dir_as_cwd()?;
     logger::setup_logger()?;
     log_panics::init();
@@ -52,9 +54,11 @@ async fn main() -> Result<(), SendableError> {
     });
 
     info!("Initialization complete!");
-    
+
     // Handle termination signals for graceful shutdown
-    tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for Ctrl+C");
     info!("Received shutdown signal. Shutting down...");
     notify.notify_waiters();
 

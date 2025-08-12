@@ -7,14 +7,13 @@ pub struct TaskResponse {
     pub message: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskInput {
-    pub id: Option<i64>, 
-    pub name: String, 
-    pub cron_schedule: String, 
-    pub action_name: String, 
-    pub action_configuration: Vec<u8>, 
-    pub timeout: i64, 
+    pub id: Option<i64>,
+    pub name: String,
+    pub cron_schedule: String,
+    pub action_name: String,
+    pub action_configuration: Vec<u8>,
+    pub timeout: i64,
     pub next_execution: Option<DateTime<Utc>>,
 }

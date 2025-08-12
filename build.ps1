@@ -15,6 +15,7 @@ function Ensure-Directory {
 try {
     $FilesToCopy = @(
         'runinator.exe', 
+        'command-center.exe',
         'runinator_plugin_console.dll'
     )
     $ScriptPath = $PSScriptRoot
@@ -63,8 +64,14 @@ try {
 
     if ($Run) {
         Write-Host "Running cargo build with profile: $BuildProfile"
-        # Set-Location
-        .\target\artifacts\runinator.exe
+        # Start both executables and capture their process objects
+        Write-Host "Run runinator.exe"
+        $process1 = Start-Process -FilePath "./target/artifacts/runinator.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
+        Write-Host "Run command-center.exe"
+        $process2 = Start-Process -FilePath "./target/artifacts/command-center.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
+
+        # Wait for both processes to exit
+        Wait-Process -Id $process1.Id, $process2.Id
     }
 
 } catch {

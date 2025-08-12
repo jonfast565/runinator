@@ -1,13 +1,13 @@
 use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info};
-use runinator_models::{core::{ScheduledTask, TaskRun}, errors::SendableError};
-use sqlx::{
-    sqlite::SqliteConnectOptions,
-    ConnectOptions, Executor, Row, SqlitePool,
-};
 use futures_util::stream::StreamExt;
+use log::{debug, info};
+use runinator_models::{
+    core::{ScheduledTask, TaskRun},
+    errors::SendableError,
+};
+use sqlx::{ConnectOptions, Executor, Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::{interfaces::DatabaseImpl, mappers};
 
@@ -68,7 +68,8 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled FROM scheduled_tasks",
+            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate 
+            FROM scheduled_tasks",
         )
         .fetch_all(&self.pool)
         .await
@@ -81,11 +82,7 @@ impl DatabaseImpl for SqliteDb {
         Ok(result)
     }
 
-    async fn fetch_task_runs(
-        &self,
-        start: i64,
-        end: i64,
-    ) -> Result<Vec<TaskRun>, SendableError> {
+    async fn fetch_task_runs(&self, start: i64, end: i64) -> Result<Vec<TaskRun>, SendableError> {
         let rows = sqlx::query(
             "SELECT id, task_name, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",
         )
@@ -107,10 +104,7 @@ impl DatabaseImpl for SqliteDb {
         Ok(result)
     }
 
-    async fn update_task_next_execution(
-        &self,
-        task: &ScheduledTask,
-    ) -> Result<(), SendableError> {
+    async fn update_task_next_execution(&self, task: &ScheduledTask) -> Result<(), SendableError> {
         self.pool
             .execute(
                 sqlx::query("UPDATE scheduled_tasks SET next_execution = ? WHERE id = ?")
@@ -139,11 +133,8 @@ impl DatabaseImpl for SqliteDb {
             .await?;
         Ok(())
     }
-    
-    async fn run_init_scripts(
-        &self,
-        paths: &Vec<String>,
-    ) -> Result<(), SendableError> {
+
+    async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
@@ -152,7 +143,10 @@ impl DatabaseImpl for SqliteDb {
                 let mut stream = self.pool.execute_many(sqlx::query(&script));
                 while let Some(result) = stream.next().await {
                     let query_result = result?;
-                    debug!("Init scripts: {} row(s) affected", query_result.rows_affected());
+                    debug!(
+                        "Init scripts: {} row(s) affected",
+                        query_result.rows_affected()
+                    );
                 }
             }
         }
@@ -160,4 +154,21 @@ impl DatabaseImpl for SqliteDb {
         Ok(())
     }
 
+    async fn request_immediate_run(&self, task_id: i64) -> Result<(), SendableError> {
+        self.pool
+            .execute(
+                sqlx::query("UPDATE scheduled_tasks SET immediate = 1 WHERE id = ?").bind(task_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn clear_immediate_run(&self, task_id: i64) -> Result<(), SendableError> {
+        self.pool
+            .execute(
+                sqlx::query("UPDATE scheduled_tasks SET immediate = 0 WHERE id = ?").bind(task_id),
+            )
+            .await?;
+        Ok(())
+    }
 }

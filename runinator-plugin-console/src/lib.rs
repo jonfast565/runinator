@@ -1,6 +1,6 @@
+mod linux;
 mod model;
 mod windows;
-mod linux;
 
 use ctor::ctor;
 use log::{error, info, warn};
@@ -10,8 +10,8 @@ use std::io::{BufRead, BufReader};
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -50,7 +50,7 @@ pub extern "C" fn call_service(action_function: *const c_char, args: *const c_ch
 }
 
 fn execute_command(args_str: &str) -> Result<c_int, Box<dyn std::error::Error>> {
-    const TIMEOUT_SECONDS: u64 = 30;
+    const TIMEOUT_SECONDS: u64 = 3600;
     let mut command = Command::new("cmd");
     command
         .args(["/C", args_str])

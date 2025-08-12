@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use runinator_models::{core::ScheduledTask, errors::{RuntimeError, SendableError}};
+use runinator_models::{
+    core::ScheduledTask,
+    errors::{RuntimeError, SendableError},
+};
 use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_sql::SqlProvider;
