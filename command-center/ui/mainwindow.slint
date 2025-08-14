@@ -1,6 +1,6 @@
-import { Button, ListView } from "std-widgets.slint";
+import { Button, ListView, CheckBox } from "std-widgets.slint";
 
-export struct TaskItem { id: int, name: string, enabled: bool }
+import { TaskItem } from "models.slint";
 
 export component MainWindow inherits Window {
     width: 500px;
@@ -50,7 +50,14 @@ export component MainWindow inherits Window {
             for task in tasks : HorizontalLayout {
                 spacing: 10px;
 
-                Text { text: task.name; vertical-alignment: center; }
+                Text { 
+                    text: task.name; 
+                    vertical-alignment: center; 
+                }
+
+                CheckBox {
+                    checked: task.enabled;
+                }
 
                 if (!task.enabled) : Text {
                     text: "(disabled)";

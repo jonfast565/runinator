@@ -3,7 +3,8 @@
 use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use slint::{ModelRc, VecModel, Weak, Timer, TimerMode};
+use slint::{Model, ModelRc, Timer, TimerMode, VecModel, Weak};
+use std::time::Duration;
 
 slint::include_modules!();
 
@@ -23,15 +24,14 @@ struct ScheduledTask {
 #[derive(Clone)]
 struct AppState {
     client: Client,
-    model: ModelRc<slint::SharedString>, // dummy to keep type around; unused directly
+    model: ModelRc<slint::SharedString>, // unused placeholder; safe to remove if not needed
 }
 
 fn main() -> Result<()> {
     let ui = MainWindow::new()?;
 
-    // Backing model for tasks
-    let tasks_model: VecModel<TaskItem> = VecModel::default();
-    ui.set_tasks(ModelRc::new(tasks_model.clone()));
+    // Backing model for tasks: move into ModelRc (no clone needed)
+    ui.set_tasks(ModelRc::new(VecModel::<TaskItem>::default()));
 
     // Shared HTTP client
     let client = Client::new();
@@ -59,20 +59,18 @@ fn main() -> Result<()> {
         fetch_tasks(ui_weak, client_clone);
     }
 
-    // Poll every 10s (like your throttle)
+    // Poll every 10s
+    let refresh_timer = Timer::default();
     {
         let ui_weak = ui.as_weak();
         let client_clone = client.clone();
-        let timer = Timer::default();
-        timer.start(
+        refresh_timer.start(
             TimerMode::Repeated,
-            std::time::Duration::from_secs(10),
+            Duration::from_secs(10),
             move || {
                 fetch_tasks(ui_weak.clone(), client_clone.clone());
             },
         );
-        // Keep _timer alive by moving into UI (optional; Slint keeps timer alive by handle)
-        std::mem::forget(timer);
     }
 
     ui.run()?;
@@ -100,17 +98,18 @@ fn fetch_tasks(ui: Weak<MainWindow>, client: Client) {
 
                 slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui.upgrade() {
-                        if let Some(vm) = ui.get_tasks().as_any().downcast_ref::<VecModel<TaskItem>>() {
+                        if let Some(vm) =
+                            ui.get_tasks().as_any().downcast_ref::<VecModel<TaskItem>>()
+                        {
                             vm.set_vec(items);
                         } else {
-                            // first time or replaced: reset model
                             let vm = VecModel::from(items);
                             ui.set_tasks(ModelRc::new(vm));
                         }
                         ui.set_error("".into());
-                        // Keep status if any
                     }
-                }).ok();
+                })
+                .ok();
             }
             Err(err) => {
                 let msg = err.to_string();
@@ -118,7 +117,8 @@ fn fetch_tasks(ui: Weak<MainWindow>, client: Client) {
                     if let Some(ui) = ui.upgrade() {
                         ui.set_error(msg.into());
                     }
-                }).ok();
+                })
+                .ok();
             }
         }
     });
@@ -139,12 +139,16 @@ fn run_now(ui: Weak<MainWindow>, client: Client, id: i64) {
                     if resp.success { "OK" } else { "ERR" },
                     resp.message
                 );
+
+                // Clone Weak before moving into the event-loop closure
+                let ui_for_status = ui.clone();
                 slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui.upgrade() {
+                    if let Some(ui) = ui_for_status.upgrade() {
                         ui.set_status(status.into());
                         ui.set_error("".into());
                     }
-                }).ok();
+                })
+                .ok();
 
                 // Auto-refresh after run
                 let ui2 = ui.clone();
@@ -157,7 +161,8 @@ fn run_now(ui: Weak<MainWindow>, client: Client, id: i64) {
                     if let Some(ui) = ui.upgrade() {
                         ui.set_error(msg.into());
                     }
-                }).ok();
+                })
+                .ok();
             }
         }
     });
