@@ -6,14 +6,14 @@ pub struct Config {
     #[clap(long, default_value = "tasks.db")]
     pub database: String,
 
-    #[clap(long, default_value = "3000")]
+    #[clap(long, default_value = "3001")]
     pub port: u16,
 
     #[clap(long, default_value = "./")]
     pub dll_path: String,
 
-    #[clap(long, default_value = "5")]
-    pub scheduler_frequency_seconds: u64
+    #[clap(long, default_value = "1")]
+    pub scheduler_frequency_seconds: u64,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

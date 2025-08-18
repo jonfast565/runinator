@@ -1,0 +1,78 @@
+import { Button, ListView, CheckBox } from "std-widgets.slint";
+
+import { TaskItem } from "models.slint";
+
+export component MainWindow inherits Window {
+    width: 500px;
+    height: 380px;
+    title: "Command Center";
+
+    in-out property <[TaskItem]> tasks;
+    in-out property <string> status;
+    in-out property <string> error;
+
+    callback refresh();
+    callback run_now(id: int);
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Button {
+                text: "Refresh";
+                clicked => { 
+                    root.refresh() 
+                }
+            }
+
+            if (error != "") : Text {
+                wrap: word-wrap;
+                color: red;
+                text: error;
+            }
+            
+            if (status != "") : Text {
+                wrap: word-wrap;
+                text: status;
+            }
+        }
+
+        Rectangle { height: 1px; background: #dddddd; }
+
+        Text { font-weight: 600; text: "Scheduled Tasks"; }
+
+        if (tasks.length == 0 && error == "") : Text { text: "No tasks found."; }
+
+        ListView {
+            for task in tasks : HorizontalLayout {
+                spacing: 10px;
+
+                Text { 
+                    text: task.name; 
+                    vertical-alignment: center; 
+                }
+
+                CheckBox {
+                    checked: task.enabled;
+                }
+
+                if (!task.enabled) : Text {
+                    text: "(disabled)";
+                    color: #666666;
+                    vertical-alignment: center;
+                }
+                
+                if (task.enabled) : Button {
+                    text: "Run Now";
+                    enabled: task.enabled;
+                    clicked => { 
+                        root.run_now(task.id); 
+                    }
+                }
+            }
+        }
+    }
+}

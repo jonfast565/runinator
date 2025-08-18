@@ -1,12 +1,12 @@
-use runinator_models::{core::{ScheduledTask, TaskRun}, web::TaskResponse};
+use runinator_models::{
+    core::{ScheduledTask, TaskRun},
+    web::TaskResponse,
+};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
-pub struct Empty {}
-
-#[derive(Debug, Serialize)]
 pub struct ApiError {
-    pub message: String
+    pub message: String,
 }
 
 #[derive(Serialize)]

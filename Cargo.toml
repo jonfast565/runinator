@@ -13,5 +13,7 @@ members = [
     "runinator-provider-aws",
     "runinator-provider-sql",
     "runinator-plugin-console",
-    "runinator-utilities"
+    "runinator-utilities",
+
+    "command-center"
 ]

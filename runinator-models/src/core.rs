@@ -3,15 +3,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTask {
-    pub id: Option<i64>, 
-    pub name: String, 
-    pub cron_schedule: String, 
-    pub action_name: String, 
+    pub id: Option<i64>,
+    pub name: String,
+    pub cron_schedule: String,
+    pub action_name: String,
     pub action_function: String,
-    pub action_configuration: String, 
-    pub timeout: i64, 
+    pub action_configuration: String,
+    pub timeout: i64,
     pub next_execution: Option<DateTime<Utc>>,
-    pub enabled: bool
+    pub enabled: bool,
+    pub immediate: bool,
 }
 
 #[derive(Debug, Serialize)]

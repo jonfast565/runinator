@@ -15,6 +15,7 @@ function Ensure-Directory {
 try {
     $FilesToCopy = @(
         'runinator.exe', 
+        'command-center.exe',
         'runinator_plugin_console.dll'
     )
     $ScriptPath = $PSScriptRoot
@@ -24,6 +25,8 @@ try {
     $ArtifactsFolder = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts"
     $DbScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "database-scripts"
     $DbScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\scripts"
+    $TaskScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "task-scripts"
+    $TaskScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\task-scripts"
 
     Write-Host "Switching to workspace: $WorkspacePath"
     Set-Location -Path $WorkspacePath
@@ -51,12 +54,24 @@ try {
     Write-Host "Copying database scripts from $DbScriptsSourceDir to $DbScriptsTargetDir"
     Copy-Item -Path $DbScriptsSourceDir\* -Destination $DbScriptsTargetDir -Recurse -Force
 
+    Write-Host "Ensuring task scripts target directory exists: $TaskScriptsTargetDir"
+    Ensure-Directory -Path $TaskScriptsTargetDir
+
+    Write-Host "Copying task scripts from $TaskScriptsSourceDir to $TaskScriptsTargetDir"
+    Copy-Item -Path $TaskScriptsSourceDir\* -Destination $TaskScriptsTargetDir -Recurse -Force
+
     Write-Host "Build and copy operations completed successfully."
 
     if ($Run) {
         Write-Host "Running cargo build with profile: $BuildProfile"
-        # Set-Location
-        .\target\artifacts\runinator.exe
+        # Start both executables and capture their process objects
+        Write-Host "Run runinator.exe"
+        $process1 = Start-Process -FilePath "./target/artifacts/runinator.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
+        Write-Host "Run command-center.exe"
+        $process2 = Start-Process -FilePath "./target/artifacts/command-center.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
+
+        # Wait for both processes to exit
+        Wait-Process -Id $process1.Id, $process2.Id
     }
 
 } catch {

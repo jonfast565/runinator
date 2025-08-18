@@ -5,7 +5,7 @@ pub type SendableError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug)]
 pub struct RuntimeError {
     code: String,
-    message: String
+    message: String,
 }
 
 unsafe impl Sync for RuntimeError {}
@@ -13,10 +13,7 @@ unsafe impl Send for RuntimeError {}
 
 impl RuntimeError {
     pub fn new(code: String, message: String) -> Self {
-        Self {
-            code,
-            message
-        }
+        Self { code, message }
     }
 }
 

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use runinator_models::core::ScheduledTask;
-use sqlx::{sqlite::SqliteRow, Row};
+use sqlx::{Row, sqlite::SqliteRow};
 
 pub fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
     let next_execution = row
@@ -20,6 +20,7 @@ pub fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
         action_configuration: row.get::<String, _>("action_configuration"),
         timeout: row.get::<i64, _>("timeout"),
         next_execution: next_execution_part,
-        enabled: row.get::<bool, _>("enabled")
+        enabled: row.get::<bool, _>("enabled"),
+        immediate: row.get::<bool, _>("immediate"),
     }
 }

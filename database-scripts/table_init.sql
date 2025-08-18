@@ -8,7 +8,8 @@ CREATE TABLE
         action_configuration BLOB NOT NULL,
         timeout INTEGER NOT NULL,
         next_execution INTEGER NULL,
-        enabled BOOL NOT NULL
+        enabled BOOL NOT NULL,
+        immediate BOOL NOT NULL
     );
 
 CREATE TABLE

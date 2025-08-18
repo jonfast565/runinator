@@ -1,3 +1,3 @@
-pub mod errors;
 pub mod core;
+pub mod errors;
 pub mod web;

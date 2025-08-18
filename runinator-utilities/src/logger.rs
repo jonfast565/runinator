@@ -1,6 +1,6 @@
-use std::{env, time::SystemTime};
 use log::info;
 use runinator_models::errors::SendableError;
+use std::{env, time::SystemTime};
 
 pub fn setup_logger() -> Result<(), SendableError> {
     fern::Dispatch::new()

@@ -1,14 +1,14 @@
-mod model;
 mod db_extensions;
+mod model;
 mod provider_repository;
 
 use chrono::{Duration, Local, Utc};
+use futures_util::FutureExt;
 use log::{debug, error, info};
 use model::SchedulerTaskFuture;
 use runinator_database::interfaces::DatabaseImpl;
 use std::{collections::HashMap, pin::Pin, sync::Arc, time};
 use uuid::Uuid;
-use futures_util::FutureExt;
 
 use runinator_config::Config;
 use runinator_models::{
@@ -25,6 +25,7 @@ async fn process_one_task(
     libraries: &HashMap<String, Plugin>,
     task: &ScheduledTask,
     task_handles: TaskHandleMap,
+    force: bool,
     _config: &Config,
 ) -> Result<(), SendableError> {
     let now = Utc::now();
@@ -34,9 +35,16 @@ async fn process_one_task(
         return Ok(());
     }
 
-    if let Some(next_execution) = task.next_execution {
-        if next_execution > now {
+    if !force {
+        if task.next_execution.is_none() {
+            db_extensions::set_initial_execution(pool, task).await?;
             return Ok(());
+        }
+
+        if let Some(next_execution) = task.next_execution {
+            if next_execution > now {
+                return Ok(());
+            }
         }
     }
 
@@ -120,12 +128,7 @@ async fn schedule_sleep_seconds(config: &Config) {
     .await;
 }
 
-
-pub async fn scheduler_loop(
-    pool: &Arc<impl DatabaseImpl>,
-    notify: Arc<Notify>,
-    config: &Config,
-) {
+pub async fn scheduler_loop(pool: &Arc<impl DatabaseImpl>, notify: Arc<Notify>, config: &Config) {
     // Attempt to load libraries; if it fails, log the error, sleep briefly, and retry.
     let libraries = loop {
         match load_libraries_from_path(&config.dll_path) {
@@ -172,15 +175,28 @@ async fn run_scheduler_iteration(
     task_handles: TaskHandleMap,
     config: &Config,
 ) -> Result<(), SendableError> {
-    debug!("Fetching tasks");
     let tasks = pool.fetch_all_tasks().await?;
     debug!("Running tasks...");
 
     for task in tasks {
-        if let Err(e) = process_one_task(pool, libraries, &task, task_handles.clone(), config).await {
+        let force = task.immediate;
+        let due = force || task.next_execution.map_or(false, |dt| dt <= Utc::now());
+
+        if !due {
+            continue;
+        }
+
+        if force {
+            pool.clear_immediate_run(task.id.unwrap()).await?;
+        }
+        if let Err(e) =
+            process_one_task(pool, libraries, &task, task_handles.clone(), force, config).await
+        {
             error!(
                 "Error processing task {}: {}",
-                task.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                task.id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
                 e
             );
         }
