@@ -36,15 +36,19 @@ impl SqliteDb {
 impl DatabaseImpl for SqliteDb {
     async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), SendableError> {
         self.pool.execute(sqlx::query(
-            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled)
-             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()), ?)
+            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end)
+             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()), ?, COALESCE(immediate, 0), ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 cron_schedule = excluded.cron_schedule,
                 action_name = excluded.action_name,
                 action_configuration = excluded.action_configuration,
                 timeout = excluded.timeout,
-                next_execution = excluded.next_execution",
+                next_execution = excluded.next_execution,
+                enabled = excluded.enabled,
+                immediate = excluded.immediate,
+                blackout_start = excluded.blackout_start,
+                blackout_end = excluded.blackout_end",
         )
         .bind(task.id)
         .bind(&task.name)
@@ -54,7 +58,10 @@ impl DatabaseImpl for SqliteDb {
         .bind(&task.action_configuration)
         .bind(task.timeout)
         .bind(task.next_execution.map(|dt| dt.timestamp()))
-        .bind(task.enabled))
+        .bind(task.enabled)
+        .bind(task.immediate)
+        .bind(task.blackout_start.map(|dt| dt.timestamp()))
+        .bind(task.blackout_end.map(|dt| dt.timestamp())))
         .await?;
         Ok(())
     }
@@ -68,7 +75,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate 
+            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end 
             FROM scheduled_tasks",
         )
         .fetch_all(&self.pool)

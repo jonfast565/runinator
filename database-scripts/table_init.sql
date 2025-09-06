@@ -9,7 +9,9 @@ CREATE TABLE
         timeout INTEGER NOT NULL,
         next_execution INTEGER NULL,
         enabled BOOL NOT NULL,
-        immediate BOOL NOT NULL
+        immediate BOOL NOT NULL,
+        blackout_start INTEGER NULL,
+        blackout_end INTEGER NULL
     );
 
 CREATE TABLE

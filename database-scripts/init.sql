@@ -80,3 +80,30 @@ VALUES
         1,
         0
     );
+
+INSERT
+OR IGNORE INTO scheduled_tasks (
+    id,
+    name,
+    cron_schedule,
+    action_name,
+    action_function,
+    action_configuration,
+    timeout,
+    next_execution,
+    enabled,
+    immediate
+)
+VALUES
+    (
+        4,
+        'SDM Login',
+        '0 0,9,12,15,18,21 * * *',
+        'Console',
+        'run_powershell',
+        'powershell.exe ./task-scripts/sdm-login.ps1',
+        100000,
+        1737018000,
+        1,
+        0
+    );

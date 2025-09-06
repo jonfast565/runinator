@@ -10,7 +10,7 @@ impl Provider for AwsProvider {
         "AWS".to_string()
     }
 
-    fn call_service(&self, call: String, args: String) -> Result<i32, SendableError> {
+    fn call_service(&self, call: String, args: String, timeout: i64) -> Result<i32, SendableError> {
         info!("Running call '{}' w/ args `{}`", call, args);
         Ok(0)
     }

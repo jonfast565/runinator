@@ -64,7 +64,8 @@ async fn process_one_task(
         }
     };
 
-    let timeout_duration = Duration::seconds((task.timeout * 60) as i64).to_std()?;
+    // Timeout is stored in seconds
+    let timeout_duration = Duration::seconds(task.timeout as i64).to_std()?;
     let action_name = task.action_name.clone();
     let action_configuration = task.action_configuration.clone();
     let task_clone = task.clone();
@@ -113,7 +114,7 @@ async fn process_provider_task(
 ) -> Result<(), SendableError> {
     let start_time = Local::now().to_utc();
     let start = time::Instant::now();
-    plugin.call_service(action_name, action_configuration)?;
+    plugin.call_service(action_name, action_configuration, task_clone.timeout)?;
     let duration_ms = start.elapsed().as_millis() as i64;
     pool_clone
         .log_task_run(task_clone.id.unwrap(), start_time, duration_ms)
@@ -178,12 +179,25 @@ async fn run_scheduler_iteration(
     let tasks = pool.fetch_all_tasks().await?;
     debug!("Running tasks...");
 
-    for task in tasks {
+    for mut task in tasks {
         let force = task.immediate;
-        let due = force || task.next_execution.map_or(false, |dt| dt <= Utc::now());
+        let now = Utc::now();
+        let due = force || task.next_execution.map_or(false, |dt| dt <= now);
 
         if !due {
             continue;
+        }
+
+        // Blackout handling: if now is within blackout window, skip and set next_execution to blackout_end if available
+        if let (Some(start), Some(end)) = (task.blackout_start, task.blackout_end) {
+            if now >= start && now <= end {
+                // push next execution to end of blackout
+                task.next_execution = Some(end);
+                if let Err(e) = pool.update_task_next_execution(&task).await {
+                    error!("Failed to update next_execution for blackout: {}", e);
+                }
+                continue;
+            }
         }
 
         if force {

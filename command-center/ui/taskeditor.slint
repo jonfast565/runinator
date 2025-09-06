@@ -1,2 +1,166 @@
-export component TaskEditor inherits Window {
+import { Button, CheckBox, LineEdit, SpinBox, DatePickerPopup, TimePickerPopup } from "std-widgets.slint";
+import { TaskItem, DateTime, Date, Time } from "models.slint";
+
+export struct TaskEditorData {
+    name: string,
+    cron_schedule: string,
+    action_name: string,
+    action_function: string,
+    action_configuration: string,
+    timeout: int,
+    enabled: bool,
+    immediate: bool,
+    next: DateTime,
+    next_set: bool,
+}
+
+export component TaskEditorPopup inherits Window {
+    // Emits the collected data
+    callback accepted(TaskEditorData);
+
+    // Editable properties (two-way bind targets)
+    in-out property <string> name: "";
+    in-out property <string> cron_schedule: "";
+    in-out property <string> action_name: "";
+    in-out property <string> action_function: "";
+    in-out property <string> action_configuration: "";
+    in-out property <int>    timeout: 0;
+    in-out property <bool>   enabled: true;
+    in-out property <bool>   immediate: false;
+
+    // Optional next execution (date/time kept separately)
+    in-out property <bool> next_set: false;
+    in-out property <Date> next_date: { day: 0, month: 0, year: 0 };
+    in-out property <Time> next_time: { hour: 0, minute: 0, second: 0 };
+
+    // Public API to reset for a new item
+    public function open_for_new() {
+        name = "";
+        cron_schedule = "";
+        action_name = "";
+        action_function = "";
+        action_configuration = "";
+        timeout = 0;
+        enabled = true;
+        immediate = false;
+        next_set = false;
+        next_date = { day: 0, month: 0, year: 0 };
+        next_time = { hour: 0, minute: 0, second: 0 };
+    }
+
+    width: 560px;
+    height: 520px;
+    x: 0px;
+    y: 0px;
+
+    Rectangle {
+        background: #ffffff;
+        border-color: #00000033;
+        border-width: 1px;
+        border-radius: 10px;
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+
+            Text { text: "New Task"; font-weight: 600; font-size: 18px; }
+
+            GridLayout {
+                spacing: 8px; padding: 2px;
+
+                Row { Text { text: "Name:"; }           LineEdit { text <=> root.name; placeholder-text: "Human-readable name"; } }
+                Row { Text { text: "Cron:"; }           LineEdit { text <=> root.cron_schedule; placeholder-text: "e.g. */5 * * * *"; } }
+                Row { Text { text: "Action Name:"; }    LineEdit { text <=> root.action_name; } }
+                Row { Text { text: "Action Fn:"; }      LineEdit { text <=> root.action_function; } }
+                Row { Text { text: "Action Config:"; }  LineEdit { text <=> root.action_configuration; placeholder-text: "{\"key\":\"value\"}"; } }
+                Row { Text { text: "Timeout (s):"; }    SpinBox { value <=> root.timeout; minimum: 0; maximum: 2147483647; } }
+
+                Row {
+                    Text { text: "Next Execution:"; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: root.next_set ? "Change Date" : "Pick Date"; clicked => { date_picker.show(); } }
+                        Button { text: root.next_set ? "Change Time" : "Pick Time"; clicked => { time_picker.show(); } }
+                        Button {
+                            text: "Clear";
+                            enabled: root.next_set;
+                            clicked => { root.next_set = false; root.next_date = { day: 0, month: 0, year: 0 }; root.next_time = { hour: 0, minute: 0, second: 0 }; }
+                        }
+                    }
+                }
+
+                Row { Text { text: "Enabled:"; }   CheckBox { checked <=> root.enabled; } }
+                Row { Text { text: "Immediate:"; } CheckBox { checked <=> root.immediate; } }
+            }
+
+            // Show selection summary below the grid
+            if (root.next_set) : HorizontalLayout {
+                spacing: 6px;
+                Text { text: "Selected:"; }
+                Text { text: root.next_date.year; }
+                Text { text: "-"; }
+                Text { text: root.next_date.month; }
+                Text { text: "-"; }
+                Text { text: root.next_date.day; }
+                Text { text: "  "; }
+                Text { text: root.next_time.hour; }
+                Text { text: ":"; }
+                Text { text: root.next_time.minute; }
+            }
+
+            if (root.name == "" || root.cron_schedule == "") : Text {
+                color: #cc0000; text: "Name and Cron are required.";
+            }
+
+            Rectangle { height: 1px; background: #00000022; }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Rectangle { horizontal-stretch: 1; } // spacer
+
+                Button { text: "Cancel"; clicked => { root.visible = false; } }
+                Button {
+                    text: "Save";
+                    enabled: root.name != "" && root.cron_schedule != "";
+                    clicked => {
+                        // Assemble DateTime from separate parts
+                        root.accepted({
+                            name: root.name,
+                            cron_schedule: root.cron_schedule,
+                            action_name: root.action_name,
+                            action_function: root.action_function,
+                            action_configuration: root.action_configuration,
+                            timeout: root.timeout,
+                            enabled: root.enabled,
+                            immediate: root.immediate,
+                            next: {
+                                date: root.next_date,
+                                time: root.next_time,
+                            },
+                            next_set: root.next_set,
+                        });
+                        root.visible = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pickers
+    date_picker := DatePickerPopup {
+        x: (root.x + (root.width - self.width) / 2);
+        y: (root.y + (root.height - self.height) / 2);
+        title: "Pick a date";
+        accepted(date) => { root.next_date = date; root.next_set = true; date_picker.close(); }
+        canceled => { date_picker.close(); }
+    }
+
+    time_picker := TimePickerPopup {
+        x: (root.x + (root.width - self.width) / 2);
+        y: (root.y + (root.height - self.height) / 2);
+        title: "Pick a time";
+        use-24-hour-format: true;
+        accepted(time) => { root.next_time = time; root.next_set = true; time_picker.close(); }
+        canceled => { time_picker.close(); }
+    }
 }

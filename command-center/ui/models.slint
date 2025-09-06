@@ -1,5 +1,22 @@
-export struct TaskItem { 
-    id: int, 
-    name: string, 
-    enabled: bool 
+export struct TaskItem {
+    id: int,
+    name: string,
+    enabled: bool,
+}
+
+export struct Date {
+    day: int,
+    month: int,
+    year: int,
+}
+
+export struct Time {
+    hour: int,
+    minute: int,
+    second: int,
+}
+
+export struct DateTime {
+    date: Date,
+    time: Time,
 }

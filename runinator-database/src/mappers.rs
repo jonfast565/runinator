@@ -5,11 +5,15 @@ use sqlx::{Row, sqlite::SqliteRow};
 pub fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
     let next_execution = row
         .get::<Option<i64>, _>("next_execution")
-        .map(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
-    let next_execution_part = match next_execution {
-        Some(x) => x,
-        None => None,
-    };
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+
+    let blackout_start = row
+        .get::<Option<i64>, _>("blackout_start")
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+
+    let blackout_end = row
+        .get::<Option<i64>, _>("blackout_end")
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
 
     ScheduledTask {
         id: row.get::<Option<i64>, _>("id"),
@@ -19,8 +23,10 @@ pub fn row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
         action_function: row.get::<String, _>("action_function"),
         action_configuration: row.get::<String, _>("action_configuration"),
         timeout: row.get::<i64, _>("timeout"),
-        next_execution: next_execution_part,
+        next_execution: next_execution,
         enabled: row.get::<bool, _>("enabled"),
         immediate: row.get::<bool, _>("immediate"),
+        blackout_start: blackout_start,
+        blackout_end: blackout_end,
     }
 }

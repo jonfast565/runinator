@@ -1,6 +1,7 @@
 import { Button, ListView, CheckBox } from "std-widgets.slint";
 
 import { TaskItem } from "models.slint";
+import { TaskEditorPopup } from "taskeditor.slint";
 
 export component MainWindow inherits Window {
     width: 500px;
@@ -68,11 +69,23 @@ export component MainWindow inherits Window {
                 if (task.enabled) : Button {
                     text: "Run Now";
                     enabled: task.enabled;
-                    clicked => { 
-                        root.run_now(task.id); 
+                    clicked => {
+                        root.run_now(task.id);
+                    }
+                }
+
+                Button {
+                    text: "✎ Edit";
+                    clicked => {
+                        editor.open_for_new();
+                        editor.visible = true;
                     }
                 }
             }
         }
+        
     }
+
+    // Editor window instance
+    editor := TaskEditorPopup { }
 }
