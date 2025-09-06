@@ -54,10 +54,6 @@ export component TaskEditorPopup inherits Window {
     y: 0px;
 
     Rectangle {
-        background: #ffffff;
-        border-color: #00000033;
-        border-width: 1px;
-        border-radius: 10px;
 
         VerticalLayout {
             padding: 14px;
@@ -109,10 +105,10 @@ export component TaskEditorPopup inherits Window {
             }
 
             if (root.name == "" || root.cron_schedule == "") : Text {
-                color: #cc0000; text: "Name and Cron are required.";
+                text: "Name and Cron are required.";
             }
 
-            Rectangle { height: 1px; background: #00000022; }
+            Rectangle { height: 1px; }
 
             HorizontalLayout {
                 spacing: 8px;
