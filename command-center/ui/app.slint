@@ -4,8 +4,8 @@ import { TaskItem } from "models.slint";
 import { TaskEditorPopup } from "taskeditor.slint";
 
 export component MainWindow inherits Window {
-    width: 500px;
-    height: 380px;
+    width: 640px;
+    height: 480px;
     title: "Command Center";
 
     in-out property <[TaskItem]> tasks;
@@ -15,75 +15,81 @@ export component MainWindow inherits Window {
     callback refresh();
     callback run_now(id: int);
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 8px;
+    // Paint an explicit background to avoid white-on-white issues in some themes
+    Rectangle {
+        background: #f5f6f8;
 
-        HorizontalLayout {
+        VerticalLayout {
+            padding: 12px;
             spacing: 8px;
 
-            Button {
-                text: "Refresh";
-                clicked => { 
-                    root.refresh() 
-                }
-            }
-
-            if (error != "") : Text {
-                wrap: word-wrap;
-                color: red;
-                text: error;
-            }
-            
-            if (status != "") : Text {
-                wrap: word-wrap;
-                text: status;
-            }
-        }
-
-        Rectangle { height: 1px; background: #dddddd; }
-
-        Text { font-weight: 600; text: "Scheduled Tasks"; }
-
-        if (tasks.length == 0 && error == "") : Text { text: "No tasks found."; }
-
-        ListView {
-            for task in tasks : HorizontalLayout {
-                spacing: 10px;
-
-                Text { 
-                    text: task.name; 
-                    vertical-alignment: center; 
-                }
-
-                CheckBox {
-                    checked: task.enabled;
-                }
-
-                if (!task.enabled) : Text {
-                    text: "(disabled)";
-                    color: #666666;
-                    vertical-alignment: center;
-                }
-                
-                if (task.enabled) : Button {
-                    text: "Run Now";
-                    enabled: task.enabled;
-                    clicked => {
-                        root.run_now(task.id);
-                    }
-                }
+            HorizontalLayout {
+                spacing: 8px;
 
                 Button {
-                    text: "✎ Edit";
-                    clicked => {
-                        editor.open_for_new();
-                        editor.visible = true;
+                    text: "Refresh";
+                    clicked => { root.refresh() }
+                }
+
+                if (error != "") : Text {
+                    wrap: word-wrap;
+                    color: #cc0000;
+                    text: error;
+                }
+                
+                if (status != "") : Text {
+                    wrap: word-wrap;
+                    color: #222222;
+                    text: status;
+                }
+
+                Rectangle { horizontal-stretch: 1; } // spacer
+            }
+
+            Rectangle { height: 1px; background: #dddddd; }
+
+            Text { font-weight: 600; color: #111111; text: "Scheduled Tasks"; }
+
+            if (tasks.length == 0 && error == "") : Text { color: #444444; text: "No tasks found."; }
+
+            ListView {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                for task in tasks : HorizontalLayout {
+                    spacing: 10px;
+
+                    Text { 
+                        text: task.name; 
+                        color: #111111;
+                        vertical-alignment: center; 
                     }
+
+                    CheckBox { checked: task.enabled; }
+
+                    if (!task.enabled) : Text {
+                        text: "(disabled)";
+                        color: #666666;
+                        vertical-alignment: center;
+                    }
+                    
+                    if (task.enabled) : Button {
+                        text: "Run Now";
+                        enabled: task.enabled;
+                        clicked => { root.run_now(task.id); }
+                    }
+
+                    Button {
+                        text: "✎ Edit";
+                        clicked => {
+                            editor.open_for_new();
+                            editor.visible = true;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; } // push actions to the right
                 }
             }
         }
-        
     }
 
     // Editor window instance
