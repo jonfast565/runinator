@@ -14,7 +14,7 @@ export struct TaskEditorData {
     next_set: bool,
 }
 
-export component TaskEditorPopup inherits Window {
+export component TaskEditorPopup inherits Dialog {
     // Emits the collected data
     callback accepted(TaskEditorData);
 
@@ -48,31 +48,37 @@ export component TaskEditorPopup inherits Window {
         next_time = { hour: 0, minute: 0, second: 0 };
     }
 
+    // The dialog will be sized by the caller (we make it cover the app window)
+    // Default size kept for standalone usage
     width: 560px;
     height: 520px;
     x: 0px;
     y: 0px;
 
     Rectangle {
+        background: #f5f6f7;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: #00000022;
 
         VerticalLayout {
             padding: 14px;
             spacing: 10px;
 
-            Text { text: "New Task"; font-weight: 600; font-size: 18px; }
+            Text { text: "New Task"; font-weight: 600; font-size: 18px; color: #111111; }
 
             GridLayout {
                 spacing: 8px; padding: 2px;
 
-                Row { Text { text: "Name:"; }           LineEdit { text <=> root.name; placeholder-text: "Human-readable name"; } }
-                Row { Text { text: "Cron:"; }           LineEdit { text <=> root.cron_schedule; placeholder-text: "e.g. */5 * * * *"; } }
-                Row { Text { text: "Action Name:"; }    LineEdit { text <=> root.action_name; } }
-                Row { Text { text: "Action Fn:"; }      LineEdit { text <=> root.action_function; } }
-                Row { Text { text: "Action Config:"; }  LineEdit { text <=> root.action_configuration; placeholder-text: "{\"key\":\"value\"}"; } }
-                Row { Text { text: "Timeout (s):"; }    SpinBox { value <=> root.timeout; minimum: 0; maximum: 2147483647; } }
+                Row { Text { text: "Name:"; color: #111111; }           LineEdit { text <=> root.name; placeholder-text: "Human-readable name"; } }
+                Row { Text { text: "Cron:"; color: #111111; }           LineEdit { text <=> root.cron_schedule; placeholder-text: "e.g. */5 * * * *"; } }
+                Row { Text { text: "Action Name:"; color: #111111; }    LineEdit { text <=> root.action_name; } }
+                Row { Text { text: "Action Fn:"; color: #111111; }      LineEdit { text <=> root.action_function; } }
+                Row { Text { text: "Action Config:"; color: #111111; }  LineEdit { text <=> root.action_configuration; placeholder-text: "{\"key\":\"value\"}"; } }
+                Row { Text { text: "Timeout (s):"; color: #111111; }    SpinBox { value <=> root.timeout; minimum: 0; maximum: 2147483647; } }
 
                 Row {
-                    Text { text: "Next Execution:"; }
+                    Text { text: "Next Execution:"; color: #111111; }
                     HorizontalLayout {
                         spacing: 6px;
                         Button { text: root.next_set ? "Change Date" : "Pick Date"; clicked => { date_picker.show(); } }
@@ -92,20 +98,21 @@ export component TaskEditorPopup inherits Window {
             // Show selection summary below the grid
             if (root.next_set) : HorizontalLayout {
                 spacing: 6px;
-                Text { text: "Selected:"; }
-                Text { text: root.next_date.year; }
-                Text { text: "-"; }
-                Text { text: root.next_date.month; }
-                Text { text: "-"; }
-                Text { text: root.next_date.day; }
-                Text { text: "  "; }
-                Text { text: root.next_time.hour; }
-                Text { text: ":"; }
-                Text { text: root.next_time.minute; }
+                Text { text: "Selected:"; color: #111111; }
+                Text { text: root.next_date.year; color: #111111; }
+                Text { text: "-"; color: #111111; }
+                Text { text: root.next_date.month; color: #111111; }
+                Text { text: "-"; color: #111111; }
+                Text { text: root.next_date.day; color: #111111; }
+                Text { text: "  "; color: #111111; }
+                Text { text: root.next_time.hour; color: #111111; }
+                Text { text: ":"; color: #111111; }
+                Text { text: root.next_time.minute; color: #111111; }
             }
 
             if (root.name == "" || root.cron_schedule == "") : Text {
                 text: "Name and Cron are required.";
+                color: #111111;
             }
 
             Rectangle { height: 1px; }
