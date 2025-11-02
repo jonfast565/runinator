@@ -11,6 +11,136 @@ use sqlx::{ConnectOptions, Executor, Row, SqlitePool, sqlite::SqliteConnectOptio
 
 use crate::{interfaces::DatabaseImpl, mappers};
 
+const SQLITE_TABLE_INIT_SQL: &str = r#"
+CREATE TABLE
+    IF NOT EXISTS scheduled_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        cron_schedule TEXT NOT NULL,
+        action_name TEXT NOT NULL,
+        action_function TEXT NOT NULL,
+        action_configuration BLOB NOT NULL,
+        timeout INTEGER NOT NULL,
+        next_execution INTEGER NULL,
+        enabled BOOL NOT NULL,
+        immediate BOOL NOT NULL,
+        blackout_start INTEGER NULL,
+        blackout_end INTEGER NULL
+    );
+
+CREATE TABLE
+    IF NOT EXISTS task_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL REFERENCES scheduled_tasks(id),
+        start_time INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL
+    );
+"#;
+
+const SQLITE_SEED_SQL: &str = r#"
+DELETE FROM task_runs;
+
+INSERT OR IGNORE INTO scheduled_tasks (
+    id,
+    name,
+    cron_schedule,
+    action_name,
+    action_function,
+    action_configuration,
+    timeout,
+    next_execution,
+    enabled,
+    immediate
+) VALUES
+    (
+        1,
+        'Test: Hello World',
+        '*/1 * * * *',
+        'Console',
+        'run_console',
+        'echo ''Hello World!''',
+        1000,
+        1737008700,
+        1,
+        0
+    );
+
+INSERT OR IGNORE INTO scheduled_tasks (
+    id,
+    name,
+    cron_schedule,
+    action_name,
+    action_function,
+    action_configuration,
+    timeout,
+    next_execution,
+    enabled,
+    immediate
+) VALUES
+    (
+        2,
+        'AWS Login',
+        '0 0,9,12,15,18,21 * * *',
+        'Console',
+        'run_console',
+        'aws sso login',
+        100000,
+        1737018000,
+        1,
+        0
+    );
+
+INSERT OR IGNORE INTO scheduled_tasks (
+    id,
+    name,
+    cron_schedule,
+    action_name,
+    action_function,
+    action_configuration,
+    timeout,
+    next_execution,
+    enabled,
+    immediate
+) VALUES
+    (
+        3,
+        'Powershell: Sync Repositories',
+        '0 0,9,12,15,18,21 * * *',
+        'Console',
+        'run_powershell',
+        'powershell.exe ./task-scripts/sync-repos.ps1 "C:\\Repos"',
+        100000,
+        1737018000,
+        1,
+        0
+    );
+
+INSERT OR IGNORE INTO scheduled_tasks (
+    id,
+    name,
+    cron_schedule,
+    action_name,
+    action_function,
+    action_configuration,
+    timeout,
+    next_execution,
+    enabled,
+    immediate
+) VALUES
+    (
+        4,
+        'SDM Login',
+        '0 0,9,12,15,18,21 * * *',
+        'Console',
+        'run_powershell',
+        'powershell.exe ./task-scripts/sdm-login.ps1',
+        100000,
+        1737018000,
+        1,
+        0
+    );
+"#;
+
 pub struct SqliteDb {
     pub pool: SqlitePool,
 }
@@ -30,6 +160,21 @@ impl SqliteDb {
         let connection = SqlitePool::connect_with(unmutable_options).await?;
         let result = SqliteDb { pool: connection };
         Ok(result)
+    }
+
+    async fn execute_script(&self, script: &str) -> Result<(), SendableError> {
+        let sql = script.trim();
+        if sql.is_empty() {
+            return Ok(());
+        }
+
+        let mut stream = self.pool.execute_many(sqlx::query(sql));
+        while let Some(result) = stream.next().await {
+            let query_result = result?;
+            debug!("Init scripts: {} row(s) affected", query_result.rows_affected());
+        }
+
+        Ok(())
     }
 }
 
@@ -79,25 +224,23 @@ impl DatabaseImpl for SqliteDb {
             FROM scheduled_tasks",
         )
         .fetch_all(&self.pool)
-        .await
-        .unwrap();
+        .await?;
 
         let result = rows
             .into_iter()
-            .map(|row| mappers::row_to_scheduled_task(&row))
+            .map(|row| mappers::sqlite_row_to_scheduled_task(&row))
             .collect();
         Ok(result)
     }
 
     async fn fetch_task_runs(&self, start: i64, end: i64) -> Result<Vec<TaskRun>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, task_name, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",
+            "SELECT id, task_id, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",
         )
         .bind(start)
         .bind(end)
         .fetch_all(&self.pool)
-        .await
-        .unwrap();
+        .await?;
 
         let result = rows
             .into_iter()
@@ -142,19 +285,18 @@ impl DatabaseImpl for SqliteDb {
     }
 
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
+        info!("Running embedded SQLite table initialization script");
+        self.execute_script(SQLITE_TABLE_INIT_SQL).await?;
+
+        info!("Running embedded SQLite seed data script");
+        self.execute_script(SQLITE_SEED_SQL).await?;
+
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
                 info!("Running {}", path_info.to_str().unwrap());
                 let script = fs::read_to_string(path_info.as_path())?;
-                let mut stream = self.pool.execute_many(sqlx::query(&script));
-                while let Some(result) = stream.next().await {
-                    let query_result = result?;
-                    debug!(
-                        "Init scripts: {} row(s) affected",
-                        query_result.rows_affected()
-                    );
-                }
+                self.execute_script(&script).await?;
             }
         }
 

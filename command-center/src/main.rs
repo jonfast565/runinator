@@ -507,7 +507,14 @@ fn spawn_run_now(tx: mpsc::Sender<Msg>, client: Client, id: i64) {
     });
 }
 
-fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, task: ScheduledTask) {
+fn prepare_task_for_submission(task: &mut ScheduledTask) {
+    if task.next_execution.is_none() {
+        task.next_execution = Some(Utc::now());
+    }
+}
+
+fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask) {
+    prepare_task_for_submission(&mut task);
     thread::spawn(move || {
         let res = client
             .post("http://localhost:3001/tasks")
@@ -521,7 +528,8 @@ fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, task: ScheduledTask) {
     });
 }
 
-fn spawn_update_task(tx: mpsc::Sender<Msg>, client: Client, task: ScheduledTask) {
+fn spawn_update_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask) {
+    prepare_task_for_submission(&mut task);
     thread::spawn(move || {
         let res = client
             .patch("http://localhost:3001/tasks")
@@ -694,7 +702,10 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
 fn validate_editor(task: &ScheduledTask) -> Option<String> {
     if task.name.trim().is_empty() { return Some("Name is required".into()); }
     if task.cron_schedule.trim().is_empty() { return Some("Cron is required".into()); }
-    if task.timeout < 0 { return Some("Timeout must be >= 0".into()); }
+    if task.action_name.trim().is_empty() { return Some("Action name is required".into()); }
+    if task.action_function.trim().is_empty() { return Some("Action function is required".into()); }
+    if task.action_configuration.trim().is_empty() { return Some("Action configuration is required".into()); }
+    if task.timeout <= 0 { return Some("Timeout must be > 0".into()); }
     None
 }
 

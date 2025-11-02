@@ -23,7 +23,7 @@ try {
     $TargetProfile = if ($BuildProfile -eq "dev") { "debug" } else { $BuildProfile }
     $TargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\$TargetProfile"
     $ArtifactsFolder = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts"
-    $DbScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "database-scripts"
+    # $DbScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "database-scripts"
     $DbScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\scripts"
     $TaskScriptsSourceDir = Join-Path -Path $WorkspacePath -ChildPath "task-scripts"
     $TaskScriptsTargetDir = Join-Path -Path $WorkspacePath -ChildPath "target\artifacts\task-scripts"
@@ -51,8 +51,8 @@ try {
     Write-Host "Ensuring database scripts target directory exists: $DbScriptsTargetDir"
     Ensure-Directory -Path $DbScriptsTargetDir
 
-    Write-Host "Copying database scripts from $DbScriptsSourceDir to $DbScriptsTargetDir"
-    Copy-Item -Path $DbScriptsSourceDir\* -Destination $DbScriptsTargetDir -Recurse -Force
+    # Write-Host "Copying database scripts from $DbScriptsSourceDir to $DbScriptsTargetDir"
+    # Copy-Item -Path $DbScriptsSourceDir\* -Destination $DbScriptsTargetDir -Recurse -Force
 
     Write-Host "Ensuring task scripts target directory exists: $TaskScriptsTargetDir"
     Ensure-Directory -Path $TaskScriptsTargetDir
@@ -68,7 +68,7 @@ try {
         Write-Host "Run runinator.exe"
         $process1 = Start-Process -FilePath "./target/artifacts/runinator.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
         Write-Host "Run command-center.exe"
-        $process2 = Start-Process -FilePath "./target/artifacts/command-center.exe" -WorkingDirectory "./target/artifacts" -PassThru -NoNewWindow
+        $process2 = Start-Process -FilePath "./target/artifacts/command-center.exe" -WorkingDirectory "./target/artifacts" -PassThru
 
         # Wait for both processes to exit
         Wait-Process -Id $process1.Id, $process2.Id
