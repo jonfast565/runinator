@@ -12,29 +12,27 @@ use sqlx::{ConnectOptions, Executor, Row, SqlitePool, sqlite::SqliteConnectOptio
 use crate::{interfaces::DatabaseImpl, mappers};
 
 const SQLITE_TABLE_INIT_SQL: &str = r#"
-CREATE TABLE
-    IF NOT EXISTS scheduled_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        cron_schedule TEXT NOT NULL,
-        action_name TEXT NOT NULL,
-        action_function TEXT NOT NULL,
-        action_configuration BLOB NOT NULL,
-        timeout INTEGER NOT NULL,
-        next_execution INTEGER NULL,
-        enabled BOOL NOT NULL,
-        immediate BOOL NOT NULL,
-        blackout_start INTEGER NULL,
-        blackout_end INTEGER NULL
-    );
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    cron_schedule TEXT NOT NULL,
+    action_name TEXT NOT NULL,
+    action_function TEXT NOT NULL,
+    action_configuration BLOB NOT NULL,
+    timeout INTEGER NOT NULL,
+    next_execution INTEGER NULL,
+    enabled BOOL NOT NULL,
+    immediate BOOL NOT NULL,
+    blackout_start INTEGER NULL,
+    blackout_end INTEGER NULL
+);
 
-CREATE TABLE
-    IF NOT EXISTS task_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id INTEGER NOT NULL REFERENCES scheduled_tasks(id),
-        start_time INTEGER NOT NULL,
-        duration_ms INTEGER NOT NULL
-    );
+CREATE TABLE IF NOT EXISTS task_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES scheduled_tasks(id),
+    start_time INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL
+);
 "#;
 
 pub struct SqliteDb {
@@ -47,7 +45,7 @@ impl SqliteDb {
             .filename(filename)
             .create_if_missing(true);
         let options_with_logs = options
-            .log_statements(log::LevelFilter::Debug)
+            .log_statements(log::LevelFilter::Info)
             .log_slow_statements(
                 log::LevelFilter::Warn,
                 Duration::seconds(1).to_std().unwrap(),
@@ -61,16 +59,25 @@ impl SqliteDb {
     async fn execute_script(&self, script: &str) -> Result<(), SendableError> {
         let sql = script.trim();
         if sql.is_empty() {
+            debug!("No SQL to execute");
             return Ok(());
         }
 
-        let mut stream = self.pool.execute_many(sqlx::query(sql));
-        while let Some(result) = stream.next().await {
-            let query_result = result?;
-            debug!(
-                "Init scripts: {} row(s) affected",
-                query_result.rows_affected()
-            );
+        for statement in sql.split(';') {
+            let stmt = statement.trim();
+            if stmt.is_empty() {
+                debug!("Skipping empty statement");
+                continue;
+            }
+
+            let mut stream = self.pool.execute_many(sqlx::query(stmt));
+            while let Some(result) = stream.next().await {
+                let query_result = result?;
+                debug!(
+                    "Init scripts: {} row(s) affected",
+                    query_result.rows_affected()
+                );
+            }
         }
 
         Ok(())
@@ -81,7 +88,7 @@ impl DatabaseImpl for SqliteDb {
     async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), SendableError> {
         self.pool.execute(sqlx::query(
             "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end)
-             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(next_execution, now()), ?, COALESCE(immediate, 0), ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch('now')), ?, COALESCE(?, 0), ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 cron_schedule = excluded.cron_schedule,

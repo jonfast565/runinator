@@ -241,9 +241,9 @@ function Start-LocalStack {
 
     $commands = @(
         [pscustomobject]@{
-            Name       = 'Runinator Web Service'
-            CargoArgs  = @(
-                'run', '-p', 'runinator-ws', '--profile', $BuildProfile, '--',
+            Name  = 'Runinator Web Service'
+            Cmd = './target/artifacts/runinator-ws.exe'
+            Args  = @(
                 '--database', 'sqlite',
                 '--sqlite-path', $LocalDatabasePath,
                 '--announce-address', '127.0.0.1'
@@ -253,10 +253,9 @@ function Start-LocalStack {
             }
         },
         [pscustomobject]@{
-            Name       = 'Runinator Scheduler'
-            CargoArgs  = @(
-                'run', '-p', 'runinator-scheduler', '--profile', $BuildProfile, '--'
-            ) + (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
+            Name  = 'Runinator Scheduler'
+            Cmd = './target/artifacts/runinator-scheduler.exe'
+            Args  = @() + (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
                 '--worker-timeout-seconds', '60',
                 '--worker-command-retry', '3',
                 '--api-timeout-seconds', '30'
@@ -267,8 +266,8 @@ function Start-LocalStack {
         },
         [pscustomobject]@{
             Name       = 'Runinator Worker'
-            CargoArgs  = @(
-                'run', '-p', 'runinator-worker', '--profile', $BuildProfile, '--',
+            Cmd = './target/artifacts/runinator-worker.exe'
+            Args  = @(
                 '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
                 '--announce-address', '127.0.0.1',
                 '--command-bind', '127.0.0.1'
@@ -279,8 +278,8 @@ function Start-LocalStack {
         },
         [pscustomobject]@{
             Name       = 'Runinator Importer'
-            CargoArgs  = @(
-                'run', '-p', 'runinator-importer', '--profile', $BuildProfile, '--',
+            Cmd = './target/artifacts/runinator-importer.exe'
+            Args  = @(
                 '--tasks-file', $tasksFile,
                 '--poll-interval-seconds', '30'
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
@@ -294,8 +293,8 @@ function Start-LocalStack {
     foreach ($command in $commands) {
         Write-Host "Starting $($command.Name)..."
         $startArgs = @{
-            FilePath         = 'cargo'
-            ArgumentList     = $command.CargoArgs
+            FilePath         = $command.Cmd
+            ArgumentList     = $command.Args
             WorkingDirectory = $WorkspacePath
             PassThru         = $true
             NoNewWindow      = $true
@@ -307,12 +306,14 @@ function Start-LocalStack {
 
         try {
             $process = Start-Process @startArgs
-            $processes += [pscustomobject]@{
+            $processCommand = [pscustomobject]@{
                 Name      = $command.Name
                 Process   = $process
                 Reported  = $false
-                Command   = "cargo $($command.CargoArgs -join ' ')"
+                Command   = "$($command.Cmd) $($command.Args -join ' ')"
             }
+            $processes += $processCommand
+            Write-Host "Started $($processCommand.Command) (PID $($process.Id))."
         } catch {
             Write-Warning "Failed to start $($command.Name): $_"
         }

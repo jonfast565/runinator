@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS task_runs (
     start_time BIGINT NOT NULL,
     duration_ms BIGINT NOT NULL
 );
+
+COMMIT;
 "#;
 
 pub struct PostgresDb {
@@ -45,7 +47,7 @@ pub struct PostgresDb {
 impl PostgresDb {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         let mut options = PgConnectOptions::from_str(connection_str)?;
-        options.log_statements(log::LevelFilter::Debug);
+        options.log_statements(log::LevelFilter::Info);
         options.log_slow_statements(
             log::LevelFilter::Warn,
             Duration::seconds(1).to_std().unwrap(),
@@ -61,13 +63,20 @@ impl PostgresDb {
             return Ok(());
         }
 
-        let mut stream = self.pool.execute_many(sqlx::query(sql));
-        while let Some(result) = stream.next().await {
-            let query_result = result?;
-            debug!(
-                "Init scripts: {} row(s) affected",
-                query_result.rows_affected()
-            );
+        for statement in sql.split(';') {
+            let stmt = statement.trim();
+            if stmt.is_empty() {
+                continue;
+            }
+
+            let mut stream = self.pool.execute_many(sqlx::query(stmt));
+            while let Some(result) = stream.next().await {
+                let query_result = result?;
+                debug!(
+                    "Init scripts: {} row(s) affected",
+                    query_result.rows_affected()
+                );
+            }
         }
 
         Ok(())

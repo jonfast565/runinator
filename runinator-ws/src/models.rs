@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use clap::ValueEnum;
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
     web::TaskResponse,

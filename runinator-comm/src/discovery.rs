@@ -151,6 +151,11 @@ where
                     }
                 }
                 Err(err) => {
+                    if err.kind() == std::io::ErrorKind::ConnectionReset {
+                        debug!("Gossip listener ignored connection reset (likely ICMP unreachable)");
+                        continue;
+                    }
+
                     error!("Error receiving gossip payload: {}", err);
                     time::sleep(Duration::from_secs(1)).await;
                 }

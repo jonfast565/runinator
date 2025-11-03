@@ -9,7 +9,8 @@
       "action_configuration": "echo 'Hello World!'",
       "timeout": 1000,
       "enabled": true,
-      "immediate": false
+      "immediate": false,
+      "next_execution": null
     },
     {
       "id": 2,
@@ -20,7 +21,8 @@
       "action_configuration": "aws sso login",
       "timeout": 100000,
       "enabled": true,
-      "immediate": false
+      "immediate": false,
+      "next_execution": null
     },
     {
       "id": 3,
@@ -31,7 +33,8 @@
       "action_configuration": "powershell.exe ./task-scripts/sync-repos.ps1 \"C:\\Repos\"",
       "timeout": 100000,
       "enabled": true,
-      "immediate": false
+      "immediate": false,
+      "next_execution": null
     },
     {
       "id": 4,
@@ -42,7 +45,8 @@
       "action_configuration": "powershell.exe ./task-scripts/sdm-login.ps1",
       "timeout": 100000,
       "enabled": true,
-      "immediate": false
+      "immediate": false,
+      "next_execution": null
     }
   ]
 }

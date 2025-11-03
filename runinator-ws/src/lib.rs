@@ -1,5 +1,7 @@
 mod models;
 mod repository;
+mod discovery;
+mod config;
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
@@ -11,7 +13,7 @@ use axum::{
 };
 use log::info;
 use models::{ApiError, ApiResponse, TaskRunRequest};
-use runinator_database::interfaces::DatabaseImpl;
+use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{core::ScheduledTask, errors::SendableError, web::TaskResponse};
 use tokio::sync::Notify;
 
@@ -176,6 +178,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     notify: Arc<Notify>,
     port: u16,
 ) -> Result<(), SendableError> {
+    initialize_database(&pool).await?;
     let app = build_router(pool);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
