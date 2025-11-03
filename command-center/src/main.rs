@@ -12,7 +12,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
+};
 use runinator_api::BlockingApiClient;
 use runinator_models::core::ScheduledTask as ApiScheduledTask;
 use serde::{Deserialize, Serialize};
@@ -104,11 +106,24 @@ impl Default for MenuKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListFocus {
+    Task,
+    EditButton,
+}
+
+impl Default for ListFocus {
+    fn default() -> Self {
+        ListFocus::Task
+    }
+}
+
 #[derive(Default)]
 struct AppState {
     // Data
     tasks: Vec<ScheduledTask>,
     selected: usize,
+    list_focus: ListFocus,
 
     // Status
     status: String,
@@ -389,11 +404,21 @@ fn handle_list_key(
         KeyCode::Up => {
             if app.selected > 0 {
                 app.selected -= 1;
+                app.list_focus = ListFocus::Task;
             }
         }
         KeyCode::Down => {
             if !app.tasks.is_empty() {
                 app.selected = min(app.selected + 1, app.tasks.len() - 1);
+                app.list_focus = ListFocus::Task;
+            }
+        }
+        KeyCode::Left => {
+            app.list_focus = ListFocus::Task;
+        }
+        KeyCode::Right => {
+            if !app.tasks.is_empty() {
+                app.list_focus = ListFocus::EditButton;
             }
         }
         KeyCode::Char('r') => {
@@ -401,24 +426,24 @@ fn handle_list_key(
         }
         KeyCode::Enter => {
             if let Some(task) = app.tasks.get(app.selected) {
-                if task.enabled {
-                    app.status.clear();
-                    app.error.clear();
-                    app.op_in_progress = true;
-                    app.op_label = format!("Running {}", task.name);
-                    spawn_run_now(tx, api, task.id.unwrap_or_default());
+                match app.list_focus {
+                    ListFocus::Task => {
+                        if task.enabled {
+                            app.status.clear();
+                            app.error.clear();
+                            app.op_in_progress = true;
+                            app.op_label = format!("Running {}", task.name);
+                            spawn_run_now(tx, api, task.id.unwrap_or_default());
+                        }
+                    }
+                    ListFocus::EditButton => {
+                        open_editor_existing(app);
+                    }
                 }
             }
         }
         KeyCode::Char('e') => {
-            // edit selected
-            if let Some(task) = app.tasks.get(app.selected).cloned() {
-                app.mode = Mode::Editor { creating: false };
-                app.editor_draft = task;
-                app.editor_focus = 0;
-                app.editor_dirty = false;
-                app.editor_error.clear();
-            }
+            open_editor_existing(app);
         }
         _ => {}
     }
@@ -435,6 +460,7 @@ fn handle_editor_key(
     // Esc closes editor (confirm if dirty?)
     if key.code == KeyCode::Esc {
         app.mode = Mode::List;
+        app.list_focus = ListFocus::Task;
         return Ok(false);
     }
 
@@ -458,6 +484,15 @@ fn handle_editor_key(
             app.editor_dirty = true;
             return Ok(false);
         }
+    }
+
+    if app.editor_focus == 4
+        && matches!(key.code, KeyCode::Enter)
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+    {
+        app.editor_draft.action_configuration.push('\n');
+        app.editor_dirty = true;
+        return Ok(false);
     }
 
     // Enter to save when on last field or explicit Ctrl+S
@@ -566,6 +601,19 @@ fn open_editor_new(app: &mut AppState) {
     app.editor_error.clear();
 }
 
+fn open_editor_existing(app: &mut AppState) {
+    if let Some(task) = app.tasks.get(app.selected).cloned() {
+        app.mode = Mode::Editor { creating: false };
+        app.editor_draft = task;
+        app.editor_focus = 0;
+        app.editor_dirty = false;
+        app.editor_error.clear();
+    } else {
+        app.error = "No task selected".into();
+        app.last_status_at = Some(Instant::now());
+    }
+}
+
 fn trigger_menu_action(app: &mut AppState, tx: mpsc::Sender<Msg>, api: ApiClient) {
     let items = menu_items(app);
     let idx = app.menu_index.min(items.len().saturating_sub(1));
@@ -584,16 +632,7 @@ fn trigger_menu_action(app: &mut AppState, tx: mpsc::Sender<Msg>, api: ApiClient
         }
         (MenuKind::Edit, 1) => {
             // Edit Selected
-            if let Some(task) = app.tasks.get(app.selected).cloned() {
-                app.mode = Mode::Editor { creating: false };
-                app.editor_draft = task;
-                app.editor_focus = 0;
-                app.editor_dirty = false;
-                app.editor_error.clear();
-            } else {
-                app.error = "No task selected".into();
-                app.last_status_at = Some(Instant::now());
-            }
+            open_editor_existing(app);
         }
         _ => {}
     }
@@ -795,39 +834,99 @@ fn draw_menubar(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
 }
 
 fn draw_task_list(frame: &mut ratatui::Frame, area: Rect, app: &mut AppState) {
-    let items: Vec<ListItem> = if app.tasks.is_empty() && app.error.is_empty() && !app.loading {
-        vec![ListItem::new("No tasks found.")]
-    } else {
-        app.tasks
-            .iter()
-            .map(|t| {
-                let mut spans = vec![Span::raw(&t.name)];
-                if !t.enabled {
-                    spans.push(Span::styled(
-                        "  (disabled)",
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                ListItem::new(Line::from(spans))
-            })
-            .collect()
-    };
-
-    let mut list_state = ListState::default();
-    if !app.tasks.is_empty() {
-        list_state.select(Some(app.selected));
+    if app.tasks.is_empty() {
+        let message = if app.loading {
+            "Loading tasks..."
+        } else if !app.error.is_empty() {
+            app.error.as_str()
+        } else {
+            "No tasks found."
+        };
+        let placeholder = Paragraph::new(Line::from(Span::raw(message)))
+            .block(
+                Block::default()
+                    .title("Scheduled Tasks")
+                    .borders(Borders::ALL),
+            )
+            .alignment(Alignment::Center);
+        frame.render_widget(placeholder, area);
+        return;
     }
 
-    let list = List::new(items)
+    let header_cells = ["Name", "Cron", "Next Run", "Enabled", "Timeout", "Action"]
+        .into_iter()
+        .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
+    let header = Row::new(header_cells).style(Style::default().fg(Color::Cyan));
+
+    let rows: Vec<Row> = app
+        .tasks
+        .iter()
+        .enumerate()
+        .map(|(idx, task)| {
+            let name_span: Span = if task.enabled {
+                Span::raw(task.name.clone())
+            } else {
+                Span::styled(task.name.clone(), Style::default().fg(Color::DarkGray))
+            };
+            let action_span = if idx == app.selected && matches!(app.list_focus, ListFocus::EditButton)
+            {
+                Span::styled(
+                    "[Edit]",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("[Edit]", Style::default().fg(Color::Yellow))
+            };
+
+            let mut row = Row::new(vec![
+                Cell::from(name_span),
+                Cell::from(task.cron_schedule.clone()),
+                Cell::from(format_next_execution(task.next_execution.as_ref())),
+                Cell::from(if task.enabled { "Yes" } else { "No" }),
+                Cell::from(format!("{} ms", task.timeout)),
+                Cell::from(action_span),
+            ]);
+
+            if !task.enabled {
+                row = row.style(Style::default().fg(Color::DarkGray));
+            }
+
+            row
+        })
+        .collect();
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.selected));
+
+    let widths = [
+        Constraint::Percentage(25),
+        Constraint::Percentage(20),
+        Constraint::Percentage(25),
+        Constraint::Length(8),
+        Constraint::Length(12),
+        Constraint::Length(8),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
         .block(
             Block::default()
                 .title("Scheduled Tasks")
                 .borders(Borders::ALL),
         )
+        .column_spacing(1)
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("▶ ");
+        .highlight_symbol("");
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+fn format_next_execution(dt: Option<&DateTime<Utc>>) -> String {
+    dt.map(|val| val.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "-".into())
 }
 
 fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
@@ -842,22 +941,8 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
         "Enabled:",
     ];
 
-    let values = [
-        app.editor_draft.name.as_str(),
-        app.editor_draft.cron_schedule.as_str(),
-        app.editor_draft.action_name.as_str(),
-        app.editor_draft.action_function.as_str(),
-        app.editor_draft.action_configuration.as_str(),
-        &app.editor_draft.timeout.to_string(),
-        if app.editor_draft.enabled {
-            "Yes (Space to toggle)"
-        } else {
-            "No (Space to toggle)"
-        },
-    ];
-
     let mut text = Text::from("");
-    for i in 0..labels.len() {
+    for (i, label) in labels.iter().enumerate() {
         let label_style = if i == app.editor_focus {
             Style::default()
                 .fg(Color::Yellow)
@@ -866,10 +951,61 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
             Style::default().fg(Color::White)
         };
         text.extend(Text::from(Line::from(vec![Span::styled(
-            labels[i],
+            *label,
             label_style,
         )])));
-        text.extend(Text::from(Line::from(vec![Span::raw(values[i])])));
+        match i {
+            0 => text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                "  {}",
+                app.editor_draft.name
+            ))]))),
+            1 => text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                "  {}",
+                app.editor_draft.cron_schedule
+            ))]))),
+            2 => text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                "  {}",
+                app.editor_draft.action_name
+            ))]))),
+            3 => text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                "  {}",
+                app.editor_draft.action_function
+            ))]))),
+            4 => {
+                if app.editor_draft.action_configuration.is_empty() {
+                    text.extend(Text::from(Line::from(vec![Span::styled(
+                        "  <empty>",
+                        Style::default().fg(Color::DarkGray),
+                    )])));
+                } else {
+                    for line in app.editor_draft.action_configuration.split('\n') {
+                        text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                            "  {}",
+                            line
+                        ))])));
+                    }
+                }
+                if i == app.editor_focus {
+                    text.extend(Text::from(Line::from(vec![Span::styled(
+                        "  Shift+Enter for newline",
+                        Style::default().fg(Color::DarkGray),
+                    )])));
+                }
+            }
+            5 => text.extend(Text::from(Line::from(vec![Span::raw(format!(
+                "  {}",
+                app.editor_draft.timeout
+            ))]))),
+            6 => {
+                let value = if app.editor_draft.enabled {
+                    "  Yes (Space to toggle)"
+                } else {
+                    "  No (Space to toggle)"
+                };
+                text.extend(Text::from(Line::from(vec![Span::raw(value)])));
+            }
+            _ => {}
+        }
         text.extend(Text::from(Line::from("")));
     }
 
@@ -881,7 +1017,7 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
     }
     text.extend(Text::from(Line::from("")));
     text.extend(Text::from(Line::from(
-        "Enter/Ctrl+S: Save   Esc: Cancel   Tab/Shift+Tab: Move",
+        "Enter/Ctrl+S: Save   Esc: Cancel   Tab/Shift+Tab: Move   Shift+Enter: New line (Config)",
     )));
 
     let block = Block::default()
