@@ -45,7 +45,7 @@ impl SqliteDb {
             .filename(filename)
             .create_if_missing(true);
         let options_with_logs = options
-            .log_statements(log::LevelFilter::Info)
+            .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(
                 log::LevelFilter::Warn,
                 Duration::seconds(1).to_std().unwrap(),
