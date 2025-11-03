@@ -7,9 +7,11 @@ edition = "2024"
 log = "0.4"
 fern = "0.7"
 colored = "2.2"
+env_logger = "0.11"
 humantime = "2.1.0"
 tokio = { version = "1", features = ["full"] }
 csv = "1"
 rust_xlsxwriter = "0.91.0"
+log-panics = "2.1"
 
 runinator-models = { path = "../runinator-models" }

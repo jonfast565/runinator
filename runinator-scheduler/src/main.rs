@@ -1,23 +1,15 @@
-use std::{env, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use log::{error, info};
 use runinator_models::errors::SendableError;
 use tokio::{sync::Notify, task::JoinHandle};
 
 use runinator_scheduler::{WorkerManager, api::SchedulerApi, config::parse_config, scheduler_loop};
-use runinator_utilities::{dirutils, logger};
+use runinator_utilities::{startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    unsafe {
-        env::set_var("RUST_BACKTRACE", "1");
-    }
-    dirutils::set_exe_dir_as_cwd()?;
-    logger::setup_logger()?;
-    log_panics::init();
-
-    info!("--- Runinator Scheduler ---");
-    logger::print_env()?;
+    startup::startup("Runinator Scheduler")?;
 
     info!("Parse scheduler config");
     let config = parse_config()?;

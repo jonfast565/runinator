@@ -16,6 +16,5 @@ async-trait = "0.1"
 
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
-log-panics = "2.1"
 runinator-comm = { path = "../runinator-comm" }
 runinator-api = { path = "../runinator-api" }

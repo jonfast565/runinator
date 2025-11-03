@@ -14,17 +14,11 @@ use uuid::Uuid;
 use runinator_ws::run_webserver;
 
 use crate::config::{CliArgs, DatabaseKind};
+use runinator_utilities::{startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    unsafe {
-        env::set_var("RUST_BACKTRACE", "1");
-    }
-    dirutils::set_exe_dir_as_cwd()?;
-    logger::setup_logger()?;
-    log_panics::init();
-    info!("--- Runinator Web Service ---");
-    logger::print_env()?;
+    startup::startup("Runinator Web Service")?;
     
     let args = CliArgs::parse();
 

@@ -11,19 +11,11 @@ use discovery::DiscoveryService;
 use log::{error, info};
 use runinator_models::errors::SendableError;
 use runinator_plugin::{load_libraries_from_path, print_libs};
-use runinator_utilities::{dirutils, logger};
+use runinator_utilities::{startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    unsafe {
-        env::set_var("RUST_BACKTRACE", "1");
-    }
-    dirutils::set_exe_dir_as_cwd()?;
-    logger::setup_logger()?;
-    log_panics::init();
-
-    info!("--- Runinator Worker ---");
-    logger::print_env()?;
+    startup::startup("Runinator Worker")?;
 
     let config = parse_config()?;
     info!("Worker ID: {}", config.worker_id);
