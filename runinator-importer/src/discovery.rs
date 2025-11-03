@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
+use async_trait::async_trait;
 use runinator_comm::discovery::{
     apply_service_address, bind_gossip_socket, spawn_gossip_listener, WebServiceDiscovery,
 };
+use runinator_api::ServiceLocator;
 use tokio::net::UdpSocket;
 
 use crate::config::Config;
@@ -51,5 +53,14 @@ impl std::ops::Deref for ServiceDiscovery {
 impl AsRef<WebServiceDiscovery> for ServiceDiscovery {
     fn as_ref(&self) -> &WebServiceDiscovery {
         &self.inner
+    }
+}
+
+#[async_trait]
+impl ServiceLocator for ServiceDiscovery {
+    type Error = Infallible;
+
+    async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        Ok(self.inner.wait_for_service_url().await)
     }
 }

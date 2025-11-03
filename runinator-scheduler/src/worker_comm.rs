@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
@@ -17,6 +18,8 @@ use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
 };
+use runinator_api::ServiceLocator;
+use async_trait::async_trait;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpStream, UdpSocket},
@@ -251,6 +254,15 @@ impl WorkerManager {
 impl AsRef<WebServiceDiscovery> for WorkerManager {
     fn as_ref(&self) -> &WebServiceDiscovery {
         self.service_registry()
+    }
+}
+
+#[async_trait]
+impl ServiceLocator for WorkerManager {
+    type Error = Infallible;
+
+    async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        Ok(self.service_registry().wait_for_service_url().await)
     }
 }
 

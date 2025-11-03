@@ -1,3 +1,5 @@
+mod discovery;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -11,7 +13,8 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
-use reqwest::blocking::Client;
+use runinator_api::BlockingApiClient;
+use runinator_models::core::ScheduledTask as ApiScheduledTask;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::io;
@@ -19,11 +22,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[derive(Deserialize, Debug, Clone)]
-struct TaskResponse {
-    success: bool,
-    message: String,
-}
+use discovery::GossipLocator;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct ScheduledTask {
@@ -40,6 +39,46 @@ struct ScheduledTask {
     blackout_start: Option<DateTime<Utc>>,
     blackout_end: Option<DateTime<Utc>>,
 }
+
+impl From<ApiScheduledTask> for ScheduledTask {
+    fn from(task: ApiScheduledTask) -> Self {
+        ScheduledTask {
+            id: task.id,
+            name: task.name,
+            cron_schedule: task.cron_schedule,
+            action_name: task.action_name,
+            action_function: task.action_function,
+            action_configuration: task.action_configuration,
+            timeout: task.timeout,
+            next_execution: task.next_execution,
+            enabled: task.enabled,
+            immediate: task.immediate,
+            blackout_start: task.blackout_start,
+            blackout_end: task.blackout_end,
+        }
+    }
+}
+
+impl ScheduledTask {
+    fn to_api(&self) -> ApiScheduledTask {
+        ApiScheduledTask {
+            id: self.id,
+            name: self.name.clone(),
+            cron_schedule: self.cron_schedule.clone(),
+            action_name: self.action_name.clone(),
+            action_function: self.action_function.clone(),
+            action_configuration: self.action_configuration.clone(),
+            timeout: self.timeout,
+            next_execution: self.next_execution.clone(),
+            enabled: self.enabled,
+            immediate: self.immediate,
+            blackout_start: self.blackout_start.clone(),
+            blackout_end: self.blackout_end.clone(),
+        }
+    }
+}
+
+type ApiClient = BlockingApiClient<GossipLocator>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -118,7 +157,7 @@ fn main() -> Result<()> {
     // Channel for background -> UI messages
     let (tx, rx) = mpsc::channel::<Msg>();
 
-    let client = Client::new();
+    let api = ApiClient::new(GossipLocator::from_env()?)?;
 
     // App state
     let mut app = AppState::default();
@@ -126,7 +165,7 @@ fn main() -> Result<()> {
     app.active_menu = MenuKind::File;
 
     // Initial fetch
-    trigger_refresh(&mut app, tx.clone(), client.clone());
+    trigger_refresh(&mut app, tx.clone(), api.clone());
 
     // Timers
     let tick_rate = Duration::from_millis(100);
@@ -172,7 +211,7 @@ fn main() -> Result<()> {
                         app.op_in_progress = false;
                         app.last_status_at = Some(Instant::now());
                         // Trigger refresh after run
-                        trigger_refresh(&mut app, tx.clone(), client.clone());
+                        trigger_refresh(&mut app, tx.clone(), api.clone());
                     }
                     Err(err) => {
                         app.error = err;
@@ -187,7 +226,7 @@ fn main() -> Result<()> {
                         app.op_in_progress = false;
                         app.last_status_at = Some(Instant::now());
                         app.mode = Mode::List;
-                        trigger_refresh(&mut app, tx.clone(), client.clone());
+                        trigger_refresh(&mut app, tx.clone(), api.clone());
                     }
                     Err(err) => {
                         app.editor_error = err.clone();
@@ -203,7 +242,7 @@ fn main() -> Result<()> {
                         app.op_in_progress = false;
                         app.last_status_at = Some(Instant::now());
                         app.mode = Mode::List;
-                        trigger_refresh(&mut app, tx.clone(), client.clone());
+                        trigger_refresh(&mut app, tx.clone(), api.clone());
                     }
                     Err(err) => {
                         app.editor_error = err.clone();
@@ -217,7 +256,7 @@ fn main() -> Result<()> {
 
         // Auto-refresh every 10s
         if last_auto.elapsed() >= auto_refresh && !app.loading && matches!(app.mode, Mode::List) {
-            trigger_refresh(&mut app, tx.clone(), client.clone());
+            trigger_refresh(&mut app, tx.clone(), api.clone());
             last_auto = Instant::now();
         }
 
@@ -239,7 +278,7 @@ fn main() -> Result<()> {
         if event::poll(timeout)? {
             if let CEvent::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if handle_key(key, &mut app, tx.clone(), client.clone())? {
+                    if handle_key(key, &mut app, tx.clone(), api.clone())? {
                         break;
                     }
                 }
@@ -265,12 +304,12 @@ fn handle_key(
     key: KeyEvent,
     app: &mut AppState,
     tx: mpsc::Sender<Msg>,
-    client: Client,
+    api: ApiClient,
 ) -> Result<bool> {
     // Returns true to quit
     match app.mode {
-        Mode::List => handle_list_key(key, app, tx, client),
-        Mode::Editor { .. } => handle_editor_key(key, app, tx, client),
+        Mode::List => handle_list_key(key, app, tx, api),
+        Mode::Editor { .. } => handle_editor_key(key, app, tx, api),
     }
 }
 
@@ -278,7 +317,7 @@ fn handle_list_key(
     key: KeyEvent,
     app: &mut AppState,
     tx: mpsc::Sender<Msg>,
-    client: Client,
+    api: ApiClient,
 ) -> Result<bool> {
     let quit = match key.code {
         KeyCode::Char('q') | KeyCode::Esc => true,
@@ -291,7 +330,7 @@ fn handle_list_key(
 
     // Direct shortcuts
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
-        trigger_refresh(app, tx, client);
+        trigger_refresh(app, tx, api);
         return Ok(false);
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
@@ -338,7 +377,7 @@ fn handle_list_key(
                 app.menu_open = false;
             }
             KeyCode::Enter => {
-                trigger_menu_action(app, tx, client);
+                trigger_menu_action(app, tx, api);
             }
             _ => {}
         }
@@ -358,7 +397,7 @@ fn handle_list_key(
             }
         }
         KeyCode::Char('r') => {
-            trigger_refresh(app, tx, client);
+            trigger_refresh(app, tx, api);
         }
         KeyCode::Enter => {
             if let Some(task) = app.tasks.get(app.selected) {
@@ -367,7 +406,7 @@ fn handle_list_key(
                     app.error.clear();
                     app.op_in_progress = true;
                     app.op_label = format!("Running {}", task.name);
-                    spawn_run_now(tx, client, task.id.unwrap_or_default());
+                    spawn_run_now(tx, api, task.id.unwrap_or_default());
                 }
             }
         }
@@ -391,7 +430,7 @@ fn handle_editor_key(
     key: KeyEvent,
     app: &mut AppState,
     tx: mpsc::Sender<Msg>,
-    client: Client,
+    api: ApiClient,
 ) -> Result<bool> {
     // Esc closes editor (confirm if dirty?)
     if key.code == KeyCode::Esc {
@@ -439,9 +478,9 @@ fn handle_editor_key(
             "Updating task".into()
         };
         if matches!(app.mode, Mode::Editor { creating: true }) {
-            spawn_add_task(tx, client, app.editor_draft.clone());
+            spawn_add_task(tx, api, app.editor_draft.clone());
         } else {
-            spawn_update_task(tx, client, app.editor_draft.clone());
+            spawn_update_task(tx, api, app.editor_draft.clone());
         }
         return Ok(false);
     }
@@ -527,13 +566,13 @@ fn open_editor_new(app: &mut AppState) {
     app.editor_error.clear();
 }
 
-fn trigger_menu_action(app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) {
+fn trigger_menu_action(app: &mut AppState, tx: mpsc::Sender<Msg>, api: ApiClient) {
     let items = menu_items(app);
     let idx = app.menu_index.min(items.len().saturating_sub(1));
     match (app.active_menu, idx) {
         (MenuKind::File, 0) => {
             // Refresh
-            trigger_refresh(app, tx, client);
+            trigger_refresh(app, tx, api);
         }
         (MenuKind::File, 1) => {
             // Quit
@@ -568,8 +607,8 @@ fn menu_items(app: &AppState) -> Vec<&'static str> {
     }
 }
 
-fn trigger_refresh(app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) {
-    spawn_fetch(tx, client);
+fn trigger_refresh(app: &mut AppState, tx: mpsc::Sender<Msg>, api: ApiClient) {
+    spawn_fetch(tx, api);
     app.loading = true;
     app.status.clear();
     app.error.clear();
@@ -577,25 +616,20 @@ fn trigger_refresh(app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) {
     app.op_label = "Refreshing tasks".to_string();
 }
 
-fn spawn_fetch(tx: mpsc::Sender<Msg>, client: Client) {
+fn spawn_fetch(tx: mpsc::Sender<Msg>, api: ApiClient) {
     thread::spawn(move || {
-        let res = client
-            .get("http://localhost:3001/tasks")
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<Vec<ScheduledTask>>())
+        let res = api
+            .fetch_tasks()
+            .map(|tasks| tasks.into_iter().map(ScheduledTask::from).collect())
             .map_err(|e| e.to_string());
         let _ = tx.send(Msg::TasksLoaded(res));
     });
 }
 
-fn spawn_run_now(tx: mpsc::Sender<Msg>, client: Client, id: i64) {
+fn spawn_run_now(tx: mpsc::Sender<Msg>, api: ApiClient, id: i64) {
     thread::spawn(move || {
-        let res = client
-            .post(&format!("http://localhost:3001/tasks/{}/request_run", id))
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<TaskResponse>())
+        let res = api
+            .request_task_run(id)
             .map(|resp| {
                 format!(
                     "{}: {}",
@@ -614,15 +648,12 @@ fn prepare_task_for_submission(task: &mut ScheduledTask) {
     }
 }
 
-fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask) {
+fn spawn_add_task(tx: mpsc::Sender<Msg>, api: ApiClient, mut task: ScheduledTask) {
     prepare_task_for_submission(&mut task);
     thread::spawn(move || {
-        let res = client
-            .post("http://localhost:3001/tasks")
-            .json(&task)
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<TaskResponse>())
+        let payload = task.to_api();
+        let res = api
+            .upsert_task(&payload)
             .map(|resp| {
                 format!(
                     "{}: {}",
@@ -635,23 +666,23 @@ fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask
     });
 }
 
-fn spawn_update_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask) {
+fn spawn_update_task(tx: mpsc::Sender<Msg>, api: ApiClient, mut task: ScheduledTask) {
     prepare_task_for_submission(&mut task);
     thread::spawn(move || {
-        let res = client
-            .patch("http://localhost:3001/tasks")
-            .json(&task)
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<TaskResponse>())
-            .map(|resp| {
-                format!(
-                    "{}: {}",
-                    if resp.success { "OK" } else { "ERR" },
-                    resp.message
-                )
-            })
-            .map_err(|e| e.to_string());
+        let res = if task.id.is_none() {
+            Err("Task is missing an ID".to_string())
+        } else {
+            let payload = task.to_api();
+            api.update_task(&payload)
+                .map(|resp| {
+                    format!(
+                        "{}: {}",
+                        if resp.success { "OK" } else { "ERR" },
+                        resp.message
+                    )
+                })
+                .map_err(|e| e.to_string())
+        };
         let _ = tx.send(Msg::UpdateTaskDone(res));
     });
 }
@@ -675,8 +706,8 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &mut AppState) {
 
     // Status bar (single line, no borders)
     let spinner_frames = ["-", "\\", "|", "/"]; // ASCII-safe spinner
-    let mut line = String::new();
-    let mut style = Style::default().fg(Color::Gray);
+    let mut line = "Ready.".to_string();
+    let mut style = Style::default().fg(Color::DarkGray);
 
     if !app.error.is_empty() {
         line = format!("Error: {}", app.error);
@@ -693,9 +724,6 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &mut AppState) {
     } else if !app.status.is_empty() {
         line = format!("✔ {}", app.status);
         style = Style::default().fg(Color::Green);
-    } else {
-        line = "Ready.".to_string();
-        style = Style::default().fg(Color::DarkGray);
     }
 
     let status_bar = Paragraph::new(Line::from(Span::styled(line, style)));

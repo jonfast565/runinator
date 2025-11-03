@@ -8,12 +8,13 @@ use clap::Parser;
 use config::Config;
 use discovery::ServiceDiscovery;
 use log::{error, info};
-use reqwest::Url;
+use runinator_api::AsyncApiClient;
 use runinator_models::core::ScheduledTask;
 use serde::Deserialize;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
+type ApiClient = AsyncApiClient<ServiceDiscovery>;
 
 #[derive(Deserialize)]
 struct TaskFile {
@@ -64,33 +65,6 @@ impl From<TaskDefinition> for ScheduledTask {
     }
 }
 
-#[derive(Clone)]
-struct ApiClient {
-    client: reqwest::Client,
-    discovery: ServiceDiscovery,
-}
-
-impl ApiClient {
-    fn new(discovery: ServiceDiscovery) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
-        Ok(Self { client, discovery })
-    }
-
-    async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), DynError> {
-        let base = self.discovery.wait_for_service_url().await;
-        let url = Url::parse(&base)
-            .map_err(|err| -> DynError { Box::new(err) })?
-            .join("tasks")
-            .map_err(|err| -> DynError { Box::new(err) })?;
-
-        let response = self.client.post(url.clone()).json(task).send().await?;
-        handle_response(url, response).await?;
-        Ok(())
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     env_logger::init();
@@ -98,7 +72,10 @@ async fn main() -> Result<(), DynError> {
 
     info!("Starting Runinator Importer");
     let discovery = ServiceDiscovery::new(&config).await?;
-    let api = ApiClient::new(discovery.clone())?;
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let api = ApiClient::with_client(discovery.clone(), http_client);
 
     let mut interval = time::interval(Duration::from_secs(config.poll_interval_seconds.max(1)));
     let mut last_modified: Option<SystemTime> = None;
@@ -137,7 +114,10 @@ async fn sync_tasks_if_changed(
     let tasks = load_tasks(path).await?;
     info!("Seeding {} task(s) from {}", tasks.len(), path.display());
     for task in tasks {
-        api.upsert_task(&task).await?;
+        let _ = api
+            .upsert_task(&task)
+            .await
+            .map_err(|err| -> DynError { Box::new(err) })?;
     }
 
     *last_modified = Some(modified);
@@ -150,46 +130,3 @@ async fn load_tasks(path: &Path) -> Result<Vec<ScheduledTask>, DynError> {
     Ok(parsed.tasks.into_iter().map(Into::into).collect())
 }
 
-async fn handle_response(
-    url: Url,
-    response: reqwest::Response,
-) -> Result<reqwest::Response, DynError> {
-    let status = response.status();
-    if status.is_success() {
-        Ok(response)
-    } else {
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<unable to read body>".into());
-        Err(Box::new(RuntimeError::new(
-            format!("importer.http.{}", status.as_u16()),
-            format!("{} {}: {}", status, url, body),
-        )))
-    }
-}
-
-struct RuntimeError {
-    code: String,
-    message: String,
-}
-
-impl RuntimeError {
-    fn new(code: String, message: String) -> Self {
-        Self { code, message }
-    }
-}
-
-impl std::fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::fmt::Debug for RuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for RuntimeError {}
