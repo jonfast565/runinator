@@ -23,10 +23,9 @@ impl GossipLocator {
     /// `RUNINATOR_GOSSIP_BIND` defaults to `0.0.0.0` and `RUNINATOR_GOSSIP_PORT`
     /// defaults to `5000` when not provided.
     pub fn from_env() -> Result<Self> {
-        let bind = env::var("RUNINATOR_GOSSIP_BIND").unwrap_or_else(|_| "0.0.0.0".to_string());
-        let port = env::var("RUNINATOR_GOSSIP_PORT")
-            .ok()
-            .and_then(|value| value.parse::<u16>().ok())
+        let bind = env::var("RUNINATOR_GOSSIP_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let port = env::var("RUNINATOR_GOSSIP_PORT").unwrap_or_else(|_| "5504".to_string())
+            .parse::<u16>()
             .unwrap_or(5000);
 
         Self::new(bind, port)
