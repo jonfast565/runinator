@@ -4,7 +4,7 @@ mod executor;
 mod provider_repository;
 mod server;
 
-use std::{env, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use config::parse_config;
 use discovery::DiscoveryService;

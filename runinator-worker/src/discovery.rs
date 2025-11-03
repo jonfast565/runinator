@@ -120,9 +120,9 @@ impl DiscoveryService {
         });
     }
 
-    pub async fn latest_web_service(&self) -> Option<WebServiceAnnouncement> {
-        self.service_discovery.current_service().await
-    }
+    //pub async fn latest_web_service(&self) -> Option<WebServiceAnnouncement> {
+    //    self.service_discovery.current_service().await
+    //}
 }
 
 async fn update_known_workers(
