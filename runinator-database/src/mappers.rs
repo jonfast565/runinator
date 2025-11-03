@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use runinator_models::core::ScheduledTask;
-use sqlx::{postgres::PgRow, sqlite::SqliteRow, Row};
+use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
 
 macro_rules! scheduled_task_from_row {
     ($row:expr) => {{

@@ -2,12 +2,13 @@
 resolver = "2"
 
 members = [
-    "runinator",
     "runinator-models",
-    "runinator-config",
     "runinator-database",
     "runinator-scheduler",
     "runinator-ws",
+    "runinator-worker",
+    "runinator-comm",
+    "runinator-importer",
     
     "runinator-plugin",
     "runinator-provider-aws",

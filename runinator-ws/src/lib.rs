@@ -10,7 +10,7 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use log::info;
-use models::{ApiError, ApiResponse};
+use models::{ApiError, ApiResponse, TaskRunRequest};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{core::ScheduledTask, errors::SendableError, web::TaskResponse};
 use tokio::sync::Notify;
@@ -33,8 +33,12 @@ async fn add_task<T: DatabaseImpl>(
 
 async fn update_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Json(task_input): Json<ScheduledTask>,
+    Path(task_id): Path<i64>,
+    Json(mut task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if task_input.id != Some(task_id) {
+        task_input.id = Some(task_id);
+    }
     info!("Updating task: {:?}", task_input);
     let r = repository::update_task(db.as_ref(), &task_input).await;
     match r {
@@ -125,12 +129,28 @@ async fn request_run<T: DatabaseImpl>(
     }
 }
 
+async fn record_task_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(payload): Json<TaskRunRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let r = repository::log_task_run(db.as_ref(), &payload).await;
+    match r {
+        Ok(r) => (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
+    }
+}
+
 pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
     Router::new()
         .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
         .route(
-            "/tasks",
+            "/tasks/:id",
             patch(update_task::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -140,6 +160,10 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
         .route(
             "/task_runs",
             get(get_task_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/task_runs",
+            post(record_task_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/tasks/:id/request_run",

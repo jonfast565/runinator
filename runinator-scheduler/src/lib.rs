@@ -1,258 +1,180 @@
+pub mod api;
+pub mod config;
 mod db_extensions;
-mod model;
-mod provider_repository;
+mod worker_comm;
 
-use chrono::{Duration, Local, Utc};
-use futures_util::FutureExt;
-use log::{debug, error, info};
-use model::SchedulerTaskFuture;
-use runinator_database::interfaces::DatabaseImpl;
-use std::{collections::HashMap, pin::Pin, sync::Arc, time};
-use uuid::Uuid;
+pub use worker_comm::WorkerManager;
 
-use runinator_config::Config;
+use std::{sync::Arc, time::Duration};
+
+use chrono::{DateTime, Utc};
+use log::{debug, error, info, warn};
+use runinator_comm::TaskResult;
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
 };
-use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs, provider::Provider};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Notify;
 
-type TaskHandleMap = Arc<Mutex<HashMap<Uuid, SchedulerTaskFuture>>>;
+use crate::{api::SchedulerApi, config::Config};
 
-async fn process_one_task(
-    pool: &Arc<impl DatabaseImpl>,
-    libraries: &HashMap<String, Plugin>,
-    task: &ScheduledTask,
-    task_handles: TaskHandleMap,
-    force: bool,
-    _config: &Config,
-) -> Result<(), SendableError> {
-    let now = Utc::now();
-
-    if task.next_execution.is_none() {
-        db_extensions::set_initial_execution(pool, task).await?;
-        return Ok(());
-    }
-
-    if !force {
-        if task.next_execution.is_none() {
-            db_extensions::set_initial_execution(pool, task).await?;
-            return Ok(());
-        }
-
-        if let Some(next_execution) = task.next_execution {
-            if next_execution > now {
-                return Ok(());
-            }
-        }
-    }
-
-    debug!("Running action {}", &task.action_name);
-
-    let provider = provider_repository::get_plugin_or_provider(libraries, task).await;
-    let resolved_provider = match provider {
-        Ok(provider) => provider,
-        Err(e) => {
-            // Log error and schedule the next execution even if provider resolution fails.
-            error!("Error getting provider: {}", e);
-            db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
-            return Err(Box::new(RuntimeError::new(
-                "1".to_string(),
-                "An error occurred".to_string(),
-            )));
-        }
-    };
-
-    // Timeout is stored in seconds
-    let timeout_duration = Duration::seconds(task.timeout as i64).to_std()?;
-    let action_name = task.action_name.clone();
-    let action_configuration = task.action_configuration.clone();
-    let task_clone = task.clone();
-    let pool_clone = pool.clone();
-
-    let handle = tokio::spawn(async move {
-        if let Err(e) = process_provider_task(
-            action_name,
-            action_configuration,
-            task_clone,
-            pool_clone,
-            resolved_provider,
-        )
-        .await
-        {
-            error!("Error running provider task: {}", e);
-        }
-    });
-
-    let handle_uuid = Uuid::new_v4();
-    {
-        let mut handles = task_handles.lock().await;
-        handles.insert(handle_uuid.clone(), SchedulerTaskFuture::new(handle));
-    }
-
-    let task_handles_clone = task_handles.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(timeout_duration).await;
-        let mut handles = task_handles_clone.lock().await;
-        if let Some(task_future) = handles.remove(&handle_uuid) {
-            let handle = Pin::into_inner(task_future.future);
-            handle.abort();
-        }
-    });
-
-    db_extensions::set_next_execution_with_cron_statement(pool, task).await?;
-    Ok(())
-}
-
-async fn process_provider_task(
-    action_name: String,
-    action_configuration: String,
-    task_clone: ScheduledTask,
-    pool_clone: Arc<impl DatabaseImpl>,
-    plugin: Box<dyn Provider>,
-) -> Result<(), SendableError> {
-    let start_time = Local::now().to_utc();
-    let start = time::Instant::now();
-    plugin.call_service(action_name, action_configuration, task_clone.timeout)?;
-    let duration_ms = start.elapsed().as_millis() as i64;
-    pool_clone
-        .log_task_run(task_clone.id.unwrap(), start_time, duration_ms)
-        .await?;
-    Ok(())
-}
-
-async fn schedule_sleep_seconds(config: &Config) {
-    tokio::time::sleep(tokio::time::Duration::from_secs(
-        config.scheduler_frequency_seconds,
-    ))
-    .await;
-}
-
-pub async fn scheduler_loop(pool: &Arc<impl DatabaseImpl>, notify: Arc<Notify>, config: &Config) {
-    // Attempt to load libraries; if it fails, log the error, sleep briefly, and retry.
-    let libraries = loop {
-        match load_libraries_from_path(&config.dll_path) {
-            Ok(libs) => break libs,
-            Err(e) => {
-                error!("Failed to load libraries: {}", e);
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            }
-        }
-    };
-
-    print_libs(&libraries);
-
-    let task_handles: TaskHandleMap = Arc::new(Mutex::new(HashMap::new()));
-
+pub async fn scheduler_loop(
+    worker_manager: Arc<WorkerManager>,
+    api: SchedulerApi,
+    notify: Arc<Notify>,
+    config: &Config,
+) {
     loop {
-        let start = time::Instant::now();
-
         tokio::select! {
-            // Only exit when a shutdown notification is received.
             _ = notify.notified() => {
-                info!("Shutdown signal received. Cleaning up tasks...");
-                handle_shutdown(task_handles.clone()).await;
+                info!("Shutdown signal received. Exiting scheduler loop.");
                 break;
             }
-            // Run one scheduler iteration after sleeping.
-            _ = schedule_sleep_seconds(config) => {
-                if let Err(e) = run_scheduler_iteration(pool, &libraries, task_handles.clone(), config).await {
-                    error!("Error during scheduler iteration: {}", e);
+            _ = tokio::time::sleep(Duration::from_secs(config.scheduler_frequency_seconds)) => {
+                if let Err(err) = run_scheduler_iteration(&api, worker_manager.as_ref(), config).await {
+                    error!("Error during scheduler iteration: {}", err);
                 }
             }
         }
-
-        debug!(
-            "Scheduler iteration took {} seconds",
-            start.elapsed().as_secs_f64()
-        );
     }
 }
 
 async fn run_scheduler_iteration(
-    pool: &Arc<impl DatabaseImpl>,
-    libraries: &HashMap<String, Plugin>,
-    task_handles: TaskHandleMap,
+    api: &SchedulerApi,
+    worker_manager: &WorkerManager,
     config: &Config,
 ) -> Result<(), SendableError> {
-    let tasks = pool.fetch_all_tasks().await?;
-    debug!("Running tasks...");
+    let tasks = api.fetch_tasks().await?;
+    let now = Utc::now();
+
+    debug!("Scheduler evaluating {} task(s)", tasks.len());
 
     for mut task in tasks {
-        let force = task.immediate;
-        let now = Utc::now();
-        let due = force || task.next_execution.map_or(false, |dt| dt <= now);
-
-        if !due {
+        if !task.enabled {
             continue;
         }
 
-        // Blackout handling: if now is within blackout window, skip and set next_execution to blackout_end if available
+        if task.next_execution.is_none() {
+            debug!(
+                "Task {} has no next_execution. Initializing.",
+                task.id.unwrap_or_default()
+            );
+            db_extensions::set_initial_execution(api, &mut task).await?;
+            continue;
+        }
+
+        let force = task.immediate;
+        if !is_task_due(&task, force, now) {
+            continue;
+        }
+
         if let (Some(start), Some(end)) = (task.blackout_start, task.blackout_end) {
             if now >= start && now <= end {
-                // push next execution to end of blackout
+                debug!(
+                    "Task {} is within blackout window. Deferring to {}.",
+                    task.id.unwrap_or_default(),
+                    end
+                );
                 task.next_execution = Some(end);
-                if let Err(e) = pool.update_task_next_execution(&task).await {
-                    error!("Failed to update next_execution for blackout: {}", e);
-                }
+                api.update_task(&task).await?;
                 continue;
             }
         }
 
-        if force {
-            pool.clear_immediate_run(task.id.unwrap()).await?;
+        match dispatch_to_worker(api, worker_manager, &task, config).await {
+            Ok(_) => {
+                debug!(
+                    "Task {} dispatched successfully",
+                    task.id.unwrap_or_default()
+                );
+            }
+            Err(err) => {
+                error!(
+                    "Failed dispatching task {}: {}",
+                    task.id.unwrap_or_default(),
+                    err
+                );
+            }
         }
-        if let Err(e) =
-            process_one_task(pool, libraries, &task, task_handles.clone(), force, config).await
+
+        if force {
+            task.immediate = false;
+        }
+
+        if let Err(err) =
+            db_extensions::set_next_execution_with_cron_statement(api, &mut task).await
         {
             error!(
-                "Error processing task {}: {}",
-                task.id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                e
+                "Unable to update next execution for task {}: {}",
+                task.id.unwrap_or_default(),
+                err
             );
         }
     }
 
-    debug!("Attempting to clean up finished tasks...");
-    clean_up_finished_tasks(task_handles).await;
-
     Ok(())
 }
 
-async fn clean_up_finished_tasks(task_handles: TaskHandleMap) {
-    let mut guard = task_handles.lock().await;
-    let mut still_running = Vec::new();
-
-    for (uuid, mut pinned_task) in guard.drain() {
-        match pinned_task.future.as_mut().now_or_never() {
-            Some(join_result) => match join_result {
-                Ok(_) => {
-                    debug!("Task {uuid} finished successfully.");
-                }
-                Err(e) => {
-                    error!("Task {uuid} failed: {e:?}");
-                }
-            },
-            None => {
-                still_running.push((uuid, pinned_task));
-            }
-        }
+async fn dispatch_to_worker(
+    api: &SchedulerApi,
+    worker_manager: &WorkerManager,
+    task: &ScheduledTask,
+    config: &Config,
+) -> Result<(), SendableError> {
+    if task.id.is_none() {
+        return Err(Box::new(RuntimeError::new(
+            "scheduler.task.missing_id".into(),
+            "Cannot dispatch task without an ID".into(),
+        )));
     }
 
-    // Reinsert still running tasks back into the handles.
-    for (uuid, pinned_task) in still_running {
-        guard.insert(uuid, pinned_task);
+    let timeout = Duration::from_secs(config.worker_timeout_seconds);
+    let retries = config.worker_command_retry;
+
+    match worker_manager.dispatch_task(task, timeout, retries).await {
+        Ok(result) => handle_worker_result(api, task, result).await,
+        Err(err) => Err(err),
     }
 }
 
-async fn handle_shutdown(task_handles: TaskHandleMap) {
-    info!("Scheduler received shutdown signal. Aborting all tasks...");
-    let mut handles = task_handles.lock().await;
-    for (_, task_future) in handles.drain() {
-        let handle = Pin::into_inner(task_future.future);
-        handle.abort();
+async fn handle_worker_result(
+    api: &SchedulerApi,
+    task: &ScheduledTask,
+    result: TaskResult,
+) -> Result<(), SendableError> {
+    if !result.success {
+        warn!(
+            "Worker reported failure for task {}: {:?}",
+            task.id.unwrap_or_default(),
+            result.message
+        );
+        return Ok(());
+    }
+
+    let task_id = task.id.ok_or_else(|| {
+        RuntimeError::new(
+            "scheduler.task.missing_id".into(),
+            "Task missing identifier when logging result".into(),
+        )
+    })?;
+
+    api.log_task_run(
+        task_id,
+        result.started_at,
+        result.duration_ms(),
+        result.message.clone(),
+    )
+    .await?;
+    Ok(())
+}
+
+fn is_task_due(task: &ScheduledTask, force: bool, now: DateTime<Utc>) -> bool {
+    if force {
+        return true;
+    }
+
+    match task.next_execution {
+        Some(next_execution) => next_execution <= now,
+        None => false,
     }
 }

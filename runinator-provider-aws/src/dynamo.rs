@@ -4,17 +4,18 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use aws_config::BehaviorVersion;
 use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::Region;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::AttributeValue;
-use aws_sdk_dynamodb::Client;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use log::info;
 use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_utilities::data_export::{
-    csv::CsvTableExporter, excel::ExcelTableExporter, TableData, TableExportContext, TableExporter,
+    TableData, TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -74,7 +75,7 @@ async fn build_client(request: &DynamoDumpRequest) -> Result<Client, SendableErr
         .or_default_provider()
         .or_else("us-east-1");
 
-    let shared_config = aws_config::from_env()
+    let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
         .region(region_provider)
         .load()
         .await;
@@ -86,13 +87,16 @@ async fn query_items(
     client: &Client,
     request: &DynamoDumpRequest,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, SendableError> {
-    let key_condition = request
-        .key_condition_expression
-        .as_ref()
-        .ok_or_else(|| invalid_request("MISSING_KEY_CONDITION", "key_condition_expression is required when query_type is 'query'"))?;
+    let key_condition = request.key_condition_expression.as_ref().ok_or_else(|| {
+        invalid_request(
+            "MISSING_KEY_CONDITION",
+            "key_condition_expression is required when query_type is 'query'",
+        )
+    })?;
     let key_condition_expr = key_condition.as_str();
 
-    let expression_values = convert_expression_attribute_values(&request.expression_attribute_values)?;
+    let expression_values =
+        convert_expression_attribute_values(&request.expression_attribute_values)?;
     let expression_names = if request.expression_attribute_names.is_empty() {
         None
     } else {
@@ -155,10 +159,12 @@ async fn execute_partiql(
     client: &Client,
     request: &DynamoDumpRequest,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, SendableError> {
-    let statement = request
-        .partiql_statement
-        .as_ref()
-        .ok_or_else(|| invalid_request("MISSING_PARTIQL_STATEMENT", "partiql_statement is required when query_type is 'partiql'"))?;
+    let statement = request.partiql_statement.as_ref().ok_or_else(|| {
+        invalid_request(
+            "MISSING_PARTIQL_STATEMENT",
+            "partiql_statement is required when query_type is 'partiql'",
+        )
+    })?;
     let statement_text = statement.as_str();
 
     let parameters = convert_partiql_parameters(request.partiql_parameters.as_ref())?;
@@ -208,11 +214,7 @@ fn export_results(request: &DynamoDumpRequest, table: TableData) -> Result<(), S
         .filter(|stem| !stem.is_empty())
         .unwrap_or_else(|| sanitize_file_stem(&request.table_name));
 
-    let output_path = dump_dir.join(format!(
-        "{}.{}",
-        file_stem,
-        request.format.file_extension()
-    ));
+    let output_path = dump_dir.join(format!("{}.{}", file_stem, request.format.file_extension()));
 
     let exporter: Box<dyn TableExporter> = match request.format {
         DumpFormat::Excel => Box::new(ExcelTableExporter::new()),
@@ -317,7 +319,9 @@ fn json_to_attribute_value(value: &JsonValue) -> Result<AttributeValue, Sendable
     }
 }
 
-fn object_to_attribute_value(map: &JsonMap<String, JsonValue>) -> Result<AttributeValue, SendableError> {
+fn object_to_attribute_value(
+    map: &JsonMap<String, JsonValue>,
+) -> Result<AttributeValue, SendableError> {
     let mut normalized = HashMap::new();
     for (key, value) in map {
         normalized.insert(key.to_ascii_uppercase(), value);
@@ -352,9 +356,7 @@ fn object_to_attribute_value(map: &JsonMap<String, JsonValue>) -> Result<Attribu
 
     if let Some(raw) = normalized.get("B") {
         if let Some(value) = raw.as_str() {
-            let bytes = BASE64_STANDARD
-                .decode(value)
-                .map_err(to_sendable)?;
+            let bytes = BASE64_STANDARD.decode(value).map_err(to_sendable)?;
             return Ok(AttributeValue::B(Blob::new(bytes)));
         }
     }
@@ -381,7 +383,9 @@ fn object_to_attribute_value(map: &JsonMap<String, JsonValue>) -> Result<Attribu
                 .map(|value| match value {
                     JsonValue::String(s) => Ok(s.to_string()),
                     JsonValue::Number(n) => Ok(n.to_string()),
-                    _ => Err(invalid_attribute_value("NS entries must be numeric strings")),
+                    _ => Err(invalid_attribute_value(
+                        "NS entries must be numeric strings",
+                    )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(AttributeValue::Ns(numbers));

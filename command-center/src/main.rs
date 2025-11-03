@@ -1,14 +1,16 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute, ExecutableCommand};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use crossterm::{ExecutableCommand, execute};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::Terminal;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
@@ -46,7 +48,9 @@ enum Mode {
 }
 
 impl Default for Mode {
-    fn default() -> Self { Mode::List }
+    fn default() -> Self {
+        Mode::List
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +60,9 @@ enum MenuKind {
 }
 
 impl Default for MenuKind {
-    fn default() -> Self { MenuKind::File }
+    fn default() -> Self {
+        MenuKind::File
+    }
 }
 
 #[derive(Default)]
@@ -132,7 +138,9 @@ fn main() -> Result<()> {
     loop {
         // Draw UI
         terminal.draw(|f| draw_ui(f, &mut app))?;
-        if app.should_quit { break; }
+        if app.should_quit {
+            break;
+        }
 
         // Handle messages from workers (non-blocking)
         while let Ok(msg) = rx.try_recv() {
@@ -253,7 +261,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) -> Result<bool> {
+fn handle_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    tx: mpsc::Sender<Msg>,
+    client: Client,
+) -> Result<bool> {
     // Returns true to quit
     match app.mode {
         Mode::List => handle_list_key(key, app, tx, client),
@@ -261,13 +274,20 @@ fn handle_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, client: 
     }
 }
 
-fn handle_list_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) -> Result<bool> {
+fn handle_list_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    tx: mpsc::Sender<Msg>,
+    client: Client,
+) -> Result<bool> {
     let quit = match key.code {
         KeyCode::Char('q') | KeyCode::Esc => true,
         _ => false,
     };
 
-    if quit { return Ok(true); }
+    if quit {
+        return Ok(true);
+    }
 
     // Direct shortcuts
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
@@ -296,12 +316,30 @@ fn handle_list_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, cli
     // Menu navigation
     if app.menu_open {
         match key.code {
-            KeyCode::Left => app.active_menu = match app.active_menu { MenuKind::File => MenuKind::Edit, MenuKind::Edit => MenuKind::File },
-            KeyCode::Right => app.active_menu = match app.active_menu { MenuKind::File => MenuKind::Edit, MenuKind::Edit => MenuKind::File },
-            KeyCode::Up => { app.menu_index = app.menu_index.saturating_sub(1); },
-            KeyCode::Down => { app.menu_index = (app.menu_index + 1).min(menu_items(app).len().saturating_sub(1)); },
-            KeyCode::Esc => { app.menu_open = false; },
-            KeyCode::Enter => { trigger_menu_action(app, tx, client); },
+            KeyCode::Left => {
+                app.active_menu = match app.active_menu {
+                    MenuKind::File => MenuKind::Edit,
+                    MenuKind::Edit => MenuKind::File,
+                }
+            }
+            KeyCode::Right => {
+                app.active_menu = match app.active_menu {
+                    MenuKind::File => MenuKind::Edit,
+                    MenuKind::Edit => MenuKind::File,
+                }
+            }
+            KeyCode::Up => {
+                app.menu_index = app.menu_index.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                app.menu_index = (app.menu_index + 1).min(menu_items(app).len().saturating_sub(1));
+            }
+            KeyCode::Esc => {
+                app.menu_open = false;
+            }
+            KeyCode::Enter => {
+                trigger_menu_action(app, tx, client);
+            }
             _ => {}
         }
         return Ok(false);
@@ -310,10 +348,14 @@ fn handle_list_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, cli
     // List navigation / actions
     match key.code {
         KeyCode::Up => {
-            if app.selected > 0 { app.selected -= 1; }
+            if app.selected > 0 {
+                app.selected -= 1;
+            }
         }
         KeyCode::Down => {
-            if !app.tasks.is_empty() { app.selected = min(app.selected + 1, app.tasks.len() - 1); }
+            if !app.tasks.is_empty() {
+                app.selected = min(app.selected + 1, app.tasks.len() - 1);
+            }
         }
         KeyCode::Char('r') => {
             trigger_refresh(app, tx, client);
@@ -345,30 +387,57 @@ fn handle_list_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, cli
     Ok(false)
 }
 
-fn handle_editor_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client) -> Result<bool> {
+fn handle_editor_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    tx: mpsc::Sender<Msg>,
+    client: Client,
+) -> Result<bool> {
     // Esc closes editor (confirm if dirty?)
-    if key.code == KeyCode::Esc { app.mode = Mode::List; return Ok(false); }
+    if key.code == KeyCode::Esc {
+        app.mode = Mode::List;
+        return Ok(false);
+    }
 
     // Tab navigation
     match key.code {
-        KeyCode::Tab => { app.editor_focus = (app.editor_focus + 1) % editor_field_count(); return Ok(false); }
-        KeyCode::BackTab => { app.editor_focus = (app.editor_focus + editor_field_count() - 1) % editor_field_count(); return Ok(false); }
+        KeyCode::Tab => {
+            app.editor_focus = (app.editor_focus + 1) % editor_field_count();
+            return Ok(false);
+        }
+        KeyCode::BackTab => {
+            app.editor_focus = (app.editor_focus + editor_field_count() - 1) % editor_field_count();
+            return Ok(false);
+        }
         _ => {}
     }
 
     // Toggle enabled with Space when focused on enabled field
     if app.editor_focus == 6 {
-        if let KeyCode::Char(' ') | KeyCode::Enter = key.code { app.editor_draft.enabled = !app.editor_draft.enabled; app.editor_dirty = true; return Ok(false); }
+        if let KeyCode::Char(' ') | KeyCode::Enter = key.code {
+            app.editor_draft.enabled = !app.editor_draft.enabled;
+            app.editor_dirty = true;
+            return Ok(false);
+        }
     }
 
     // Enter to save when on last field or explicit Ctrl+S
-    if key.code == KeyCode::Enter || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s'))) {
-        if let Some(err) = validate_editor(&app.editor_draft) { app.editor_error = err; return Ok(false); }
+    if key.code == KeyCode::Enter
+        || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')))
+    {
+        if let Some(err) = validate_editor(&app.editor_draft) {
+            app.editor_error = err;
+            return Ok(false);
+        }
         // Save
         app.status.clear();
         app.error.clear();
         app.op_in_progress = true;
-        app.op_label = if matches!(app.mode, Mode::Editor { creating: true }) { "Creating task".into() } else { "Updating task".into() };
+        app.op_label = if matches!(app.mode, Mode::Editor { creating: true }) {
+            "Creating task".into()
+        } else {
+            "Updating task".into()
+        };
         if matches!(app.mode, Mode::Editor { creating: true }) {
             spawn_add_task(tx, client, app.editor_draft.clone());
         } else {
@@ -385,11 +454,21 @@ fn handle_editor_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, c
             2 => &mut app.editor_draft.action_name,
             3 => &mut app.editor_draft.action_function,
             4 => &mut app.editor_draft.action_configuration,
-            5 => { // timeout numeric
-                if c.is_ascii_digit() { let mut cur = app.editor_draft.timeout.to_string(); cur.push(c); if let Ok(v) = cur.parse::<i64>() { app.editor_draft.timeout = v; app.editor_dirty = true; } }
+            5 => {
+                // timeout numeric
+                if c.is_ascii_digit() {
+                    let mut cur = app.editor_draft.timeout.to_string();
+                    cur.push(c);
+                    if let Ok(v) = cur.parse::<i64>() {
+                        app.editor_draft.timeout = v;
+                        app.editor_dirty = true;
+                    }
+                }
                 return Ok(false);
             }
-            _ => { return Ok(false); }
+            _ => {
+                return Ok(false);
+            }
         };
         sref.push(c);
         app.editor_dirty = true;
@@ -398,12 +477,26 @@ fn handle_editor_key(key: KeyEvent, app: &mut AppState, tx: mpsc::Sender<Msg>, c
 
     if key.code == KeyCode::Backspace {
         match app.editor_focus {
-            0 => { app.editor_draft.name.pop(); }
-            1 => { app.editor_draft.cron_schedule.pop(); }
-            2 => { app.editor_draft.action_name.pop(); }
-            3 => { app.editor_draft.action_function.pop(); }
-            4 => { app.editor_draft.action_configuration.pop(); }
-            5 => { let mut cur = app.editor_draft.timeout.to_string(); cur.pop(); app.editor_draft.timeout = cur.parse::<i64>().unwrap_or(0); }
+            0 => {
+                app.editor_draft.name.pop();
+            }
+            1 => {
+                app.editor_draft.cron_schedule.pop();
+            }
+            2 => {
+                app.editor_draft.action_name.pop();
+            }
+            3 => {
+                app.editor_draft.action_function.pop();
+            }
+            4 => {
+                app.editor_draft.action_configuration.pop();
+            }
+            5 => {
+                let mut cur = app.editor_draft.timeout.to_string();
+                cur.pop();
+                app.editor_draft.timeout = cur.parse::<i64>().unwrap_or(0);
+            }
             _ => {}
         }
         app.editor_dirty = true;
@@ -438,16 +531,20 @@ fn trigger_menu_action(app: &mut AppState, tx: mpsc::Sender<Msg>, client: Client
     let items = menu_items(app);
     let idx = app.menu_index.min(items.len().saturating_sub(1));
     match (app.active_menu, idx) {
-        (MenuKind::File, 0) => { // Refresh
+        (MenuKind::File, 0) => {
+            // Refresh
             trigger_refresh(app, tx, client);
         }
-        (MenuKind::File, 1) => { // Quit
+        (MenuKind::File, 1) => {
+            // Quit
             app.should_quit = true;
         }
-        (MenuKind::Edit, 0) => { // Add New Task
+        (MenuKind::Edit, 0) => {
+            // Add New Task
             open_editor_new(app);
         }
-        (MenuKind::Edit, 1) => { // Edit Selected
+        (MenuKind::Edit, 1) => {
+            // Edit Selected
             if let Some(task) = app.tasks.get(app.selected).cloned() {
                 app.mode = Mode::Editor { creating: false };
                 app.editor_draft = task;
@@ -500,7 +597,11 @@ fn spawn_run_now(tx: mpsc::Sender<Msg>, client: Client, id: i64) {
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.json::<TaskResponse>())
             .map(|resp| {
-                format!("{}: {}", if resp.success { "OK" } else { "ERR" }, resp.message)
+                format!(
+                    "{}: {}",
+                    if resp.success { "OK" } else { "ERR" },
+                    resp.message
+                )
             })
             .map_err(|e| e.to_string());
         let _ = tx.send(Msg::RunNowDone(res));
@@ -522,7 +623,13 @@ fn spawn_add_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledTask
             .send()
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.json::<TaskResponse>())
-            .map(|resp| format!("{}: {}", if resp.success { "OK" } else { "ERR" }, resp.message))
+            .map(|resp| {
+                format!(
+                    "{}: {}",
+                    if resp.success { "OK" } else { "ERR" },
+                    resp.message
+                )
+            })
             .map_err(|e| e.to_string());
         let _ = tx.send(Msg::AddTaskDone(res));
     });
@@ -537,7 +644,13 @@ fn spawn_update_task(tx: mpsc::Sender<Msg>, client: Client, mut task: ScheduledT
             .send()
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.json::<TaskResponse>())
-            .map(|resp| format!("{}: {}", if resp.success { "OK" } else { "ERR" }, resp.message))
+            .map(|resp| {
+                format!(
+                    "{}: {}",
+                    if resp.success { "OK" } else { "ERR" },
+                    resp.message
+                )
+            })
             .map_err(|e| e.to_string());
         let _ = tx.send(Msg::UpdateTaskDone(res));
     });
@@ -570,7 +683,11 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &mut AppState) {
         style = Style::default().fg(Color::Red);
     } else if app.op_in_progress || app.loading {
         let framec = spinner_frames[app.spinner_idx % spinner_frames.len()];
-        let label = if app.op_label.is_empty() { "Working" } else { &app.op_label };
+        let label = if app.op_label.is_empty() {
+            "Working"
+        } else {
+            &app.op_label
+        };
         line = format!(" {} {}...", framec, label);
         style = Style::default().fg(Color::Yellow);
     } else if !app.status.is_empty() {
@@ -595,13 +712,21 @@ fn draw_menubar(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
     let mut line = Line::default();
     for (idx, (title, active)) in titles.iter().enumerate() {
         let mut style = Style::default().fg(Color::White);
-        if *active { style = style.add_modifier(Modifier::BOLD).fg(Color::Yellow); }
+        if *active {
+            style = style.add_modifier(Modifier::BOLD).fg(Color::Yellow);
+        }
         line.spans.push(Span::styled(*title, style));
-        if idx == 0 { line.spans.push(Span::raw("  ")); }
+        if idx == 0 {
+            line.spans.push(Span::raw("  "));
+        }
     }
 
     let bar = Paragraph::new(line)
-        .block(Block::default().title("Command Center").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Command Center")
+                .borders(Borders::ALL),
+        )
         .alignment(Alignment::Left);
     frame.render_widget(bar, area);
 
@@ -609,16 +734,31 @@ fn draw_menubar(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
         // Draw dropdown
         let items = menu_items(app);
         let menu_width = items.iter().map(|s| s.len()).max().unwrap_or(10) as u16 + 4;
-        let x = match app.active_menu { MenuKind::File => area.x + 2, MenuKind::Edit => area.x + 10 };
+        let x = match app.active_menu {
+            MenuKind::File => area.x + 2,
+            MenuKind::Edit => area.x + 10,
+        };
         let y = area.y + 1;
         let height = (items.len() as u16).max(1) + 2;
-        let popup = Rect { x, y, width: menu_width, height };
+        let popup = Rect {
+            x,
+            y,
+            width: menu_width,
+            height,
+        };
 
         let list_items: Vec<ListItem> = items.iter().map(|s| ListItem::new(*s)).collect();
         let mut state = ListState::default();
         state.select(Some(app.menu_index.min(items.len().saturating_sub(1))));
         let list = List::new(list_items)
-            .block(Block::default().borders(Borders::ALL).title(match app.active_menu { MenuKind::File => "File", MenuKind::Edit => "Edit" }))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(match app.active_menu {
+                        MenuKind::File => "File",
+                        MenuKind::Edit => "Edit",
+                    }),
+            )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
         frame.render_widget(Clear, popup); // clears out the background
@@ -635,7 +775,10 @@ fn draw_task_list(frame: &mut ratatui::Frame, area: Rect, app: &mut AppState) {
             .map(|t| {
                 let mut spans = vec![Span::raw(&t.name)];
                 if !t.enabled {
-                    spans.push(Span::styled("  (disabled)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        "  (disabled)",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                 }
                 ListItem::new(Line::from(spans))
             })
@@ -648,7 +791,11 @@ fn draw_task_list(frame: &mut ratatui::Frame, area: Rect, app: &mut AppState) {
     }
 
     let list = List::new(items)
-        .block(Block::default().title("Scheduled Tasks").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Scheduled Tasks")
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("▶ ");
 
@@ -674,25 +821,46 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
         app.editor_draft.action_function.as_str(),
         app.editor_draft.action_configuration.as_str(),
         &app.editor_draft.timeout.to_string(),
-        if app.editor_draft.enabled { "Yes (Space to toggle)" } else { "No (Space to toggle)" },
+        if app.editor_draft.enabled {
+            "Yes (Space to toggle)"
+        } else {
+            "No (Space to toggle)"
+        },
     ];
 
     let mut text = Text::from("");
     for i in 0..labels.len() {
-        let label_style = if i == app.editor_focus { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) };
-        text.extend(Text::from(Line::from(vec![Span::styled(labels[i], label_style)])));
+        let label_style = if i == app.editor_focus {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        text.extend(Text::from(Line::from(vec![Span::styled(
+            labels[i],
+            label_style,
+        )])));
         text.extend(Text::from(Line::from(vec![Span::raw(values[i])])));
         text.extend(Text::from(Line::from("")));
     }
 
     if !app.editor_error.is_empty() {
-        text.extend(Text::from(Line::from(vec![Span::styled(format!("Error: {}", app.editor_error), Style::default().fg(Color::Red))])));
+        text.extend(Text::from(Line::from(vec![Span::styled(
+            format!("Error: {}", app.editor_error),
+            Style::default().fg(Color::Red),
+        )])));
     }
     text.extend(Text::from(Line::from("")));
-    text.extend(Text::from(Line::from("Enter/Ctrl+S: Save   Esc: Cancel   Tab/Shift+Tab: Move")));
+    text.extend(Text::from(Line::from(
+        "Enter/Ctrl+S: Save   Esc: Cancel   Tab/Shift+Tab: Move",
+    )));
 
     let block = Block::default()
-        .title(match app.mode { Mode::Editor { creating: true } => "New Task", _ => "Edit Task" })
+        .title(match app.mode {
+            Mode::Editor { creating: true } => "New Task",
+            _ => "Edit Task",
+        })
         .borders(Borders::ALL);
 
     let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
@@ -700,13 +868,27 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
 }
 
 fn validate_editor(task: &ScheduledTask) -> Option<String> {
-    if task.name.trim().is_empty() { return Some("Name is required".into()); }
-    if task.cron_schedule.trim().is_empty() { return Some("Cron is required".into()); }
-    if task.action_name.trim().is_empty() { return Some("Action name is required".into()); }
-    if task.action_function.trim().is_empty() { return Some("Action function is required".into()); }
-    if task.action_configuration.trim().is_empty() { return Some("Action configuration is required".into()); }
-    if task.timeout <= 0 { return Some("Timeout must be > 0".into()); }
+    if task.name.trim().is_empty() {
+        return Some("Name is required".into());
+    }
+    if task.cron_schedule.trim().is_empty() {
+        return Some("Cron is required".into());
+    }
+    if task.action_name.trim().is_empty() {
+        return Some("Action name is required".into());
+    }
+    if task.action_function.trim().is_empty() {
+        return Some("Action function is required".into());
+    }
+    if task.action_configuration.trim().is_empty() {
+        return Some("Action configuration is required".into());
+    }
+    if task.timeout <= 0 {
+        return Some("Timeout must be > 0".into());
+    }
     None
 }
 
-fn editor_field_count() -> usize { 7 }
+fn editor_field_count() -> usize {
+    7
+}

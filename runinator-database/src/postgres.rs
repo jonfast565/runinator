@@ -8,8 +8,8 @@ use runinator_models::{
     errors::SendableError,
 };
 use sqlx::{
-    postgres::{PgConnectOptions, PgPoolOptions},
     ConnectOptions, Executor, PgPool, Row,
+    postgres::{PgConnectOptions, PgPoolOptions},
 };
 
 use crate::{interfaces::DatabaseImpl, mappers};
@@ -38,114 +38,6 @@ CREATE TABLE IF NOT EXISTS task_runs (
 );
 "#;
 
-const POSTGRES_SEED_SQL: &str = r#"
-DELETE FROM task_runs;
-
-INSERT INTO scheduled_tasks (
-    id,
-    name,
-    cron_schedule,
-    action_name,
-    action_function,
-    action_configuration,
-    timeout,
-    next_execution,
-    enabled,
-    immediate
-) VALUES
-    (
-        1,
-        'Test: Hello World',
-        '*/1 * * * *',
-        'Console',
-        'run_console',
-        'echo ''Hello World!''',
-        1000,
-        1737008700,
-        1,
-        0
-    )
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO scheduled_tasks (
-    id,
-    name,
-    cron_schedule,
-    action_name,
-    action_function,
-    action_configuration,
-    timeout,
-    next_execution,
-    enabled,
-    immediate
-) VALUES
-    (
-        2,
-        'AWS Login',
-        '0 0,9,12,15,18,21 * * *',
-        'Console',
-        'run_console',
-        'aws sso login',
-        100000,
-        1737018000,
-        1,
-        0
-    )
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO scheduled_tasks (
-    id,
-    name,
-    cron_schedule,
-    action_name,
-    action_function,
-    action_configuration,
-    timeout,
-    next_execution,
-    enabled,
-    immediate
-) VALUES
-    (
-        3,
-        'Powershell: Sync Repositories',
-        '0 0,9,12,15,18,21 * * *',
-        'Console',
-        'run_powershell',
-        'powershell.exe ./task-scripts/sync-repos.ps1 "C:\\Repos"',
-        100000,
-        1737018000,
-        1,
-        0
-    )
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO scheduled_tasks (
-    id,
-    name,
-    cron_schedule,
-    action_name,
-    action_function,
-    action_configuration,
-    timeout,
-    next_execution,
-    enabled,
-    immediate
-) VALUES
-    (
-        4,
-        'SDM Login',
-        '0 0,9,12,15,18,21 * * *',
-        'Console',
-        'run_powershell',
-        'powershell.exe ./task-scripts/sdm-login.ps1',
-        100000,
-        1737018000,
-        1,
-        0
-    )
-ON CONFLICT (id) DO NOTHING;
-"#;
-
 pub struct PostgresDb {
     pub pool: PgPool,
 }
@@ -172,7 +64,10 @@ impl PostgresDb {
         let mut stream = self.pool.execute_many(sqlx::query(sql));
         while let Some(result) = stream.next().await {
             let query_result = result?;
-            debug!("Init scripts: {} row(s) affected", query_result.rows_affected());
+            debug!(
+                "Init scripts: {} row(s) affected",
+                query_result.rows_affected()
+            );
         }
 
         Ok(())
@@ -335,10 +230,6 @@ impl DatabaseImpl for PostgresDb {
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
         info!("Running embedded Postgres table initialization script");
         self.execute_script(POSTGRES_TABLE_INIT_SQL).await?;
-
-        info!("Running embedded Postgres seed data script");
-        self.execute_script(POSTGRES_SEED_SQL).await?;
-
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {

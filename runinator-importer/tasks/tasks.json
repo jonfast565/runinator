@@ -1,0 +1,48 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "name": "Test: Hello World",
+      "cron_schedule": "*/1 * * * *",
+      "action_name": "Console",
+      "action_function": "run_console",
+      "action_configuration": "echo 'Hello World!'",
+      "timeout": 1000,
+      "enabled": true,
+      "immediate": false
+    },
+    {
+      "id": 2,
+      "name": "AWS Login",
+      "cron_schedule": "0 0,9,12,15,18,21 * * *",
+      "action_name": "Console",
+      "action_function": "run_console",
+      "action_configuration": "aws sso login",
+      "timeout": 100000,
+      "enabled": true,
+      "immediate": false
+    },
+    {
+      "id": 3,
+      "name": "Powershell: Sync Repositories",
+      "cron_schedule": "0 0,9,12,15,18,21 * * *",
+      "action_name": "Console",
+      "action_function": "run_powershell",
+      "action_configuration": "powershell.exe ./task-scripts/sync-repos.ps1 \"C:\\Repos\"",
+      "timeout": 100000,
+      "enabled": true,
+      "immediate": false
+    },
+    {
+      "id": 4,
+      "name": "SDM Login",
+      "cron_schedule": "0 0,9,12,15,18,21 * * *",
+      "action_name": "Console",
+      "action_function": "run_powershell",
+      "action_configuration": "powershell.exe ./task-scripts/sdm-login.ps1",
+      "timeout": 100000,
+      "enabled": true,
+      "immediate": false
+    }
+  ]
+}

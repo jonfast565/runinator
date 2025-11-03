@@ -1,33 +1,28 @@
-use std::sync::Arc;
-
 use chrono::Utc;
 use croner::Cron;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{core::ScheduledTask, errors::SendableError};
 
+use crate::api::SchedulerApi;
+
 pub(crate) async fn set_next_execution_with_cron_statement(
-    pool: &Arc<impl DatabaseImpl>,
-    task: &ScheduledTask,
+    api: &SchedulerApi,
+    task: &mut ScheduledTask,
 ) -> Result<(), SendableError> {
-    let mut task_next_execution = task.clone();
-    let schedule_str = task_next_execution.cron_schedule.as_str();
-    let cron = Cron::new(schedule_str)
+    let cron = Cron::new(task.cron_schedule.as_str())
         .parse()
-        .expect("Couldn't parse cron string");
+        .map_err(|err| -> SendableError { Box::new(err) })?;
     let now = Utc::now();
-    let next_upcoming = cron.find_next_occurrence(&now, false).unwrap();
-    task_next_execution.next_execution = Some(next_upcoming);
-    pool.update_task_next_execution(&task_next_execution)
-        .await?;
-    Ok(())
+    let next = cron
+        .find_next_occurrence(&now, false)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    task.next_execution = Some(next);
+    api.update_task(task).await
 }
 
 pub(crate) async fn set_initial_execution(
-    pool: &Arc<impl DatabaseImpl>,
-    task: &ScheduledTask,
+    api: &SchedulerApi,
+    task: &mut ScheduledTask,
 ) -> Result<(), SendableError> {
-    let mut task_clone = task.clone();
-    task_clone.next_execution = Some(Utc::now());
-    pool.update_task_next_execution(&task_clone).await?;
-    Ok(())
+    task.next_execution = Some(Utc::now());
+    api.update_task(task).await
 }
