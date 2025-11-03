@@ -1,6 +1,5 @@
 mod models;
 mod repository;
-mod discovery;
 mod config;
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};

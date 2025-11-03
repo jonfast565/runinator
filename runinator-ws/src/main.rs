@@ -1,13 +1,12 @@
 mod config;
 mod discovery;
 
-use std::{env, sync::Arc};
+use std::{sync::Arc};
 
 use clap::Parser;
 use log::info;
 use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
-use runinator_utilities::{dirutils, logger};
 use tokio::{sync::Notify};
 use uuid::Uuid;
 

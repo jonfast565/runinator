@@ -6,7 +6,7 @@ use runinator_comm::{
         apply_service_address, bind_gossip_socket, broadcast_gossip_message, gossip_targets,
         spawn_gossip_listener, WebServiceDiscovery,
     },
-    GossipMessage, WebServiceAnnouncement, WorkerAnnouncement, WorkerPeer,
+    GossipMessage, WorkerAnnouncement, WorkerPeer,
 };
 use tokio::{
     net::UdpSocket,
