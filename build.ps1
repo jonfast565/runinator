@@ -71,7 +71,7 @@ function Invoke-ExternalCommand {
     $proc = Start-Process -FilePath $FilePath `
                           -ArgumentList $Arguments `
                           -WorkingDirectory $WorkingDirectory `
-                          <#-NoNewWindow#> -Wait -PassThru `
+                          <#-NoNewWindow#> -Wait -PassThru -WindowStyle Normal`
                           -Environment $Environment
 
     if ($proc.ExitCode -ne 0) {
