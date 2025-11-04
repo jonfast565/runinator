@@ -13,6 +13,7 @@
       <sourceFolder url="file://$MODULE_DIR$/runinator-utilities/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-ws/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/command-center/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

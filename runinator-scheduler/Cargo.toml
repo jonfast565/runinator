@@ -6,18 +6,15 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 croner = "2.0.6"
-either = "1.13"
-futures-util = "0.3.31"
-
-sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1.3", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+async-trait = "0.1"
 
-runinator-plugin = { path = "../runinator-plugin" }
-runinator-config = { path = "../runinator-config" }
 runinator-models = { path = "../runinator-models" }
-runinator-database = { path = "../runinator-database" }
-runinator-provider-aws = { path = "../runinator-provider-aws" }
-runinator-provider-sql = { path = "../runinator-provider-sql" }
+runinator-utilities = { path = "../runinator-utilities" }
+runinator-comm = { path = "../runinator-comm" }
+runinator-api = { path = "../runinator-api" }

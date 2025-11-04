@@ -1,18 +1,23 @@
 mod models;
 mod repository;
+mod config;
+
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::Path, http::StatusCode, routing::{delete, get, patch, post}, Extension, Json, Router
+    Extension, Json, Router,
+    extract::{Path, Query},
+    http::StatusCode,
+    routing::{delete, get, patch, post},
 };
 use log::info;
-use models::{ApiError, ApiResponse};
-use runinator_database::sqlite::SqliteDb;
+use models::{ApiError, ApiResponse, TaskRunRequest};
+use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{core::ScheduledTask, errors::SendableError, web::TaskResponse};
-use std::sync::Arc;
 use tokio::sync::Notify;
 
-async fn add_task(
-    Extension(db): Extension<Arc<SqliteDb>>,
+async fn add_task<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let r = repository::add_task(db.as_ref(), &task_input).await;
@@ -27,10 +32,14 @@ async fn add_task(
     }
 }
 
-async fn update_task(
-    Extension(db): Extension<Arc<SqliteDb>>,
-    Json(task_input): Json<ScheduledTask>,
+async fn update_task<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(task_id): Path<i64>,
+    Json(mut task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if task_input.id != Some(task_id) {
+        task_input.id = Some(task_id);
+    }
     info!("Updating task: {:?}", task_input);
     let r = repository::update_task(db.as_ref(), &task_input).await;
     match r {
@@ -44,9 +53,9 @@ async fn update_task(
     }
 }
 
-async fn delete_task(
-    Extension(db): Extension<Arc<SqliteDb>>,
-    axum::extract::Path(task_id): axum::extract::Path<i64>,
+async fn delete_task<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(task_id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("Deleting task with ID: {}", task_id);
     let r = repository::delete_task(db.as_ref(), task_id).await;
@@ -61,9 +70,8 @@ async fn delete_task(
     }
 }
 
-async fn get_tasks(
-    Extension(db): Extension<Arc<SqliteDb>>,
-    //axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+async fn get_tasks<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("Fetching all tasks");
     let r = repository::fetch_tasks(db.as_ref()).await;
@@ -78,9 +86,9 @@ async fn get_tasks(
     }
 }
 
-async fn get_task_runs(
-    Extension(db): Extension<Arc<SqliteDb>>,
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+async fn get_task_runs<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let start_time = params
         .get("start_time")
@@ -105,8 +113,8 @@ async fn get_task_runs(
     }
 }
 
-async fn request_run(
-    Extension(db): Extension<Arc<SqliteDb>>,
+async fn request_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Path(task_id): Path<i64>,
 ) -> (StatusCode, Json<TaskResponse>) {
     info!("Requesting run of task {}", task_id);
@@ -114,32 +122,64 @@ async fn request_run(
         Ok(resp) => (StatusCode::OK, Json(resp)),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(TaskResponse { success: false, message: err.to_string() }),
+            Json(TaskResponse {
+                success: false,
+                message: err.to_string(),
+            }),
         ),
     }
 }
 
+async fn record_task_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(payload): Json<TaskRunRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let r = repository::log_task_run(db.as_ref(), &payload).await;
+    match r {
+        Ok(r) => (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(r))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::ApiError(ApiError {
+                message: err.to_string(),
+            })),
+        ),
+    }
+}
 
-pub async fn run_webserver(
-    pool: &Arc<SqliteDb>,
-    notify: Arc<Notify>,
-    port: u16,
-) -> Result<(), SendableError> {
-    let app = Router::new()
-        .route("/tasks", get(get_tasks).layer(Extension(pool.clone())))
-        .route("/tasks", post(add_task).layer(Extension(pool.clone())))
-        .route("/tasks", patch(update_task).layer(Extension(pool.clone())))
+pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
+    Router::new()
+        .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
+        .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
         .route(
             "/tasks/:id",
-            delete(delete_task).layer(Extension(pool.clone())),
+            patch(update_task::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/tasks/:id",
+            delete(delete_task::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/task_runs",
-            get(get_task_runs).layer(Extension(pool.clone())),
+            get(get_task_runs::<T>).layer(Extension(pool.clone())),
         )
-        .route("/tasks/:id/request_run", post(request_run).layer(Extension(pool.clone())));
+        .route(
+            "/task_runs",
+            post(record_task_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/tasks/:id/request_run",
+            post(request_run::<T>).layer(Extension(pool)),
+        )
+}
 
-    let addr = format!("0.0.0.0:{}", port).parse().unwrap();
+pub async fn run_webserver<T: DatabaseImpl>(
+    pool: Arc<T>,
+    notify: Arc<Notify>,
+    port: u16,
+) -> Result<(), SendableError> {
+    initialize_database(&pool).await?;
+    let app = build_router(pool);
+    let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
     info!("Webserver started at {}:{}", addr.ip(), addr.port());
 
@@ -149,11 +189,11 @@ pub async fn run_webserver(
                 log::error!("Webserver error: {}", err);
                 return Err(Box::new(err));
             }
-            return Ok(());
+            Ok(())
         }
         _ = notify.notified() => {
             info!("Shutting down web server...");
-            return Ok(());
+            Ok(())
         }
     }
 }

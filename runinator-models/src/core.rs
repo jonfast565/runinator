@@ -13,6 +13,8 @@ pub struct ScheduledTask {
     pub next_execution: Option<DateTime<Utc>>,
     pub enabled: bool,
     pub immediate: bool,
+    pub blackout_start: Option<DateTime<Utc>>,
+    pub blackout_end: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]

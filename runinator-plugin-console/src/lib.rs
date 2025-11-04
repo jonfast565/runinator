@@ -34,23 +34,23 @@ pub extern "C" fn name() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn call_service(action_function: *const c_char, args: *const c_char) -> c_int {
+pub extern "C" fn call_service(
+    action_function: *const c_char,
+    args: *const c_char,
+    timeout_secs: i64,
+) -> c_int {
     let action = ffiutils::cstr_to_rust_string(action_function);
     let args_str = ffiutils::cstr_to_rust_string(args);
 
     info!("Running action '{}' w/ args `{}`", action, args_str);
 
-    match execute_command(&args_str) {
-        Ok(code) => code,
-        Err(e) => {
-            error!("Error executing command: {}", e);
-            -1
-        }
-    }
+    execute_command(&args_str, timeout_secs).unwrap_or_else(|e| {
+        error!("Error executing command: {}", e);
+        -1
+    })
 }
 
-fn execute_command(args_str: &str) -> Result<c_int, Box<dyn std::error::Error>> {
-    const TIMEOUT_SECONDS: u64 = 3600;
+fn execute_command(args_str: &str, timeout_secs: i64) -> Result<c_int, Box<dyn std::error::Error>> {
     let mut command = Command::new("cmd");
     command
         .args(["/C", args_str])
@@ -70,7 +70,11 @@ fn execute_command(args_str: &str) -> Result<c_int, Box<dyn std::error::Error>> 
     let stderr_thread = spawn_output_thread(stderr, Arc::clone(&stop_flag), true);
 
     let start = Instant::now();
-    let exit_status = wait_for_child(&mut child, Duration::from_secs(TIMEOUT_SECONDS), start)?;
+    let exit_status = wait_for_child(
+        &mut child,
+        Duration::from_secs(timeout_secs.max(0) as u64),
+        start,
+    )?;
 
     stop_flag.store(true, Ordering::Relaxed);
     let _ = stdout_thread.join();

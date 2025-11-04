@@ -1,3 +1,4 @@
+use crate::models::TaskRunRequest;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
@@ -61,4 +62,16 @@ pub async fn fetch_task_runs<T: DatabaseImpl>(
 ) -> Result<Vec<TaskRun>, SendableError> {
     let result = db.fetch_task_runs(start, end).await?;
     Ok(result)
+}
+
+pub async fn log_task_run<T: DatabaseImpl>(
+    db: &T,
+    input: &TaskRunRequest,
+) -> Result<TaskResponse, SendableError> {
+    db.log_task_run(input.task_id, input.started_at, input.duration_ms)
+        .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Task run recorded".into(),
+    })
 }

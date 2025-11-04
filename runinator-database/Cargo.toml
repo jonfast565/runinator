@@ -7,6 +7,6 @@ edition = "2024"
 chrono = "0.4"
 log = "0.4"
 futures-util = "0.3.31"
-sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+sqlx = { version = "0.6", features = ["sqlite", "postgres", "runtime-tokio-native-tls", "macros"] }
 
 runinator-models = { path = "../runinator-models" }

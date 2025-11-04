@@ -1,6 +1,6 @@
 use std::fmt;
 
-pub type SendableError = Box<dyn std::error::Error + Send + Sync>;
+pub type SendableError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug)]
 pub struct RuntimeError {
