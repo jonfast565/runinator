@@ -1,11 +1,18 @@
 use std::{sync::Arc, time::Duration};
 
 use log::{error, info};
-use runinator_models::errors::SendableError;
+use reqwest::Url;
+use runinator_broker::{Broker, http::client::HttpBroker, in_memory::InMemoryBroker};
+use runinator_models::errors::{RuntimeError, SendableError};
 use tokio::{sync::Notify, task::JoinHandle};
 
-use runinator_scheduler::{WorkerManager, api::SchedulerApi, config::parse_config, scheduler_loop};
-use runinator_utilities::{startup};
+use runinator_scheduler::{
+    WorkerManager,
+    api::SchedulerApi,
+    config::{Config, parse_config},
+    scheduler_loop,
+};
+use runinator_utilities::startup;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
@@ -13,6 +20,8 @@ async fn main() -> Result<(), SendableError> {
 
     info!("Parse scheduler config");
     let config = parse_config()?;
+
+    let broker = build_broker(&config)?;
 
     let notify = Arc::new(Notify::new());
 
@@ -38,14 +47,9 @@ async fn main() -> Result<(), SendableError> {
     let scheduler_config = config.clone();
     let api_clone = api.clone();
     let worker_manager_clone = worker_manager.clone();
+    let broker_clone = broker.clone();
     let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
-        scheduler_loop(
-            worker_manager_clone,
-            api_clone,
-            notify_scheduler,
-            &scheduler_config,
-        )
-        .await;
+        scheduler_loop(broker_clone, api_clone, notify_scheduler, &scheduler_config).await;
         Ok(())
     });
 
@@ -61,4 +65,41 @@ async fn main() -> Result<(), SendableError> {
 
     info!("Scheduler shutdown complete.");
     Ok(())
+}
+
+fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
+    match config.broker_backend.as_str() {
+        "http" => {
+            let url = Url::parse(&config.broker_endpoint).map_err(|err| -> SendableError {
+                Box::new(RuntimeError::new(
+                    "scheduler.broker.invalid_endpoint".into(),
+                    err.to_string().into(),
+                ))
+            })?;
+            let poll_timeout = Duration::from_secs(config.broker_poll_timeout_seconds);
+            let client = reqwest::Client::builder()
+                .build()
+                .map_err(|err| -> SendableError {
+                    Box::new(RuntimeError::new(
+                        "scheduler.broker.client".into(),
+                        err.to_string().into(),
+                    ))
+                })?;
+
+            Ok(Arc::new(HttpBroker::new(url, client, poll_timeout)))
+        }
+        "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
+        "rabbitmq" | "kafka" => Err(Box::new(RuntimeError::new(
+            "scheduler.broker.backend_not_ready".into(),
+            format!(
+                "Broker backend '{}' is not implemented yet",
+                config.broker_backend
+            )
+            .into(),
+        ))),
+        other => Err(Box::new(RuntimeError::new(
+            "scheduler.broker.unknown_backend".into(),
+            format!("Unknown broker backend '{other}'").into(),
+        ))),
+    }
 }

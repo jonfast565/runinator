@@ -139,6 +139,18 @@ impl DatabaseImpl for SqliteDb {
         Ok(result)
     }
 
+    async fn fetch_task_by_id(&self, task_id: i64) -> Result<Option<ScheduledTask>, SendableError> {
+        let row = sqlx::query(
+            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end
+            FROM scheduled_tasks WHERE id = ?",
+        )
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| mappers::sqlite_row_to_scheduled_task(&row)))
+    }
+
     async fn fetch_task_runs(&self, start: i64, end: i64) -> Result<Vec<TaskRun>, SendableError> {
         let rows = sqlx::query(
             "SELECT id, task_id, start_time, duration_ms FROM task_runs WHERE start_time >= ? AND start_time <= ?",

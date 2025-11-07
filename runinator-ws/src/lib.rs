@@ -1,6 +1,6 @@
+mod config;
 mod models;
 mod repository;
-mod config;
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
@@ -14,42 +14,89 @@ use log::info;
 use models::{ApiError, ApiResponse, TaskRunRequest};
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{core::ScheduledTask, errors::SendableError, web::TaskResponse};
+use serde::Deserialize;
 use tokio::sync::Notify;
+
+#[derive(Debug, Default, Deserialize)]
+struct TaskMutationParams {
+    #[serde(default)]
+    override_next_execution: bool,
+}
+
+impl TaskMutationParams {
+    fn should_override(&self) -> bool {
+        self.override_next_execution
+    }
+}
+
+fn api_error(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiResponse::ApiError(ApiError {
+            message: message.into(),
+        })),
+    )
+}
+
+async fn preserve_next_execution_if_needed<T: DatabaseImpl>(
+    db: &T,
+    task: &mut ScheduledTask,
+    override_next_execution: bool,
+) -> Result<(), SendableError> {
+    if override_next_execution {
+        return Ok(());
+    }
+
+    let Some(task_id) = task.id else {
+        return Ok(());
+    };
+
+    if let Some(existing) = db.fetch_task_by_id(task_id).await? {
+        task.next_execution = existing.next_execution;
+    }
+
+    Ok(())
+}
 
 async fn add_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Json(task_input): Json<ScheduledTask>,
+    Query(params): Query<TaskMutationParams>,
+    Json(mut task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let r = repository::add_task(db.as_ref(), &task_input).await;
-    match r {
+    if let Err(err) =
+        preserve_next_execution_if_needed(db.as_ref(), &mut task_input, params.should_override())
+            .await
+    {
+        return api_error(err.to_string());
+    }
+
+    match repository::add_task(db.as_ref(), &task_input).await {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
 async fn update_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Path(task_id): Path<i64>,
+    Query(params): Query<TaskMutationParams>,
     Json(mut task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if task_input.id != Some(task_id) {
         task_input.id = Some(task_id);
     }
     info!("Updating task: {:?}", task_input);
-    let r = repository::update_task(db.as_ref(), &task_input).await;
-    match r {
+
+    if let Err(err) =
+        preserve_next_execution_if_needed(db.as_ref(), &mut task_input, params.should_override())
+            .await
+    {
+        return api_error(err.to_string());
+    }
+
+    match repository::update_task(db.as_ref(), &task_input).await {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 

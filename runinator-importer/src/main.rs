@@ -1,20 +1,56 @@
 mod config;
-mod discovery;
 
-use std::{path::Path, time::SystemTime};
+use std::{convert::Infallible, path::Path, time::SystemTime};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use config::Config;
-use discovery::ServiceDiscovery;
 use log::{error, info};
 use runinator_api::AsyncApiClient;
+use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::core::ScheduledTask;
 use serde::Deserialize;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
-type ApiClient = AsyncApiClient<ServiceDiscovery>;
+type ApiClient = AsyncApiClient<GossipServiceLocator>;
+
+#[derive(Clone)]
+struct GossipServiceLocator {
+    inner: WebServiceDiscovery,
+}
+
+impl GossipServiceLocator {
+    async fn from_config(config: &Config) -> Result<Self, std::io::Error> {
+        let inner =
+            start_web_service_listener(config.gossip_bind.as_str(), config.gossip_port).await?;
+        Ok(Self { inner })
+    }
+}
+
+impl std::ops::Deref for GossipServiceLocator {
+    type Target = WebServiceDiscovery;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<WebServiceDiscovery> for GossipServiceLocator {
+    fn as_ref(&self) -> &WebServiceDiscovery {
+        &self.inner
+    }
+}
+
+#[async_trait]
+impl runinator_api::ServiceLocator for GossipServiceLocator {
+    type Error = Infallible;
+
+    async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        Ok(self.inner.wait_for_service_url().await)
+    }
+}
 
 #[derive(Deserialize)]
 struct TaskFile {
@@ -71,7 +107,7 @@ async fn main() -> Result<(), DynError> {
     let config = Config::parse();
 
     info!("Starting Runinator Importer");
-    let discovery = ServiceDiscovery::new(&config).await?;
+    let discovery = GossipServiceLocator::from_config(&config).await?;
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -129,4 +165,3 @@ async fn load_tasks(path: &Path) -> Result<Vec<ScheduledTask>, DynError> {
     let parsed: TaskFile = serde_json::from_str(&data)?;
     Ok(parsed.tasks.into_iter().map(Into::into).collect())
 }
-

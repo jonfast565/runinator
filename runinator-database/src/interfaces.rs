@@ -25,6 +25,10 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn fetch_all_tasks(
         &self,
     ) -> impl Future<Output = Result<Vec<ScheduledTask>, SendableError>> + Send;
+    fn fetch_task_by_id(
+        &self,
+        task_id: i64,
+    ) -> impl Future<Output = Result<Option<ScheduledTask>, SendableError>> + Send;
     fn fetch_task_runs(
         &self,
         start: i64,

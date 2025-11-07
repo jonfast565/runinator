@@ -8,18 +8,20 @@ pub use worker_comm::WorkerManager;
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
-use runinator_comm::TaskResult;
+use log::{debug, error, info};
+use runinator_broker::{Broker, BrokerError, BrokerMessage};
+use runinator_comm::TaskCommand;
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
 };
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 use crate::{api::SchedulerApi, config::Config};
 
 pub async fn scheduler_loop(
-    worker_manager: Arc<WorkerManager>,
+    broker: Arc<dyn Broker>,
     api: SchedulerApi,
     notify: Arc<Notify>,
     config: &Config,
@@ -31,7 +33,7 @@ pub async fn scheduler_loop(
                 break;
             }
             _ = tokio::time::sleep(Duration::from_secs(config.scheduler_frequency_seconds)) => {
-                if let Err(err) = run_scheduler_iteration(&api, worker_manager.as_ref(), config).await {
+                if let Err(err) = run_scheduler_iteration(broker.as_ref(), &api, config).await {
                     error!("Error during scheduler iteration: {}", err);
                 }
             }
@@ -40,9 +42,9 @@ pub async fn scheduler_loop(
 }
 
 async fn run_scheduler_iteration(
+    broker: &dyn Broker,
     api: &SchedulerApi,
-    worker_manager: &WorkerManager,
-    config: &Config,
+    _config: &Config,
 ) -> Result<(), SendableError> {
     let tasks = api.fetch_tasks().await?;
     let now = Utc::now();
@@ -81,19 +83,17 @@ async fn run_scheduler_iteration(
             }
         }
 
-        match dispatch_to_worker(api, worker_manager, &task, config).await {
+        match enqueue_task(broker, &task).await {
             Ok(_) => {
-                debug!(
-                    "Task {} dispatched successfully",
-                    task.id.unwrap_or_default()
-                );
+                debug!("Task {} queued successfully", task.id.unwrap_or_default());
             }
             Err(err) => {
                 error!(
-                    "Failed dispatching task {}: {}",
+                    "Failed queueing task {}: {}",
                     task.id.unwrap_or_default(),
                     err
                 );
+                continue;
             }
         }
 
@@ -115,57 +115,43 @@ async fn run_scheduler_iteration(
     Ok(())
 }
 
-async fn dispatch_to_worker(
-    api: &SchedulerApi,
-    worker_manager: &WorkerManager,
-    task: &ScheduledTask,
-    config: &Config,
-) -> Result<(), SendableError> {
-    if task.id.is_none() {
-        return Err(Box::new(RuntimeError::new(
-            "scheduler.task.missing_id".into(),
-            "Cannot dispatch task without an ID".into(),
-        )));
-    }
-
-    let timeout = Duration::from_secs(config.worker_timeout_seconds);
-    let retries = config.worker_command_retry;
-
-    match worker_manager.dispatch_task(task, timeout, retries).await {
-        Ok(result) => handle_worker_result(api, task, result).await,
-        Err(err) => Err(err),
-    }
-}
-
-async fn handle_worker_result(
-    api: &SchedulerApi,
-    task: &ScheduledTask,
-    result: TaskResult,
-) -> Result<(), SendableError> {
-    if !result.success {
-        warn!(
-            "Worker reported failure for task {}: {:?}",
-            task.id.unwrap_or_default(),
-            result.message
-        );
-        return Ok(());
-    }
-
+async fn enqueue_task(broker: &dyn Broker, task: &ScheduledTask) -> Result<(), SendableError> {
     let task_id = task.id.ok_or_else(|| {
         RuntimeError::new(
             "scheduler.task.missing_id".into(),
-            "Task missing identifier when logging result".into(),
+            "Cannot enqueue task without an ID".into(),
         )
     })?;
 
-    api.log_task_run(
-        task_id,
-        result.started_at,
-        result.duration_ms(),
-        result.message.clone(),
-    )
-    .await?;
-    Ok(())
+    let dedupe_key = build_dedupe_key(task_id, task.next_execution);
+    let message = BrokerMessage {
+        command: TaskCommand {
+            command_id: Uuid::new_v4(),
+            task: task.clone(),
+        },
+        dedupe_key: Some(dedupe_key),
+        enqueued_at: Utc::now(),
+    };
+
+    match broker.publish(message).await {
+        Ok(_) => Ok(()),
+        Err(BrokerError::Duplicate(_)) => Ok(()),
+        Err(err) => Err(broker_error("publish", err)),
+    }
+}
+
+fn build_dedupe_key(task_id: i64, next_execution: Option<DateTime<Utc>>) -> String {
+    match next_execution {
+        Some(next) => format!("{}:{}", task_id, next.timestamp()),
+        None => format!("{}:{}", task_id, Utc::now().timestamp()),
+    }
+}
+
+fn broker_error(context: &'static str, err: BrokerError) -> SendableError {
+    Box::new(RuntimeError::new(
+        format!("scheduler.broker.{context}"),
+        err.to_string(),
+    ))
 }
 
 fn is_task_due(task: &ScheduledTask, force: bool, now: DateTime<Utc>) -> bool {

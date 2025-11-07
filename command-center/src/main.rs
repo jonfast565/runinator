@@ -1,5 +1,3 @@
-mod discovery;
-
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -20,11 +18,14 @@ use runinator_models::core::ScheduledTask as ApiScheduledTask;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::io;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use discovery::GossipLocator;
+use runinator_api::BlockingServiceLocator;
+use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
+use tokio::runtime::Runtime;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct ScheduledTask {
@@ -868,18 +869,18 @@ fn draw_task_list(frame: &mut ratatui::Frame, area: Rect, app: &mut AppState) {
             } else {
                 Span::styled(task.name.clone(), Style::default().fg(Color::DarkGray))
             };
-            let action_span = if idx == app.selected && matches!(app.list_focus, ListFocus::EditButton)
-            {
-                Span::styled(
-                    "[Edit]",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled("[Edit]", Style::default().fg(Color::Yellow))
-            };
+            let action_span =
+                if idx == app.selected && matches!(app.list_focus, ListFocus::EditButton) {
+                    Span::styled(
+                        "[Edit]",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("[Edit]", Style::default().fg(Color::Yellow))
+                };
 
             let mut row = Row::new(vec![
                 Cell::from(name_span),
@@ -1055,4 +1056,39 @@ fn validate_editor(task: &ScheduledTask) -> Option<String> {
 
 fn editor_field_count() -> usize {
     7
+}
+#[derive(Clone)]
+struct GossipLocator {
+    discovery: WebServiceDiscovery,
+    runtime: Arc<Runtime>,
+}
+
+impl GossipLocator {
+    pub fn from_env() -> Result<Self> {
+        let bind =
+            std::env::var("RUNINATOR_GOSSIP_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let port = std::env::var("RUNINATOR_GOSSIP_PORT")
+            .unwrap_or_else(|_| "5504".to_string())
+            .parse::<u16>()
+            .unwrap_or(5000);
+
+        Self::new(bind, port)
+    }
+
+    pub fn new(gossip_bind: String, gossip_port: u16) -> Result<Self> {
+        let runtime = Arc::new(Runtime::new()?);
+        let discovery = runtime.block_on(start_web_service_listener(
+            gossip_bind.as_str(),
+            gossip_port,
+        ))?;
+        Ok(Self { discovery, runtime })
+    }
+}
+
+impl BlockingServiceLocator for GossipLocator {
+    type Error = std::convert::Infallible;
+
+    fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        Ok(self.runtime.block_on(self.discovery.wait_for_service_url()))
+    }
 }

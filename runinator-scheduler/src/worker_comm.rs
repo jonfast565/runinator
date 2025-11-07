@@ -1,25 +1,25 @@
 use std::{
-    convert::Infallible,
     collections::HashMap,
+    convert::Infallible,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
+use runinator_api::ServiceLocator;
 use runinator_comm::{
-    discovery::{
-        apply_service_address, bind_gossip_socket, spawn_gossip_listener, WebServiceDiscovery,
-    },
     GossipMessage, TaskCommand, TaskResult, WorkerAnnouncement, WorkerPeer,
+    discovery::{
+        WebServiceDiscovery, apply_service_address, bind_gossip_socket, spawn_gossip_listener,
+    },
 };
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
 };
-use runinator_api::ServiceLocator;
-use async_trait::async_trait;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpStream, UdpSocket},
@@ -53,8 +53,7 @@ pub struct WorkerManager {
 
 impl WorkerManager {
     pub async fn new(config: &Config) -> Result<Self, SendableError> {
-        let socket =
-            bind_gossip_socket(config.gossip_bind.as_str(), config.gossip_port).await?;
+        let socket = bind_gossip_socket(config.gossip_bind.as_str(), config.gossip_port).await?;
         info!(
             "Listening for gossip on {}:{}",
             config.gossip_bind, config.gossip_port
@@ -314,4 +313,3 @@ async fn update_peer(workers: Arc<RwLock<HashMap<Uuid, WorkerInfo>>>, peer: Work
     entry.command_port = peer.command_port;
     entry.last_seen = peer.last_heartbeat;
 }
-

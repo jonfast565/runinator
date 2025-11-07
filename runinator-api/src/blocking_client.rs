@@ -91,11 +91,13 @@ where
             source,
         })?;
         let trimmed_path = path.trim_start_matches('/');
-        base_url.join(trimmed_path).map_err(|source| ApiError::InvalidPath {
-            base: base_url.clone(),
-            path: trimmed_path.to_string(),
-            source,
-        })
+        base_url
+            .join(trimmed_path)
+            .map_err(|source| ApiError::InvalidPath {
+                base: base_url.clone(),
+                path: trimmed_path.to_string(),
+                source,
+            })
     }
 
     fn handle_response(url: Url, response: Response) -> Result<Response> {
@@ -106,7 +108,11 @@ where
             let message = response
                 .text()
                 .unwrap_or_else(|_| "<unable to read body>".into());
-            Err(ApiError::Http { status, url, message })
+            Err(ApiError::Http {
+                status,
+                url,
+                message,
+            })
         }
     }
 }

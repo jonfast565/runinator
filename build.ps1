@@ -24,7 +24,13 @@ param(
     [string]$ImageTag = "local",
     [string]$KubeContext,
     [string]$KubeManifest = "runinator-stack.yaml",
-    [switch]$KubeDelete
+    [switch]$KubeDelete,
+
+    [ValidateNotNullOrEmpty()]
+    [string]$KubeHostVolumePath = "/var/runinator",
+
+    [ValidateSet("RabbitMQ", "Kafka")]
+    [string]$KubeBrokerBackend = "RabbitMQ"
 )
 
 Set-StrictMode -Version Latest
@@ -103,6 +109,50 @@ function Get-PluginLibraryName {
     return 'libruninator_plugin_console.so'
 }
 
+function Convert-ToLinuxPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $normalized = ($Path -replace '\\', '/').Trim()
+
+    if ($normalized -match '^(?<drive>[A-Za-z]):(?<rest>.*)$') {
+        $drive = $Matches['drive'].ToLower()
+        $rest = $Matches['rest'].TrimStart('/')
+        $normalized = "/mnt/$drive/$rest"
+    }
+
+    if (-not $normalized.StartsWith('/')) {
+        $normalized = '/' + $normalized.TrimStart('/')
+    }
+
+    if ($normalized.Length -gt 1) {
+        $normalized = $normalized.TrimEnd('/')
+    }
+
+    return $normalized
+}
+
+function Join-HostSubPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Root,
+
+        [Parameter(Mandatory)]
+        [string]$Child
+    )
+
+    $cleanRoot = Convert-ToLinuxPath -Path $Root
+    $cleanChild = $Child.Trim('/')
+
+    if ([string]::IsNullOrEmpty($cleanChild)) {
+        return $cleanRoot
+    }
+
+    return "$cleanRoot/$cleanChild"
+}
+
 function Publish-Binaries {
     param(
         [Parameter(Mandatory)]
@@ -119,6 +169,7 @@ function Publish-Binaries {
         'runinator-worker.exe',
         'runinator-importer.exe',
         'runinator-ws.exe',
+        'runinator-broker.exe',
         'command-center.exe'
     )
 
@@ -201,6 +252,167 @@ function Get-GossipArguments {
     return $arguments
 }
 
+function Get-BrokerInfraManifest {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('RabbitMQ', 'Kafka')]
+        [string]$Backend,
+
+        [Parameter(Mandatory)]
+        [string]$HostRoot
+    )
+
+    $rabbitPath = Join-HostSubPath -Root $HostRoot -Child 'rabbitmq'
+    $rabbitManifest = @"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-rabbitmq
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-rabbitmq
+  template:
+    metadata:
+      labels:
+        app: runinator-rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.13-management
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5672
+              name: amqp
+              protocol: TCP
+            - containerPort: 15672
+              name: management
+              protocol: TCP
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: runinator
+            - name: RABBITMQ_DEFAULT_PASS
+              value: runinator
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+      volumes:
+        - name: rabbitmq-data
+          hostPath:
+            path: $rabbitPath
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-rabbitmq
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+      protocol: TCP
+    - name: management
+      port: 15672
+      targetPort: 15672
+      protocol: TCP
+"@
+
+    $kafkaPath = Join-HostSubPath -Root $HostRoot -Child 'kafka'
+    $kafkaManifest = @"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-kafka
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-kafka
+  template:
+    metadata:
+      labels:
+        app: runinator-kafka
+    spec:
+      containers:
+        - name: kafka
+          image: bitnami/kafka:3.7
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9092
+              name: kafka
+              protocol: TCP
+            - containerPort: 9093
+              name: kafka-controller
+              protocol: TCP
+          env:
+            - name: KAFKA_ENABLE_KRAFT
+              value: "yes"
+            - name: KAFKA_CFG_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_CFG_NODE_ID
+              value: "1"
+            - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              value: "1@runinator-kafka.runinator.svc.cluster.local:9093"
+            - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CFG_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_CFG_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://runinator-kafka.runinator.svc.cluster.local:9092"
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            - name: KAFKA_CFG_LOG_DIRS
+              value: "/bitnami/kafka"
+            - name: ALLOW_PLAINTEXT_LISTENER
+              value: "yes"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /bitnami/kafka
+      volumes:
+        - name: kafka-data
+          hostPath:
+            path: $kafkaPath
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-kafka
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+      protocol: TCP
+    - name: kafka-controller
+      port: 9093
+      targetPort: 9093
+      protocol: TCP
+"@
+
+    if ($Backend -eq 'Kafka') {
+        return $kafkaManifest
+    }
+
+    return $rabbitManifest
+}
+
 function Start-LocalStack {
     param(
         [Parameter(Mandatory)]
@@ -227,9 +439,8 @@ function Start-LocalStack {
 
     $gossipPorts = @{
         Scheduler = $GossipBasePort + 1
-        Worker    = $GossipBasePort + 2
-        Importer  = $GossipBasePort + 3
-        Web       = $GossipBasePort + 4
+        Importer  = $GossipBasePort + 2
+        Web       = $GossipBasePort + 3
     }
 
     $allGossipTargets = $gossipPorts.Values | ForEach-Object { "127.0.0.1:$_" }
@@ -241,9 +452,18 @@ function Start-LocalStack {
 
     $commands = @(
         [pscustomobject]@{
-            Name  = 'Runinator Web Service'
-            Cmd = './target/artifacts/runinator-ws.exe'
-            Args  = @(
+            Name = 'Runinator Test Broker'
+            Cmd  = './target/artifacts/runinator-broker.exe'
+            Args = @()
+            Environment = @{
+                RUST_LOG              = 'info'
+                RUNINATOR_BROKER_ADDR = '127.0.0.1:7070'
+            }
+        },
+        [pscustomobject]@{
+            Name = 'Runinator Web Service'
+            Cmd  = './target/artifacts/runinator-ws.exe'
+            Args = @(
                 '--database', 'sqlite',
                 '--sqlite-path', $LocalDatabasePath,
                 '--announce-address', '127.0.0.1'
@@ -253,33 +473,37 @@ function Start-LocalStack {
             }
         },
         [pscustomobject]@{
-            Name  = 'Runinator Scheduler'
-            Cmd = './target/artifacts/runinator-scheduler.exe'
-            Args  = @() + (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
-                '--worker-timeout-seconds', '60',
-                '--worker-command-retry', '3',
-                '--api-timeout-seconds', '30'
+            Name = 'Runinator Scheduler'
+            Cmd  = './target/artifacts/runinator-scheduler.exe'
+            Args = (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
+                '--scheduler-frequency-seconds', '1',
+                '--api-timeout-seconds', '30',
+                '--broker-backend', 'http',
+                '--broker-endpoint', 'http://127.0.0.1:7070/',
+                '--broker-poll-timeout-seconds', '5'
             )
             Environment = @{
                 RUST_LOG = 'info'
             }
         },
         [pscustomobject]@{
-            Name       = 'Runinator Worker'
-            Cmd = './target/artifacts/runinator-worker.exe'
-            Args  = @(
+            Name = 'Runinator Worker'
+            Cmd  = './target/artifacts/runinator-worker.exe'
+            Args = @(
                 '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
-                '--announce-address', '127.0.0.1',
-                '--command-bind', '127.0.0.1'
-            ) + (Get-GossipArguments -Port $gossipPorts.Worker -AllTargets $allGossipTargets)
+                '--broker-backend', 'http',
+                '--broker-endpoint', 'http://127.0.0.1:7070/',
+                '--broker-poll-timeout-seconds', '5',
+                '--api-base-url', 'http://127.0.0.1:8080/'
+            )
             Environment = @{
                 RUST_LOG = 'info'
             }
         },
         [pscustomobject]@{
-            Name       = 'Runinator Importer'
-            Cmd = './target/artifacts/runinator-importer.exe'
-            Args  = @(
+            Name = 'Runinator Importer'
+            Cmd  = './target/artifacts/runinator-importer.exe'
+            Args = @(
                 '--tasks-file', $tasksFile,
                 '--poll-interval-seconds', '30'
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
@@ -402,7 +626,8 @@ function Build-ContainerImages {
         @{ Name = 'runinator-scheduler'; Dockerfile = 'runinator-scheduler/Dockerfile' },
         @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
         @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
-        @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' }
+        @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
+        @{ Name = 'runinator-broker';    Dockerfile = 'runinator-broker/Dockerfile' }
     )
 
     $builtImages = @{}
@@ -435,6 +660,11 @@ function Deploy-KubernetesStack {
 
         [hashtable]$ImageMap,
 
+        [string]$HostVolumePath = "/var/runinator",
+
+        [ValidateSet('RabbitMQ', 'Kafka')]
+        [string]$BrokerBackend = 'RabbitMQ',
+
         [switch]$Delete
     )
 
@@ -452,6 +682,16 @@ function Deploy-KubernetesStack {
 
     $tempManifest = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.yaml')
     $content = Get-Content -Path $resolvedManifest -Raw
+    $linuxHostPath = Convert-ToLinuxPath -Path $HostVolumePath
+    $content = $content.Replace('__HOST_VOLUME_ROOT__', $linuxHostPath)
+    $content = $content.Replace('__BROKER_BACKEND__', $BrokerBackend.ToLowerInvariant())
+
+    $brokerManifest = Get-BrokerInfraManifest -Backend $BrokerBackend -HostRoot $linuxHostPath
+    if ($content.Contains('# BROKER_INFRA_PLACEHOLDER')) {
+        $content = $content.Replace('# BROKER_INFRA_PLACEHOLDER', $brokerManifest)
+    } else {
+        $content = ($content.TrimEnd() + [Environment]::NewLine + $brokerManifest)
+    }
 
     if ($ImageMap) {
         foreach ($entry in $ImageMap.GetEnumerator()) {
@@ -482,7 +722,8 @@ function Deploy-KubernetesStack {
                 'runinator-scheduler',
                 'runinator-worker',
                 'runinator-importer',
-                'runinator-ws'
+                'runinator-ws',
+                'runinator-broker'
             )
 
             foreach ($deployment in $deployments) {
@@ -573,6 +814,8 @@ try {
                 ManifestPath  = $manifestPath
                 KubeContext   = $KubeContext
                 ImageMap      = $imageMap
+                HostVolumePath = $KubeHostVolumePath
+                BrokerBackend  = $KubeBrokerBackend
             }
 
             if ($KubeDelete) {
