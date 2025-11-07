@@ -46,7 +46,6 @@ async fn main() -> Result<(), SendableError> {
     let notify_scheduler = notify.clone();
     let scheduler_config = config.clone();
     let api_clone = api.clone();
-    let worker_manager_clone = worker_manager.clone();
     let broker_clone = broker.clone();
     let scheduler_task: JoinHandle<Result<(), SendableError>> = tokio::spawn(async move {
         scheduler_loop(broker_clone, api_clone, notify_scheduler, &scheduler_config).await;

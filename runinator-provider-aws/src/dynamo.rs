@@ -75,7 +75,7 @@ async fn build_client(request: &DynamoDumpRequest) -> Result<Client, SendableErr
         .or_default_provider()
         .or_else("us-east-1");
 
-    let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
+    let shared_config = aws_config::defaults(BehaviorVersion::v2025_08_07())
         .region(region_provider)
         .load()
         .await;

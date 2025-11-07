@@ -3,7 +3,7 @@ param(
     [string]$BuildProfile = "dev",
 
     [ValidateSet("Local", "Kubernetes")]
-    [string]$Mode = "Local",
+    [string]$Mode = "Kubernetes",
 
     [switch]$Run,
     [switch]$SkipBuild,
@@ -77,7 +77,7 @@ function Invoke-ExternalCommand {
     $proc = Start-Process -FilePath $FilePath `
                           -ArgumentList $Arguments `
                           -WorkingDirectory $WorkingDirectory `
-                          <#-NoNewWindow#> -Wait -PassThru -WindowStyle Normal`
+                          -NoNewWindow -Wait -PassThru `
                           -Environment $Environment
 
     if ($proc.ExitCode -ne 0) {
