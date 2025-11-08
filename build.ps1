@@ -30,7 +30,10 @@ param(
     [string]$KubeHostVolumePath = "/var/runinator",
 
     [ValidateSet("RabbitMQ", "Kafka")]
-    [string]$KubeBrokerBackend = "RabbitMQ"
+    [string]$KubeBrokerBackend = "RabbitMQ",
+
+    [ValidateNotNullOrEmpty()]
+    [string]$WindowsTargetTriple = "x86_64-pc-windows-msvc"
 )
 
 Set-StrictMode -Version Latest
@@ -182,6 +185,26 @@ function Publish-Binaries {
         } else {
             Write-Warning "Build artifact missing: $source"
         }
+    }
+}
+
+function Ensure-RustTarget {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkspacePath,
+
+        [Parameter(Mandatory)]
+        [string]$Target
+    )
+
+    Test-ToolAvailable -Name 'rustup'
+
+    $installed = (& rustup target list --installed 2>$null) -split [Environment]::NewLine
+    $isInstalled = $installed | Where-Object { $_.Trim() -eq $Target }
+
+    if (-not $isInstalled) {
+        Write-Step "Adding rustup target '$Target'"
+        Invoke-ExternalCommand -FilePath 'rustup' -Arguments @('target', 'add', $Target) -WorkingDirectory $WorkspacePath
     }
 }
 
@@ -759,26 +782,35 @@ try {
     $targetDir = Join-Path -Path $workspacePath -ChildPath ("target/$targetProfile")
     $artifactsDir = Join-Path -Path $workspacePath -ChildPath 'target/artifacts'
 
-    if (-not $SkipBuild) {
+    $shouldBuildLocal = ($Mode -eq 'Local' -and -not $SkipBuild)
+
+    if ($shouldBuildLocal) {
+        Ensure-RustTarget -WorkspacePath $workspacePath -Target $WindowsTargetTriple
         Write-Step "Building workspace with cargo profile '$BuildProfile'"
         Invoke-ExternalCommand -FilePath 'cargo' -Arguments @('build', '--profile', $BuildProfile, '--workspace') -WorkingDirectory $workspacePath
-    } else {
+    } elseif ($Mode -eq 'Local') {
         Write-Step 'Skipping cargo build as requested.'
-    }
-
-    $pluginFileName = Get-PluginLibraryName
-    $tasksFilePath = if ([System.IO.Path]::IsPathRooted($LocalTasksFile)) {
-        $LocalTasksFile
     } else {
-        Join-Path -Path $workspacePath -ChildPath $LocalTasksFile
+        Write-Step 'Skipping local cargo build; Kubernetes container images build artifacts internally.'
     }
 
-    if (-not (Test-Path -LiteralPath $tasksFilePath)) {
-        Write-Warning "Specified tasks file not found at $tasksFilePath"
-    }
+    if ($Mode -eq 'Local') {
+        $pluginFileName = Get-PluginLibraryName
+        $tasksFilePath = if ([System.IO.Path]::IsPathRooted($LocalTasksFile)) {
+            $LocalTasksFile
+        } else {
+            Join-Path -Path $workspacePath -ChildPath $LocalTasksFile
+        }
 
-    Write-Step 'Publishing build artifacts'
-    Prepare-LocalArtifacts -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -PluginFileName $pluginFileName -TasksFileSource $tasksFilePath
+        if (-not (Test-Path -LiteralPath $tasksFilePath)) {
+            Write-Warning "Specified tasks file not found at $tasksFilePath"
+        }
+
+        Write-Step 'Publishing build artifacts'
+        Prepare-LocalArtifacts -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -PluginFileName $pluginFileName -TasksFileSource $tasksFilePath
+    } else {
+        Write-Step 'Skipping local artifact publication for Kubernetes mode.'
+    }
 
     if (-not $Run) {
         Write-Step 'Run flag not provided. Build phase complete.'
