@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-FROM rust:latest AS builder
+FROM rust:1.91-bookworm AS builder
 WORKDIR /workspace
 COPY . .
 RUN rustup install 1.91.0 && \
@@ -8,11 +8,13 @@ RUN rustup install 1.91.0 && \
     cargo build --release --bin runinator-worker && \
     cargo build --release -p runinator-plugin-console
 
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-RUN addgroup -S runinator && adduser -S -G runinator runinator \
-    && apk add --no-cache ca-certificates \
-    && mkdir -p /opt/runinator/plugins
+RUN groupadd --system runinator && useradd --system --gid runinator --home /home/runinator --create-home runinator \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && mkdir -p /opt/runinator/plugins \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-worker /usr/local/bin/runinator-worker
@@ -23,3 +25,4 @@ ENV RUST_LOG=info
 VOLUME ["/data"]
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-worker"]
+
