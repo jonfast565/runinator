@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
+[[bin]]
+name = "runinator-broker"
+path = "src/bin/main.rs"
+
 [dependencies]
 async-trait = "0.1"
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1"] }
