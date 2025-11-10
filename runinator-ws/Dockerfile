@@ -16,9 +16,11 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-ws /usr/local/bin/runinator-ws
-RUN chmod +x /usr/local/bin/runinator-ws
+RUN chown -R runinator:runinator /usr/local/bin/runinator-ws
+RUN chmod -R 775 /usr/local/bin/runinator-ws
 
-ENV RUST_LOG=info
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1
 EXPOSE 8080
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-ws"]

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.19.0
 
 FROM rust:1.91-bookworm AS builder
 WORKDIR /workspace
@@ -18,9 +18,10 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-importer /usr/local/bin/runinator-importer
 COPY runinator-importer/tasks /opt/runinator/tasks
-RUN chmod +x /usr/local/bin/runinator-importer
+RUN chown -R runinator:runinator /usr/local/bin/runinator-importer
+RUN chmod -R 775 /usr/local/bin/runinator-importer
 
-ENV RUST_LOG=info
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-importer"]
-

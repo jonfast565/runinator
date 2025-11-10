@@ -60,8 +60,6 @@ spec:
       labels:
         app: runinator-scheduler
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: scheduler
           image: your-registry/runinator-scheduler:latest
@@ -119,8 +117,6 @@ spec:
       labels:
         app: runinator-worker
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: worker
           image: your-registry/runinator-worker:latest
@@ -172,8 +168,6 @@ spec:
       labels:
         app: runinator-importer
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: importer
           image: your-registry/runinator-importer:latest
@@ -225,8 +219,6 @@ spec:
       labels:
         app: runinator-ws
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: web
           image: your-registry/runinator-ws:latest
@@ -291,8 +283,6 @@ spec:
       labels:
         app: runinator-broker
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: broker
           image: your-registry/runinator-broker:latest

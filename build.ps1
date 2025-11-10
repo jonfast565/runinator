@@ -25,6 +25,7 @@ param(
     [string]$KubeContext,
     [string]$KubeManifest = "runinator-stack.yaml",
     [switch]$KubeDelete,
+    [string]$LocalRegistry = "",
 
     [ValidateNotNullOrEmpty()]
     [string]$KubeHostVolumePath = "/var/runinator",
@@ -632,6 +633,19 @@ function Get-ImageTag {
     return "${Repository}/${Name}:${Tag}"
 }
 
+function Get-VersionedImageTag {
+    param(
+        [string]$RequestedTag
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedTag) -and $RequestedTag -ne 'local') {
+        return $RequestedTag
+    }
+
+    $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+    return "kube-$timestamp"
+}
+
 function Build-ContainerImages {
     param(
         [Parameter(Mandatory)]
@@ -640,7 +654,11 @@ function Build-ContainerImages {
         [string]$Repository,
 
         [Parameter(Mandatory)]
-        [string]$Tag
+        [string]$Tag,
+
+        [switch]$PushImages,
+
+        [switch]$LoadIntoDocker
     )
 
     Test-ToolAvailable -Name 'docker'
@@ -666,6 +684,26 @@ function Build-ContainerImages {
         ) -WorkingDirectory $WorkspacePath
 
         $builtImages[$image.Name] = $taggedName
+
+        if ($PushImages) {
+            Write-Step "Pushing image $taggedName"
+            Invoke-ExternalCommand -FilePath 'docker' -Arguments @('push', $taggedName) -WorkingDirectory $WorkspacePath
+        }
+
+        if ($LoadIntoDocker) {
+            $tempTar = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName() + '.tar')
+            try {
+                Write-Step "Saving image $taggedName to $tempTar"
+                Invoke-ExternalCommand -FilePath 'docker' -Arguments @('save', '-o', $tempTar, $taggedName) -WorkingDirectory $WorkspacePath
+
+                Write-Step "Loading image $taggedName into local Docker engine"
+                Invoke-ExternalCommand -FilePath 'docker' -Arguments @('load', '-i', $tempTar) -WorkingDirectory $WorkspacePath
+            } finally {
+                if (Test-Path -LiteralPath $tempTar) {
+                    Remove-Item -Path $tempTar -ErrorAction SilentlyContinue
+                }
+            }
+        }
     }
 
     return $builtImages
@@ -759,7 +797,7 @@ function Deploy-KubernetesStack {
                     'rollout', 'status',
                     "deployment/$deployment",
                     '--namespace', 'runinator',
-                    '--timeout', '120s'
+                    '--timeout', '10s'
                 )
 
                 try {
@@ -781,6 +819,14 @@ try {
     $targetProfile = if ($BuildProfile -eq 'dev') { 'debug' } else { $BuildProfile }
     $targetDir = Join-Path -Path $workspacePath -ChildPath ("target/$targetProfile")
     $artifactsDir = Join-Path -Path $workspacePath -ChildPath 'target/artifacts'
+
+    if ($Mode -eq 'Kubernetes') {
+        $ImageTag = Get-VersionedImageTag -RequestedTag $ImageTag
+
+        if ([string]::IsNullOrWhiteSpace($ImageRepository) -and -not [string]::IsNullOrWhiteSpace($LocalRegistry)) {
+            $ImageRepository = $LocalRegistry.TrimEnd('/')
+        }
+    }
 
     $shouldBuildLocal = ($Mode -eq 'Local' -and -not $SkipBuild)
 
@@ -834,7 +880,14 @@ try {
             Start-LocalStack -WorkspacePath $workspacePath -BuildProfile $BuildProfile -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -GossipBasePort $GossipBasePort
         }
         'Kubernetes' {
-            $imageMap = Build-ContainerImages -WorkspacePath $workspacePath -Repository $ImageRepository -Tag $ImageTag
+            $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)
+            $shouldImportImages = -not $shouldPushImages
+            $imageMap = Build-ContainerImages `
+                -WorkspacePath $workspacePath `
+                -Repository $ImageRepository `
+                -Tag $ImageTag `
+                -PushImages:$shouldPushImages `
+                -LoadIntoDocker:$shouldImportImages
             $manifestPath = if ([System.IO.Path]::IsPathRooted($KubeManifest)) {
                 $KubeManifest
             } else {

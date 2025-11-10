@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.19.0
 
 FROM rust:1.91-bookworm AS builder
 WORKDIR /workspace
@@ -16,9 +16,10 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-scheduler /usr/local/bin/runinator-scheduler
-RUN chmod +x /usr/local/bin/runinator-scheduler
+RUN chown -R runinator:runinator /usr/local/bin/runinator-scheduler
+RUN chmod -R 775 /usr/local/bin/runinator-scheduler
 
-ENV RUST_LOG=info
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-scheduler"]
-
