@@ -7,6 +7,7 @@ use log::{error, info, warn};
 use runinator_utilities::{ffiutils, logger};
 use std::ffi::{c_char, c_int};
 use std::io::{BufRead, BufReader};
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{
@@ -51,12 +52,21 @@ pub extern "C" fn call_service(
 }
 
 fn execute_command(args_str: &str, timeout_secs: i64) -> Result<c_int, Box<dyn std::error::Error>> {
-    let mut command = Command::new("cmd");
-    command
-        .args(["/C", args_str])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x00000008);
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", args_str]).creation_flags(0x00000008);
+        cmd
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut command = {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", args_str]);
+        cmd
+    };
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command
         .spawn()

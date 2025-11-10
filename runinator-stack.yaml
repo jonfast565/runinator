@@ -4,18 +4,6 @@ metadata:
   name: runinator
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: runinator-shared-data
-  namespace: runinator
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
 kind: Service
 metadata:
   name: runinator-gossip
@@ -25,9 +13,37 @@ spec:
     app: runinator-scheduler
   ports:
     - name: gossip
-      port: 5000
+      port: 5511
       protocol: UDP
-      targetPort: 5000
+      targetPort: 5511
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-ws
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-broker
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-broker
+  ports:
+    - name: http
+      port: 7070
+      targetPort: 7070
+      protocol: TCP
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -49,23 +65,42 @@ spec:
           image: your-registry/runinator-scheduler:latest
           imagePullPolicy: IfNotPresent
           command:
-            - /bin/sh
-            - -c
-            - >
-              runinator-scheduler
-              --gossip-bind 0.0.0.0
-              --gossip-port 5000
-              --gossip-targets runinator-gossip.runinator.svc.cluster.local
-              --worker-timeout-seconds 60
-              --worker-command-retry 3
-              --api-timeout-seconds 30
+            - runinator-scheduler
+          args:
+            - '--scheduler-frequency-seconds'
+            - '1'
+            - '--gossip-bind'
+            - '0.0.0.0'
+            - '--gossip-port'
+            - '5511'
+            - '--gossip-targets'
+            - 'runinator-gossip.runinator.svc.cluster.local:5511'
+            - '--api-timeout-seconds'
+            - '30'
+            - '--broker-backend'
+            - 'http'
+            - '--broker-endpoint'
+            - 'http://runinator-broker.runinator.svc.cluster.local:7070/'
+            - '--broker-poll-timeout-seconds'
+            - '5'
           env:
             - name: RUST_LOG
               value: info
-          ports:
-            - containerPort: 5000
-              name: gossip
-              protocol: UDP
+          volumeMounts:
+            - name: scheduler-data
+              mountPath: /var/runinator
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: scheduler-data
+          hostPath:
+            path: __HOST_VOLUME_ROOT__/scheduler
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -73,7 +108,7 @@ metadata:
   name: runinator-worker
   namespace: runinator
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: runinator-worker
@@ -87,35 +122,35 @@ spec:
           image: your-registry/runinator-worker:latest
           imagePullPolicy: IfNotPresent
           command:
-            - /bin/sh
-            - -c
-            - >
-              runinator-worker
-              --dll-path /opt/runinator/plugins
-              --gossip-bind 0.0.0.0
-              --gossip-port 5000
-              --gossip-targets runinator-gossip.runinator.svc.cluster.local
-              --announce-address "$POD_IP"
-              --command-bind 0.0.0.0
-              --command-port 7100
+            - runinator-worker
+          args:
+            - '--dll-path'
+            - '/opt/runinator/plugins'
+            - '--broker-backend'
+            - 'http'
+            - '--broker-endpoint'
+            - 'http://runinator-broker.runinator.svc.cluster.local:7070/'
+            - '--broker-poll-timeout-seconds'
+            - '5'
+            - '--api-base-url'
+            - 'http://runinator-ws.runinator.svc.cluster.local:8080/'
           env:
             - name: RUST_LOG
               value: info
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-          ports:
-            - containerPort: 7100
-              name: worker-cmd
-              protocol: TCP
           volumeMounts:
-            - name: worker-host-volume
-              mountPath: /data
+            - name: worker-data
+              mountPath: /var/runinator
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
       volumes:
-        - name: worker-host-volume
+        - name: worker-data
           hostPath:
-            path: /var/runinator
+            path: __HOST_VOLUME_ROOT__/worker
             type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
@@ -138,18 +173,36 @@ spec:
           image: your-registry/runinator-importer:latest
           imagePullPolicy: IfNotPresent
           command:
-            - /bin/sh
-            - -c
-            - >
-              runinator-importer
-              --gossip-bind 0.0.0.0
-              --gossip-port 5000
-              --gossip-targets runinator-gossip.runinator.svc.cluster.local
-              --tasks-file /opt/runinator/tasks/tasks.json
-              --poll-interval-seconds 30
+            - runinator-importer
+          args:
+            - '--tasks-file'
+            - '/opt/runinator/tasks/tasks.json'
+            - '--poll-interval-seconds'
+            - '30'
+            - '--gossip-bind'
+            - '0.0.0.0'
+            - '--gossip-port'
+            - '5512'
+            - '--gossip-targets'
+            - 'runinator-gossip.runinator.svc.cluster.local:5511'
           env:
             - name: RUST_LOG
               value: info
+          volumeMounts:
+            - name: importer-data
+              mountPath: /var/runinator
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: importer-data
+          hostPath:
+            path: __HOST_VOLUME_ROOT__/importer
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -171,17 +224,23 @@ spec:
           image: your-registry/runinator-ws:latest
           imagePullPolicy: IfNotPresent
           command:
-            - /bin/sh
-            - -c
-            - >
-              runinator-ws
-              --database sqlite
-              --sqlite-path /data/tasks.db
-              --port 8080
-              --gossip-bind 0.0.0.0
-              --gossip-port 5000
-              --gossip-targets runinator-gossip.runinator.svc.cluster.local
-              --announce-address "$POD_IP"
+            - runinator-ws
+          args:
+            - '--database'
+            - 'postgres'
+            - '--database-url'
+            - 'postgresql://runinator:runinator@runinator-postgres.runinator.svc.cluster.local:5432/runinator'
+            - '--port'
+            - '8080'
+            - '--gossip-bind'
+            - '0.0.0.0'
+            - '--gossip-port'
+            - '5510'
+            - '--gossip-targets'
+            - 'runinator-gossip.runinator.svc.cluster.local:5511'
+            - '--announce-address=$(POD_IP)'
+            - '--announce-base-path'
+            - '/'
           env:
             - name: RUST_LOG
               value: info
@@ -194,24 +253,127 @@ spec:
               name: http
               protocol: TCP
           volumeMounts:
-            - name: scheduler-data
-              mountPath: /data
+            - name: web-data
+              mountPath: /var/runinator
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
       volumes:
-        - name: scheduler-data
-          persistentVolumeClaim:
-            claimName: runinator-shared-data
+        - name: web-data
+          hostPath:
+            path: __HOST_VOLUME_ROOT__/web
+            type: DirectoryOrCreate
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-broker
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-broker
+  template:
+    metadata:
+      labels:
+        app: runinator-broker
+    spec:
+      containers:
+        - name: broker
+          image: your-registry/runinator-broker:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - runinator-broker
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: RUNINATOR_BROKER_ADDR
+              value: 0.0.0.0:7070
+            - name: RUNINATOR_BROKER_BACKEND
+              value: __BROKER_BACKEND__
+          ports:
+            - containerPort: 7070
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: broker-data
+              mountPath: /var/runinator
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: broker-data
+          hostPath:
+            path: __HOST_VOLUME_ROOT__/broker
+            type: DirectoryOrCreate
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-postgres
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-postgres
+  template:
+    metadata:
+      labels:
+        app: runinator-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              value: runinator
+            - name: POSTGRES_USER
+              value: runinator
+            - name: POSTGRES_PASSWORD
+              value: runinator
+          ports:
+            - containerPort: 5432
+              name: postgres
+              protocol: TCP
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: postgres-data
+          hostPath:
+            path: __HOST_VOLUME_ROOT__/postgres
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: runinator-ws
+  name: runinator-postgres
   namespace: runinator
 spec:
-  type: NodePort
   selector:
-    app: runinator-ws
+    app: runinator-postgres
   ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
-      nodePort: 30080
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+# BROKER_INFRA_PLACEHOLDER

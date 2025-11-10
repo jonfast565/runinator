@@ -5,13 +5,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub dll_path: String,
-    pub gossip_bind: String,
-    pub gossip_port: u16,
-    pub gossip_interval_seconds: u64,
-    pub gossip_targets: Vec<String>,
-    pub announce_address: String,
-    pub command_bind: String,
-    pub command_port: u16,
+    pub broker_backend: String,
+    pub broker_endpoint: String,
+    pub broker_consumer_id: String,
+    pub broker_poll_timeout_seconds: u64,
+    pub api_base_url: String,
     pub worker_id: Uuid,
 }
 
@@ -21,26 +19,20 @@ struct CliArgs {
     #[arg(long, default_value = "/opt/runinator/plugins")]
     dll_path: String,
 
-    #[arg(long, default_value = "0.0.0.0")]
-    gossip_bind: String,
+    #[arg(long, default_value = "http")]
+    broker_backend: String,
 
-    #[arg(long, default_value_t = 5000)]
-    gossip_port: u16,
+    #[arg(long, default_value = "http://127.0.0.1:7070/")]
+    broker_endpoint: String,
+
+    #[arg(long)]
+    broker_consumer_id: Option<String>,
 
     #[arg(long, default_value_t = 5)]
-    gossip_interval_seconds: u64,
+    broker_poll_timeout_seconds: u64,
 
-    #[arg(long, value_delimiter = ',', default_value = "")]
-    gossip_targets: Vec<String>,
-
-    #[arg(long, default_value = "127.0.0.1")]
-    announce_address: String,
-
-    #[arg(long, default_value = "0.0.0.0")]
-    command_bind: String,
-
-    #[arg(long, default_value_t = 7100)]
-    command_port: u16,
+    #[arg(long, default_value = "http://127.0.0.1:8080/")]
+    api_base_url: String,
 
     #[arg(long)]
     worker_id: Option<String>,
@@ -55,21 +47,17 @@ pub fn parse_config() -> Result<Config, SendableError> {
         _ => Uuid::new_v4(),
     };
 
-    let gossip_targets = args
-        .gossip_targets
-        .into_iter()
-        .filter(|value| !value.trim().is_empty())
-        .collect();
+    let consumer_id = args
+        .broker_consumer_id
+        .unwrap_or_else(|| worker_id.to_string());
 
     Ok(Config {
         dll_path: args.dll_path,
-        gossip_bind: args.gossip_bind,
-        gossip_port: args.gossip_port,
-        gossip_interval_seconds: args.gossip_interval_seconds,
-        gossip_targets,
-        announce_address: args.announce_address,
-        command_bind: args.command_bind,
-        command_port: args.command_port,
+        broker_backend: args.broker_backend,
+        broker_endpoint: args.broker_endpoint,
+        broker_consumer_id: consumer_id,
+        broker_poll_timeout_seconds: args.broker_poll_timeout_seconds,
+        api_base_url: args.api_base_url,
         worker_id,
     })
 }

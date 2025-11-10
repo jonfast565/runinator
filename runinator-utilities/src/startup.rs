@@ -1,7 +1,9 @@
-use std::env;
+use crate::{
+    dirutils,
+    logger::{self, print_env},
+};
 use log::info;
-use crate::{dirutils, logger::{self, print_env}};
-
+use std::env;
 
 pub fn startup(name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     unsafe {

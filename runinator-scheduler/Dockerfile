@@ -1,14 +1,25 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.19.0
 
-FROM rust:1.90.1 AS builder
+FROM rust:1.91-bookworm AS builder
 WORKDIR /workspace
 COPY . .
-RUN cargo build --release --bin runinator-scheduler
+RUN rustup install 1.91.0 && \
+    rustup default 1.91.0 && \
+    cargo build --release --bin runinator-scheduler
 
-FROM debian:bookworm-slim AS runtime
-RUN useradd --system --uid 10001 --gid 100 --create-home runinator
+FROM debian:bookworm-slim
+
+RUN groupadd --system runinator && useradd --system --gid runinator --home /home/runinator --create-home runinator \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-scheduler /usr/local/bin/runinator-scheduler
-ENV RUST_LOG=info
+RUN chown -R runinator:runinator /usr/local/bin/runinator-scheduler
+RUN chmod -R 775 /usr/local/bin/runinator-scheduler
+
+ENV RUST_LOG=info \
+    RUST_BACKTRACE=1
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-scheduler"]

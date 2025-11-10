@@ -1,24 +1,23 @@
 mod config;
-mod discovery;
-
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use clap::Parser;
 use log::info;
 use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
-use tokio::{sync::Notify};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use runinator_ws::run_webserver;
 
 use crate::config::{CliArgs, DatabaseKind};
-use runinator_utilities::{startup};
+use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
+use runinator_utilities::startup;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
     startup::startup("Runinator Web Service")?;
-    
+
     let args = CliArgs::parse();
 
     let notify = Arc::new(Notify::new());
@@ -46,17 +45,17 @@ async fn main() -> Result<(), SendableError> {
     } = args;
 
     let service_id = Uuid::new_v4();
-    discovery::spawn_gossip_advertiser_ws(
+    spawn_web_service_advertiser(WebServiceAdvertiserConfig {
         service_id,
-        gossip_bind,
+        bind_addr: gossip_bind,
         gossip_port,
-        gossip_targets,
-        announce_address.clone(),
-        announce_base_path.clone(),
-        gossip_interval_seconds,
-        notify.clone(),
-        port,
-    );
+        extra_targets: gossip_targets,
+        announce_address: announce_address.clone(),
+        announce_base_path: announce_base_path.clone(),
+        interval_seconds: gossip_interval_seconds,
+        shutdown: notify.clone(),
+        service_port: port,
+    });
 
     match database {
         DatabaseKind::Sqlite => {
@@ -85,4 +84,3 @@ async fn main() -> Result<(), SendableError> {
 
     Ok(())
 }
-
