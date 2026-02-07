@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TaskEditorDialog</class>
+ <widget class="QDialog" name="TaskEditorDialog">
+  <property name="windowTitle">
+   <string>Task Editor</string>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>520</width>
+    <height>420</height>
+   </size>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QFormLayout" name="formLayout">
+     <item row="0" column="0">
+      <widget class="QLabel" name="nameLabel">
+       <property name="text">
+        <string>Name:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="nameEdit"/>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="cronLabel">
+       <property name="text">
+        <string>Cron:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="cronEdit"/>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="actionNameLabel">
+       <property name="text">
+        <string>Action Name:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="actionNameEdit"/>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="actionFunctionLabel">
+       <property name="text">
+        <string>Action Function:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLineEdit" name="actionFunctionEdit"/>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="actionConfigLabel">
+       <property name="text">
+        <string>Action Config:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QPlainTextEdit" name="actionConfigEdit"/>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="timeoutLabel">
+       <property name="text">
+        <string>Timeout (ms):</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QSpinBox" name="timeoutSpin">
+       <property name="minimum">
+        <number>1</number>
+       </property>
+       <property name="maximum">
+        <number>2147483647</number>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QCheckBox" name="enabledCheck">
+       <property name="text">
+        <string>Enabled</string>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <widget class="QLabel" name="errorLabel">
+       <property name="text">
+        <string/>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
