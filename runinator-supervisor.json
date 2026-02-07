@@ -1,0 +1,90 @@
+{
+  "state_dir": ".runinator-supervisor",
+  "shutdown_timeout_secs": 12,
+  "restart_delay_ms": 2000,
+  "processes": [
+    {
+      "name": "broker",
+      "command": "./target/debug/runinator-broker",
+      "env": {
+        "RUNINATOR_BROKER_ADDR": "127.0.0.1:7070"
+      }
+    },
+    {
+      "name": "web-service",
+      "command": "./target/debug/runinator-ws",
+      "args": [
+        "--database",
+        "sqlite",
+        "--sqlite-path",
+        "./target/runinator.db",
+        "--port",
+        "8080",
+        "--gossip-bind",
+        "127.0.0.1",
+        "--gossip-port",
+        "5510",
+        "--gossip-targets",
+        "127.0.0.1:5511,127.0.0.1:5512",
+        "--announce-address",
+        "127.0.0.1",
+        "--announce-base-path",
+        "/"
+      ]
+    },
+    {
+      "name": "scheduler",
+      "command": "./target/debug/runinator-scheduler",
+      "args": [
+        "--scheduler-frequency-seconds",
+        "1",
+        "--gossip-bind",
+        "127.0.0.1",
+        "--gossip-port",
+        "5511",
+        "--gossip-targets",
+        "127.0.0.1:5510,127.0.0.1:5512",
+        "--api-timeout-seconds",
+        "30",
+        "--broker-backend",
+        "http",
+        "--broker-endpoint",
+        "http://127.0.0.1:7070/",
+        "--broker-poll-timeout-seconds",
+        "5"
+      ]
+    },
+    {
+      "name": "worker",
+      "command": "./target/debug/runinator-worker",
+      "args": [
+        "--dll-path",
+        "./target/debug",
+        "--broker-backend",
+        "http",
+        "--broker-endpoint",
+        "http://127.0.0.1:7070/",
+        "--broker-poll-timeout-seconds",
+        "5",
+        "--api-base-url",
+        "http://127.0.0.1:8080/"
+      ]
+    },
+    {
+      "name": "importer",
+      "command": "./target/debug/runinator-importer",
+      "args": [
+        "--tasks-file",
+        "./runinator-importer/tasks/tasks.json",
+        "--poll-interval-seconds",
+        "30",
+        "--gossip-bind",
+        "127.0.0.1",
+        "--gossip-port",
+        "5512",
+        "--gossip-targets",
+        "127.0.0.1:5510,127.0.0.1:5511"
+      ]
+    }
+  ]
+}

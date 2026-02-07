@@ -1,0 +1,187 @@
+name: Release Builds
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_suffix: linux-x64
+            qt_arch: gcc_64
+          - os: macos-latest
+            asset_suffix: macos-x64
+            qt_arch: clang_64
+          - os: windows-latest
+            asset_suffix: windows-x64
+            qt_arch: win64_msvc2022_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux Qt prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.6.3"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      - name: Build Rust workspace
+        run: cargo build --workspace --release
+
+      - name: Configure Command Center
+        run: cmake -S command-center -B build/command-center -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Command Center
+        run: cmake --build build/command-center --parallel
+
+      - name: Bundle Qt runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $appExe = Join-Path $PWD "build/command-center/CommandCenter.exe"
+          if (-not (Test-Path $appExe)) {
+            throw "CommandCenter executable was not found at $appExe"
+          }
+
+          $windeployqt = Join-Path $env:Qt6_DIR "bin/windeployqt.exe"
+          if (Test-Path $windeployqt) {
+            & $windeployqt $appExe
+          } else {
+            Write-Warning "windeployqt not found at $windeployqt; packaging raw binary."
+          }
+
+      - name: Bundle Qt runtime (macOS)
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: |
+          $appBundle = Join-Path $PWD "build/command-center/CommandCenter.app"
+          if (-not (Test-Path $appBundle)) {
+            throw "CommandCenter app bundle was not found at $appBundle"
+          }
+
+          $macdeployqt = Join-Path $env:Qt6_DIR "bin/macdeployqt"
+          if (Test-Path $macdeployqt) {
+            & $macdeployqt $appBundle
+          } else {
+            Write-Warning "macdeployqt not found at $macdeployqt; packaging raw app bundle."
+          }
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          $distRoot = Join-Path $PWD "dist"
+          $bundleName = "Runinator-${{ matrix.asset_suffix }}"
+          $bundleDir = Join-Path $distRoot $bundleName
+          $releaseDir = Join-Path $PWD "target/release"
+
+          New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+
+          $rustBins = @(
+            "runinator-scheduler",
+            "runinator-worker",
+            "runinator-importer",
+            "runinator-ws",
+            "runinator-broker",
+            "runinator-supervisor"
+          )
+
+          foreach ($bin in $rustBins) {
+            $fileName = if ($env:RUNNER_OS -eq "Windows") { "$bin.exe" } else { $bin }
+            $source = Join-Path $releaseDir $fileName
+            if (Test-Path $source) {
+              Copy-Item -Path $source -Destination (Join-Path $bundleDir $fileName) -Force
+            } else {
+              throw "Missing release binary: $source"
+            }
+          }
+
+          $pluginName = switch ($env:RUNNER_OS) {
+            "Windows" { "runinator_plugin_console.dll" }
+            "macOS" { "libruninator_plugin_console.dylib" }
+            default { "libruninator_plugin_console.so" }
+          }
+          $pluginPath = Join-Path $releaseDir $pluginName
+          if (Test-Path $pluginPath) {
+            Copy-Item -Path $pluginPath -Destination (Join-Path $bundleDir $pluginName) -Force
+          } else {
+            Write-Warning "Plugin not found at $pluginPath"
+          }
+
+          $configSource = Join-Path $PWD "runinator-supervisor.json"
+          if (Test-Path $configSource) {
+            Copy-Item -Path $configSource -Destination (Join-Path $bundleDir "runinator-supervisor.json") -Force
+          }
+
+          $readmeSource = Join-Path $PWD "README.md"
+          if (Test-Path $readmeSource) {
+            Copy-Item -Path $readmeSource -Destination (Join-Path $bundleDir "README.md") -Force
+          }
+
+          if ($env:RUNNER_OS -eq "Windows") {
+            $qtBuildDir = Join-Path $PWD "build/command-center"
+            $qtBundleDir = Join-Path $bundleDir "command-center"
+            New-Item -ItemType Directory -Path $qtBundleDir -Force | Out-Null
+
+            $exclude = @("CMakeFiles", "CMakeCache.txt", "cmake_install.cmake", "build.ninja", ".ninja_deps", ".ninja_log")
+            Get-ChildItem -Path $qtBuildDir | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination (Join-Path $qtBundleDir $_.Name) -Recurse -Force
+            }
+          } elseif ($env:RUNNER_OS -eq "macOS") {
+            $qtArtifact = Join-Path $PWD "build/command-center/CommandCenter.app"
+            Copy-Item -Path $qtArtifact -Destination (Join-Path $bundleDir "CommandCenter.app") -Recurse -Force
+          } else {
+            $qtArtifact = Join-Path $PWD "build/command-center/CommandCenter"
+            Copy-Item -Path $qtArtifact -Destination (Join-Path $bundleDir "CommandCenter") -Force
+          }
+
+          $archivePath = Join-Path $distRoot "$bundleName.zip"
+          if (Test-Path $archivePath) {
+            Remove-Item -Path $archivePath -Force
+          }
+          Compress-Archive -Path (Join-Path $bundleDir "*") -DestinationPath $archivePath -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Runinator-${{ matrix.asset_suffix }}
+          path: dist/Runinator-${{ matrix.asset_suffix }}.zip
+
+  release:
+    name: Publish Release Assets
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Runinator-*
+          merge-multiple: true
+          path: dist
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

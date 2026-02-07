@@ -174,6 +174,7 @@ function Publish-Binaries {
         'runinator-importer.exe',
         'runinator-ws.exe',
         'runinator-broker.exe',
+        'runinator-supervisor.exe',
         'command-center.exe'
     )
 
@@ -437,13 +438,131 @@ spec:
     return $rabbitManifest
 }
 
+function Write-LocalSupervisorConfig {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkspacePath,
+
+        [Parameter(Mandatory)]
+        [string]$ArtifactsDir,
+
+        [Parameter(Mandatory)]
+        [string]$ConfigPath,
+
+        [Parameter(Mandatory)]
+        [string]$LocalDatabasePath,
+
+        [Parameter(Mandatory)]
+        [int]$GossipBasePort
+    )
+
+    $gossipPorts = @{
+        Scheduler = $GossipBasePort + 1
+        Importer  = $GossipBasePort + 2
+        Web       = $GossipBasePort + 3
+    }
+
+    $allGossipTargets = @(
+        "127.0.0.1:$($gossipPorts.Scheduler)"
+        "127.0.0.1:$($gossipPorts.Importer)"
+        "127.0.0.1:$($gossipPorts.Web)"
+    )
+
+    $pluginFileName = Get-PluginLibraryName
+    $pluginPath = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'plugins') -ChildPath $pluginFileName
+    if (-not (Test-Path -LiteralPath $pluginPath)) {
+        Write-Warning "Plugin library not found at $pluginPath. The worker will likely fail to start."
+    }
+
+    $tasksFile = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'tasks') -ChildPath 'tasks.json'
+    if (-not (Test-Path -LiteralPath $tasksFile)) {
+        Write-Warning "Tasks seed file missing at $tasksFile. The importer will idle without it."
+    }
+
+    $commands = @(
+        [ordered]@{
+            name = 'Runinator Test Broker'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-broker.exe')
+            cwd = $WorkspacePath
+            env = @{
+                RUST_LOG              = 'info'
+                RUNINATOR_BROKER_ADDR = '127.0.0.1:7070'
+            }
+        }
+        [ordered]@{
+            name = 'Runinator Web Service'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-ws.exe')
+            cwd = $WorkspacePath
+            args = @(
+                '--database', 'sqlite',
+                '--sqlite-path', $LocalDatabasePath,
+                '--announce-address', '127.0.0.1'
+            ) + (Get-GossipArguments -Port $gossipPorts.Web -AllTargets $allGossipTargets)
+            env = @{
+                RUST_LOG = 'info'
+            }
+        }
+        [ordered]@{
+            name = 'Runinator Scheduler'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-scheduler.exe')
+            cwd = $WorkspacePath
+            args = (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
+                '--scheduler-frequency-seconds', '1',
+                '--api-timeout-seconds', '30',
+                '--broker-backend', 'http',
+                '--broker-endpoint', 'http://127.0.0.1:7070/',
+                '--broker-poll-timeout-seconds', '5'
+            )
+            env = @{
+                RUST_LOG = 'info'
+            }
+        }
+        [ordered]@{
+            name = 'Runinator Worker'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-worker.exe')
+            cwd = $WorkspacePath
+            args = @(
+                '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
+                '--broker-backend', 'http',
+                '--broker-endpoint', 'http://127.0.0.1:7070/',
+                '--broker-poll-timeout-seconds', '5',
+                '--api-base-url', 'http://127.0.0.1:8080/'
+            )
+            env = @{
+                RUST_LOG = 'info'
+            }
+        }
+        [ordered]@{
+            name = 'Runinator Importer'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-importer.exe')
+            cwd = $WorkspacePath
+            args = @(
+                '--tasks-file', $tasksFile,
+                '--poll-interval-seconds', '30'
+            ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
+            env = @{
+                RUST_LOG = 'info'
+            }
+        }
+    )
+
+    $supervisorConfig = [ordered]@{
+        state_dir = 'supervisor-state'
+        shutdown_timeout_secs = 15
+        restart_delay_ms = 2000
+        processes = $commands
+    }
+
+    $supervisorConfig | ConvertTo-Json -Depth 8 | Set-Content -Path $ConfigPath -Encoding utf8NoBOM
+}
+
 function Start-LocalStack {
     param(
         [Parameter(Mandatory)]
         [string]$WorkspacePath,
 
         [Parameter(Mandatory)]
-        [string]$BuildProfile,
+        [string]$TargetDir,
 
         [Parameter(Mandatory)]
         [string]$ArtifactsDir,
@@ -455,164 +574,21 @@ function Start-LocalStack {
         [int]$GossipBasePort
     )
 
-    $pluginFileName = Get-PluginLibraryName
-    $pluginPath = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'plugins') -ChildPath $pluginFileName
-    if (-not (Test-Path -LiteralPath $pluginPath)) {
-        Write-Warning "Plugin library not found at $pluginPath. The worker will likely fail to start."
+    $supervisorBinary = Join-Path -Path $TargetDir -ChildPath 'runinator-supervisor.exe'
+    if (-not (Test-Path -LiteralPath $supervisorBinary)) {
+        throw "Supervisor binary was not found at $supervisorBinary. Build the workspace first."
     }
 
-    $gossipPorts = @{
-        Scheduler = $GossipBasePort + 1
-        Importer  = $GossipBasePort + 2
-        Web       = $GossipBasePort + 3
-    }
+    $supervisorConfigPath = Join-Path -Path $ArtifactsDir -ChildPath 'runinator-supervisor.local.json'
+    Write-LocalSupervisorConfig `
+        -WorkspacePath $WorkspacePath `
+        -ArtifactsDir $ArtifactsDir `
+        -ConfigPath $supervisorConfigPath `
+        -LocalDatabasePath $LocalDatabasePath `
+        -GossipBasePort $GossipBasePort
 
-    $allGossipTargets = $gossipPorts.Values | ForEach-Object { "127.0.0.1:$_" }
-
-    $tasksFile = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'tasks') -ChildPath 'tasks.json'
-    if (-not (Test-Path -LiteralPath $tasksFile)) {
-        Write-Warning "Tasks seed file missing at $tasksFile. The importer will idle without it."
-    }
-
-    $commands = @(
-        [pscustomobject]@{
-            Name = 'Runinator Test Broker'
-            Cmd  = './target/artifacts/runinator-broker.exe'
-            Args = @()
-            Environment = @{
-                RUST_LOG              = 'info'
-                RUNINATOR_BROKER_ADDR = '127.0.0.1:7070'
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Runinator Web Service'
-            Cmd  = './target/artifacts/runinator-ws.exe'
-            Args = @(
-                '--database', 'sqlite',
-                '--sqlite-path', $LocalDatabasePath,
-                '--announce-address', '127.0.0.1'
-            ) + (Get-GossipArguments -Port $gossipPorts.Web -AllTargets $allGossipTargets)
-            Environment = @{
-                RUST_LOG = 'info'
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Runinator Scheduler'
-            Cmd  = './target/artifacts/runinator-scheduler.exe'
-            Args = (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
-                '--scheduler-frequency-seconds', '1',
-                '--api-timeout-seconds', '30',
-                '--broker-backend', 'http',
-                '--broker-endpoint', 'http://127.0.0.1:7070/',
-                '--broker-poll-timeout-seconds', '5'
-            )
-            Environment = @{
-                RUST_LOG = 'info'
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Runinator Worker'
-            Cmd  = './target/artifacts/runinator-worker.exe'
-            Args = @(
-                '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
-                '--broker-backend', 'http',
-                '--broker-endpoint', 'http://127.0.0.1:7070/',
-                '--broker-poll-timeout-seconds', '5',
-                '--api-base-url', 'http://127.0.0.1:8080/'
-            )
-            Environment = @{
-                RUST_LOG = 'info'
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Runinator Importer'
-            Cmd  = './target/artifacts/runinator-importer.exe'
-            Args = @(
-                '--tasks-file', $tasksFile,
-                '--poll-interval-seconds', '30'
-            ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
-            Environment = @{
-                RUST_LOG = 'info'
-            }
-        }
-    )
-
-    $processes = @()
-    foreach ($command in $commands) {
-        Write-Host "Starting $($command.Name)..."
-        $startArgs = @{
-            FilePath         = $command.Cmd
-            ArgumentList     = $command.Args
-            WorkingDirectory = $WorkspacePath
-            PassThru         = $true
-            NoNewWindow      = $true
-        }
-
-        if ($command.Environment) {
-            $startArgs['Environment'] = $command.Environment
-        }
-
-        try {
-            $process = Start-Process @startArgs
-            $processCommand = [pscustomobject]@{
-                Name      = $command.Name
-                Process   = $process
-                Reported  = $false
-                Command   = "$($command.Cmd) $($command.Args -join ' ')"
-            }
-            $processes += $processCommand
-            Write-Host "Started $($processCommand.Command) (PID $($process.Id))."
-        } catch {
-            Write-Warning "Failed to start $($command.Name): $_"
-        }
-    }
-
-    if ($processes.Count -eq 0) {
-        Write-Warning 'No services were started.'
-        return
-    }
-
-    Write-Host ''
-    Write-Host 'Runinator services are running locally. Press Ctrl+C to stop them.' -ForegroundColor Green
-
-    try {
-        while ($true) {
-            $running = @($processes | Where-Object { -not $_.Process.HasExited })
-            if ($running.Count -eq 0) {
-                Write-Host 'All services have exited.'
-                break
-            }
-
-            $completed = @($processes | Where-Object { $_.Process.HasExited -and -not $_.Reported })
-            foreach ($item in $completed) {
-                $item.Reported = $true
-                $code = $item.Process.ExitCode
-                if ($code -eq 0) {
-                    Write-Host "$($item.Name) exited cleanly (code 0)."
-                } else {
-                    Write-Warning "$($item.Name) exited with code $code."
-                }
-            }
-
-            if ($completed.Count -gt 0) {
-                Write-Warning 'Stopping remaining services due to process exit.'
-                break
-            }
-
-            Start-Sleep -Milliseconds 500
-        }
-    } finally {
-        foreach ($svc in $processes) {
-            if ($svc.Process -and -not $svc.Process.HasExited) {
-                Write-Host "Stopping $($svc.Name) (PID $($svc.Process.Id))..."
-                try {
-                    $svc.Process.Kill()
-                } catch {
-                    Write-Warning "Failed to stop $($svc.Name): $_"
-                }
-            }
-        }
-    }
+    Write-Host "Starting local Runinator stack via supervisor config '$supervisorConfigPath'"
+    Invoke-ExternalCommand -FilePath $supervisorBinary -Arguments @('--config', $supervisorConfigPath, 'start', '--foreground') -WorkingDirectory $WorkspacePath
 }
 
 function Get-ImageTag {
@@ -877,7 +853,7 @@ try {
             }
 
             Write-Step 'Starting local Runinator stack'
-            Start-LocalStack -WorkspacePath $workspacePath -BuildProfile $BuildProfile -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -GossipBasePort $GossipBasePort
+            Start-LocalStack -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -GossipBasePort $GossipBasePort
         }
         'Kubernetes' {
             $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)

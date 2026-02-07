@@ -15,5 +15,6 @@ members = [
     "runinator-provider-sql",
     "runinator-plugin-console",
     "runinator-utilities",
-    "runinator-broker"
+    "runinator-broker",
+    "runinator-supervisor"
 ]
