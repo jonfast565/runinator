@@ -24,7 +24,7 @@ jobs:
             qt_arch: clang_64
           - os: windows-latest
             asset_suffix: windows-x64
-            qt_arch: win64_msvc2022_64
+            qt_arch: win64_msvc2019_64
 
     steps:
       - name: Checkout
@@ -65,7 +65,12 @@ jobs:
             throw "CommandCenter executable was not found at $appExe"
           }
 
-          $windeployqt = Join-Path $env:Qt6_DIR "bin/windeployqt.exe"
+          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
+          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
+            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
+          }
+
+          $windeployqt = Join-Path $qtRoot "bin/windeployqt.exe"
           if (Test-Path $windeployqt) {
             & $windeployqt $appExe
           } else {
@@ -81,7 +86,12 @@ jobs:
             throw "CommandCenter app bundle was not found at $appBundle"
           }
 
-          $macdeployqt = Join-Path $env:Qt6_DIR "bin/macdeployqt"
+          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
+          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
+            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
+          }
+
+          $macdeployqt = Join-Path $qtRoot "bin/macdeployqt"
           if (Test-Path $macdeployqt) {
             & $macdeployqt $appBundle
           } else {
