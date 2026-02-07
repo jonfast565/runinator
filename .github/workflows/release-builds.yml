@@ -47,20 +47,50 @@ jobs:
           arch: ${{ matrix.qt_arch }}
           cache: true
 
+      - name: Set up MSVC toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build Rust workspace
         run: cargo build --workspace --release
 
-      - name: Configure Command Center
+      - name: Clean Command Center build dir (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $PWD "build/command-center"
+          if (Test-Path $buildDir) {
+            Remove-Item -Recurse -Force $buildDir
+          }
+
+      - name: Configure Command Center (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
+          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
+            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
+          }
+
+          cmake -S command-center -B build/command-center -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$qtRoot"
+
+      - name: Configure Command Center (Unix)
+        if: runner.os != 'Windows'
         run: cmake -S command-center -B build/command-center -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Command Center
+      - name: Build Command Center (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build/command-center --config Release --parallel
+
+      - name: Build Command Center (Unix)
+        if: runner.os != 'Windows'
         run: cmake --build build/command-center --parallel
 
       - name: Bundle Qt runtime (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $appExe = Join-Path $PWD "build/command-center/CommandCenter.exe"
+          $appExe = Join-Path $PWD "build/command-center/Release/CommandCenter.exe"
           if (-not (Test-Path $appExe)) {
             throw "CommandCenter executable was not found at $appExe"
           }
@@ -150,12 +180,11 @@ jobs:
           }
 
           if ($env:RUNNER_OS -eq "Windows") {
-            $qtBuildDir = Join-Path $PWD "build/command-center"
+            $qtBuildDir = Join-Path $PWD "build/command-center/Release"
             $qtBundleDir = Join-Path $bundleDir "command-center"
             New-Item -ItemType Directory -Path $qtBundleDir -Force | Out-Null
 
-            $exclude = @("CMakeFiles", "CMakeCache.txt", "cmake_install.cmake", "build.ninja", ".ninja_deps", ".ninja_log")
-            Get-ChildItem -Path $qtBuildDir | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
+            Get-ChildItem -Path $qtBuildDir | ForEach-Object {
               Copy-Item -Path $_.FullName -Destination (Join-Path $qtBundleDir $_.Name) -Recurse -Force
             }
           } elseif ($env:RUNNER_OS -eq "macOS") {
