@@ -1,0 +1,149 @@
+# AGENTS.md
+
+Guidance for agents working in this repository. Keep changes aligned with the existing architecture before adding new abstractions or cross-crate dependencies.
+
+## Project Shape
+
+Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime.
+
+Primary runtime flow:
+
+1. `runinator-ws` owns the HTTP API and persists scheduled tasks through `runinator-database`.
+2. `runinator-scheduler` discovers the web service, fetches due tasks through `runinator-api`, and publishes task commands to `runinator-broker`.
+3. `runinator-worker` polls the broker, resolves a provider/plugin, executes the task, and records successful task runs back through `runinator-api`.
+4. `runinator-importer` imports task definitions into the web service.
+5. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
+
+There is also a C++/Qt `command-center` client. Keep it separate from the Rust workspace unless the change explicitly touches the desktop UI.
+
+## Crate Boundaries
+
+Keep dependency direction boring and predictable:
+
+- `runinator-models`: shared domain and wire structs only. Avoid service logic, database details, HTTP clients, broker behavior, or runtime configuration here.
+- `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
+- `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through scheduler, worker, or importer code.
+- `runinator-database`: persistence interfaces and concrete SQLite/Postgres implementations. Database-specific mapping belongs here, not in `runinator-ws`.
+- `runinator-ws`: API server and repository orchestration. It should depend on the database trait, not on worker/scheduler/provider internals.
+- `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Scheduler and worker should talk to the `Broker` trait where practical.
+- `runinator-scheduler`: scheduling loop and due-task dispatch. It should not execute task providers directly and should not write to the database directly.
+- `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate scheduled-task state except through API calls intended for worker results.
+- `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
+- `runinator-provider-*` and `runinator-plugin-console`: provider implementations. Keep provider-specific configuration and external system behavior out of scheduler/web/database crates.
+- `runinator-utilities`: small cross-cutting helpers such as startup/logging, filesystem utilities, FFI helpers, and data export. Do not turn this into a dumping ground for domain logic.
+
+If a change requires a dependency from a lower-level/shared crate back into a service crate, stop and redesign the boundary.
+
+## Runtime Contracts
+
+Preserve the command lifecycle:
+
+- Tasks are stored as `ScheduledTask` values from `runinator-models`.
+- Scheduler publishes `TaskCommand` values through `runinator-broker`.
+- Workers acknowledge broker deliveries only after processing and any required result logging has completed.
+- Task run logging goes through the web API, not directly into the database from worker code.
+- Broker messages should remain serializable and backend-neutral.
+- Discovery/gossip types in `runinator-comm` should stay transport-friendly and serde-compatible.
+
+When adding fields to shared structs, check every boundary that serializes, persists, or maps that type:
+
+- `runinator-models`
+- `runinator-comm`
+- `runinator-database/src/mappers.rs`
+- SQLite/Postgres implementations
+- `runinator-api`
+- importer task JSON
+- C++ command center models, if the field is user-facing
+
+## Broker Guidance
+
+The broker is the handoff between scheduling and execution. Keep scheduler and worker code independent of specific queue implementations.
+
+- Add backend-specific behavior under `runinator-broker/src/adapters` or the HTTP/in-memory modules.
+- Keep `BrokerMessage`, `BrokerDelivery`, `publish`, `poll`, `ack`, and `nack` semantics consistent across backends.
+- Preserve dedupe behavior unless the change explicitly redesigns delivery semantics.
+- Do not let scheduler or worker special-case Kafka/RabbitMQ/HTTP beyond backend construction from config.
+
+## Provider And Plugin Guidance
+
+Providers execute task actions; they are not schedulers, API clients, or persistence layers.
+
+- Keep provider resolution in `runinator-worker`.
+- Keep dynamic library loading and FFI safety wrappers in `runinator-plugin`.
+- Treat plugin ABI names (`runinator_marker`, `name`, `call_service`) as public contracts.
+- Prefer adding a typed provider implementation under `runinator-provider-*` when Rust code can own the integration.
+- Keep `action_name`, `action_function`, and `action_configuration` semantics compatible with existing task import and execution paths.
+
+## Database And API Guidance
+
+The database crate owns persistence behavior. The web service owns HTTP behavior.
+
+- Add new persistence operations to `DatabaseImpl` first, then implement them for SQLite and Postgres together.
+- Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
+- Keep repository functions in `runinator-ws/src/repository.rs` thin. They should orchestrate database calls and web responses, not duplicate SQL behavior.
+- Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
+
+## Configuration
+
+CLI/config changes usually affect more than one place.
+
+Check these when adding or renaming runtime options:
+
+- the crate's `config.rs` or `cli.rs`
+- `runinator-supervisor.json`
+- `README.md` and crate-specific README files
+- `runinator-stack.yaml`
+- Dockerfiles for service binaries
+- local scripts such as `build.ps1`
+
+Local development defaults should continue to work with:
+
+```bash
+cargo build --workspace
+cargo run -p runinator-supervisor -- start
+cargo run -p runinator-supervisor -- status
+cargo run -p runinator-supervisor -- stop
+```
+
+## Error Handling And Async
+
+- Prefer returning `SendableError` where the crate already uses that convention.
+- Preserve structured `RuntimeError` codes where call sites already use them.
+- Do not use `unwrap` or `expect` in runtime paths unless the process truly cannot continue and existing style already does so nearby.
+- Keep blocking provider/plugin execution inside `spawn_blocking` or equivalent isolation.
+- Preserve graceful shutdown with `Notify` and `ctrl_c` patterns in service binaries.
+- Avoid holding locks across `.await`.
+
+## Tests And Verification
+
+Before handing off non-trivial Rust changes, run the narrowest useful checks first:
+
+```bash
+cargo fmt --all --check
+cargo test -p <crate>
+cargo test --workspace
+```
+
+Use `cargo check -p <crate>` when a full test run is slow or when the crate has no tests. If a change touches shared contracts, prefer `cargo test --workspace`.
+
+For command-center changes, use the existing CMake/Qt build path and verify UI behavior separately.
+
+## Change Hygiene
+
+- Read nearby code before editing; mirror existing naming, async style, and error conventions.
+- Keep edits scoped to the crate that owns the behavior.
+- Do not introduce new workspace dependencies for small conveniences.
+- Do not move shared structs between crates casually; that is a public boundary change.
+- Avoid broad refactors while fixing localized behavior.
+- Keep generated/runtime artifacts out of commits, especially `build/`, `target/`, and `.runinator-supervisor/`.
+- Update docs/config examples in the same change when behavior changes.
+
+## Architecture Checklist
+
+Before adding code, ask:
+
+- Does this crate own the behavior I am changing?
+- Is the dependency direction still from services toward shared contracts, not the reverse?
+- Are scheduler, worker, web service, broker, and database responsibilities still distinct?
+- Have all serializers, mappers, API clients, and config files been updated for shared contract changes?
+- Can the local supervisor stack still run after this change?
