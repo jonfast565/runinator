@@ -18,7 +18,7 @@ struct RunSummary {
   std::optional<QDateTime> finishedAt;
   QDateTime createdAt;
   std::optional<qint64> workflowRunId;
-  QString workflowStepId;
+  QString workflowNodeId;
 
   static RunSummary fromJson(const QJsonObject &obj);
 };
@@ -67,6 +67,9 @@ struct WorkflowNodeRun {
   QString status;
   qint64 attempt = 0;
   QJsonObject parameters;
+  QJsonObject outputJson;
+  QJsonObject state;
+  QString transitionReason;
   QDateTime createdAt;
   std::optional<QDateTime> startedAt;
   std::optional<QDateTime> finishedAt;

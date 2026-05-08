@@ -80,7 +80,7 @@ pub async fn log_task_run<T: DatabaseImpl>(
     })
 }
 
-fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
+pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     match (defaults, parameters) {
         (Value::Object(defaults), Value::Object(parameters)) => {
             let mut merged = defaults.clone();
@@ -94,10 +94,12 @@ fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     }
 }
 
-pub async fn create_run<T: DatabaseImpl>(
+pub async fn create_run_with_workflow<T: DatabaseImpl>(
     db: &T,
     task_id: i64,
     request: &RunRequest,
+    workflow_run_id: Option<i64>,
+    workflow_node_id: Option<String>,
 ) -> Result<RunSummary, SendableError> {
     let task = db.fetch_task_by_id(task_id).await?.ok_or_else(|| {
         Box::new(std::io::Error::new(
@@ -112,11 +114,25 @@ pub async fn create_run<T: DatabaseImpl>(
             message,
         )) as SendableError
     })?;
-    db.create_task_run(task_id, parameters, request.trigger.clone(), None, None)
-        .await
+    db.create_task_run(
+        task_id,
+        parameters,
+        request.trigger.clone(),
+        workflow_run_id,
+        workflow_node_id,
+    )
+    .await
 }
 
-fn validate_json_schema(schema: &Value, value: &Value) -> Result<(), String> {
+pub async fn create_run<T: DatabaseImpl>(
+    db: &T,
+    task_id: i64,
+    request: &RunRequest,
+) -> Result<RunSummary, SendableError> {
+    create_run_with_workflow(db, task_id, request, None, None).await
+}
+
+pub(crate) fn validate_json_schema(schema: &Value, value: &Value) -> Result<(), String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(());
     };
@@ -523,3 +539,4 @@ pub async fn resolve_approval<T: DatabaseImpl>(
 
     Ok(updated)
 }
+

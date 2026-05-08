@@ -67,7 +67,7 @@ pub struct RunSummary {
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub workflow_run_id: Option<i64>,
-    pub workflow_step_id: Option<String>,
+    pub workflow_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

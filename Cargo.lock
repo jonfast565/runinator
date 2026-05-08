@@ -2691,6 +2691,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-provider-ai"
+version = "0.1.0"
+dependencies = [
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runinator-provider-approval"
+version = "0.1.0"
+dependencies = [
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "runinator-provider-aws"
 version = "0.1.0"
 dependencies = [
@@ -2704,6 +2724,38 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "runinator-provider-git"
+version = "0.1.0"
+dependencies = [
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runinator-provider-github"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runinator-provider-jira"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2786,7 +2838,12 @@ dependencies = [
  "runinator-comm",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-ai",
+ "runinator-provider-approval",
  "runinator-provider-aws",
+ "runinator-provider-git",
+ "runinator-provider-github",
+ "runinator-provider-jira",
  "runinator-provider-sql",
  "runinator-utilities",
  "serde",

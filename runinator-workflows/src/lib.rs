@@ -118,7 +118,46 @@ pub fn validate_workflow(
         }
     }
 
+    validate_graph_cycles(&start, &nodes)?;
+
     Ok((start, nodes))
+}
+
+fn validate_graph_cycles(
+    start: &str,
+    nodes: &[WorkflowNode],
+) -> Result<(), WorkflowValidationError> {
+    let mut visited = HashSet::new();
+    let mut stack = HashSet::new();
+    let node_map: HashMap<_, _> = nodes.iter().map(|n| (&n.id, n)).collect();
+
+    fn visit(
+        id: &str,
+        node_map: &HashMap<&String, &WorkflowNode>,
+        visited: &mut HashSet<String>,
+        stack: &mut HashSet<String>,
+    ) -> Result<(), WorkflowValidationError> {
+        if stack.contains(id) {
+            return Err(WorkflowValidationError::RefCycle(id.to_string()));
+        }
+        if visited.contains(id) {
+            return Ok(());
+        }
+
+        visited.insert(id.to_string());
+        stack.insert(id.to_string());
+
+        if let Some(node) = node_map.get(&id.to_string()) {
+            for target in transition_targets(&node.transitions) {
+                visit(&target, node_map, visited, stack)?;
+            }
+        }
+
+        stack.remove(id);
+        Ok(())
+    }
+
+    visit(start, &node_map, &mut visited, &mut stack)
 }
 
 pub fn resolve_value_refs(
@@ -358,77 +397,4 @@ pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn workflow(definition: Value) -> WorkflowDefinition {
-        WorkflowDefinition {
-            id: Some(1),
-            name: "test".into(),
-            version: 1,
-            enabled: true,
-            input_schema: Value::Null,
-            definition,
-            created_at: None,
-            updated_at: None,
-        }
-    }
-
-    #[test]
-    fn validates_state_machine_workflow() {
-        let wf = workflow(serde_json::json!({
-            "start": "build",
-            "nodes": [
-                { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "done" } },
-                { "id": "done", "kind": "end" }
-            ]
-        }));
-
-        assert!(validate_workflow(&wf).is_ok());
-    }
-
-    #[test]
-    fn rejects_missing_transition_target() {
-        let wf = workflow(serde_json::json!({
-            "start": "build",
-            "nodes": [
-                { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "missing" } }
-            ]
-        }));
-
-        assert!(matches!(
-            validate_workflow(&wf),
-            Err(WorkflowValidationError::MissingTransition { .. })
-        ));
-    }
-
-    #[test]
-    fn resolves_value_refs() {
-        let context = serde_json::json!({
-            "steps": { "find": { "output": { "items": [{ "key": "A-1" }] } } }
-        });
-        let value = serde_json::json!({ "$value": "steps.find.output#/items/0/key" });
-        assert_eq!(
-            resolve_value_refs(&value, &context).unwrap(),
-            Value::String("A-1".into())
-        );
-    }
-
-    #[test]
-    fn expands_local_defs_with_overlay() {
-        let wf = workflow(serde_json::json!({
-            "$defs": {
-                "approval": { "kind": "approval", "parameters": { "type": "merge" } }
-            },
-            "start": "approve",
-            "nodes": [
-                { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } } }
-            ]
-        }));
-
-        let (_, nodes) = parse_nodes(&wf).unwrap();
-        assert_eq!(nodes[0].kind, WorkflowNodeKind::Approval);
-        assert_eq!(nodes[0].parameters["type"], "merge");
-        assert_eq!(nodes[0].parameters["prompt"], "ok?");
-    }
-}
+mod tests;

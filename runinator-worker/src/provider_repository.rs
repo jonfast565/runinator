@@ -5,12 +5,14 @@ use runinator_models::{
     errors::{RuntimeError, SendableError},
 };
 use runinator_plugin::{plugin::Plugin, provider::Provider};
+use runinator_provider_ai::AiCommandProvider;
+use runinator_provider_approval::ApprovalProvider;
 use runinator_provider_aws::AwsProvider;
+use runinator_provider_git::GitProvider;
+use runinator_provider_github::GitHubProvider;
+use runinator_provider_jira::JiraProvider;
 use runinator_provider_sql::SqlProvider;
 
-use crate::automation_providers::{
-    AiCommandProvider, ApprovalProvider, GitHubProvider, GitProvider, JiraProvider,
-};
 use crate::console_provider::ConsoleProvider;
 
 type StaticProvider = Box<dyn Provider + Send + Sync>;

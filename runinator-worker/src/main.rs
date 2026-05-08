@@ -1,4 +1,3 @@
-mod automation_providers;
 mod config;
 mod console_provider;
 mod executor;

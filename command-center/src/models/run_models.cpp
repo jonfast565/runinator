@@ -45,7 +45,7 @@ RunSummary RunSummary::fromJson(const QJsonObject &obj) {
   if (obj.contains("workflow_run_id") && !obj.value("workflow_run_id").isNull()) {
     run.workflowRunId = obj.value("workflow_run_id").toVariant().toLongLong();
   }
-  run.workflowStepId = obj.value("workflow_node_id").toString();
+  run.workflowNodeId = obj.value("workflow_node_id").toString();
   return run;
 }
 
@@ -108,6 +108,9 @@ WorkflowNodeRun WorkflowNodeRun::fromJson(const QJsonObject &obj) {
   step.status = obj.value("status").toString();
   step.attempt = obj.value("attempt").toVariant().toLongLong();
   step.parameters = objectOrEmpty(obj.value("parameters"));
+  step.outputJson = objectOrEmpty(obj.value("output_json"));
+  step.state = objectOrEmpty(obj.value("state"));
+  step.transitionReason = obj.value("transition_reason").toString();
   step.createdAt = parseRequiredDate(obj.value("created_at"));
   step.startedAt = parseOptionalDate(obj.value("started_at"));
   step.finishedAt = parseOptionalDate(obj.value("finished_at"));

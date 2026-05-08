@@ -80,7 +80,7 @@ macro_rules! run_summary_from_row {
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             workflow_run_id: $row.get("workflow_run_id"),
-            workflow_step_id: $row.get("workflow_step_id"),
+            workflow_node_id: $row.get("workflow_node_id"),
         }
     }};
 }
@@ -313,4 +313,16 @@ pub fn sqlite_row_to_idempotency_key(row: &SqliteRow) -> Value {
 
 pub fn postgres_row_to_idempotency_key(row: &PgRow) -> Value {
     idempotency_key_from_row!(row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_json() {
+        assert_eq!(parse_json("{\"a\":1}".to_string()), json!({"a":1}));
+        assert_eq!(parse_json("invalid".to_string()), Value::Null);
+    }
 }

@@ -4,3 +4,6 @@ pub mod orchestration;
 pub mod runs;
 pub mod web;
 pub mod workflows;
+
+#[cfg(test)]
+mod tests;

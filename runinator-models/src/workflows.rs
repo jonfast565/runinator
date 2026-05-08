@@ -57,6 +57,16 @@ impl WorkflowStatus {
                 | WorkflowStatus::Canceled
         )
     }
+
+    pub fn is_active(self) -> bool {
+        matches!(
+            self,
+            WorkflowStatus::Queued
+                | WorkflowStatus::Running
+                | WorkflowStatus::Waiting
+                | WorkflowStatus::ApprovalRequired
+        )
+    }
 }
 
 impl TryFrom<&str> for WorkflowStatus {

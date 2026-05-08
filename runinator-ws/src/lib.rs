@@ -1,6 +1,8 @@
 mod config;
 mod models;
 mod repository;
+#[cfg(test)]
+mod tests;
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 

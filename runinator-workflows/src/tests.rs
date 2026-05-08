@@ -1,0 +1,197 @@
+use super::*;
+use runinator_models::workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus};
+use std::collections::HashMap;
+
+fn workflow(definition: serde_json::Value) -> WorkflowDefinition {
+    WorkflowDefinition {
+        id: Some(1),
+        name: "test".into(),
+        version: 1,
+        enabled: true,
+        input_schema: serde_json::Value::Null,
+        definition,
+        created_at: None,
+        updated_at: None,
+    }
+}
+
+#[test]
+fn validates_state_machine_workflow() {
+    let wf = workflow(serde_json::json!({
+        "start": "build",
+        "nodes": [
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "done" } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(validate_workflow(&wf).is_ok());
+}
+
+#[test]
+fn rejects_missing_transition_target() {
+    let wf = workflow(serde_json::json!({
+        "start": "build",
+        "nodes": [
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "missing" } }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::MissingTransition { .. })
+    ));
+}
+
+#[test]
+fn resolves_value_refs() {
+    let context = serde_json::json!({
+        "steps": { "find": { "output": { "items": [{ "key": "A-1" }] } } }
+    });
+    let value = serde_json::json!({ "$value": "steps.find.output#/items/0/key" });
+    assert_eq!(
+        resolve_value_refs(&value, &context).unwrap(),
+        serde_json::Value::String("A-1".into())
+    );
+}
+
+#[test]
+fn expands_local_defs_with_overlay() {
+    let wf = workflow(serde_json::json!({
+        "$defs": {
+            "approval": { "kind": "approval", "parameters": { "type": "merge" } }
+        },
+        "start": "approve",
+        "nodes": [
+            { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } } }
+        ]
+    }));
+
+    let (_, nodes) = parse_nodes(&wf).unwrap();
+    assert_eq!(nodes[0].kind, WorkflowNodeKind::Approval);
+    assert_eq!(nodes[0].parameters["type"], "merge");
+    assert_eq!(nodes[0].parameters["prompt"], "ok?");
+}
+
+#[test]
+fn evaluates_conditions() {
+    let context = serde_json::json!({
+        "input": { "env": "prod" },
+        "steps": { "check": { "output": { "status": "ok", "count": 10 } } }
+    });
+
+    // Simple equality
+    let cond1 = serde_json::json!({ "value": { "$value": "steps.check.output#/status" }, "equals": "ok" });
+    assert!(evaluate_condition(&cond1, &context).unwrap());
+
+    // Logical ALL (AND)
+    let cond3 = serde_json::json!({
+        "all": [
+            { "value": { "$value": "input#/env" }, "equals": "prod" },
+            { "value": { "$value": "steps.check.output#/status" }, "equals": "ok" }
+        ]
+    });
+    assert!(evaluate_condition(&cond3, &context).unwrap());
+
+    // Logical ANY (OR)
+    let cond4 = serde_json::json!({
+        "any": [
+            { "value": { "$value": "input#/env" }, "equals": "dev" },
+            { "value": { "$value": "steps.check.output#/count" }, "equals": 10 }
+        ]
+    });
+    assert!(evaluate_condition(&cond4, &context).unwrap());
+}
+
+#[test]
+fn validates_node_transitions() {
+    let wf = workflow(serde_json::json!({
+        "start": "a",
+        "nodes": [
+            {
+                "id": "a",
+                "kind": "condition",
+                "transitions": {
+                    "branches": [
+                        { "when": { "value": { "$value": "foo" }, "equals": "bar" }, "target": "b" }
+                    ],
+                    "next": "c"
+                }
+            },
+            { "id": "b", "kind": "end" },
+            { "id": "c", "kind": "end" }
+        ]
+    }));
+    assert!(validate_workflow(&wf).is_ok());
+}
+
+#[test]
+fn test_workflow_state_machine_logic_integration() {
+    // 1. Define a simple state-machine workflow
+    let definition = serde_json::json!({
+        "start": "step1",
+        "nodes": [
+            {
+                "id": "step1",
+                "kind": "task",
+                "task_id": 1,
+                "transitions": { "on_success": "step2", "on_failure": "failed" }
+            },
+            {
+                "id": "step2",
+                "kind": "condition",
+                "transitions": {
+                    "branches": [
+                        { "when": { "value": { "$value": "steps.step1.output#/ok" }, "equals": true }, "target": "success" }
+                    ],
+                    "next": "failed"
+                }
+            },
+            { "id": "success", "kind": "end" },
+            { "id": "failed", "kind": "end" }
+        ]
+    });
+
+    let wf = WorkflowDefinition {
+        id: Some(1),
+        name: "integration-test".into(),
+        version: 1,
+        enabled: true,
+        input_schema: serde_json::json!({}),
+        definition: definition.clone(),
+        created_at: None,
+        updated_at: None,
+    };
+
+    // 2. Validate the workflow
+    let (start, nodes) = validate_workflow(&wf).expect("Workflow should be valid");
+    assert_eq!(start, "step1");
+    let node_map: HashMap<String, &WorkflowNode> = nodes.iter().map(|n| (n.id.clone(), n)).collect();
+
+    // 3. Simulate execution - Step 1 succeeds
+    let step1_node = node_map.get("step1").unwrap();
+    let next = next_transition(step1_node, WorkflowStatus::Succeeded, &serde_json::json!({})).unwrap();
+    assert_eq!(next.unwrap(), "step2");
+
+    // 4. Simulate Step 2 - Condition evaluation
+    let outputs = {
+        let mut m = HashMap::new();
+        m.insert("step1".to_string(), serde_json::json!({ "ok": true }));
+        m
+    };
+    let context = outputs_context(&serde_json::json!({}), &outputs);
+    
+    let step2_node = node_map.get("step2").unwrap();
+    let next = next_transition(step2_node, WorkflowStatus::Running, &context).unwrap();
+    assert_eq!(next.unwrap(), "success");
+
+    // 5. Simulate Step 2 - Condition failure
+    let outputs_fail = {
+        let mut m = HashMap::new();
+        m.insert("step1".to_string(), serde_json::json!({ "ok": false }));
+        m
+    };
+    let context_fail = outputs_context(&serde_json::json!({}), &outputs_fail);
+    let next_fail = next_transition(step2_node, WorkflowStatus::Running, &context_fail).unwrap();
+    assert_eq!(next_fail.unwrap(), "failed");
+}

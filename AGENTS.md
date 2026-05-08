@@ -4,21 +4,21 @@ Guidance for agents working in this repository. Keep changes aligned with the ex
 
 ## Project Shape
 
-Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime.
+Runinator is a Rust workspace for scheduling and executing tasks across a small distributed runtime using a resumable state-machine orchestrator.
 
 Primary runtime flow:
 
-1. `runinator-ws` owns the HTTP API and persists scheduled tasks through `runinator-database`.
-2. `runinator-scheduler` discovers the web service, fetches due tasks through `runinator-api`, and publishes task commands to `runinator-broker`.
-3. `runinator-worker` polls the broker, resolves a provider/plugin, executes the task, and records successful task runs back through `runinator-api`.
-4. `runinator-importer` imports task definitions into the web service.
+1. `runinator-ws` owns the HTTP API and persists scheduled tasks, workflow runs, and orchestration records through `runinator-database`.
+2. `runinator-scheduler` discovers the web service, fetches due state-machine nodes through `runinator-api`, and publishes task commands to `runinator-broker`.
+3. `runinator-worker` polls the broker, resolves a provider/plugin, executes the task, and records results back through `runinator-api`.
+4. `runinator-importer` imports task definitions and workflow packs into the web service.
 5. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
 There is also a C++/Qt `command-center` client. Keep it separate from the Rust workspace unless the change explicitly touches the desktop UI.
 
 ## Crate Boundaries
 
-Keep dependency direction boring and predictable:
+Keep dependency direction boring and predictable, structured with domains in mind:
 
 - `runinator-models`: shared domain and wire structs only. Avoid service logic, database details, HTTP clients, broker behavior, or runtime configuration here.
 - `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
@@ -26,20 +26,31 @@ Keep dependency direction boring and predictable:
 - `runinator-database`: persistence interfaces and concrete SQLite/Postgres implementations. Database-specific mapping belongs here, not in `runinator-ws`.
 - `runinator-ws`: API server and repository orchestration. It should depend on the database trait, not on worker/scheduler/provider internals.
 - `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Scheduler and worker should talk to the `Broker` trait where practical.
-- `runinator-scheduler`: scheduling loop and due-task dispatch. It should not execute task providers directly and should not write to the database directly.
-- `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate scheduled-task state except through API calls intended for worker results.
+- `runinator-scheduler`: scheduling loop and state-machine node dispatch. It should not execute task providers directly and should not write to the database directly.
+- `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
+- `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
-- `runinator-provider-*` and `runinator-plugin-console`: provider implementations. Keep provider-specific configuration and external system behavior out of scheduler/web/database crates.
-- `runinator-utilities`: small cross-cutting helpers such as startup/logging, filesystem utilities, FFI helpers, and data export. Do not turn this into a dumping ground for domain logic.
+- `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
+- `runinator-utilities`: small cross-cutting helpers such as startup/logging, credential store trait, and data export. Do not turn this into a dumping ground for domain logic.
 
 If a change requires a dependency from a lower-level/shared crate back into a service crate, stop and redesign the boundary.
+
+## Coding Standards
+
+- Favor guard clauses over deep nesting to keep logic flow flat and readable.
+- If a functionality can have different implementations, always use traits to define the interface.
+- Favor comments as appropriate for Rust but make them lower case, single line, with a period at the end.
+- Use RustDoc comments (`///`) where necessary on public methods, but keep them short, succinct, dense, and dispassionate.
+- Do not put all the code for a library in `lib.rs`; break it out into smaller, focused files.
+- Do not put tests in the same files as code; break them out into a `tests.rs` file (or a `tests` module in a separate file).
 
 ## Runtime Contracts
 
 Preserve the command lifecycle:
 
-- Tasks are stored as `ScheduledTask` values from `runinator-models`.
-- Scheduler publishes `TaskCommand` values through `runinator-broker`.
+- Workflows are executed as state-machines with nodes like `task`, `wait`, `condition`, `approval`, `loop`, and `subflow`.
+- Scheduler publishes `TaskCommand` values through `runinator-broker` for `task` nodes.
+- Workflow run states (`queued`, `running`, `waiting`, etc.) are persisted separately from individual task run statuses.
 - Workers acknowledge broker deliveries only after processing and any required result logging has completed.
 - Task run logging goes through the web API, not directly into the database from worker code.
 - Broker messages should remain serializable and backend-neutral.
@@ -52,17 +63,8 @@ When adding fields to shared structs, check every boundary that serializes, pers
 - `runinator-database/src/mappers.rs`
 - SQLite/Postgres implementations
 - `runinator-api`
-- importer task JSON
+- importer task/pack JSON
 - C++ command center models, if the field is user-facing
-
-## Broker Guidance
-
-The broker is the handoff between scheduling and execution. Keep scheduler and worker code independent of specific queue implementations.
-
-- Add backend-specific behavior under `runinator-broker/src/adapters` or the HTTP/in-memory modules.
-- Keep `BrokerMessage`, `BrokerDelivery`, `publish`, `poll`, `ack`, and `nack` semantics consistent across backends.
-- Preserve dedupe behavior unless the change explicitly redesigns delivery semantics.
-- Do not let scheduler or worker special-case Kafka/RabbitMQ/HTTP beyond backend construction from config.
 
 ## Provider And Plugin Guidance
 
@@ -71,7 +73,7 @@ Providers execute task actions; they are not schedulers, API clients, or persist
 - Keep provider resolution in `runinator-worker`.
 - Keep dynamic library loading and FFI safety wrappers in `runinator-plugin`.
 - Treat plugin ABI names (`runinator_marker`, `name`, `call_service`) as public contracts.
-- Prefer adding a typed provider implementation under `runinator-provider-*` when Rust code can own the integration.
+- Always add a new provider as a separate crate: `runinator-provider-<name>`.
 - Keep `action_name`, `action_function`, and `action_configuration` semantics compatible with existing task import and execution paths.
 
 ## Database And API Guidance

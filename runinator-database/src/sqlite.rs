@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at INTEGER NULL,
     created_at INTEGER NOT NULL,
     workflow_run_id INTEGER NULL,
-    workflow_step_id TEXT NULL
+    workflow_node_id TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS run_chunks (
@@ -418,13 +418,13 @@ impl DatabaseImpl for SqliteDb {
         parameters: Value,
         trigger: String,
         workflow_run_id: Option<i64>,
-        workflow_step_id: Option<String>,
+        workflow_node_id: Option<String>,
     ) -> Result<RunSummary, SendableError> {
         let now = Utc::now().timestamp();
         let row = sqlx::query(
-            "INSERT INTO runs (task_id, status, parameters, trigger, created_at, workflow_run_id, workflow_step_id)
+            "INSERT INTO runs (task_id, status, parameters, trigger, created_at, workflow_run_id, workflow_node_id)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_step_id",
+             RETURNING id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id",
         )
         .bind(task_id)
         .bind(RunStatus::Queued.as_str())
@@ -432,7 +432,7 @@ impl DatabaseImpl for SqliteDb {
         .bind(trigger)
         .bind(now)
         .bind(workflow_run_id)
-        .bind(workflow_step_id)
+        .bind(workflow_node_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(mappers::sqlite_row_to_run_summary(&row))
@@ -440,7 +440,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_run(&self, run_id: i64) -> Result<Option<RunSummary>, SendableError> {
         let row = sqlx::query(
-            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_step_id FROM runs WHERE id = ?",
+            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE id = ?",
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
@@ -450,7 +450,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_runs_for_task(&self, task_id: i64) -> Result<Vec<RunSummary>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_step_id FROM runs WHERE task_id = ? ORDER BY id DESC",
+            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE task_id = ? ORDER BY id DESC",
         )
         .bind(task_id)
         .fetch_all(&self.pool)
@@ -466,7 +466,7 @@ impl DatabaseImpl for SqliteDb {
         status: RunStatus,
     ) -> Result<Vec<RunSummary>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_step_id FROM runs WHERE status = ? ORDER BY id",
+            "SELECT id, task_id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = ? ORDER BY id",
         )
         .bind(status.as_str())
         .fetch_all(&self.pool)
