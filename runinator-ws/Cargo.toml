@@ -8,6 +8,7 @@ log = "0.4"
 axum = "0.6"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
@@ -18,3 +19,4 @@ runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-workflows = { path = "../runinator-workflows" }

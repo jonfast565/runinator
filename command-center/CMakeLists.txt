@@ -27,6 +27,7 @@ add_executable(CommandCenter
   src/clients/api_client.cpp
   src/gossip/gossip_discovery.cpp
   src/models/scheduled_task.cpp
+  src/models/run_models.cpp
   src/ui/windows/main_window.ui
   src/ui/dialogs/task_editor_dialog.ui
 )

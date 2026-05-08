@@ -37,19 +37,13 @@ fn open_log_output() -> std::io::Result<fern::Output> {
         match fern::log_file(&path) {
             Ok(output) => {
                 if had_failure {
-                    error!(
-                        "Falling back to log file at {}",
-                        path_string
-                    );
+                    error!("Falling back to log file at {}", path_string);
                 }
                 return Ok(fern::Output::from(output));
             }
             Err(err) => {
                 had_failure = true;
-                error!(
-                    "Failed to open log file at {}: {}",
-                    path_string, err
-                );
+                error!("Failed to open log file at {}: {}", path_string, err);
                 last_error = Some(err);
             }
         }

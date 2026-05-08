@@ -171,7 +171,10 @@ pub fn run_supervisor(
         thread::sleep(Duration::from_millis(500));
     }
 
-    stop_children(&mut processes, Duration::from_secs(config.shutdown_timeout_secs))?;
+    stop_children(
+        &mut processes,
+        Duration::from_secs(config.shutdown_timeout_secs),
+    )?;
 
     let final_snapshot = build_snapshot(paths, started_at, &processes);
     write_snapshot(&paths.state_file, &final_snapshot)?;
@@ -223,7 +226,10 @@ fn wait_for_pid_file(pid_file: &Path, timeout: Duration) -> bool {
     false
 }
 
-fn build_processes(config: &SupervisorConfig, paths: &Paths) -> Result<Vec<ManagedProcess>, DynError> {
+fn build_processes(
+    config: &SupervisorConfig,
+    paths: &Paths,
+) -> Result<Vec<ManagedProcess>, DynError> {
     let mut processes = Vec::with_capacity(config.processes.len());
     for process in &config.processes {
         let command_raw = Path::new(&process.command);
@@ -441,7 +447,11 @@ fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<
     Ok(())
 }
 
-fn build_snapshot(paths: &Paths, started_at: DateTime<Utc>, processes: &[ManagedProcess]) -> StateSnapshot {
+fn build_snapshot(
+    paths: &Paths,
+    started_at: DateTime<Utc>,
+    processes: &[ManagedProcess],
+) -> StateSnapshot {
     let updated_at = Utc::now();
     let process_snapshots = processes
         .iter()

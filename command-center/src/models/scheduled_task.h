@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QString>
 #include <optional>
 
@@ -18,6 +19,13 @@ struct ScheduledTask {
   bool immediate = false;
   std::optional<QDateTime> blackoutStart;
   std::optional<QDateTime> blackoutEnd;
+  QJsonObject inputSchema;
+  QJsonObject defaultParameters;
+  QJsonObject outputSchema;
+  bool hasOutputSchema = false;
+  bool mcpEnabled = false;
+  QJsonObject metadata;
+  QStringList tags;
 
   static std::optional<QDateTime> parseOptionalDate(const QJsonValue &value);
   static ScheduledTask fromJson(const QJsonObject &obj);

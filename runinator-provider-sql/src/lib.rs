@@ -9,12 +9,17 @@ use std::time::Duration;
 use connector::DatabaseConnector;
 use connector::postgres::PostgresConnector;
 use log::info;
-use runinator_models::errors::{RuntimeError, SendableError};
-use runinator_plugin::provider::Provider;
+use runinator_models::{
+    errors::{RuntimeError, SendableError},
+    runs::{NewRunArtifact, ProviderExecutionRequest, TaskExecutionResult},
+};
+use runinator_plugin::provider::{Provider, ProviderEventSink};
 use runinator_utilities::data_export::{
     TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SqlProvider;
@@ -24,24 +29,30 @@ impl Provider for SqlProvider {
         "SQL".to_string()
     }
 
-    fn call_service(
+    fn execute_service(
         &self,
-        call: String,
-        args: String,
-        timeout_secs: i64,
-    ) -> Result<i32, SendableError> {
-        match call.as_str() {
-            "dump_data" => self.dump_data(args, timeout_secs),
+        request: ProviderExecutionRequest,
+        _sink: Option<Arc<dyn ProviderEventSink>>,
+    ) -> Result<TaskExecutionResult, SendableError> {
+        match request.action_function.as_str() {
+            "dump_data" => self.dump_data(request.action_configuration, request.timeout_secs),
             _ => Err(Box::new(RuntimeError::new(
                 "UNSUPPORTED_CALL".to_string(),
-                format!("Unsupported SQL provider call '{call}'"),
+                format!(
+                    "Unsupported SQL provider call '{}'",
+                    request.action_function
+                ),
             ))),
         }
     }
 }
 
 impl SqlProvider {
-    fn dump_data(&self, args: String, timeout_secs: i64) -> Result<i32, SendableError> {
+    fn dump_data(
+        &self,
+        args: String,
+        timeout_secs: i64,
+    ) -> Result<TaskExecutionResult, SendableError> {
         let request: DumpDataRequest =
             serde_json::from_str(&args).map_err(|err| to_sendable(err))?;
 
@@ -66,6 +77,7 @@ impl SqlProvider {
             DumpFormat::Excel => Box::new(ExcelTableExporter::new()),
             DumpFormat::Csv => Box::new(CsvTableExporter::new()),
         };
+        let mut exports = Vec::new();
 
         for (idx, query) in request.queries.iter().enumerate() {
             info!("Executing query {} for database dump", idx + 1);
@@ -99,6 +111,15 @@ impl SqlProvider {
             };
 
             exporter.export(&file_path, &table_data, &context)?;
+            let size_bytes = file_size(&file_path)?;
+            exports.push(SqlExport {
+                name: sheet_name_owned.clone(),
+                rows: table_data.rows.len(),
+                path: file_path.clone(),
+                mime_type: format.mime_type().to_string(),
+                size_bytes,
+                format,
+            });
             info!(
                 "Wrote {} rows to {}",
                 table_data.rows.len(),
@@ -106,7 +127,43 @@ impl SqlProvider {
             );
         }
 
-        Ok(0)
+        let artifacts = exports
+            .iter()
+            .map(|export| NewRunArtifact {
+                name: export
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| export.name.clone()),
+                mime_type: export.mime_type.clone(),
+                size_bytes: export.size_bytes,
+                uri: export.path.to_string_lossy().into_owned(),
+                metadata: json!({
+                    "provider": "SQL",
+                    "query_name": export.name,
+                    "rows": export.rows,
+                    "format": export.format.as_str(),
+                }),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(TaskExecutionResult {
+            message: Some(format!("Exported {} SQL result file(s)", artifacts.len())),
+            output_json: Some(json!({
+                "provider": "SQL",
+                "exports": exports.iter().map(|export| {
+                    json!({
+                        "name": export.name,
+                        "rows": export.rows,
+                        "path": export.path,
+                        "format": export.format.as_str(),
+                        "size_bytes": export.size_bytes,
+                    })
+                }).collect::<Vec<_>>()
+            })),
+            chunks: Vec::new(),
+            artifacts,
+        })
     }
 }
 
@@ -116,7 +173,7 @@ enum DatabaseKind {
     Postgres,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum DumpFormat {
     Excel,
@@ -140,6 +197,31 @@ impl DumpFormat {
     fn requires_sheet_name(&self) -> bool {
         matches!(self, DumpFormat::Excel)
     }
+
+    fn mime_type(&self) -> &'static str {
+        match self {
+            DumpFormat::Excel => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+            DumpFormat::Csv => "text/csv",
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            DumpFormat::Excel => "excel",
+            DumpFormat::Csv => "csv",
+        }
+    }
+}
+
+struct SqlExport {
+    name: String,
+    rows: usize,
+    path: PathBuf,
+    mime_type: String,
+    size_bytes: i64,
+    format: DumpFormat,
 }
 
 #[derive(Deserialize)]
@@ -215,4 +297,8 @@ where
     E: Error + Send + Sync + 'static,
 {
     Box::new(err)
+}
+
+fn file_size(path: &PathBuf) -> Result<i64, SendableError> {
+    Ok(fs::metadata(path).map_err(|err| to_sendable(err))?.len() as i64)
 }

@@ -1,11 +1,20 @@
-use runinator_models::errors::SendableError;
+use std::sync::Arc;
+
+use runinator_models::{
+    errors::SendableError,
+    runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
+};
+
+pub trait ProviderEventSink: Send + Sync {
+    fn emit(&self, event: ProviderExecutionEvent);
+}
 
 pub trait Provider: Send + Sync {
     fn name(&self) -> String;
-    fn call_service(
+
+    fn execute_service(
         &self,
-        call: String,
-        args: String,
-        timeout_secs: i64,
-    ) -> Result<i32, SendableError>;
+        request: ProviderExecutionRequest,
+        sink: Option<Arc<dyn ProviderEventSink>>,
+    ) -> Result<TaskExecutionResult, SendableError>;
 }

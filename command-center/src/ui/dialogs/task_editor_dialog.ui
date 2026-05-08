@@ -7,8 +7,8 @@
   </property>
   <property name="minimumSize">
    <size>
-    <width>520</width>
-    <height>420</height>
+    <width>680</width>
+    <height>620</height>
    </size>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -89,6 +89,43 @@
       </widget>
      </item>
      <item row="7" column="1">
+      <widget class="QCheckBox" name="mcpEnabledCheck">
+       <property name="text">
+        <string>Expose as MCP tool</string>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="0">
+      <widget class="QLabel" name="inputSchemaLabel">
+       <property name="text">
+        <string>Input Schema:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="1">
+      <widget class="QPlainTextEdit" name="inputSchemaEdit"/>
+     </item>
+     <item row="9" column="0">
+      <widget class="QLabel" name="defaultParamsLabel">
+       <property name="text">
+        <string>Default Params:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="9" column="1">
+      <widget class="QPlainTextEdit" name="defaultParamsEdit"/>
+     </item>
+     <item row="10" column="0">
+      <widget class="QLabel" name="metadataLabel">
+       <property name="text">
+        <string>Metadata:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="10" column="1">
+      <widget class="QPlainTextEdit" name="metadataEdit"/>
+     </item>
+     <item row="11" column="1">
       <widget class="QLabel" name="errorLabel">
        <property name="text">
         <string/>

@@ -7,14 +7,83 @@
   </property>
   <property name="minimumSize">
    <size>
-    <width>900</width>
-    <height>600</height>
+    <width>1100</width>
+    <height>720</height>
    </size>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="centralLayout">
     <item>
-     <widget class="QTableView" name="tableView"/>
+     <widget class="QTabWidget" name="tabWidget">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="QWidget" name="tasksTab">
+       <attribute name="title">
+        <string>Tasks</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="tasksLayout">
+        <item>
+         <widget class="QTableView" name="tableView"/>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="runsTab">
+       <attribute name="title">
+        <string>Runs</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="runsLayout">
+        <item>
+         <widget class="QSplitter" name="runsSplitter">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <widget class="QTableView" name="runsTableView"/>
+          <widget class="QSplitter" name="runDetailsSplitter">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <widget class="QPlainTextEdit" name="runOutputEdit">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+            <property name="placeholderText">
+             <string>Run output chunks</string>
+            </property>
+           </widget>
+           <widget class="QTableView" name="artifactsTableView"/>
+          </widget>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="workflowsTab">
+       <attribute name="title">
+        <string>Workflows</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="workflowsLayout">
+        <item>
+         <widget class="QSplitter" name="workflowsSplitter">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <widget class="QTableView" name="workflowsTableView"/>
+          <widget class="QSplitter" name="workflowDetailsSplitter">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <widget class="QPlainTextEdit" name="workflowDefinitionEdit">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+           </widget>
+           <widget class="QGraphicsView" name="workflowGraphView"/>
+          </widget>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
     </item>
    </layout>
   </widget>
@@ -23,7 +92,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>900</width>
+     <width>1100</width>
      <height>22</height>
     </rect>
    </property>
@@ -52,6 +121,7 @@
    <addaction name="actionRunNow"/>
    <addaction name="actionEdit"/>
    <addaction name="actionAdd"/>
+   <addaction name="actionRunWorkflow"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionRefresh">
@@ -72,6 +142,11 @@
   <action name="actionAdd">
    <property name="text">
     <string>Add</string>
+   </property>
+  </action>
+  <action name="actionRunWorkflow">
+   <property name="text">
+    <string>Run Workflow</string>
    </property>
   </action>
   <action name="actionQuit">

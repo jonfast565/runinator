@@ -4,7 +4,10 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
     errors::SendableError,
+    runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
 };
+use serde_json::Value;
 
 // doing something like this would make the code look more readable:
 // but alas Rust kills us every time
@@ -53,4 +56,113 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         task_id: i64,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn create_task_run(
+        &self,
+        task_id: i64,
+        parameters: Value,
+        trigger: String,
+        workflow_run_id: Option<i64>,
+        workflow_step_id: Option<String>,
+    ) -> impl Future<Output = Result<RunSummary, SendableError>> + Send;
+    fn fetch_run(
+        &self,
+        run_id: i64,
+    ) -> impl Future<Output = Result<Option<RunSummary>, SendableError>> + Send;
+    fn fetch_runs_for_task(
+        &self,
+        task_id: i64,
+    ) -> impl Future<Output = Result<Vec<RunSummary>, SendableError>> + Send;
+    fn fetch_runs_by_status(
+        &self,
+        status: RunStatus,
+    ) -> impl Future<Output = Result<Vec<RunSummary>, SendableError>> + Send;
+    fn update_run_status(
+        &self,
+        run_id: i64,
+        status: RunStatus,
+        output_json: Option<Value>,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+    fn append_run_chunk(
+        &self,
+        run_id: i64,
+        chunk: &NewRunChunk,
+    ) -> impl Future<Output = Result<RunChunk, SendableError>> + Send;
+    fn fetch_run_chunks(
+        &self,
+        run_id: i64,
+        cursor: Option<i64>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<RunChunk>, SendableError>> + Send;
+    fn add_run_artifact(
+        &self,
+        run_id: i64,
+        artifact: &NewRunArtifact,
+    ) -> impl Future<Output = Result<RunArtifact, SendableError>> + Send;
+    fn fetch_run_artifacts(
+        &self,
+        run_id: i64,
+    ) -> impl Future<Output = Result<Vec<RunArtifact>, SendableError>> + Send;
+    fn fetch_artifact(
+        &self,
+        artifact_id: i64,
+    ) -> impl Future<Output = Result<Option<RunArtifact>, SendableError>> + Send;
+    fn upsert_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> impl Future<Output = Result<WorkflowDefinition, SendableError>> + Send;
+    fn fetch_workflows(
+        &self,
+    ) -> impl Future<Output = Result<Vec<WorkflowDefinition>, SendableError>> + Send;
+    fn fetch_workflow(
+        &self,
+        workflow_id: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowDefinition>, SendableError>> + Send;
+    fn delete_workflow(
+        &self,
+        workflow_id: i64,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+    fn create_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+    ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
+    fn fetch_workflow_runs_by_status(
+        &self,
+        status: RunStatus,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+    fn fetch_workflow_runs_for_workflow(
+        &self,
+        workflow_id: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+    fn update_workflow_run_status(
+        &self,
+        workflow_run_id: i64,
+        status: RunStatus,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+    fn fetch_workflow_run(
+        &self,
+        workflow_run_id: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowRun>, SendableError>> + Send;
+    fn create_workflow_step_run(
+        &self,
+        workflow_run_id: i64,
+        step_id: String,
+        parameters: Value,
+    ) -> impl Future<Output = Result<WorkflowStepRun, SendableError>> + Send;
+    fn update_workflow_step_run(
+        &self,
+        step_run_id: i64,
+        status: RunStatus,
+        task_run_id: Option<i64>,
+        attempt: Option<i64>,
+        parameters: Option<Value>,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+    fn fetch_workflow_step_runs(
+        &self,
+        workflow_run_id: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowStepRun>, SendableError>> + Send;
 }

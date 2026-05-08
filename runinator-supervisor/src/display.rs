@@ -50,13 +50,7 @@ pub fn render_snapshot(snapshot: &StateSnapshot) {
     println!();
 
     let headers = [
-        "process",
-        "status",
-        "pid",
-        "restarts",
-        "uptime",
-        "exit",
-        "command",
+        "process", "status", "pid", "restarts", "uptime", "exit", "command",
     ];
 
     let mut rows = Vec::with_capacity(snapshot.processes.len());

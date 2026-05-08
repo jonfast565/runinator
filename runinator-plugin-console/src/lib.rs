@@ -4,9 +4,13 @@ mod windows;
 
 use ctor::ctor;
 use log::{error, info, warn};
+use runinator_models::runs::{
+    ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse,
+};
 use runinator_utilities::{ffiutils, logger};
 use std::ffi::{c_char, c_int};
-use std::io::{BufRead, BufReader};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -35,23 +39,67 @@ pub extern "C" fn name() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn runinator_abi_version() -> c_int {
+    1
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn call_service(
-    action_function: *const c_char,
-    args: *const c_char,
-    timeout_secs: i64,
+    request_json_path: *const c_char,
+    response_json_path: *const c_char,
 ) -> c_int {
-    let action = ffiutils::cstr_to_rust_string(action_function);
-    let args_str = ffiutils::cstr_to_rust_string(args);
+    let request_path = ffiutils::cstr_to_rust_string(request_json_path);
+    let response_path = ffiutils::cstr_to_rust_string(response_json_path);
 
-    info!("Running action '{}' w/ args `{}`", action, args_str);
-
-    execute_command(&args_str, timeout_secs).unwrap_or_else(|e| {
+    execute_request(&request_path, &response_path).unwrap_or_else(|e| {
         error!("Error executing command: {}", e);
         -1
     })
 }
 
-fn execute_command(args_str: &str, timeout_secs: i64) -> Result<c_int, Box<dyn std::error::Error>> {
+fn execute_request(
+    request_path: &str,
+    response_path: &str,
+) -> Result<c_int, Box<dyn std::error::Error>> {
+    let request_file = std::fs::File::open(request_path)?;
+    let request: ProviderExecutionRequest = serde_json::from_reader(request_file)?;
+    let command = request
+        .parameters
+        .get("command")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            request
+                .parameters
+                .get("args")
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or(&request.action_configuration)
+        .to_string();
+
+    info!(
+        "Running action '{}' w/ command `{}`",
+        request.action_function, command
+    );
+    let exit_code = execute_command(&command, request.timeout_secs, &request.events_jsonl_path)?;
+    let response = ProviderExecutionResponse {
+        message: Some(format!("Console command exited with code {exit_code}")),
+        output_json: Some(serde_json::json!({
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "command": command,
+        })),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    };
+    std::fs::write(response_path, serde_json::to_vec_pretty(&response)?)?;
+    Ok(if exit_code == 0 { 0 } else { exit_code })
+}
+
+fn execute_command(
+    args_str: &str,
+    timeout_secs: i64,
+    events_jsonl_path: &str,
+) -> Result<c_int, Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut cmd = Command::new("cmd");
@@ -76,8 +124,18 @@ fn execute_command(args_str: &str, timeout_secs: i64) -> Result<c_int, Box<dyn s
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
     let stop_flag = Arc::new(AtomicBool::new(false));
-    let stdout_thread = spawn_output_thread(stdout, Arc::clone(&stop_flag), false);
-    let stderr_thread = spawn_output_thread(stderr, Arc::clone(&stop_flag), true);
+    let stdout_thread = spawn_output_thread(
+        stdout,
+        Arc::clone(&stop_flag),
+        false,
+        events_jsonl_path.to_string(),
+    );
+    let stderr_thread = spawn_output_thread(
+        stderr,
+        Arc::clone(&stop_flag),
+        true,
+        events_jsonl_path.to_string(),
+    );
 
     let start = Instant::now();
     let exit_status = wait_for_child(
@@ -99,6 +157,7 @@ fn spawn_output_thread<R: std::io::Read + Send + 'static>(
     reader: R,
     stop_flag: Arc<AtomicBool>,
     is_stderr: bool,
+    events_jsonl_path: String,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let buf_reader = BufReader::new(reader);
@@ -113,6 +172,13 @@ fn spawn_output_thread<R: std::io::Read + Send + 'static>(
                     } else {
                         info!("{}", l);
                     }
+                    if !events_jsonl_path.is_empty() {
+                        let event = ProviderExecutionEvent::Chunk {
+                            stream: if is_stderr { "stderr" } else { "stdout" }.into(),
+                            content: l,
+                        };
+                        append_event(&events_jsonl_path, &event);
+                    }
                 }
                 Err(e) => {
                     error!(
@@ -125,6 +191,22 @@ fn spawn_output_thread<R: std::io::Read + Send + 'static>(
             }
         }
     })
+}
+
+fn append_event(path: &str, event: &ProviderExecutionEvent) {
+    let Ok(serialized) = serde_json::to_string(event) else {
+        return;
+    };
+    let mut file = match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            error!("Failed opening plugin event file {}: {}", path, err);
+            return;
+        }
+    };
+    if let Err(err) = writeln!(file, "{serialized}") {
+        error!("Failed writing plugin event: {}", err);
+    }
 }
 
 fn wait_for_child(

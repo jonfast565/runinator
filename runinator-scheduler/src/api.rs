@@ -6,7 +6,10 @@ use runinator_api::{AsyncApiClient, TaskRunPayload};
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
+    runs::{RunRequest, RunStatus, RunSummary},
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
 };
+use serde_json::Value;
 
 use crate::worker_comm::WorkerManager;
 
@@ -72,6 +75,117 @@ impl SchedulerApi {
         let _ = self
             .client
             .log_task_run(&payload)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn create_run(
+        &self,
+        task_id: i64,
+        parameters: Value,
+        trigger: impl Into<String>,
+    ) -> Result<RunSummary, SendableError> {
+        let request = RunRequest {
+            parameters,
+            trigger: trigger.into(),
+        };
+        self.client
+            .create_run(task_id, &request)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError> {
+        self.client
+            .fetch_run(run_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_runs_by_status(
+        &self,
+        status: RunStatus,
+    ) -> Result<Vec<RunSummary>, SendableError> {
+        self.client
+            .fetch_runs_by_status(status)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_workflow(
+        &self,
+        workflow_id: i64,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        self.client
+            .fetch_workflow(workflow_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_workflow_runs_by_status(
+        &self,
+        status: RunStatus,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        self.client
+            .fetch_workflow_runs_by_status(status)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn update_workflow_run(
+        &self,
+        workflow_run_id: i64,
+        status: RunStatus,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        self.client
+            .update_workflow_run(workflow_run_id, status, message)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn fetch_workflow_run(
+        &self,
+        workflow_run_id: i64,
+    ) -> Result<(WorkflowRun, Vec<WorkflowStepRun>), SendableError> {
+        self.client
+            .fetch_workflow_run(workflow_run_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn create_workflow_step_run(
+        &self,
+        workflow_run_id: i64,
+        step_id: &str,
+        parameters: Value,
+    ) -> Result<WorkflowStepRun, SendableError> {
+        self.client
+            .create_workflow_step_run(workflow_run_id, step_id, parameters)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn update_workflow_step_run(
+        &self,
+        step_run_id: i64,
+        status: RunStatus,
+        task_run_id: Option<i64>,
+        attempt: Option<i64>,
+        parameters: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        self.client
+            .update_workflow_step_run(
+                step_run_id,
+                status,
+                task_run_id,
+                attempt,
+                parameters,
+                message,
+            )
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
         Ok(())

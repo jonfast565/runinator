@@ -1,17 +1,25 @@
 mod config;
+mod console_provider;
 mod executor;
+mod output_sink;
 mod provider_repository;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use config::parse_config;
 use log::{error, info, warn};
-use runinator_api::{AsyncApiClient, StaticLocator, TaskRunPayload};
+use runinator_api::{
+    AsyncApiClient, RunChunkPayload, RunStatusPayload, StaticLocator, TaskRunPayload,
+};
 use runinator_broker::{Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker};
 use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::runs::RunStatus;
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
 use runinator_utilities::startup;
+use serde_json::json;
 use tokio::sync::Notify;
+
+use crate::output_sink::RunOutputSink;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
@@ -173,15 +181,75 @@ async fn process_delivery(
 ) -> Result<(), SendableError> {
     let command = delivery.command.clone();
     let task = command.task.clone();
-    let result = executor::execute_task(libraries, command.command_id, task.clone()).await;
+    if let Some(run_id) = command.run_id {
+        let payload = RunStatusPayload {
+            status: RunStatus::Running,
+            output_json: None,
+            message: None,
+        };
+        if let Err(err) = api_client.update_run(run_id, &payload).await {
+            error!("Failed to mark run {} running: {}", run_id, err);
+        }
+    }
+    let sink = RunOutputSink::new(
+        command.run_id,
+        api_client.clone(),
+        tokio::runtime::Handle::current(),
+    );
+    let result = executor::execute_task(
+        libraries,
+        command.command_id,
+        task.clone(),
+        command.run_id,
+        command.parameters.clone(),
+        Some(Arc::new(sink.clone())),
+    )
+    .await;
+    if let Some(execution_result) = &result.execution_result {
+        sink.persist_result(execution_result).await;
+    }
+    let task_result = result.task_result;
+    let provider_message = task_result.message.clone().or_else(|| sink.message());
 
-    if result.success {
+    if task_result.success {
+        if let Some(run_id) = command.run_id {
+            let chunk = RunChunkPayload {
+                stream: "log".into(),
+                content: format!(
+                    "Task {} completed successfully in {} ms",
+                    task.id.unwrap_or_default(),
+                    task_result.duration_ms()
+                ),
+            };
+            if let Err(err) = api_client.append_run_chunk(run_id, &chunk).await {
+                error!("Failed to append run {} chunk: {}", run_id, err);
+            }
+            let output_json = result
+                .execution_result
+                .as_ref()
+                .and_then(|execution_result| execution_result.output_json.clone())
+                .unwrap_or_else(|| {
+                    json!({
+                        "success": true,
+                        "duration_ms": task_result.duration_ms(),
+                        "message": provider_message,
+                    })
+                });
+            let payload = RunStatusPayload {
+                status: RunStatus::Succeeded,
+                output_json: Some(output_json),
+                message: provider_message.clone(),
+            };
+            if let Err(err) = api_client.update_run(run_id, &payload).await {
+                error!("Failed to mark run {} succeeded: {}", run_id, err);
+            }
+        }
         if let Some(task_id) = task.id {
             let payload = TaskRunPayload {
                 task_id,
-                started_at: result.started_at,
-                duration_ms: result.duration_ms(),
-                message: result.message.clone(),
+                started_at: task_result.started_at,
+                duration_ms: task_result.duration_ms(),
+                message: provider_message.clone(),
             };
 
             if let Err(err) = api_client.log_task_run(&payload).await {
@@ -196,10 +264,33 @@ async fn process_delivery(
             warn!("Task result missing ID; skipping run logging");
         }
     } else {
+        if let Some(run_id) = command.run_id {
+            let chunk = RunChunkPayload {
+                stream: "stderr".into(),
+                content: provider_message
+                    .clone()
+                    .unwrap_or_else(|| "Task failed without a provider message".into()),
+            };
+            if let Err(err) = api_client.append_run_chunk(run_id, &chunk).await {
+                error!("Failed to append run {} failure chunk: {}", run_id, err);
+            }
+            let payload = RunStatusPayload {
+                status: result.status,
+                output_json: Some(json!({
+                    "success": false,
+                    "duration_ms": task_result.duration_ms(),
+                    "message": provider_message,
+                })),
+                message: provider_message.clone(),
+            };
+            if let Err(err) = api_client.update_run(run_id, &payload).await {
+                error!("Failed to mark run {} terminal: {}", run_id, err);
+            }
+        }
         warn!(
             "Task {} reported failure: {:?}",
             task.id.unwrap_or_default(),
-            result.message
+            provider_message
         );
     }
 

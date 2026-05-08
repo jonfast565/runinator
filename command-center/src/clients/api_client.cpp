@@ -174,6 +174,276 @@ void ApiClient::updateTask(const ScheduledTask &task) {
   });
 }
 
+void ApiClient::fetchRuns(qint64 taskId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("tasks/%1/runs").arg(taskId)));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed("Failed to parse run list");
+      return;
+    }
+
+    QVector<RunSummary> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(RunSummary::fromJson(item.toObject()));
+      }
+    }
+    emit runsLoaded(loaded);
+  });
+}
+
+void ApiClient::fetchRunChunks(qint64 runId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("runs/%1/chunks?limit=500").arg(runId)));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply, runId]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed("Failed to parse run chunks");
+      return;
+    }
+
+    QVector<RunChunk> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(RunChunk::fromJson(item.toObject()));
+      }
+    }
+    emit runChunksLoaded(runId, loaded);
+  });
+}
+
+void ApiClient::fetchRunArtifacts(qint64 runId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("runs/%1/artifacts").arg(runId)));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply, runId]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed("Failed to parse run artifacts");
+      return;
+    }
+
+    QVector<RunArtifact> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(RunArtifact::fromJson(item.toObject()));
+      }
+    }
+    emit runArtifactsLoaded(runId, loaded);
+  });
+}
+
+void ApiClient::fetchWorkflows() {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl("workflows"));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed("Failed to parse workflow list");
+      return;
+    }
+
+    QVector<WorkflowDefinition> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(WorkflowDefinition::fromJson(item.toObject()));
+      }
+    }
+    emit workflowsLoaded(loaded);
+  });
+}
+
+void ApiClient::saveWorkflow(const WorkflowDefinition &workflow) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  const QByteArray payload = QJsonDocument(workflow.toJson()).toJson(QJsonDocument::Compact);
+  QNetworkRequest request(workflow.id.has_value()
+                              ? buildUrl(QString("workflows/%1").arg(workflow.id.value()))
+                              : buildUrl("workflows"));
+  request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+  QNetworkReply *reply = workflow.id.has_value()
+                             ? network->sendCustomRequest(request, "PATCH", payload)
+                             : network->post(request, payload);
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+      emit requestFailed("Failed to parse saved workflow");
+      return;
+    }
+    emit workflowSaved(WorkflowDefinition::fromJson(doc.object()));
+  });
+}
+
+void ApiClient::createWorkflowRun(qint64 workflowId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("No service discovered");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("workflows/%1/runs").arg(workflowId)));
+  request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+  QNetworkReply *reply = network->post(request, QByteArray("{}"));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+      emit requestFailed("Failed to parse workflow run response");
+      return;
+    }
+
+    const QJsonObject runObj = doc.object().value("run").toObject();
+    emit workflowRunRequested(runObj.value("id").toVariant().toLongLong());
+  });
+}
+
+void ApiClient::fetchWorkflowRun(qint64 workflowRunId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("API base URL is not configured");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("workflow_runs/%1").arg(workflowRunId)));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+      emit requestFailed("Failed to parse workflow run detail");
+      return;
+    }
+
+    emit workflowRunLoaded(WorkflowRunDetail::fromJson(doc.object()));
+  });
+}
+
+void ApiClient::fetchWorkflowRuns(qint64 workflowId) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("API base URL is not configured");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("workflow_runs?workflow_id=%1").arg(workflowId)));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply, workflowId]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed("Failed to parse workflow run history");
+      return;
+    }
+
+    QVector<WorkflowRunSummary> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(WorkflowRunSummary::fromJson(item.toObject()));
+      }
+    }
+    emit workflowRunsLoaded(workflowId, loaded);
+  });
+}
+
 bool ApiClient::parseTaskResponse(const QByteArray &body, bool &ok, QString &message) {
   QJsonParseError parseError;
   const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);

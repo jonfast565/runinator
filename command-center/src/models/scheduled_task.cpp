@@ -1,6 +1,20 @@
 #include "scheduled_task.h"
 
+#include <QJsonArray>
 #include <QJsonValue>
+
+namespace {
+QJsonObject objectOrDefault(const QJsonValue &value, const QJsonObject &fallback = QJsonObject()) {
+  return value.isObject() ? value.toObject() : fallback;
+}
+
+QJsonObject defaultInputSchema() {
+  QJsonObject schema;
+  schema.insert("type", "object");
+  schema.insert("additionalProperties", true);
+  return schema;
+}
+} // namespace
 
 std::optional<QDateTime> ScheduledTask::parseOptionalDate(const QJsonValue &value) {
   if (!value.isString()) {
@@ -37,6 +51,17 @@ ScheduledTask ScheduledTask::fromJson(const QJsonObject &obj) {
   task.immediate = obj.value("immediate").toBool(false);
   task.blackoutStart = parseOptionalDate(obj.value("blackout_start"));
   task.blackoutEnd = parseOptionalDate(obj.value("blackout_end"));
+  task.inputSchema = objectOrDefault(obj.value("input_schema"), defaultInputSchema());
+  task.defaultParameters = objectOrDefault(obj.value("default_parameters"));
+  task.hasOutputSchema = obj.contains("output_schema") && obj.value("output_schema").isObject();
+  task.outputSchema = objectOrDefault(obj.value("output_schema"));
+  task.mcpEnabled = obj.value("mcp_enabled").toBool(false);
+  task.metadata = objectOrDefault(obj.value("metadata"));
+  if (obj.value("tags").isArray()) {
+    for (const auto &tag : obj.value("tags").toArray()) {
+      task.tags.push_back(tag.toString());
+    }
+  }
   return task;
 }
 
@@ -65,6 +90,16 @@ QJsonObject ScheduledTask::toJson() const {
   obj.insert("immediate", immediate);
   obj.insert("blackout_start", dateOrNull(blackoutStart));
   obj.insert("blackout_end", dateOrNull(blackoutEnd));
+  obj.insert("input_schema", inputSchema.isEmpty() ? defaultInputSchema() : inputSchema);
+  obj.insert("default_parameters", defaultParameters);
+  obj.insert("output_schema", hasOutputSchema ? QJsonValue(outputSchema) : QJsonValue::Null);
+  obj.insert("mcp_enabled", mcpEnabled);
+  obj.insert("metadata", metadata);
+  QJsonArray tagArray;
+  for (const auto &tag : tags) {
+    tagArray.append(tag);
+  }
+  obj.insert("tags", tagArray);
   return obj;
 }
 

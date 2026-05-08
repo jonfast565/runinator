@@ -2,13 +2,20 @@
 
 #include <QLabel>
 #include <QMainWindow>
+#include <QGraphicsScene>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSpinBox>
 #include <QStandardItemModel>
+#include <QTableView>
 #include <QTimer>
 #include <QStringList>
 
 #include "clients/api_client.h"
 #include "dialogs/task_editor_dialog.h"
 #include "gossip/gossip_discovery.h"
+#include "models/run_models.h"
 #include "models/scheduled_task.h"
 
 namespace Ui {
@@ -25,9 +32,28 @@ private:
   void setupUiBindings();
   void setupShortcuts();
   void refreshTasks();
+  void refreshRunsForSelectedTask();
+  void refreshWorkflows();
+  void setupWorkflowDesigner();
   void updateTable();
+  void updateRunsTable();
+  void updateArtifactsTable();
+  void updateWorkflowsTable();
+  void updateWorkflowRunsTable();
+  void updateWorkflowDetails();
+  void updateSelectedWorkflowNodeDetail();
+  void populateStepEditor(const QString &stepId);
+  void applyStepEditor();
+  void addWorkflow();
+  void saveWorkflow();
+  void addWorkflowStep();
+  void removeWorkflowStep();
+  WorkflowDefinition currentWorkflowDraft() const;
+  void renderWorkflowGraph(const WorkflowDefinition &workflow);
   void updateRunNowState();
+  void updateWorkflowActionState();
   void requestRunSelected();
+  void requestWorkflowSelected();
   void addNewTask();
   void editSelectedTask();
   void openEditor(const ScheduledTask &task, bool creating);
@@ -36,18 +62,61 @@ private:
   void setError(const QString &text);
   void updateStatusBar();
   void onTasksLoaded(const QVector<ScheduledTask> &loaded);
+  void onRunsLoaded(const QVector<RunSummary> &loaded);
+  void onRunChunksLoaded(qint64 runId, const QVector<RunChunk> &loaded);
+  void onRunArtifactsLoaded(qint64 runId, const QVector<RunArtifact> &loaded);
+  void onWorkflowsLoaded(const QVector<WorkflowDefinition> &loaded);
+  void onWorkflowSaved(const WorkflowDefinition &workflow);
+  void onWorkflowRunRequested(qint64 workflowRunId);
+  void onWorkflowRunsLoaded(qint64 workflowId, const QVector<WorkflowRunSummary> &runs);
+  void onWorkflowRunLoaded(const WorkflowRunDetail &detail);
   void onRequestFailed(const QString &message);
   void onTaskRunResult(bool ok, const QString &message);
   void onTaskSaved(bool ok, const QString &message, bool creating);
 
   int selectedRow() const;
+  int selectedRunRow() const;
+  int selectedWorkflowRow() const;
+  int selectedWorkflowRunRow() const;
 
   Ui::MainWindow *ui = nullptr;
   QLabel *statusLabel = nullptr;
   QLabel *serviceLabel = nullptr;
 
   QStandardItemModel *model = nullptr;
+  QStandardItemModel *runsModel = nullptr;
+  QStandardItemModel *artifactsModel = nullptr;
+  QStandardItemModel *workflowsModel = nullptr;
+  QStandardItemModel *workflowRunsModel = nullptr;
+  QGraphicsScene *workflowScene = nullptr;
+  QLineEdit *workflowNameEdit = nullptr;
+  QSpinBox *workflowVersionSpin = nullptr;
+  QSpinBox *workflowConcurrencySpin = nullptr;
+  QPushButton *newWorkflowButton = nullptr;
+  QPushButton *saveWorkflowButton = nullptr;
+  QPushButton *addStepButton = nullptr;
+  QPushButton *removeStepButton = nullptr;
+  QPushButton *applyStepButton = nullptr;
+  QLineEdit *stepIdEdit = nullptr;
+  QSpinBox *stepTaskIdSpin = nullptr;
+  QLineEdit *stepNeedsEdit = nullptr;
+  QSpinBox *stepRetrySpin = nullptr;
+  QSpinBox *stepTimeoutSpin = nullptr;
+  QPlainTextEdit *stepParametersEdit = nullptr;
+  QPlainTextEdit *stepMappingsEdit = nullptr;
+  QPlainTextEdit *workflowRunDetailEdit = nullptr;
+  QTableView *workflowRunsTableView = nullptr;
   QVector<ScheduledTask> tasks;
+  QVector<RunSummary> runs;
+  QVector<RunArtifact> artifacts;
+  QVector<WorkflowDefinition> workflows;
+  QVector<WorkflowRunSummary> workflowRuns;
+  WorkflowRunDetail currentWorkflowRun;
+  qint64 selectedRunId = 0;
+  qint64 selectedWorkflowRunId = 0;
+  qint64 selectedWorkflowNodeTaskRunId = 0;
+  std::optional<qint64> editingWorkflowId;
+  QString selectedStepId;
 
   ApiClient *api = nullptr;
   GossipDiscovery *discovery = nullptr;

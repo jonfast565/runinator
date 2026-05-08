@@ -3,6 +3,7 @@ pub mod discovery;
 use chrono::{DateTime, Utc};
 use runinator_models::core::ScheduledTask;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +44,10 @@ pub enum GossipMessage {
 pub struct TaskCommand {
     pub command_id: Uuid,
     pub task: ScheduledTask,
+    #[serde(default)]
+    pub run_id: Option<i64>,
+    #[serde(default)]
+    pub parameters: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

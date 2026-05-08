@@ -10,5 +10,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "1"
 url = "2"

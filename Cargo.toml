@@ -16,5 +16,7 @@ members = [
     "runinator-plugin-console",
     "runinator-utilities",
     "runinator-broker",
-    "runinator-supervisor"
+    "runinator-supervisor",
+    "runinator-mcp",
+    "runinator-workflows"
 ]

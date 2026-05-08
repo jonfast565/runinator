@@ -59,7 +59,10 @@ pub fn load_config(path: &Path) -> Result<(SupervisorConfig, Paths), DynError> {
     let config_path = config_path.canonicalize().map_err(|err| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Unable to resolve config path {}: {err}", config_path.display()),
+            format!(
+                "Unable to resolve config path {}: {err}",
+                config_path.display()
+            ),
         )
     })?;
     let config_dir = config_path

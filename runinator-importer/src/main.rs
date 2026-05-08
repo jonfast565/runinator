@@ -11,6 +11,7 @@ use runinator_api::AsyncApiClient;
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::core::ScheduledTask;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -76,10 +77,30 @@ struct TaskDefinition {
     blackout_start: Option<DateTime<Utc>>,
     #[serde(default)]
     blackout_end: Option<DateTime<Utc>>,
+    #[serde(default = "default_input_schema")]
+    input_schema: Value,
+    #[serde(default = "default_json_object")]
+    default_parameters: Value,
+    #[serde(default)]
+    output_schema: Option<Value>,
+    #[serde(default)]
+    mcp_enabled: bool,
+    #[serde(default = "default_json_object")]
+    metadata: Value,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 fn default_enabled() -> bool {
     true
+}
+
+fn default_input_schema() -> Value {
+    serde_json::json!({ "type": "object", "additionalProperties": true })
+}
+
+fn default_json_object() -> Value {
+    Value::Object(Default::default())
 }
 
 impl From<TaskDefinition> for ScheduledTask {
@@ -97,6 +118,12 @@ impl From<TaskDefinition> for ScheduledTask {
             immediate: def.immediate,
             blackout_start: def.blackout_start,
             blackout_end: def.blackout_end,
+            input_schema: def.input_schema,
+            default_parameters: def.default_parameters,
+            output_schema: def.output_schema,
+            mcp_enabled: def.mcp_enabled,
+            metadata: def.metadata,
+            tags: def.tags,
         }
     }
 }

@@ -13,15 +13,18 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use log::info;
-use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::{
+    errors::{RuntimeError, SendableError},
+    runs::NewRunArtifact,
+};
 use runinator_utilities::data_export::{
     TableData, TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
 use serde::Deserialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tokio::time;
 
-pub fn run_dynamo_dump(args: &str, timeout_secs: i64) -> Result<(), SendableError> {
+pub fn run_dynamo_dump(args: &str, timeout_secs: i64) -> Result<DynamoDumpResult, SendableError> {
     let request: DynamoDumpRequest = serde_json::from_str(args).map_err(to_sendable)?;
     let timeout = normalize_timeout(timeout_secs);
 
@@ -34,7 +37,10 @@ pub fn run_dynamo_dump(args: &str, timeout_secs: i64) -> Result<(), SendableErro
     runtime.block_on(async move { execute_dump(request, timeout).await })
 }
 
-async fn execute_dump(request: DynamoDumpRequest, timeout: Duration) -> Result<(), SendableError> {
+async fn execute_dump(
+    request: DynamoDumpRequest,
+    timeout: Duration,
+) -> Result<DynamoDumpResult, SendableError> {
     let timeout_secs = timeout.as_secs();
     let fut = async {
         let client = build_client(&request).await?;
@@ -49,8 +55,7 @@ async fn execute_dump(request: DynamoDumpRequest, timeout: Duration) -> Result<(
         );
 
         let table = items_to_table_data(&items);
-        export_results(&request, table)?;
-        Ok(())
+        export_results(&request, table)
     };
 
     match time::timeout(timeout, fut).await {
@@ -203,7 +208,10 @@ async fn execute_partiql(
     Ok(items)
 }
 
-fn export_results(request: &DynamoDumpRequest, table: TableData) -> Result<(), SendableError> {
+fn export_results(
+    request: &DynamoDumpRequest,
+    table: TableData,
+) -> Result<DynamoDumpResult, SendableError> {
     let dump_dir = PathBuf::from(&request.dump_folder);
     fs::create_dir_all(&dump_dir).map_err(to_sendable)?;
 
@@ -235,14 +243,30 @@ fn export_results(request: &DynamoDumpRequest, table: TableData) -> Result<(), S
         sheet_name: sheet_name_holder.as_deref(),
     };
 
+    let rows = table.rows.len();
     exporter.export(&output_path, &table, &context)?;
-    info!(
-        "Exported {} row(s) to {}",
-        table.rows.len(),
-        output_path.display()
-    );
+    let size_bytes = fs::metadata(&output_path).map_err(to_sendable)?.len() as i64;
+    info!("Exported {} row(s) to {}", rows, output_path.display());
 
-    Ok(())
+    let artifact = NewRunArtifact {
+        name: output_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| request.table_name.clone()),
+        mime_type: request.format.mime_type().to_string(),
+        size_bytes,
+        uri: output_path.to_string_lossy().into_owned(),
+        metadata: json!({
+            "provider": "AWS",
+            "service": "DynamoDB",
+            "table_name": request.table_name,
+            "query_type": request.query_type.as_str(),
+            "rows": rows,
+            "format": request.format.as_str(),
+        }),
+    };
+
+    Ok(DynamoDumpResult { rows, artifact })
 }
 
 fn items_to_table_data(items: &[HashMap<String, AttributeValue>]) -> TableData {
@@ -595,6 +619,22 @@ impl DumpFormat {
     fn requires_sheet_name(&self) -> bool {
         matches!(self, DumpFormat::Excel)
     }
+
+    fn mime_type(&self) -> &'static str {
+        match self {
+            DumpFormat::Excel => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+            DumpFormat::Csv => "text/csv",
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            DumpFormat::Excel => "excel",
+            DumpFormat::Csv => "csv",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -608,6 +648,20 @@ impl Default for DynamoQueryType {
     fn default() -> Self {
         DynamoQueryType::Query
     }
+}
+
+impl DynamoQueryType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DynamoQueryType::Query => "query",
+            DynamoQueryType::Partiql => "partiql",
+        }
+    }
+}
+
+pub struct DynamoDumpResult {
+    pub rows: usize,
+    pub artifact: NewRunArtifact,
 }
 
 #[derive(Debug, Deserialize)]

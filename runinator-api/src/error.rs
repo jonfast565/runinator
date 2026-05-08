@@ -46,6 +46,10 @@ pub enum ApiError {
     /// The operation requires a task identifier but none was supplied.
     #[error("missing task identifier; cannot complete operation")]
     MissingTaskId,
+
+    /// The web service returned a JSON shape this client could not parse.
+    #[error("unexpected Runinator API response: {0}")]
+    UnexpectedResponse(String),
 }
 
 impl ApiError {

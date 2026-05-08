@@ -129,6 +129,8 @@ impl WorkerManager {
         let command = TaskCommand {
             command_id: Uuid::new_v4(),
             task: task.clone(),
+            run_id: None,
+            parameters: serde_json::Value::Null,
         };
 
         let mut last_error: Option<SendableError> = None;
