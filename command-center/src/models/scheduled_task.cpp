@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QTimeZone>
 
 namespace {
 QJsonObject objectOrDefault(const QJsonValue &value, const QJsonObject &fallback = QJsonObject()) {
@@ -31,7 +32,7 @@ std::optional<QDateTime> ScheduledTask::parseOptionalDate(const QJsonValue &valu
   if (!dt.isValid()) {
     return std::nullopt;
   }
-  dt.setTimeSpec(Qt::UTC);
+  dt.setTimeZone(QTimeZone::UTC);
   return dt;
 }
 

@@ -444,6 +444,81 @@ void ApiClient::fetchWorkflowRuns(qint64 workflowId) {
   });
 }
 
+void ApiClient::fetchGenericRecords(const QString &endpoint) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("API base URL is not configured");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(endpoint));
+  QNetworkReply *reply = network->get(request);
+  connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit requestFailed(extractError(body, reply));
+      return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+      emit requestFailed(QString("Failed to parse %1").arg(endpoint));
+      return;
+    }
+
+    QVector<QJsonObject> loaded;
+    for (const auto &item : doc.array()) {
+      if (item.isObject()) {
+        loaded.push_back(item.toObject());
+      }
+    }
+    emit genericRecordsLoaded(endpoint, loaded);
+  });
+}
+
+void ApiClient::approveApproval(qint64 approvalId) {
+  postApprovalAction(approvalId, "approve");
+}
+
+void ApiClient::rejectApproval(qint64 approvalId) {
+  postApprovalAction(approvalId, "reject");
+}
+
+void ApiClient::postApprovalAction(qint64 approvalId, const QString &action) {
+  if (serviceBaseUrl.isEmpty()) {
+    emit requestFailed("API base URL is not configured");
+    return;
+  }
+
+  QNetworkRequest request(buildUrl(QString("approvals/%1/%2").arg(approvalId).arg(action)));
+  request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+  QNetworkReply *reply = network->post(request, QByteArray("{}"));
+  connect(reply, &QNetworkReply::finished, this, [this, reply, action]() {
+    const QByteArray body = reply->readAll();
+    const bool hasError = reply->error() != QNetworkReply::NoError;
+    reply->deleteLater();
+
+    if (hasError) {
+      emit approvalActionFinished(false, extractError(body, reply));
+      return;
+    }
+
+    QString message = QString("Approval %1d").arg(action);
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+      const QString parsed = doc.object().value("message").toString();
+      if (!parsed.isEmpty()) {
+        message = parsed;
+      }
+    }
+    emit approvalActionFinished(true, message);
+  });
+}
+
 bool ApiClient::parseTaskResponse(const QByteArray &body, bool &ok, QString &message) {
   QJsonParseError parseError;
   const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);

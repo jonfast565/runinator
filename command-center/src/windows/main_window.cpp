@@ -40,6 +40,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
   connect(api, &ApiClient::workflowRunRequested, this, &MainWindow::onWorkflowRunRequested);
   connect(api, &ApiClient::workflowRunsLoaded, this, &MainWindow::onWorkflowRunsLoaded);
   connect(api, &ApiClient::workflowRunLoaded, this, &MainWindow::onWorkflowRunLoaded);
+  connect(api, &ApiClient::genericRecordsLoaded, this, &MainWindow::onGenericRecordsLoaded);
+  connect(api, &ApiClient::approvalActionFinished, this, &MainWindow::onApprovalActionFinished);
   connect(api, &ApiClient::requestFailed, this, &MainWindow::onRequestFailed);
   connect(api, &ApiClient::taskRunResult, this, &MainWindow::onTaskRunResult);
   connect(api, &ApiClient::taskSaved, this, &MainWindow::onTaskSaved);
@@ -73,6 +75,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
       if (selectedWorkflowRunId > 0) {
         api->fetchWorkflowRun(selectedWorkflowRunId);
       }
+      if (genericRecordsTableView && genericRecordsTableView->isVisible()) {
+        refreshGenericRecords();
+      }
     }
   });
   autoRefreshTimer->start();
@@ -89,6 +94,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 
   refreshTasks();
   refreshWorkflows();
+  refreshGenericRecords();
 }
 
 MainWindow::~MainWindow() {
@@ -166,6 +172,7 @@ void MainWindow::setupUiBindings() {
   workflowScene = new QGraphicsScene(this);
   ui->workflowGraphView->setScene(workflowScene);
   setupWorkflowDesigner();
+  setupGenericResourcePanel();
 
   connect(ui->tableView, &QTableView::doubleClicked, this, [this]() { editSelectedTask(); });
 
@@ -218,9 +225,9 @@ void MainWindow::setupUiBindings() {
     if (selected.isEmpty()) {
       return;
     }
-    const QString stepId = selected.first()->data(0).toString();
-    if (!stepId.isEmpty()) {
-      populateStepEditor(stepId);
+    const QString nodeId = selected.first()->data(0).toString();
+    if (!nodeId.isEmpty()) {
+      populateStepEditor(nodeId);
       updateSelectedWorkflowNodeDetail();
     }
   });
@@ -229,11 +236,88 @@ void MainWindow::setupUiBindings() {
       refreshWorkflows();
     } else if (ui->tabWidget->widget(index) == ui->runsTab) {
       refreshRunsForSelectedTask();
+    } else if (genericRecordsTableView && ui->tabWidget->widget(index) == genericRecordsTableView->parentWidget()) {
+      refreshGenericRecords();
     }
   });
 
   updateRunNowState();
   updateWorkflowActionState();
+}
+
+void MainWindow::setupGenericResourcePanel() {
+  auto *tab = new QWidget(this);
+  auto *layout = new QVBoxLayout(tab);
+  auto *toolbar = new QHBoxLayout();
+
+  genericRecordTypeCombo = new QComboBox(tab);
+  genericRecordTypeCombo->addItem("External Items", "external_items");
+  genericRecordTypeCombo->addItem("Resources", "external_resources");
+  genericRecordTypeCombo->addItem("Feedback", "feedback");
+  genericRecordTypeCombo->addItem("Approvals", "approvals");
+  genericRecordTypeCombo->addItem("Gates", "gates");
+  genericRecordTypeCombo->addItem("Workspaces", "workspaces");
+  genericRecordTypeCombo->addItem("Change Sets", "change_sets");
+  genericRecordTypeCombo->addItem("Events", "automation_events");
+
+  refreshGenericRecordsButton = new QPushButton("Refresh", tab);
+  approveGenericApprovalButton = new QPushButton("Approve", tab);
+  rejectGenericApprovalButton = new QPushButton("Reject", tab);
+  approveGenericApprovalButton->setEnabled(false);
+  rejectGenericApprovalButton->setEnabled(false);
+
+  toolbar->addWidget(genericRecordTypeCombo);
+  toolbar->addWidget(refreshGenericRecordsButton);
+  toolbar->addStretch(1);
+  toolbar->addWidget(approveGenericApprovalButton);
+  toolbar->addWidget(rejectGenericApprovalButton);
+  layout->addLayout(toolbar);
+
+  genericRecordsModel = new QStandardItemModel(this);
+  genericRecordsModel->setColumnCount(6);
+  genericRecordsModel->setHeaderData(0, Qt::Horizontal, "ID");
+  genericRecordsModel->setHeaderData(1, Qt::Horizontal, "Provider");
+  genericRecordsModel->setHeaderData(2, Qt::Horizontal, "Type");
+  genericRecordsModel->setHeaderData(3, Qt::Horizontal, "Status");
+  genericRecordsModel->setHeaderData(4, Qt::Horizontal, "Summary");
+  genericRecordsModel->setHeaderData(5, Qt::Horizontal, "External ID");
+
+  genericRecordsTableView = new QTableView(tab);
+  genericRecordsTableView->setModel(genericRecordsModel);
+  genericRecordsTableView->setSelectionBehavior(QAbstractItemView::SelectRows);
+  genericRecordsTableView->setSelectionMode(QAbstractItemView::SingleSelection);
+  genericRecordsTableView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  genericRecordsTableView->horizontalHeader()->setStretchLastSection(true);
+  genericRecordsTableView->verticalHeader()->setVisible(false);
+  layout->addWidget(genericRecordsTableView, 2);
+
+  genericRecordDetailEdit = new QPlainTextEdit(tab);
+  genericRecordDetailEdit->setReadOnly(true);
+  genericRecordDetailEdit->setMaximumHeight(220);
+  layout->addWidget(genericRecordDetailEdit);
+
+  ui->tabWidget->addTab(tab, "Resources");
+
+  connect(genericRecordTypeCombo, &QComboBox::currentIndexChanged, this, [this]() {
+    genericRecords.clear();
+    updateGenericRecordsTable();
+    refreshGenericRecords();
+  });
+  connect(refreshGenericRecordsButton, &QPushButton::clicked, this, &MainWindow::refreshGenericRecords);
+  connect(approveGenericApprovalButton, &QPushButton::clicked, this, &MainWindow::approveSelectedApproval);
+  connect(rejectGenericApprovalButton, &QPushButton::clicked, this, &MainWindow::rejectSelectedApproval);
+  connect(genericRecordsTableView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
+    const int row = selectedGenericRecordRow();
+    if (row < 0 || row >= genericRecords.size()) {
+      genericRecordDetailEdit->clear();
+    } else {
+      genericRecordDetailEdit->setPlainText(
+          QJsonDocument(genericRecords[row]).toJson(QJsonDocument::Indented));
+    }
+    const bool approvalSelected = selectedGenericEndpoint() == "approvals" && selectedGenericRecordId() > 0;
+    approveGenericApprovalButton->setEnabled(approvalSelected);
+    rejectGenericApprovalButton->setEnabled(approvalSelected);
+  });
 }
 
 void MainWindow::setupWorkflowDesigner() {
@@ -262,7 +346,7 @@ void MainWindow::setupWorkflowDesigner() {
   ui->workflowsLayout->insertLayout(0, toolbarLayout);
 
   auto *form = new QFormLayout();
-  stepIdEdit = new QLineEdit(this);
+  nodeIdEdit = new QLineEdit(this);
   stepTaskIdSpin = new QSpinBox(this);
   stepTaskIdSpin->setMinimum(1);
   stepTaskIdSpin->setMaximum(2147483647);
@@ -289,7 +373,7 @@ void MainWindow::setupWorkflowDesigner() {
   workflowRunsTableView->horizontalHeader()->setStretchLastSection(true);
   workflowRunsTableView->verticalHeader()->setVisible(false);
   workflowRunsTableView->setMaximumHeight(140);
-  form->addRow("Step ID", stepIdEdit);
+  form->addRow("Step ID", nodeIdEdit);
   form->addRow("Task ID", stepTaskIdSpin);
   form->addRow("Needs", stepNeedsEdit);
   form->addRow("Max Attempts", stepRetrySpin);
@@ -367,6 +451,13 @@ void MainWindow::refreshWorkflows() {
     return;
   }
   api->fetchWorkflows();
+}
+
+void MainWindow::refreshGenericRecords() {
+  if (!genericRecordTypeCombo || api->baseUrl().isEmpty()) {
+    return;
+  }
+  api->fetchGenericRecords(selectedGenericEndpoint());
 }
 
 void MainWindow::onTasksLoaded(const QVector<ScheduledTask> &loaded) {
@@ -468,9 +559,9 @@ void MainWindow::onWorkflowRunLoaded(const WorkflowRunDetail &detail) {
   if (!detail.message.isEmpty()) {
     lines.push_back(QString("Message: %1").arg(detail.message));
   }
-  for (const WorkflowStepRun &step : detail.steps) {
+  for (const WorkflowNodeRun &step : detail.nodes) {
     lines.push_back(QString("%1: %2, attempt %3, task run %4%5")
-                        .arg(step.stepId)
+                        .arg(step.nodeId)
                         .arg(step.status)
                         .arg(step.attempt)
                         .arg(step.taskRunId.has_value() ? QString::number(step.taskRunId.value()) : "-")
@@ -482,6 +573,23 @@ void MainWindow::onWorkflowRunLoaded(const WorkflowRunDetail &detail) {
   const int row = selectedWorkflowRow();
   if (row >= 0 && row < workflows.size()) {
     renderWorkflowGraph(workflows[row]);
+  }
+}
+
+void MainWindow::onGenericRecordsLoaded(const QString &endpoint, const QVector<QJsonObject> &records) {
+  if (endpoint != selectedGenericEndpoint()) {
+    return;
+  }
+  genericRecords = records;
+  updateGenericRecordsTable();
+}
+
+void MainWindow::onApprovalActionFinished(bool ok, const QString &message) {
+  if (ok) {
+    setStatus(message);
+    refreshGenericRecords();
+  } else {
+    setError(message);
   }
 }
 
@@ -675,6 +783,53 @@ void MainWindow::updateWorkflowRunsTable() {
   }
 }
 
+void MainWindow::updateGenericRecordsTable() {
+  if (!genericRecordsModel) {
+    return;
+  }
+  const int previousSelection = selectedGenericRecordRow();
+  genericRecordsModel->removeRows(0, genericRecordsModel->rowCount());
+
+  for (const QJsonObject &record : genericRecords) {
+    const QString provider = record.value("provider").toString();
+    const QString externalId = record.value("external_id").toString(
+        record.value("key").toString(record.value("url").toString()));
+    QList<QStandardItem *> row;
+    row.append(new QStandardItem(QString::number(record.value("id").toVariant().toLongLong())));
+    row.append(new QStandardItem(provider));
+    row.append(new QStandardItem(genericRecordType(record)));
+    row.append(new QStandardItem(record.value("status").toString()));
+    row.append(new QStandardItem(genericRecordSummary(record)));
+    row.append(new QStandardItem(externalId));
+    for (auto *item : row) {
+      item->setEditable(false);
+      const QString status = record.value("status").toString();
+      if (status == "blocked" || status == "failed" || status == "rejected") {
+        item->setForeground(QColor("#c0392b"));
+      } else if (status == "approved" || status == "succeeded" || status == "passed") {
+        item->setForeground(QColor("#1f7a4d"));
+      }
+    }
+    genericRecordsModel->appendRow(row);
+  }
+
+  if (!genericRecords.isEmpty()) {
+    int row = previousSelection;
+    if (row < 0 || row >= genericRecords.size()) {
+      row = 0;
+    }
+    genericRecordsTableView->selectRow(row);
+    genericRecordDetailEdit->setPlainText(
+        QJsonDocument(genericRecords[row]).toJson(QJsonDocument::Indented));
+  } else {
+    genericRecordDetailEdit->clear();
+  }
+
+  const bool approvalSelected = selectedGenericEndpoint() == "approvals" && selectedGenericRecordId() > 0;
+  approveGenericApprovalButton->setEnabled(approvalSelected);
+  rejectGenericApprovalButton->setEnabled(approvalSelected);
+}
+
 void MainWindow::updateWorkflowDetails() {
   const int row = selectedWorkflowRow();
   if (row < 0 || row >= workflows.size()) {
@@ -701,27 +856,30 @@ void MainWindow::updateWorkflowDetails() {
   }
 }
 
-void MainWindow::populateStepEditor(const QString &stepId) {
-  selectedStepId = stepId;
+void MainWindow::populateStepEditor(const QString &nodeId) {
+  selectedStepId = nodeId;
   QJsonObject definition = currentWorkflowDraft().definition;
-  const QJsonArray steps = definition.value("steps").toArray();
-  for (const auto &value : steps) {
+  const QJsonArray nodes = definition.value("nodes").toArray();
+  for (const auto &value : nodes) {
     const QJsonObject step = value.toObject();
-    if (step.value("id").toString() != stepId) {
+    if (step.value("id").toString() != nodeId) {
       continue;
     }
-    stepIdEdit->setText(stepId);
+    nodeIdEdit->setText(nodeId);
     stepTaskIdSpin->setValue(step.value("task_id").toInt(1));
-    QStringList needs;
-    for (const auto &need : step.value("needs").toArray()) {
-      needs.push_back(need.toString());
+    const QJsonObject transitions = step.value("transitions").toObject();
+    QStringList targets;
+    for (const QString &key : {"next", "on_success", "on_failure", "on_timeout", "on_reject"}) {
+      if (transitions.contains(key)) {
+        targets.push_back(QString("%1:%2").arg(key, transitions.value(key).toString()));
+      }
     }
-    stepNeedsEdit->setText(needs.join(","));
+    stepNeedsEdit->setText(targets.join(","));
     stepRetrySpin->setValue(step.value("retry").toObject().value("max_attempts").toInt(1));
     stepTimeoutSpin->setValue(step.value("timeout_seconds").toInt(0));
     stepParametersEdit->setPlainText(QJsonDocument(step.value("parameters").toObject())
                                          .toJson(QJsonDocument::Indented));
-    stepMappingsEdit->setPlainText(QJsonDocument(step.value("mappings").toArray())
+    stepMappingsEdit->setPlainText(QJsonDocument(step.value("transitions").toObject())
                                        .toJson(QJsonDocument::Indented));
     updateSelectedWorkflowNodeDetail();
     return;
@@ -733,8 +891,8 @@ void MainWindow::updateSelectedWorkflowNodeDetail() {
     return;
   }
   selectedWorkflowNodeTaskRunId = 0;
-  for (const WorkflowStepRun &step : currentWorkflowRun.steps) {
-    if (step.stepId == selectedStepId && step.taskRunId.has_value()) {
+  for (const WorkflowNodeRun &step : currentWorkflowRun.nodes) {
+    if (step.nodeId == selectedStepId && step.taskRunId.has_value()) {
       selectedWorkflowNodeTaskRunId = step.taskRunId.value();
       api->fetchRunChunks(selectedWorkflowNodeTaskRunId);
       api->fetchRunArtifacts(selectedWorkflowNodeTaskRunId);
@@ -746,19 +904,17 @@ void MainWindow::updateSelectedWorkflowNodeDetail() {
 void MainWindow::applyStepEditor() {
   WorkflowDefinition workflow = currentWorkflowDraft();
   QJsonObject definition = workflow.definition;
-  QJsonArray steps = definition.value("steps").toArray();
-  for (int i = 0; i < steps.size(); ++i) {
-    QJsonObject step = steps[i].toObject();
+  QJsonArray nodes = definition.value("nodes").toArray();
+  for (int i = 0; i < nodes.size(); ++i) {
+    QJsonObject step = nodes[i].toObject();
     if (step.value("id").toString() != selectedStepId) {
       continue;
     }
-    step.insert("id", stepIdEdit->text().trimmed());
-    step.insert("task_id", stepTaskIdSpin->value());
-    QJsonArray needs;
-    for (const QString &need : stepNeedsEdit->text().split(',', Qt::SkipEmptyParts)) {
-      needs.append(need.trimmed());
+    step.insert("id", nodeIdEdit->text().trimmed());
+    step.insert("kind", step.value("kind").toString("task"));
+    if (step.value("kind").toString("task") == "task") {
+      step.insert("task_id", stepTaskIdSpin->value());
     }
-    step.insert("needs", needs);
     step.insert("retry", QJsonObject{{"max_attempts", stepRetrySpin->value()}});
     if (stepTimeoutSpin->value() > 0) {
       step.insert("timeout_seconds", stepTimeoutSpin->value());
@@ -775,20 +931,20 @@ void MainWindow::applyStepEditor() {
     }
     step.insert("parameters", paramsDoc.object());
 
-    QJsonParseError mappingsError;
-    const QJsonDocument mappingsDoc =
-        QJsonDocument::fromJson(stepMappingsEdit->toPlainText().toUtf8(), &mappingsError);
-    if (mappingsError.error != QJsonParseError::NoError || !mappingsDoc.isArray()) {
-      setError("Step mappings must be a JSON array");
+    QJsonParseError transitionsError;
+    const QJsonDocument transitionsDoc =
+        QJsonDocument::fromJson(stepMappingsEdit->toPlainText().toUtf8(), &transitionsError);
+    if (transitionsError.error != QJsonParseError::NoError || !transitionsDoc.isObject()) {
+      setError("Node transitions must be a JSON object");
       return;
     }
-    step.insert("mappings", mappingsDoc.array());
+    step.insert("transitions", transitionsDoc.object());
 
-    steps[i] = step;
-    selectedStepId = stepIdEdit->text().trimmed();
+    nodes[i] = step;
+    selectedStepId = nodeIdEdit->text().trimmed();
     break;
   }
-  definition.insert("steps", steps);
+  definition.insert("nodes", nodes);
   workflow.definition = definition;
   ui->workflowDefinitionEdit->setPlainText(QJsonDocument(definition).toJson(QJsonDocument::Indented));
   renderWorkflowGraph(workflow);
@@ -800,7 +956,7 @@ void MainWindow::addWorkflow() {
   workflow.version = 1;
   workflow.enabled = true;
   workflow.inputSchema = QJsonObject{{"type", "object"}, {"additionalProperties", true}};
-  workflow.definition = QJsonObject{{"concurrency", 1}, {"steps", QJsonArray()}};
+  workflow.definition = QJsonObject{{"start", "node_1"}, {"nodes", QJsonArray()}};
   workflows.push_back(workflow);
   updateWorkflowsTable();
   ui->workflowsTableView->selectRow(workflows.size() - 1);
@@ -814,17 +970,20 @@ void MainWindow::saveWorkflow() {
 void MainWindow::addWorkflowStep() {
   WorkflowDefinition workflow = currentWorkflowDraft();
   QJsonObject definition = workflow.definition;
-  QJsonArray steps = definition.value("steps").toArray();
-  const QString id = QString("step_%1").arg(steps.size() + 1);
-  steps.append(QJsonObject{
+  QJsonArray nodes = definition.value("nodes").toArray();
+  const QString id = QString("node_%1").arg(nodes.size() + 1);
+  nodes.append(QJsonObject{
       {"id", id},
+      {"kind", "task"},
       {"task_id", tasks.isEmpty() || !tasks.first().id.has_value() ? 1 : static_cast<int>(tasks.first().id.value())},
-      {"needs", QJsonArray()},
       {"parameters", QJsonObject()},
       {"retry", QJsonObject{{"max_attempts", 1}}},
-      {"mappings", QJsonArray()},
+      {"transitions", QJsonObject()},
   });
-  definition.insert("steps", steps);
+  if (definition.value("start").toString().isEmpty()) {
+    definition.insert("start", id);
+  }
+  definition.insert("nodes", nodes);
   workflow.definition = definition;
   ui->workflowDefinitionEdit->setPlainText(QJsonDocument(definition).toJson(QJsonDocument::Indented));
   renderWorkflowGraph(workflow);
@@ -838,22 +997,15 @@ void MainWindow::removeWorkflowStep() {
   WorkflowDefinition workflow = currentWorkflowDraft();
   QJsonObject definition = workflow.definition;
   QJsonArray next;
-  for (const auto &value : definition.value("steps").toArray()) {
+  for (const auto &value : definition.value("nodes").toArray()) {
     QJsonObject step = value.toObject();
     if (step.value("id").toString() == selectedStepId) {
       continue;
     }
-    QJsonArray needs;
-    for (const auto &need : step.value("needs").toArray()) {
-      if (need.toString() != selectedStepId) {
-        needs.append(need);
-      }
-    }
-    step.insert("needs", needs);
     next.append(step);
   }
   selectedStepId.clear();
-  definition.insert("steps", next);
+  definition.insert("nodes", next);
   workflow.definition = definition;
   ui->workflowDefinitionEdit->setPlainText(QJsonDocument(definition).toJson(QJsonDocument::Indented));
   renderWorkflowGraph(workflow);
@@ -870,7 +1022,7 @@ WorkflowDefinition MainWindow::currentWorkflowDraft() const {
   QJsonDocument doc = QJsonDocument::fromJson(ui->workflowDefinitionEdit->toPlainText().toUtf8(), &parseError);
   workflow.definition = parseError.error == QJsonParseError::NoError && doc.isObject()
                             ? doc.object()
-                            : QJsonObject{{"steps", QJsonArray()}};
+                            : QJsonObject{{"nodes", QJsonArray()}};
   workflow.definition.insert("concurrency", workflowConcurrencySpin->value());
   QJsonObject nodes;
   for (QGraphicsItem *item : workflowScene->items()) {
@@ -878,11 +1030,11 @@ WorkflowDefinition MainWindow::currentWorkflowDraft() const {
     if (!rect) {
       continue;
     }
-    const QString stepId = rect->data(0).toString();
-    if (stepId.isEmpty()) {
+    const QString nodeId = rect->data(0).toString();
+    if (nodeId.isEmpty()) {
       continue;
     }
-    nodes.insert(stepId, QJsonObject{{"x", rect->pos().x()}, {"y", rect->pos().y()}});
+    nodes.insert(nodeId, QJsonObject{{"x", rect->pos().x()}, {"y", rect->pos().y()}});
   }
   QJsonObject layout;
   layout.insert("nodes", nodes);
@@ -894,7 +1046,7 @@ WorkflowDefinition MainWindow::currentWorkflowDraft() const {
 
 void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
   workflowScene->clear();
-  const QJsonArray steps = workflow.definition.value("steps").toArray();
+  const QJsonArray nodes = workflow.definition.value("nodes").toArray();
   const QJsonObject nodeLayout = workflow.definition.value("ui").toObject()
                                      .value("layout").toObject()
                                      .value("nodes").toObject();
@@ -904,8 +1056,8 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
   const int xGap = 220;
   const int yGap = 90;
 
-  for (int i = 0; i < steps.size(); ++i) {
-    const QJsonObject step = steps[i].toObject();
+  for (int i = 0; i < nodes.size(); ++i) {
+    const QJsonObject step = nodes[i].toObject();
     const QString id = step.value("id").toString(QString("step_%1").arg(i + 1));
     const QJsonObject layout = nodeLayout.value(id).toObject();
     if (layout.contains("x") && layout.contains("y")) {
@@ -917,44 +1069,57 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
 
   QPen edgePen(QColor("#7f8c8d"));
   edgePen.setWidth(2);
-  for (const auto &value : steps) {
+  for (const auto &value : nodes) {
     const QJsonObject step = value.toObject();
     const QString id = step.value("id").toString();
-    const QPointF to = positions.value(id) + QPointF(0, nodeHeight / 2);
-    for (const auto &depValue : step.value("needs").toArray()) {
-      const QString dep = depValue.toString();
-      if (!positions.contains(dep)) {
+    const QPointF from = positions.value(id) + QPointF(nodeWidth, nodeHeight / 2);
+    const QJsonObject transitions = step.value("transitions").toObject();
+    QStringList targets;
+    for (const QString &key : {"next", "on_success", "on_failure", "on_timeout", "on_reject"}) {
+      const QString target = transitions.value(key).toString();
+      if (!target.isEmpty()) {
+        targets.push_back(target);
+      }
+    }
+    for (const auto &branch : transitions.value("branches").toArray()) {
+      const QString target = branch.toObject().value("target").toString();
+      if (!target.isEmpty()) {
+        targets.push_back(target);
+      }
+    }
+    for (const QString &target : targets) {
+      if (!positions.contains(target)) {
         continue;
       }
-      const QPointF from = positions.value(dep) + QPointF(nodeWidth, nodeHeight / 2);
+      const QPointF to = positions.value(target) + QPointF(0, nodeHeight / 2);
       workflowScene->addLine(QLineF(from, to), edgePen);
     }
   }
 
-  QMap<QString, WorkflowStepRun> stepRunById;
+  QMap<QString, WorkflowNodeRun> nodeRunById;
   if (selectedWorkflowRunId > 0 && currentWorkflowRun.id == selectedWorkflowRunId &&
       workflow.id.has_value() && currentWorkflowRun.workflowId == workflow.id.value()) {
-    for (const WorkflowStepRun &stepRun : currentWorkflowRun.steps) {
-      stepRunById.insert(stepRun.stepId, stepRun);
+    for (const WorkflowNodeRun &nodeRun : currentWorkflowRun.nodes) {
+      nodeRunById.insert(nodeRun.nodeId, nodeRun);
     }
   }
 
   QPen nodePen(QColor("#34495e"));
-  for (const auto &value : steps) {
+  for (const auto &value : nodes) {
     const QJsonObject step = value.toObject();
     const QString id = step.value("id").toString();
     const QPointF pos = positions.value(id);
     QColor fill("#f8fafc");
     QString statusLine;
-    if (stepRunById.contains(id)) {
-      const WorkflowStepRun stepRun = stepRunById.value(id);
-      statusLine = QString("\n%1 a%2").arg(stepRun.status).arg(stepRun.attempt);
-      if (stepRun.status == "succeeded") {
+    if (nodeRunById.contains(id)) {
+      const WorkflowNodeRun nodeRun = nodeRunById.value(id);
+      statusLine = QString("\n%1 a%2").arg(nodeRun.status).arg(nodeRun.attempt);
+      if (nodeRun.status == "succeeded") {
         fill = QColor("#d5f5e3");
-      } else if (stepRun.status == "failed" || stepRun.status == "timed_out" ||
-                 stepRun.status == "canceled") {
+      } else if (nodeRun.status == "failed" || nodeRun.status == "timed_out" ||
+                 nodeRun.status == "canceled") {
         fill = QColor("#fadbd8");
-      } else if (stepRun.status == "running") {
+      } else if (nodeRun.status == "running") {
         fill = QColor("#fcf3cf");
       } else {
         fill = QColor("#eaf2f8");
@@ -965,8 +1130,11 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
     node->setPos(pos);
     node->setData(0, id);
     node->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
-    QGraphicsTextItem *label = workflowScene->addText(
-        QString("%1\nTask %2%3").arg(id).arg(step.value("task_id").toVariant().toLongLong()).arg(statusLine));
+    const QString kind = step.value("kind").toString("task");
+    const QString detail = kind == "task"
+                               ? QString("Task %1").arg(step.value("task_id").toVariant().toLongLong())
+                               : kind;
+    QGraphicsTextItem *label = workflowScene->addText(QString("%1\n%2%3").arg(id, detail, statusLine));
     label->setDefaultTextColor(QColor("#2c3e50"));
     label->setPos(pos + QPointF(8, 6));
     label->setData(0, id);
@@ -1008,6 +1176,74 @@ int MainWindow::selectedWorkflowRunRow() const {
     return selection.first().row();
   }
   return -1;
+}
+
+int MainWindow::selectedGenericRecordRow() const {
+  if (!genericRecordsTableView || !genericRecordsTableView->selectionModel()) {
+    return -1;
+  }
+  const QModelIndexList selection = genericRecordsTableView->selectionModel()->selectedRows();
+  if (selection.isEmpty()) {
+    return -1;
+  }
+  return selection.first().row();
+}
+
+qint64 MainWindow::selectedGenericRecordId() const {
+  const int row = selectedGenericRecordRow();
+  if (row < 0 || row >= genericRecords.size()) {
+    return 0;
+  }
+  return genericRecords[row].value("id").toVariant().toLongLong();
+}
+
+QString MainWindow::selectedGenericEndpoint() const {
+  if (!genericRecordTypeCombo) {
+    return "external_items";
+  }
+  return genericRecordTypeCombo->currentData().toString();
+}
+
+QString MainWindow::genericRecordType(const QJsonObject &record) const {
+  const QString explicitType = record.value("resource_type").toString(
+      record.value("feedback_type").toString(
+          record.value("approval_type").toString(
+              record.value("gate_type").toString(
+                  record.value("workspace_type").toString(
+                      record.value("change_type").toString(record.value("event_type").toString()))))));
+  if (!explicitType.isEmpty()) {
+    return explicitType;
+  }
+  const QString endpoint = selectedGenericEndpoint();
+  if (endpoint == "external_items") {
+    return "external_item";
+  }
+  if (endpoint == "automation_events") {
+    return "event";
+  }
+  return endpoint.left(endpoint.size() - 1);
+}
+
+QString MainWindow::genericRecordSummary(const QJsonObject &record) const {
+  const QString provider = record.value("provider").toString();
+  if (provider == "jira") {
+    const QString key = record.value("external_id").toString(record.value("key").toString());
+    const QString title = record.value("title").toString(record.value("summary").toString());
+    return key.isEmpty() ? title : QString("%1 %2").arg(key, title).trimmed();
+  }
+  if (provider == "github") {
+    const QString title = record.value("title").toString(record.value("name").toString());
+    const QString url = record.value("url").toString(record.value("html_url").toString());
+    return url.isEmpty() ? title : QString("%1 %2").arg(title, url).trimmed();
+  }
+  const QString title = record.value("title").toString(
+      record.value("prompt").toString(
+          record.value("message").toString(record.value("name").toString())));
+  if (!title.isEmpty()) {
+    return title;
+  }
+  const QJsonObject metadata = record.value("metadata").toObject();
+  return metadata.value("summary").toString(metadata.value("url").toString());
 }
 
 void MainWindow::updateRunNowState() {
@@ -1068,6 +1304,24 @@ void MainWindow::requestWorkflowSelected() {
   opLabel = QString("Running workflow %1").arg(workflow.name);
   updateStatusBar();
   api->createWorkflowRun(workflow.id.value());
+}
+
+void MainWindow::approveSelectedApproval() {
+  const qint64 id = selectedGenericRecordId();
+  if (id <= 0 || selectedGenericEndpoint() != "approvals") {
+    setError("No approval selected");
+    return;
+  }
+  api->approveApproval(id);
+}
+
+void MainWindow::rejectSelectedApproval() {
+  const qint64 id = selectedGenericRecordId();
+  if (id <= 0 || selectedGenericEndpoint() != "approvals") {
+    setError("No approval selected");
+    return;
+  }
+  api->rejectApproval(id);
 }
 
 void MainWindow::addNewTask() {

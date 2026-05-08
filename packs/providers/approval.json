@@ -1,0 +1,16 @@
+{
+  "uri": "runinator://providers/approval",
+  "item_type": "provider_pack",
+  "name": "Approval Provider Pack",
+  "version": "1",
+  "document": {
+    "actions": {
+      "request_approval": {
+        "kind": "approval",
+        "provider": "runinator",
+        "description": "Create a human approval request and pause until approved or rejected."
+      }
+    }
+  },
+  "metadata": {}
+}

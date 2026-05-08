@@ -1,0 +1,33 @@
+{
+  "uri": "runinator://providers/github",
+  "item_type": "provider_pack",
+  "name": "GitHub Provider Pack",
+  "version": "1",
+  "document": {
+    "actions": {
+      "create_or_update_pr": {
+        "kind": "task",
+        "provider": "github",
+        "description": "Create or update a pull request using repository, branch, title, and body parameters."
+      },
+      "read_reviews": {
+        "kind": "task",
+        "provider": "github",
+        "description": "Fetch pull request reviews and normalize them as feedback items."
+      },
+      "read_checks": {
+        "kind": "task",
+        "provider": "github",
+        "description": "Fetch check runs and normalize them as gate statuses."
+      },
+      "dispatch_workflow": {
+        "kind": "task",
+        "provider": "github",
+        "description": "Dispatch a GitHub Actions workflow with JSON inputs."
+      }
+    }
+  },
+  "metadata": {
+    "credential_scopes": ["github"]
+  }
+}

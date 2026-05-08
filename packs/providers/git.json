@@ -1,0 +1,31 @@
+{
+  "uri": "runinator://providers/git",
+  "item_type": "provider_pack",
+  "name": "Git Provider Pack",
+  "version": "1",
+  "document": {
+    "actions": {
+      "create_or_resume_worktree": {
+        "kind": "task",
+        "provider": "git",
+        "description": "Create or reuse an isolated git worktree for a workflow item."
+      },
+      "commit": {
+        "kind": "task",
+        "provider": "git",
+        "description": "Commit generated changes in a workspace."
+      },
+      "diff": {
+        "kind": "task",
+        "provider": "git",
+        "description": "Return a workspace diff as a change set."
+      },
+      "cleanup": {
+        "kind": "task",
+        "provider": "git",
+        "description": "Clean up a temporary worktree or workspace."
+      }
+    }
+  },
+  "metadata": {}
+}

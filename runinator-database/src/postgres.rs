@@ -7,7 +7,7 @@ use runinator_models::{
     core::{ScheduledTask, TaskRun},
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 use sqlx::{
@@ -96,32 +96,86 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     id BIGSERIAL PRIMARY KEY,
     workflow_id BIGINT NOT NULL REFERENCES workflows(id),
     status TEXT NOT NULL,
+    active_node_id TEXT NULL,
     parameters TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT '{}',
     created_at BIGINT NOT NULL,
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
     message TEXT NULL
 );
 
-CREATE TABLE IF NOT EXISTS workflow_step_runs (
+CREATE TABLE IF NOT EXISTS workflow_node_runs (
     id BIGSERIAL PRIMARY KEY,
     workflow_run_id BIGINT NOT NULL REFERENCES workflow_runs(id),
-    step_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
     task_run_id BIGINT NULL REFERENCES runs(id),
     status TEXT NOT NULL,
     attempt BIGINT NOT NULL DEFAULT 0,
     parameters TEXT NOT NULL DEFAULT '{}',
+    output_json TEXT NULL,
+    state TEXT NOT NULL DEFAULT '{}',
+    transition_reason TEXT NULL,
     created_at BIGINT NOT NULL,
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
     message TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS catalog_items (
+    id BIGSERIAL PRIMARY KEY,
+    uri TEXT NOT NULL UNIQUE,
+    item_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    document TEXT NOT NULL DEFAULT '{}',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS automation_records (
+    id BIGSERIAL PRIMARY KEY,
+    record_type TEXT NOT NULL,
+    workflow_run_id BIGINT NULL,
+    external_item_id BIGINT NULL,
+    node_id TEXT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    resource_type TEXT NOT NULL DEFAULT '',
+    external_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    title TEXT NULL,
+    url TEXT NULL,
+    body TEXT NULL,
+    path TEXT NULL,
+    prompt TEXT NULL,
+    approval_type TEXT NULL,
+    resolved_by TEXT NULL,
+    resolved_at BIGINT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    id BIGSERIAL PRIMARY KEY,
+    scope TEXT NOT NULL,
+    key TEXT NOT NULL,
+    result TEXT NOT NULL DEFAULT '{}',
+    created_at BIGINT NOT NULL,
+    UNIQUE(scope, key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_runs_task_id ON runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
-CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_workflow_run ON workflow_step_runs(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_workflow_run ON workflow_node_runs(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_catalog_items_type ON catalog_items(item_type);
+CREATE INDEX IF NOT EXISTS idx_automation_records_type ON automation_records(record_type);
+CREATE INDEX IF NOT EXISTS idx_automation_records_workflow_run ON automation_records(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_automation_records_external_item ON automation_records(external_item_id);
 
 COMMIT;
 "#;
@@ -167,6 +221,30 @@ impl PostgresDb {
 
         Ok(())
     }
+}
+
+fn json_str(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn json_opt_str(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn json_opt_i64(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
+}
+
+fn json_metadata(value: &Value) -> String {
+    value
+        .get("metadata")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()))
+        .to_string()
 }
 
 impl DatabaseImpl for PostgresDb {
@@ -661,13 +739,14 @@ impl DatabaseImpl for PostgresDb {
         parameters: Value,
     ) -> Result<WorkflowRun, SendableError> {
         let row = sqlx::query(
-            "INSERT INTO workflow_runs (workflow_id, status, parameters, created_at)
-             VALUES ($1, $2, $3, $4)
-             RETURNING id, workflow_id, status, parameters, created_at, started_at, finished_at, message",
+            "INSERT INTO workflow_runs (workflow_id, status, active_node_id, parameters, state, created_at)
+             VALUES ($1, $2, NULL, $3, $4, $5)
+             RETURNING id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
         )
         .bind(workflow_id)
-        .bind(RunStatus::Queued.as_str())
+        .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
+        .bind(Value::Object(Default::default()).to_string())
         .bind(Utc::now().timestamp())
         .fetch_one(&self.pool)
         .await?;
@@ -678,7 +757,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query("SELECT id, workflow_id, status, parameters, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = $1")
+        let row = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = $1")
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -687,9 +766,9 @@ impl DatabaseImpl for PostgresDb {
 
     async fn fetch_workflow_runs_by_status(
         &self,
-        status: RunStatus,
+        status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, parameters, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = $1 ORDER BY id")
+        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = $1 ORDER BY id")
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
@@ -703,7 +782,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_id: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, parameters, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;
@@ -716,18 +795,19 @@ impl DatabaseImpl for PostgresDb {
     async fn update_workflow_run_status(
         &self,
         workflow_run_id: i64,
-        status: RunStatus,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
-        let terminal = matches!(
-            status,
-            RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
-        );
+        let terminal = status.is_terminal();
         self.pool.execute(sqlx::query(
-            "UPDATE workflow_runs SET status = $1, message = COALESCE($2, message), started_at = CASE WHEN $3 = 'running' AND started_at IS NULL THEN $4 ELSE started_at END, finished_at = CASE WHEN $5 THEN $6 ELSE finished_at END WHERE id = $7",
+            "UPDATE workflow_runs SET status = $1, active_node_id = COALESCE($2, active_node_id), state = COALESCE($3, state), message = COALESCE($4, message), started_at = CASE WHEN $5 = 'running' AND started_at IS NULL THEN $6 ELSE started_at END, finished_at = CASE WHEN $7 THEN $8 ELSE finished_at END WHERE id = $9",
         )
         .bind(status.as_str())
+        .bind(active_node_id)
+        .bind(state.map(|value| value.to_string()))
         .bind(message)
         .bind(status.as_str())
         .bind(now)
@@ -738,50 +818,54 @@ impl DatabaseImpl for PostgresDb {
         Ok(())
     }
 
-    async fn create_workflow_step_run(
+    async fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,
-        step_id: String,
+        node_id: String,
         parameters: Value,
-    ) -> Result<WorkflowStepRun, SendableError> {
+    ) -> Result<WorkflowNodeRun, SendableError> {
         let row = sqlx::query(
-            "INSERT INTO workflow_step_runs (workflow_run_id, step_id, status, attempt, parameters, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, workflow_run_id, step_id, task_run_id, status, attempt, parameters, created_at, started_at, finished_at, message",
+            "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, workflow_run_id, node_id, task_run_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message",
         )
         .bind(workflow_run_id)
-        .bind(step_id)
-        .bind(RunStatus::Queued.as_str())
+        .bind(node_id)
+        .bind(WorkflowStatus::Queued.as_str())
         .bind(0i64)
         .bind(parameters.to_string())
+        .bind(Value::Object(Default::default()).to_string())
         .bind(Utc::now().timestamp())
         .fetch_one(&self.pool)
         .await?;
-        Ok(mappers::postgres_row_to_workflow_step_run(&row))
+        Ok(mappers::postgres_row_to_workflow_node_run(&row))
     }
 
-    async fn update_workflow_step_run(
+    async fn update_workflow_node_run(
         &self,
-        step_run_id: i64,
-        status: RunStatus,
+        node_run_id: i64,
+        status: WorkflowStatus,
         task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
+        transition_reason: Option<String>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
-        let terminal = matches!(
-            status,
-            RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
-        );
+        let terminal = status.is_terminal();
         self.pool.execute(sqlx::query(
-            "UPDATE workflow_step_runs SET status = $1, task_run_id = CASE WHEN $2 = 'queued' THEN NULL ELSE COALESCE($3, task_run_id) END, attempt = COALESCE($4, attempt), parameters = COALESCE($5, parameters), message = COALESCE($6, message), started_at = CASE WHEN $7 = 'running' THEN $8 WHEN $9 = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN $10 THEN $11 WHEN $12 = 'queued' THEN NULL ELSE finished_at END WHERE id = $13",
+            "UPDATE workflow_node_runs SET status = $1, task_run_id = CASE WHEN $2 = 'queued' THEN NULL ELSE COALESCE($3, task_run_id) END, attempt = COALESCE($4, attempt), parameters = COALESCE($5, parameters), output_json = COALESCE($6, output_json), state = COALESCE($7, state), transition_reason = COALESCE($8, transition_reason), message = COALESCE($9, message), started_at = CASE WHEN $10 = 'running' THEN $11 WHEN $12 = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN $13 THEN $14 WHEN $15 = 'queued' THEN NULL ELSE finished_at END WHERE id = $16",
         )
         .bind(status.as_str())
         .bind(status.as_str())
         .bind(task_run_id)
         .bind(attempt)
         .bind(parameters.map(|value| value.to_string()))
+        .bind(output_json.map(|value| value.to_string()))
+        .bind(state.map(|value| value.to_string()))
+        .bind(transition_reason)
         .bind(message)
         .bind(status.as_str())
         .bind(now)
@@ -789,22 +873,212 @@ impl DatabaseImpl for PostgresDb {
         .bind(terminal)
         .bind(now)
         .bind(status.as_str())
-        .bind(step_run_id))
+        .bind(node_run_id))
         .await?;
         Ok(())
     }
 
-    async fn fetch_workflow_step_runs(
+    async fn fetch_workflow_node_runs(
         &self,
         workflow_run_id: i64,
-    ) -> Result<Vec<WorkflowStepRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_run_id, step_id, task_run_id, status, attempt, parameters, created_at, started_at, finished_at, message FROM workflow_step_runs WHERE workflow_run_id = $1 ORDER BY id")
+    ) -> Result<Vec<WorkflowNodeRun>, SendableError> {
+        let rows = sqlx::query("SELECT id, workflow_run_id, node_id, task_run_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message FROM workflow_node_runs WHERE workflow_run_id = $1 ORDER BY id")
             .bind(workflow_run_id)
             .fetch_all(&self.pool)
             .await?;
         Ok(rows
             .iter()
-            .map(mappers::postgres_row_to_workflow_step_run)
+            .map(mappers::postgres_row_to_workflow_node_run)
             .collect())
+    }
+
+    async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let row = sqlx::query(
+            "INSERT INTO catalog_items (uri, item_type, name, version, document, metadata, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT(uri) DO UPDATE SET item_type = excluded.item_type, name = excluded.name, version = excluded.version, document = excluded.document, metadata = excluded.metadata, updated_at = excluded.updated_at
+             RETURNING id, uri, item_type, name, version, document, metadata, created_at, updated_at",
+        )
+        .bind(json_str(&item, "uri"))
+        .bind(json_str(&item, "item_type"))
+        .bind(json_str(&item, "name"))
+        .bind(json_str(&item, "version"))
+        .bind(item.get("document").cloned().unwrap_or(Value::Object(Default::default())).to_string())
+        .bind(json_metadata(&item))
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_catalog_item(&row))
+    }
+
+    async fn fetch_catalog_items(
+        &self,
+        item_type: Option<String>,
+    ) -> Result<Vec<Value>, SendableError> {
+        let rows = if let Some(item_type) = item_type {
+            sqlx::query("SELECT id, uri, item_type, name, version, document, metadata, created_at, updated_at FROM catalog_items WHERE item_type = $1 ORDER BY uri")
+                .bind(item_type)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query("SELECT id, uri, item_type, name, version, document, metadata, created_at, updated_at FROM catalog_items ORDER BY uri")
+                .fetch_all(&self.pool)
+                .await?
+        };
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_catalog_item)
+            .collect())
+    }
+
+    async fn fetch_catalog_item(&self, uri: String) -> Result<Option<Value>, SendableError> {
+        let row = sqlx::query("SELECT id, uri, item_type, name, version, document, metadata, created_at, updated_at FROM catalog_items WHERE uri = $1")
+            .bind(uri)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::postgres_row_to_catalog_item(&row)))
+    }
+
+    async fn create_automation_record(
+        &self,
+        record_type: String,
+        record: Value,
+    ) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let row = sqlx::query(
+            "INSERT INTO automation_records (record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+             RETURNING id, record_type, data, created_at, updated_at",
+        )
+        .bind(record_type)
+        .bind(json_opt_i64(&record, "workflow_run_id"))
+        .bind(json_opt_i64(&record, "external_item_id"))
+        .bind(json_opt_str(&record, "node_id"))
+        .bind(json_str(&record, "provider"))
+        .bind(json_str(&record, "resource_type"))
+        .bind(json_str(&record, "external_id"))
+        .bind(json_str(&record, "status"))
+        .bind(json_opt_str(&record, "title"))
+        .bind(json_opt_str(&record, "url"))
+        .bind(json_opt_str(&record, "body"))
+        .bind(json_opt_str(&record, "path"))
+        .bind(json_opt_str(&record, "prompt"))
+        .bind(json_opt_str(&record, "approval_type"))
+        .bind(json_opt_str(&record, "resolved_by"))
+        .bind(json_opt_i64(&record, "resolved_at"))
+        .bind(json_metadata(&record))
+        .bind(record.to_string())
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_automation_record(&row))
+    }
+
+    async fn update_automation_record(
+        &self,
+        record_type: String,
+        record_id: i64,
+        record: Value,
+    ) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let row = sqlx::query(
+            "UPDATE automation_records SET workflow_run_id = $1, external_item_id = $2, node_id = $3, provider = $4, resource_type = $5, external_id = $6, status = $7, title = $8, url = $9, body = $10, path = $11, prompt = $12, approval_type = $13, resolved_by = $14, resolved_at = $15, metadata = $16, data = $17, updated_at = $18 WHERE id = $19 AND record_type = $20 RETURNING id, record_type, data, created_at, updated_at",
+        )
+        .bind(json_opt_i64(&record, "workflow_run_id"))
+        .bind(json_opt_i64(&record, "external_item_id"))
+        .bind(json_opt_str(&record, "node_id"))
+        .bind(json_str(&record, "provider"))
+        .bind(json_str(&record, "resource_type"))
+        .bind(json_str(&record, "external_id"))
+        .bind(json_str(&record, "status"))
+        .bind(json_opt_str(&record, "title"))
+        .bind(json_opt_str(&record, "url"))
+        .bind(json_opt_str(&record, "body"))
+        .bind(json_opt_str(&record, "path"))
+        .bind(json_opt_str(&record, "prompt"))
+        .bind(json_opt_str(&record, "approval_type"))
+        .bind(json_opt_str(&record, "resolved_by"))
+        .bind(json_opt_i64(&record, "resolved_at"))
+        .bind(json_metadata(&record))
+        .bind(record.to_string())
+        .bind(now)
+        .bind(record_id)
+        .bind(record_type)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_automation_record(&row))
+    }
+
+    async fn fetch_automation_records(
+        &self,
+        record_type: String,
+        workflow_run_id: Option<i64>,
+        external_item_id: Option<i64>,
+    ) -> Result<Vec<Value>, SendableError> {
+        let rows = sqlx::query("SELECT id, record_type, data, created_at, updated_at FROM automation_records WHERE record_type = $1 ORDER BY id DESC")
+            .bind(record_type)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_automation_record)
+            .filter(|record| {
+                workflow_run_id.is_none_or(|id| {
+                    record.get("workflow_run_id").and_then(Value::as_i64) == Some(id)
+                }) && external_item_id.is_none_or(|id| {
+                    record.get("external_item_id").and_then(Value::as_i64) == Some(id)
+                })
+            })
+            .collect())
+    }
+
+    async fn fetch_automation_record(
+        &self,
+        record_type: String,
+        record_id: i64,
+    ) -> Result<Option<Value>, SendableError> {
+        let row = sqlx::query("SELECT id, record_type, data, created_at, updated_at FROM automation_records WHERE id = $1 AND record_type = $2")
+            .bind(record_id)
+            .bind(record_type)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::postgres_row_to_automation_record(&row)))
+    }
+
+    async fn put_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        result: Value,
+    ) -> Result<Value, SendableError> {
+        let row = sqlx::query(
+            "INSERT INTO idempotency_keys (scope, key, result, created_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(scope, key) DO UPDATE SET result = idempotency_keys.result
+             RETURNING id, scope, key, result, created_at",
+        )
+        .bind(scope)
+        .bind(key)
+        .bind(result.to_string())
+        .bind(Utc::now().timestamp())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_idempotency_key(&row))
+    }
+
+    async fn fetch_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+    ) -> Result<Option<Value>, SendableError> {
+        let row = sqlx::query("SELECT id, scope, key, result, created_at FROM idempotency_keys WHERE scope = $1 AND key = $2")
+            .bind(scope)
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::postgres_row_to_idempotency_key(&row)))
     }
 }

@@ -59,10 +59,10 @@ struct WorkflowDefinition {
   QJsonObject toJson() const;
 };
 
-struct WorkflowStepRun {
+struct WorkflowNodeRun {
   qint64 id = 0;
   qint64 workflowRunId = 0;
-  QString stepId;
+  QString nodeId;
   std::optional<qint64> taskRunId;
   QString status;
   qint64 attempt = 0;
@@ -72,7 +72,7 @@ struct WorkflowStepRun {
   std::optional<QDateTime> finishedAt;
   QString message;
 
-  static WorkflowStepRun fromJson(const QJsonObject &obj);
+  static WorkflowNodeRun fromJson(const QJsonObject &obj);
 };
 
 struct WorkflowRunDetail {
@@ -84,7 +84,7 @@ struct WorkflowRunDetail {
   std::optional<QDateTime> startedAt;
   std::optional<QDateTime> finishedAt;
   QString message;
-  QVector<WorkflowStepRun> steps;
+  QVector<WorkflowNodeRun> nodes;
 
   static WorkflowRunDetail fromJson(const QJsonObject &obj);
 };

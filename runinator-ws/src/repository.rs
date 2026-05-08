@@ -1,11 +1,12 @@
 use crate::models::TaskRunRequest;
+use chrono::Utc;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunRequest, RunStatus, RunSummary},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 
@@ -296,7 +297,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
     db: &T,
-    status: RunStatus,
+    status: WorkflowStatus,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
     db.fetch_workflow_runs_by_status(status).await
 }
@@ -311,10 +312,12 @@ pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
 pub async fn update_workflow_run_status<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
-    status: RunStatus,
+    status: WorkflowStatus,
+    active_node_id: Option<String>,
+    state: Option<Value>,
     message: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
-    db.update_workflow_run_status(workflow_run_id, status, message)
+    db.update_workflow_run_status(workflow_run_id, status, active_node_id, state, message)
         .await?;
     Ok(TaskResponse {
         success: true,
@@ -325,44 +328,198 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 pub async fn fetch_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
-) -> Result<Option<(WorkflowRun, Vec<WorkflowStepRun>)>, SendableError> {
+) -> Result<Option<(WorkflowRun, Vec<WorkflowNodeRun>)>, SendableError> {
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Ok(None);
     };
-    let steps = db.fetch_workflow_step_runs(workflow_run_id).await?;
-    Ok(Some((run, steps)))
+    let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
+    Ok(Some((run, nodes)))
 }
 
-pub async fn create_workflow_step_run<T: DatabaseImpl>(
+pub async fn create_workflow_node_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
-    step_id: String,
+    node_id: String,
     parameters: Value,
-) -> Result<WorkflowStepRun, SendableError> {
-    db.create_workflow_step_run(workflow_run_id, step_id, parameters)
+) -> Result<WorkflowNodeRun, SendableError> {
+    db.create_workflow_node_run(workflow_run_id, node_id, parameters)
         .await
 }
 
-pub async fn update_workflow_step_run<T: DatabaseImpl>(
+pub async fn update_workflow_node_run<T: DatabaseImpl>(
     db: &T,
-    step_run_id: i64,
-    status: RunStatus,
+    node_run_id: i64,
+    status: WorkflowStatus,
     task_run_id: Option<i64>,
     attempt: Option<i64>,
     parameters: Option<Value>,
+    output_json: Option<Value>,
+    state: Option<Value>,
+    transition_reason: Option<String>,
     message: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
-    db.update_workflow_step_run(
-        step_run_id,
+    db.update_workflow_node_run(
+        node_run_id,
         status,
         task_run_id,
         attempt,
         parameters,
+        output_json,
+        state,
+        transition_reason,
         message,
     )
     .await?;
     Ok(TaskResponse {
         success: true,
-        message: "Workflow step run updated".into(),
+        message: "Workflow node run updated".into(),
     })
+}
+
+pub async fn upsert_catalog_item<T: DatabaseImpl>(
+    db: &T,
+    item: Value,
+) -> Result<Value, SendableError> {
+    db.upsert_catalog_item(item).await
+}
+
+pub async fn fetch_catalog_items<T: DatabaseImpl>(
+    db: &T,
+    item_type: Option<String>,
+) -> Result<Vec<Value>, SendableError> {
+    db.fetch_catalog_items(item_type).await
+}
+
+pub async fn fetch_catalog_item<T: DatabaseImpl>(
+    db: &T,
+    uri: String,
+) -> Result<Option<Value>, SendableError> {
+    db.fetch_catalog_item(uri).await
+}
+
+pub async fn create_automation_record<T: DatabaseImpl>(
+    db: &T,
+    record_type: &str,
+    record: Value,
+) -> Result<Value, SendableError> {
+    db.create_automation_record(record_type.into(), record)
+        .await
+}
+
+pub async fn fetch_automation_records<T: DatabaseImpl>(
+    db: &T,
+    record_type: &str,
+    workflow_run_id: Option<i64>,
+    external_item_id: Option<i64>,
+) -> Result<Vec<Value>, SendableError> {
+    db.fetch_automation_records(record_type.into(), workflow_run_id, external_item_id)
+        .await
+}
+
+pub async fn put_idempotency_key<T: DatabaseImpl>(
+    db: &T,
+    scope: String,
+    key: String,
+    result: Value,
+) -> Result<Value, SendableError> {
+    db.put_idempotency_key(scope, key, result).await
+}
+
+pub async fn fetch_idempotency_key<T: DatabaseImpl>(
+    db: &T,
+    scope: String,
+    key: String,
+) -> Result<Option<Value>, SendableError> {
+    db.fetch_idempotency_key(scope, key).await
+}
+
+pub async fn resolve_approval<T: DatabaseImpl>(
+    db: &T,
+    approval_id: i64,
+    approved: bool,
+    resolved_by: Option<String>,
+    message: Option<String>,
+    output_json: Option<Value>,
+) -> Result<Value, SendableError> {
+    let Some(mut approval) = db
+        .fetch_automation_record("approval_requests".into(), approval_id)
+        .await?
+    else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Approval request {approval_id} not found"),
+        )));
+    };
+    let now = Utc::now().timestamp();
+    if let Some(object) = approval.as_object_mut() {
+        object.insert(
+            "status".into(),
+            if approved { "approved" } else { "rejected" }.into(),
+        );
+        object.insert("resolved_at".into(), now.into());
+        if let Some(resolved_by) = resolved_by {
+            object.insert("resolved_by".into(), resolved_by.into());
+        }
+        if let Some(message) = &message {
+            object.insert("message".into(), message.clone().into());
+        }
+    }
+    let updated = db
+        .update_automation_record("approval_requests".into(), approval_id, approval.clone())
+        .await?;
+
+    if let (Some(workflow_run_id), Some(node_id)) = (
+        approval.get("workflow_run_id").and_then(Value::as_i64),
+        approval.get("node_id").and_then(Value::as_str),
+    ) {
+        let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
+        if let Some(node_run) = node_runs
+            .iter()
+            .filter(|run| run.node_id == node_id)
+            .max_by_key(|run| run.id)
+        {
+            db.update_workflow_node_run(
+                node_run.id,
+                if approved {
+                    WorkflowStatus::Succeeded
+                } else {
+                    WorkflowStatus::Blocked
+                },
+                None,
+                None,
+                None,
+                Some(output_json.unwrap_or_else(|| {
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "approved": approved
+                    })
+                })),
+                Some(serde_json::json!({
+                    "approval_id": approval_id,
+                    "approved": approved
+                })),
+                Some(if approved {
+                    "approval_approved".into()
+                } else {
+                    "approval_rejected".into()
+                }),
+                message,
+            )
+            .await?;
+        }
+        db.update_workflow_run_status(
+            workflow_run_id,
+            if approved {
+                WorkflowStatus::Running
+            } else {
+                WorkflowStatus::Blocked
+            },
+            Some(node_id.to_string()),
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    Ok(updated)
 }

@@ -1,231 +1,360 @@
 use std::collections::{HashMap, HashSet};
 
-use runinator_models::workflows::{WorkflowDefinition, WorkflowMapping, WorkflowStep};
-use serde_json::Value;
+use runinator_models::workflows::{
+    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus, WorkflowTransitions,
+};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum WorkflowValidationError {
-    #[error("workflow definition.steps must be an array")]
-    MissingSteps,
-    #[error("workflow step '{0}' is duplicated")]
-    DuplicateStep(String),
-    #[error("workflow step '{step}' depends on missing step '{dependency}'")]
-    MissingDependency { step: String, dependency: String },
-    #[error("workflow contains a dependency cycle involving '{0}'")]
-    Cycle(String),
-    #[error("workflow step is invalid: {0}")]
-    InvalidStep(String),
-    #[error("workflow concurrency must be greater than zero")]
-    InvalidConcurrency,
-    #[error("workflow step '{step}' retry.max_attempts must be greater than zero")]
-    InvalidRetry { step: String },
-    #[error("workflow step '{step}' timeout_seconds must be greater than zero")]
-    InvalidTimeout { step: String },
-    #[error("workflow step '{step}' mapping references missing step '{from_step}'")]
-    MissingMappingStep { step: String, from_step: String },
-    #[error("workflow step '{step}' mapping pointer '{pointer}' is invalid")]
-    InvalidJsonPointer { step: String, pointer: String },
+    #[error("workflow definition.nodes must be an array")]
+    MissingNodes,
+    #[error("workflow definition.start must name the first node")]
+    MissingStart,
+    #[error("workflow node '{0}' is duplicated")]
+    DuplicateNode(String),
+    #[error("workflow start node '{0}' does not exist")]
+    MissingStartNode(String),
+    #[error("workflow node '{node}' references missing node '{target}'")]
+    MissingTransition { node: String, target: String },
+    #[error("workflow node is invalid: {0}")]
+    InvalidNode(String),
+    #[error("workflow node '{0}' of kind task requires task_id")]
+    MissingTaskId(String),
+    #[error("workflow node '{0}' retry.max_attempts must be greater than zero")]
+    InvalidRetry(String),
+    #[error("workflow node '{0}' timeout_seconds must be greater than zero")]
+    InvalidTimeout(String),
+    #[error("workflow node '{0}' max_iterations must be greater than zero")]
+    InvalidLoopLimit(String),
+    #[error("workflow node '{0}' uses unsupported local $ref cycle")]
+    RefCycle(String),
+    #[error("workflow $ref '{0}' could not be resolved")]
+    MissingRef(String),
+    #[error("runtime value reference '{0}' is invalid")]
+    InvalidValueRef(String),
+    #[error("declarative condition is invalid: {0}")]
+    InvalidCondition(String),
 }
 
-pub fn parse_steps(
+pub fn expand_workflow_refs(
     workflow: &WorkflowDefinition,
-) -> Result<Vec<WorkflowStep>, WorkflowValidationError> {
-    let steps = workflow
-        .definition
-        .get("steps")
-        .and_then(Value::as_array)
-        .ok_or(WorkflowValidationError::MissingSteps)?;
+) -> Result<Value, WorkflowValidationError> {
+    let mut root = workflow.definition.clone();
+    let defs = root
+        .get("$defs")
+        .cloned()
+        .unwrap_or(Value::Object(Map::new()));
+    let mut stack = Vec::new();
+    expand_refs_in_value(&mut root, &defs, &mut stack)?;
+    Ok(root)
+}
 
-    steps
+pub fn parse_nodes(
+    workflow: &WorkflowDefinition,
+) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
+    let definition = expand_workflow_refs(workflow)?;
+    let start = definition
+        .get("start")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or(WorkflowValidationError::MissingStart)?
+        .to_string();
+    let nodes = definition
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or(WorkflowValidationError::MissingNodes)?;
+    let nodes = nodes
         .iter()
         .map(|value| {
             serde_json::from_value(value.clone())
-                .map_err(|err| WorkflowValidationError::InvalidStep(err.to_string()))
+                .map_err(|err| WorkflowValidationError::InvalidNode(err.to_string()))
         })
-        .collect()
+        .collect::<Result<Vec<WorkflowNode>, _>>()?;
+    Ok((start, nodes))
 }
 
 pub fn validate_workflow(
     workflow: &WorkflowDefinition,
-) -> Result<Vec<WorkflowStep>, WorkflowValidationError> {
-    let steps = parse_steps(workflow)?;
+) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
+    let (start, nodes) = parse_nodes(workflow)?;
     let mut seen = HashSet::new();
-    for step in &steps {
-        if !seen.insert(step.id.clone()) {
-            return Err(WorkflowValidationError::DuplicateStep(step.id.clone()));
-        }
+    let ids = nodes
+        .iter()
+        .map(|node| {
+            if !seen.insert(node.id.clone()) {
+                return Err(WorkflowValidationError::DuplicateNode(node.id.clone()));
+            }
+            Ok(node.id.clone())
+        })
+        .collect::<Result<HashSet<_>, _>>()?;
+
+    if !ids.contains(&start) {
+        return Err(WorkflowValidationError::MissingStartNode(start));
     }
 
-    let graph = steps
-        .iter()
-        .map(|step| (step.id.clone(), step.needs.clone()))
-        .collect::<HashMap<_, _>>();
-
-    for step in &steps {
-        if step.retry.max_attempts <= 0 {
-            return Err(WorkflowValidationError::InvalidRetry {
-                step: step.id.clone(),
-            });
+    for node in &nodes {
+        if node.kind == WorkflowNodeKind::Task && node.task_id.is_none() {
+            return Err(WorkflowValidationError::MissingTaskId(node.id.clone()));
         }
-        if step
-            .timeout_seconds
-            .or(step.timeout)
-            .is_some_and(|timeout| timeout <= 0)
-        {
-            return Err(WorkflowValidationError::InvalidTimeout {
-                step: step.id.clone(),
-            });
+        if node.retry.max_attempts <= 0 {
+            return Err(WorkflowValidationError::InvalidRetry(node.id.clone()));
         }
-        for dependency in &step.needs {
-            if !graph.contains_key(dependency) {
-                return Err(WorkflowValidationError::MissingDependency {
-                    step: step.id.clone(),
-                    dependency: dependency.clone(),
+        if node.timeout_seconds.is_some_and(|timeout| timeout <= 0) {
+            return Err(WorkflowValidationError::InvalidTimeout(node.id.clone()));
+        }
+        if node.max_iterations.is_some_and(|limit| limit <= 0) {
+            return Err(WorkflowValidationError::InvalidLoopLimit(node.id.clone()));
+        }
+        validate_condition(&node.condition)?;
+        for target in transition_targets(&node.transitions) {
+            if !ids.contains(&target) {
+                return Err(WorkflowValidationError::MissingTransition {
+                    node: node.id.clone(),
+                    target,
                 });
             }
         }
-        for mapping in &step.mappings {
-            validate_mapping(step, mapping, &graph)?;
-        }
     }
 
-    if workflow
-        .definition
-        .get("concurrency")
-        .and_then(Value::as_i64)
-        .is_some_and(|concurrency| concurrency <= 0)
-    {
-        return Err(WorkflowValidationError::InvalidConcurrency);
-    }
-
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    for step in graph.keys() {
-        visit(step, &graph, &mut visiting, &mut visited)?;
-    }
-
-    Ok(steps)
+    Ok((start, nodes))
 }
 
-pub fn workflow_concurrency(workflow: &WorkflowDefinition) -> usize {
-    workflow
-        .definition
-        .get("concurrency")
-        .and_then(Value::as_u64)
-        .map(|value| value.max(1) as usize)
-        .unwrap_or(usize::MAX)
-}
-
-pub fn apply_mappings(
-    base: &Value,
-    step: &WorkflowStep,
-    upstream_outputs: &HashMap<String, Value>,
+pub fn resolve_value_refs(
+    value: &Value,
+    context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
-    let mut result = base.clone();
-    for mapping in &step.mappings {
-        let Some(source) = upstream_outputs.get(&mapping.from_step) else {
-            return Err(WorkflowValidationError::MissingMappingStep {
-                step: step.id.clone(),
-                from_step: mapping.from_step.clone(),
-            });
-        };
-        let Some(value) = source.pointer(&mapping.from_pointer) else {
-            continue;
-        };
-        set_json_pointer(&mut result, &mapping.to_pointer, value.clone()).map_err(|_| {
-            WorkflowValidationError::InvalidJsonPointer {
-                step: step.id.clone(),
-                pointer: mapping.to_pointer.clone(),
+    match value {
+        Value::Object(map) if map.len() == 1 && map.contains_key("$value") => {
+            let raw = map
+                .get("$value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+            resolve_value_ref(raw, context)
+        }
+        Value::Object(map) => {
+            let mut resolved = Map::new();
+            for (key, nested) in map {
+                resolved.insert(key.clone(), resolve_value_refs(nested, context)?);
             }
-        })?;
-    }
-    Ok(result)
-}
-
-fn validate_mapping(
-    step: &WorkflowStep,
-    mapping: &WorkflowMapping,
-    graph: &HashMap<String, Vec<String>>,
-) -> Result<(), WorkflowValidationError> {
-    if !graph.contains_key(&mapping.from_step) {
-        return Err(WorkflowValidationError::MissingMappingStep {
-            step: step.id.clone(),
-            from_step: mapping.from_step.clone(),
-        });
-    }
-    for pointer in [&mapping.from_pointer, &mapping.to_pointer] {
-        if !is_valid_pointer(pointer) {
-            return Err(WorkflowValidationError::InvalidJsonPointer {
-                step: step.id.clone(),
-                pointer: pointer.clone(),
-            });
+            Ok(Value::Object(resolved))
         }
+        Value::Array(items) => items
+            .iter()
+            .map(|item| resolve_value_refs(item, context))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        _ => Ok(value.clone()),
     }
-    Ok(())
 }
 
-fn is_valid_pointer(pointer: &str) -> bool {
-    pointer.is_empty() || pointer.starts_with('/')
-}
-
-fn set_json_pointer(target: &mut Value, pointer: &str, value: Value) -> Result<(), ()> {
-    if pointer.is_empty() {
-        *target = value;
-        return Ok(());
+pub fn evaluate_condition(
+    condition: &Value,
+    context: &Value,
+) -> Result<bool, WorkflowValidationError> {
+    if condition.is_null() {
+        return Ok(true);
     }
-    let parts = pointer
-        .strip_prefix('/')
-        .ok_or(())?
-        .split('/')
-        .map(|part| part.replace("~1", "/").replace("~0", "~"))
-        .collect::<Vec<_>>();
-    let mut current = target;
-    for part in &parts[..parts.len().saturating_sub(1)] {
-        if !current.is_object() {
-            *current = Value::Object(Default::default());
-        }
-        current = current
-            .as_object_mut()
-            .ok_or(())?
-            .entry(part.clone())
-            .or_insert_with(|| Value::Object(Default::default()));
-    }
-    let Some(last) = parts.last() else {
-        return Err(());
+    let Some(object) = condition.as_object() else {
+        return Err(WorkflowValidationError::InvalidCondition(
+            "condition must be an object".into(),
+        ));
     };
-    if !current.is_object() {
-        *current = Value::Object(Default::default());
+    if let Some(all) = object.get("all") {
+        let Some(items) = all.as_array() else {
+            return Err(WorkflowValidationError::InvalidCondition(
+                "all must be an array".into(),
+            ));
+        };
+        for item in items {
+            if !evaluate_condition(item, context)? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
     }
-    current
-        .as_object_mut()
-        .ok_or(())?
-        .insert(last.clone(), value);
+    if let Some(any) = object.get("any") {
+        let Some(items) = any.as_array() else {
+            return Err(WorkflowValidationError::InvalidCondition(
+                "any must be an array".into(),
+            ));
+        };
+        for item in items {
+            if evaluate_condition(item, context)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    if let Some(not) = object.get("not") {
+        return Ok(!evaluate_condition(not, context)?);
+    }
+
+    let left = object
+        .get("value")
+        .or_else(|| object.get("left"))
+        .ok_or_else(|| WorkflowValidationError::InvalidCondition("missing value".into()))?;
+    let left = resolve_value_refs(left, context)?;
+    if let Some(expected) = object.get("equals") {
+        return Ok(left == resolve_value_refs(expected, context)?);
+    }
+    if let Some(expected) = object.get("not_equals") {
+        return Ok(left != resolve_value_refs(expected, context)?);
+    }
+    if let Some(expected) = object.get("exists") {
+        return Ok(expected.as_bool().unwrap_or(true) == !left.is_null());
+    }
+    Err(WorkflowValidationError::InvalidCondition(
+        "expected equals, not_equals, exists, all, any, or not".into(),
+    ))
+}
+
+pub fn next_transition(
+    node: &WorkflowNode,
+    status: WorkflowStatus,
+    context: &Value,
+) -> Result<Option<String>, WorkflowValidationError> {
+    for branch in &node.transitions.branches {
+        if evaluate_condition(&branch.when, context)? {
+            return Ok(Some(branch.target.clone()));
+        }
+    }
+    let target = match status {
+        WorkflowStatus::Succeeded => node
+            .transitions
+            .on_success
+            .as_ref()
+            .or(node.transitions.next.as_ref()),
+        WorkflowStatus::Failed | WorkflowStatus::Blocked => node.transitions.on_failure.as_ref(),
+        WorkflowStatus::TimedOut => node.transitions.on_timeout.as_ref(),
+        WorkflowStatus::Canceled => None,
+        _ => node.transitions.next.as_ref(),
+    };
+    Ok(target.cloned())
+}
+
+fn validate_condition(condition: &Value) -> Result<(), WorkflowValidationError> {
+    if condition.is_null() || condition.is_object() {
+        Ok(())
+    } else {
+        Err(WorkflowValidationError::InvalidCondition(
+            "condition must be an object".into(),
+        ))
+    }
+}
+
+fn transition_targets(transitions: &WorkflowTransitions) -> Vec<String> {
+    let mut targets = Vec::new();
+    for target in [
+        &transitions.next,
+        &transitions.on_success,
+        &transitions.on_failure,
+        &transitions.on_timeout,
+        &transitions.on_reject,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        targets.push(target.clone());
+    }
+    for branch in &transitions.branches {
+        targets.push(branch.target.clone());
+    }
+    targets
+}
+
+fn expand_refs_in_value(
+    value: &mut Value,
+    defs: &Value,
+    stack: &mut Vec<String>,
+) -> Result<(), WorkflowValidationError> {
+    match value {
+        Value::Object(map) => {
+            if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string) {
+                if let Some(pointer) = reference.strip_prefix("#/$defs/") {
+                    if stack.iter().any(|item| item == &reference) {
+                        return Err(WorkflowValidationError::RefCycle(reference));
+                    }
+                    let path = format!("/{pointer}");
+                    let mut replacement = defs
+                        .pointer(&path)
+                        .cloned()
+                        .ok_or_else(|| WorkflowValidationError::MissingRef(reference.clone()))?;
+                    stack.push(reference.clone());
+                    expand_refs_in_value(&mut replacement, defs, stack)?;
+                    stack.pop();
+                    for (key, overlay) in map.clone() {
+                        if key != "$ref" && key != "with" {
+                            if let Value::Object(replacement_map) = &mut replacement {
+                                replacement_map.insert(key, overlay);
+                            }
+                        }
+                    }
+                    if let Some(with) = map.get("with") {
+                        merge_overlay(&mut replacement, with.clone());
+                    }
+                    *value = replacement;
+                    return Ok(());
+                }
+                if reference.starts_with("runinator://") {
+                    return Ok(());
+                }
+                return Err(WorkflowValidationError::MissingRef(reference));
+            }
+            for nested in map.values_mut() {
+                expand_refs_in_value(nested, defs, stack)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                expand_refs_in_value(item, defs, stack)?;
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }
 
-fn visit(
-    step: &str,
-    graph: &HashMap<String, Vec<String>>,
-    visiting: &mut HashSet<String>,
-    visited: &mut HashSet<String>,
-) -> Result<(), WorkflowValidationError> {
-    if visited.contains(step) {
-        return Ok(());
-    }
-    if !visiting.insert(step.to_string()) {
-        return Err(WorkflowValidationError::Cycle(step.to_string()));
-    }
-
-    if let Some(dependencies) = graph.get(step) {
-        for dependency in dependencies {
-            visit(dependency, graph, visiting, visited)?;
+fn merge_overlay(target: &mut Value, overlay: Value) {
+    match (target, overlay) {
+        (Value::Object(target), Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_overlay(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
         }
+        (target, overlay) => *target = overlay,
     }
+}
 
-    visiting.remove(step);
-    visited.insert(step.to_string());
-    Ok(())
+fn resolve_value_ref(raw: &str, context: &Value) -> Result<Value, WorkflowValidationError> {
+    let Some((scope, pointer)) = raw.split_once('#') else {
+        return Err(WorkflowValidationError::InvalidValueRef(raw.into()));
+    };
+    let pointer = if pointer.is_empty() { "" } else { pointer };
+    if !pointer.is_empty() && !pointer.starts_with('/') {
+        return Err(WorkflowValidationError::InvalidValueRef(raw.into()));
+    }
+    let base = context
+        .pointer(&format!("/{}", scope.replace('.', "/")))
+        .ok_or_else(|| WorkflowValidationError::InvalidValueRef(raw.into()))?;
+    Ok(base.pointer(pointer).cloned().unwrap_or(Value::Null))
+}
+
+pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> Value {
+    let mut steps = Map::new();
+    for (node, output) in outputs {
+        steps.insert(node.clone(), serde_json::json!({ "output": output }));
+    }
+    serde_json::json!({
+        "input": parameters,
+        "steps": steps
+    })
 }
 
 #[cfg(test)]
@@ -246,11 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn validates_acyclic_workflow() {
+    fn validates_state_machine_workflow() {
         let wf = workflow(serde_json::json!({
-            "steps": [
-                { "id": "build", "task_id": 1 },
-                { "id": "test", "task_id": 2, "needs": ["build"] }
+            "start": "build",
+            "nodes": [
+                { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "done" } },
+                { "id": "done", "kind": "end" }
             ]
         }));
 
@@ -258,96 +388,47 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cycles() {
+    fn rejects_missing_transition_target() {
         let wf = workflow(serde_json::json!({
-            "steps": [
-                { "id": "a", "task_id": 1, "needs": ["b"] },
-                { "id": "b", "task_id": 2, "needs": ["a"] }
+            "start": "build",
+            "nodes": [
+                { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "missing" } }
             ]
         }));
 
         assert!(matches!(
             validate_workflow(&wf),
-            Err(WorkflowValidationError::Cycle(_))
+            Err(WorkflowValidationError::MissingTransition { .. })
         ));
     }
 
     #[test]
-    fn rejects_bad_mapping_pointer() {
-        let wf = workflow(serde_json::json!({
-            "steps": [
-                { "id": "a", "task_id": 1 },
-                {
-                    "id": "b",
-                    "task_id": 2,
-                    "needs": ["a"],
-                    "mappings": [{ "from_step": "a", "from_pointer": "bad", "to_pointer": "/value" }]
-                }
-            ]
-        }));
-
-        assert!(matches!(
-            validate_workflow(&wf),
-            Err(WorkflowValidationError::InvalidJsonPointer { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_missing_dependencies() {
-        let wf = workflow(serde_json::json!({
-            "steps": [
-                { "id": "test", "task_id": 2, "needs": ["build"] }
-            ]
-        }));
-
-        assert!(matches!(
-            validate_workflow(&wf),
-            Err(WorkflowValidationError::MissingDependency { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_retry_timeout_and_concurrency() {
-        let bad_retry = workflow(serde_json::json!({
-            "steps": [{ "id": "a", "task_id": 1, "retry": { "max_attempts": 0 } }]
-        }));
-        assert!(matches!(
-            validate_workflow(&bad_retry),
-            Err(WorkflowValidationError::InvalidRetry { .. })
-        ));
-
-        let bad_timeout = workflow(serde_json::json!({
-            "steps": [{ "id": "a", "task_id": 1, "timeout_seconds": 0 }]
-        }));
-        assert!(matches!(
-            validate_workflow(&bad_timeout),
-            Err(WorkflowValidationError::InvalidTimeout { .. })
-        ));
-
-        let bad_concurrency = workflow(serde_json::json!({
-            "concurrency": 0,
-            "steps": [{ "id": "a", "task_id": 1 }]
-        }));
-        assert!(matches!(
-            validate_workflow(&bad_concurrency),
-            Err(WorkflowValidationError::InvalidConcurrency)
-        ));
-    }
-
-    #[test]
-    fn maps_output_into_parameters() {
-        let step: WorkflowStep = serde_json::from_value(serde_json::json!({
-            "id": "b",
-            "task_id": 2,
-            "mappings": [{ "from_step": "a", "from_pointer": "/sha", "to_pointer": "/build/sha" }]
-        }))
-        .unwrap();
-        let upstream = HashMap::from([("a".into(), serde_json::json!({ "sha": "abc123" }))]);
-
-        let mapped = apply_mappings(&serde_json::json!({}), &step, &upstream).unwrap();
+    fn resolves_value_refs() {
+        let context = serde_json::json!({
+            "steps": { "find": { "output": { "items": [{ "key": "A-1" }] } } }
+        });
+        let value = serde_json::json!({ "$value": "steps.find.output#/items/0/key" });
         assert_eq!(
-            mapped.pointer("/build/sha").and_then(Value::as_str),
-            Some("abc123")
+            resolve_value_refs(&value, &context).unwrap(),
+            Value::String("A-1".into())
         );
+    }
+
+    #[test]
+    fn expands_local_defs_with_overlay() {
+        let wf = workflow(serde_json::json!({
+            "$defs": {
+                "approval": { "kind": "approval", "parameters": { "type": "merge" } }
+            },
+            "start": "approve",
+            "nodes": [
+                { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } } }
+            ]
+        }));
+
+        let (_, nodes) = parse_nodes(&wf).unwrap();
+        assert_eq!(nodes[0].kind, WorkflowNodeKind::Approval);
+        assert_eq!(nodes[0].parameters["type"], "merge");
+        assert_eq!(nodes[0].parameters["prompt"], "ok?");
     }
 }

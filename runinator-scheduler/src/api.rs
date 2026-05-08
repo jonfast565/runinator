@@ -7,7 +7,7 @@ use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
     runs::{RunRequest, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 
@@ -123,9 +123,20 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    pub async fn create_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+    ) -> Result<WorkflowRun, SendableError> {
+        self.client
+            .create_workflow_run(workflow_id, parameters)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
     pub async fn fetch_workflow_runs_by_status(
         &self,
-        status: RunStatus,
+        status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         self.client
             .fetch_workflow_runs_by_status(status)
@@ -136,11 +147,13 @@ impl SchedulerApi {
     pub async fn update_workflow_run(
         &self,
         workflow_run_id: i64,
-        status: RunStatus,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         self.client
-            .update_workflow_run(workflow_run_id, status, message)
+            .update_workflow_run(workflow_run_id, status, active_node_id, state, message)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
         Ok(())
@@ -149,45 +162,85 @@ impl SchedulerApi {
     pub async fn fetch_workflow_run(
         &self,
         workflow_run_id: i64,
-    ) -> Result<(WorkflowRun, Vec<WorkflowStepRun>), SendableError> {
+    ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>), SendableError> {
         self.client
             .fetch_workflow_run(workflow_run_id)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
-    pub async fn create_workflow_step_run(
+    pub async fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,
-        step_id: &str,
+        node_id: &str,
         parameters: Value,
-    ) -> Result<WorkflowStepRun, SendableError> {
+    ) -> Result<WorkflowNodeRun, SendableError> {
         self.client
-            .create_workflow_step_run(workflow_run_id, step_id, parameters)
+            .create_workflow_node_run(workflow_run_id, node_id, parameters)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
-    pub async fn update_workflow_step_run(
+    pub async fn update_workflow_node_run(
         &self,
-        step_run_id: i64,
-        status: RunStatus,
+        node_run_id: i64,
+        status: WorkflowStatus,
         task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
+        transition_reason: Option<String>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         self.client
-            .update_workflow_step_run(
-                step_run_id,
+            .update_workflow_node_run(
+                node_run_id,
                 status,
                 task_run_id,
                 attempt,
                 parameters,
+                output_json,
+                state,
+                transition_reason,
                 message,
             )
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
         Ok(())
+    }
+
+    pub async fn create_automation_record(
+        &self,
+        path: &str,
+        record: Value,
+    ) -> Result<Value, SendableError> {
+        self.client
+            .create_automation_record(path, record)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+    ) -> Result<Option<Value>, SendableError> {
+        self.client
+            .fetch_idempotency_key(scope, key)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn put_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        result: Value,
+    ) -> Result<Value, SendableError> {
+        self.client
+            .put_idempotency_key(scope, key, result)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
     }
 }

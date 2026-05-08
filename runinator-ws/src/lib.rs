@@ -12,9 +12,10 @@ use axum::{
 };
 use log::info;
 use models::{
-    ApiError, ApiResponse, RunStatusQuery, RunStatusRequest, TaskRunRequest, WorkflowRunRequest,
-    WorkflowRunStatusQuery, WorkflowRunStatusRequest, WorkflowStepRunRequest,
-    WorkflowStepRunStatusRequest,
+    ApiError, ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, CatalogQuery,
+    CredentialPutRequest, CredentialQuery, IdempotencyRequest, RunStatusQuery, RunStatusRequest,
+    TaskRunRequest, WebhookWakeRequest, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
+    WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
 };
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
@@ -23,6 +24,9 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunRequest},
     web::TaskResponse,
     workflows::WorkflowDefinition,
+};
+use runinator_utilities::credential_store::{
+    CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
 };
 use serde::Deserialize;
 use tokio::sync::Notify;
@@ -48,6 +52,15 @@ impl TaskMutationParams {
 fn api_error(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiResponse::ApiError(ApiError {
+            message: message.into(),
+        })),
+    )
+}
+
+fn not_found(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::NOT_FOUND,
         Json(ApiResponse::ApiError(ApiError {
             message: message.into(),
         })),
@@ -383,7 +396,7 @@ async fn create_workflow_run<T: DatabaseImpl>(
             StatusCode::ACCEPTED,
             Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
                 run,
-                steps: Vec::new(),
+                nodes: Vec::new(),
             })),
         ),
         Err(err) => api_error(err.to_string()),
@@ -420,6 +433,8 @@ async fn update_workflow_run<T: DatabaseImpl>(
         db.as_ref(),
         workflow_run_id,
         request.status,
+        request.active_node_id,
+        request.state,
         request.message,
     )
     .await
@@ -434,11 +449,11 @@ async fn get_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflow_run(db.as_ref(), workflow_run_id).await {
-        Ok(Some((run, steps))) => (
+        Ok(Some((run, nodes))) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
                 run,
-                steps,
+                nodes,
             })),
         ),
         Ok(None) => (
@@ -451,45 +466,423 @@ async fn get_workflow_run<T: DatabaseImpl>(
     }
 }
 
-async fn create_workflow_step_run<T: DatabaseImpl>(
+async fn create_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Path(workflow_run_id): Path<i64>,
-    Json(request): Json<WorkflowStepRunRequest>,
+    Json(request): Json<WorkflowNodeRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::create_workflow_step_run(
+    match repository::create_workflow_node_run(
         db.as_ref(),
         workflow_run_id,
-        request.step_id,
+        request.node_id,
         request.parameters,
     )
     .await
     {
         Ok(step) => (
             StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowStepRun(step)),
+            Json(ApiResponse::WorkflowNodeRun(step)),
         ),
         Err(err) => api_error(err.to_string()),
     }
 }
 
-async fn update_workflow_step_run<T: DatabaseImpl>(
+async fn update_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(step_run_id): Path<i64>,
-    Json(request): Json<WorkflowStepRunStatusRequest>,
+    Path(node_run_id): Path<i64>,
+    Json(request): Json<WorkflowNodeRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::update_workflow_step_run(
+    match repository::update_workflow_node_run(
         db.as_ref(),
-        step_run_id,
+        node_run_id,
         request.status,
         request.task_run_id,
         request.attempt,
         request.parameters,
+        request.output_json,
+        request.state,
+        request.transition_reason,
         request.message,
     )
     .await
     {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_catalog_items<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(query): Query<CatalogQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Some(uri) = query.uri {
+        return match repository::fetch_catalog_item(db.as_ref(), uri.clone()).await {
+            Ok(Some(item)) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
+            Ok(None) => not_found(format!("Catalog item {uri} not found")),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
+    match repository::fetch_catalog_items(db.as_ref(), query.item_type).await {
+        Ok(items) => (StatusCode::OK, Json(ApiResponse::JsonList(items))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn upsert_catalog_item<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(item): Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::upsert_catalog_item(db.as_ref(), item).await {
+        Ok(item) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn list_records<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(query): Query<AutomationRecordQuery>,
+    record_type: &'static str,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_automation_records(
+        db.as_ref(),
+        record_type,
+        query.workflow_run_id,
+        query.external_item_id,
+    )
+    .await
+    {
+        Ok(records) => (StatusCode::OK, Json(ApiResponse::JsonList(records))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn create_record<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    record_type: &'static str,
+    Json(record): Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::create_automation_record(db.as_ref(), record_type, record).await {
+        Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_external_items<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "external_items").await
+}
+
+async fn create_external_item<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "external_items", json).await
+}
+
+async fn get_external_resources<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "external_resources").await
+}
+
+async fn create_external_resource<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "external_resources", json).await
+}
+
+async fn get_feedback<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "feedback").await
+}
+
+async fn create_feedback<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "feedback", json).await
+}
+
+async fn get_gates<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "gates").await
+}
+
+async fn create_gate<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "gates", json).await
+}
+
+async fn get_workspaces<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "workspaces").await
+}
+
+async fn create_workspace<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "workspaces", json).await
+}
+
+async fn get_change_sets<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "change_sets").await
+}
+
+async fn create_change_set<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "change_sets", json).await
+}
+
+async fn get_automation_events<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "automation_events").await
+}
+
+async fn create_automation_event<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "automation_events", json).await
+}
+
+async fn get_approvals<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    query: Query<AutomationRecordQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    list_records(ext, query, "approval_requests").await
+}
+
+async fn create_approval<T: DatabaseImpl>(
+    ext: Extension<Arc<T>>,
+    json: Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    create_record(ext, "approval_requests", json).await
+}
+
+async fn approve_request<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(approval_id): Path<i64>,
+    Json(request): Json<ApprovalResolutionRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::resolve_approval(
+        db.as_ref(),
+        approval_id,
+        true,
+        request.resolved_by,
+        request.message,
+        request.output_json,
+    )
+    .await
+    {
+        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn reject_request<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(approval_id): Path<i64>,
+    Json(request): Json<ApprovalResolutionRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::resolve_approval(
+        db.as_ref(),
+        approval_id,
+        false,
+        request.resolved_by,
+        request.message,
+        request.output_json,
+    )
+    .await
+    {
+        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_idempotency_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(query): Query<HashMap<String, String>>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let Some(scope) = query.get("scope").cloned() else {
+        return api_error("idempotency query requires scope");
+    };
+    let Some(key) = query.get("key").cloned() else {
+        return api_error("idempotency query requires key");
+    };
+    match repository::fetch_idempotency_key(db.as_ref(), scope, key).await {
+        Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Ok(None) => not_found("idempotency key not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn put_idempotency_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<IdempotencyRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::put_idempotency_key(db.as_ref(), request.scope, request.key, request.result)
+        .await
+    {
+        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+fn credential_store() -> LocalEncryptedCredentialStore {
+    let path = std::env::var("RUNINATOR_CREDENTIAL_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| default_credential_store_path(".runinator-supervisor"));
+    let key = std::env::var("RUNINATOR_CREDENTIAL_KEY")
+        .unwrap_or_else(|_| "runinator-local-development-key".into());
+    LocalEncryptedCredentialStore::new(path, key)
+}
+
+async fn get_credential(Query(query): Query<CredentialQuery>) -> (StatusCode, Json<ApiResponse>) {
+    match credential_store().get(&query.scope, &query.name) {
+        Ok(Some(secret)) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(serde_json::json!({
+                "scope": query.scope,
+                "name": query.name,
+                "secret": String::from_utf8_lossy(&secret)
+            }))),
+        ),
+        Ok(None) => not_found("credential not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn put_credential(
+    Json(request): Json<CredentialPutRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match credential_store().put(&request.scope, &request.name, request.secret.as_bytes()) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(serde_json::json!({
+                "scope": request.scope,
+                "name": request.name,
+                "stored": true
+            }))),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn delete_credential(
+    Query(query): Query<CredentialQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match credential_store().delete(&query.scope, &query.name) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: true,
+                message: "Credential deleted".into(),
+            })),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn webhook_wake<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<WebhookWakeRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let Ok(Some((run, node_runs))) =
+        repository::fetch_workflow_run(db.as_ref(), request.workflow_run_id).await
+    else {
+        return not_found(format!(
+            "Workflow run {} not found",
+            request.workflow_run_id
+        ));
+    };
+    let node_id = request
+        .node_id
+        .clone()
+        .or(run.active_node_id)
+        .unwrap_or_default();
+    if let Some(node_run) = node_runs
+        .iter()
+        .filter(|node_run| node_run.node_id == node_id)
+        .max_by_key(|node_run| node_run.id)
+    {
+        let mut state = node_run.state.clone();
+        merge_json(&mut state, request.state);
+        if let Some(status) = request.status {
+            if let Some(object) = state.as_object_mut() {
+                object.insert("status".into(), status.into());
+            }
+        }
+        if let Err(err) = repository::update_workflow_node_run(
+            db.as_ref(),
+            node_run.id,
+            runinator_models::workflows::WorkflowStatus::Waiting,
+            None,
+            None,
+            None,
+            None,
+            Some(state.clone()),
+            Some("webhook_wake".into()),
+            request.message.clone(),
+        )
+        .await
+        {
+            return api_error(err.to_string());
+        }
+        if let Err(err) = repository::update_workflow_run_status(
+            db.as_ref(),
+            request.workflow_run_id,
+            runinator_models::workflows::WorkflowStatus::Waiting,
+            Some(node_id),
+            Some(state),
+            request.message,
+        )
+        .await
+        {
+            return api_error(err.to_string());
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::TaskResponse(TaskResponse {
+            success: true,
+            message: "Webhook wake recorded".into(),
+        })),
+    )
+}
+
+fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (target, overlay) {
+        (serde_json::Value::Object(target), serde_json::Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_json(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
+        }
+        (target, overlay) => *target = overlay,
     }
 }
 
@@ -590,12 +983,90 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_runs/:id/steps",
-            post(create_workflow_step_run::<T>).layer(Extension(pool.clone())),
+            "/workflow_runs/:id/nodes",
+            post(create_workflow_node_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_step_runs/:id",
-            patch(update_workflow_step_run::<T>).layer(Extension(pool)),
+            "/workflow_node_runs/:id",
+            patch(update_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/catalog/items",
+            get(get_catalog_items::<T>)
+                .post(upsert_catalog_item::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/external_items",
+            get(get_external_items::<T>)
+                .post(create_external_item::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/external_resources",
+            get(get_external_resources::<T>)
+                .post(create_external_resource::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/feedback",
+            get(get_feedback::<T>)
+                .post(create_feedback::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates",
+            get(get_gates::<T>)
+                .post(create_gate::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workspaces",
+            get(get_workspaces::<T>)
+                .post(create_workspace::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/change_sets",
+            get(get_change_sets::<T>)
+                .post(create_change_set::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/automation_events",
+            get(get_automation_events::<T>)
+                .post(create_automation_event::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals",
+            get(get_approvals::<T>)
+                .post(create_approval::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals/:id/approve",
+            post(approve_request::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals/:id/reject",
+            post(reject_request::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys",
+            get(get_idempotency_key::<T>)
+                .post(put_idempotency_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/credentials",
+            get(get_credential)
+                .post(put_credential)
+                .delete(delete_credential),
+        )
+        .route(
+            "/webhooks/wake",
+            post(webhook_wake::<T>).layer(Extension(pool.clone())),
         )
 }
 
@@ -605,6 +1076,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     port: u16,
 ) -> Result<(), SendableError> {
     initialize_database(&pool).await?;
+    seed_builtin_catalog(pool.as_ref()).await?;
     let app = build_router(pool);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
@@ -623,4 +1095,19 @@ pub async fn run_webserver<T: DatabaseImpl>(
             Ok(())
         }
     }
+}
+
+async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
+    for raw in [
+        include_str!("../../packs/providers/github.json"),
+        include_str!("../../packs/providers/jira.json"),
+        include_str!("../../packs/providers/git.json"),
+        include_str!("../../packs/providers/ai-command.json"),
+        include_str!("../../packs/providers/approval.json"),
+        include_str!("../../packs/sdlc/workflow-pack.json"),
+    ] {
+        let item: serde_json::Value = serde_json::from_str(raw)?;
+        db.upsert_catalog_item(item).await?;
+    }
+    Ok(())
 }

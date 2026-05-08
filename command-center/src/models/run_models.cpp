@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QTimeZone>
 #include <QVector>
 
 namespace {
@@ -16,7 +17,7 @@ std::optional<QDateTime> parseOptionalDate(const QJsonValue &value) {
   if (!dt.isValid()) {
     return std::nullopt;
   }
-  dt.setTimeSpec(Qt::UTC);
+  dt.setTimeZone(QTimeZone::UTC);
   return dt;
 }
 
@@ -44,7 +45,7 @@ RunSummary RunSummary::fromJson(const QJsonObject &obj) {
   if (obj.contains("workflow_run_id") && !obj.value("workflow_run_id").isNull()) {
     run.workflowRunId = obj.value("workflow_run_id").toVariant().toLongLong();
   }
-  run.workflowStepId = obj.value("workflow_step_id").toString();
+  run.workflowStepId = obj.value("workflow_node_id").toString();
   return run;
 }
 
@@ -96,11 +97,11 @@ QJsonObject WorkflowDefinition::toJson() const {
   return obj;
 }
 
-WorkflowStepRun WorkflowStepRun::fromJson(const QJsonObject &obj) {
-  WorkflowStepRun step;
+WorkflowNodeRun WorkflowNodeRun::fromJson(const QJsonObject &obj) {
+  WorkflowNodeRun step;
   step.id = obj.value("id").toVariant().toLongLong();
   step.workflowRunId = obj.value("workflow_run_id").toVariant().toLongLong();
-  step.stepId = obj.value("step_id").toString();
+  step.nodeId = obj.value("node_id").toString();
   if (obj.contains("task_run_id") && !obj.value("task_run_id").isNull()) {
     step.taskRunId = obj.value("task_run_id").toVariant().toLongLong();
   }
@@ -125,9 +126,9 @@ WorkflowRunDetail WorkflowRunDetail::fromJson(const QJsonObject &obj) {
   detail.startedAt = parseOptionalDate(run.value("started_at"));
   detail.finishedAt = parseOptionalDate(run.value("finished_at"));
   detail.message = run.value("message").toString();
-  for (const auto &value : obj.value("steps").toArray()) {
+  for (const auto &value : obj.value("nodes").toArray()) {
     if (value.isObject()) {
-      detail.steps.push_back(WorkflowStepRun::fromJson(value.toObject()));
+      detail.nodes.push_back(WorkflowNodeRun::fromJson(value.toObject()));
     }
   }
   return detail;

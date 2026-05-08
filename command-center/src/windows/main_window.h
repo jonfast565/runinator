@@ -3,6 +3,8 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QGraphicsScene>
+#include <QComboBox>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -31,18 +33,21 @@ public:
 private:
   void setupUiBindings();
   void setupShortcuts();
+  void setupGenericResourcePanel();
   void refreshTasks();
   void refreshRunsForSelectedTask();
   void refreshWorkflows();
+  void refreshGenericRecords();
   void setupWorkflowDesigner();
   void updateTable();
   void updateRunsTable();
   void updateArtifactsTable();
   void updateWorkflowsTable();
   void updateWorkflowRunsTable();
+  void updateGenericRecordsTable();
   void updateWorkflowDetails();
   void updateSelectedWorkflowNodeDetail();
-  void populateStepEditor(const QString &stepId);
+  void populateStepEditor(const QString &nodeId);
   void applyStepEditor();
   void addWorkflow();
   void saveWorkflow();
@@ -54,6 +59,8 @@ private:
   void updateWorkflowActionState();
   void requestRunSelected();
   void requestWorkflowSelected();
+  void approveSelectedApproval();
+  void rejectSelectedApproval();
   void addNewTask();
   void editSelectedTask();
   void openEditor(const ScheduledTask &task, bool creating);
@@ -70,6 +77,8 @@ private:
   void onWorkflowRunRequested(qint64 workflowRunId);
   void onWorkflowRunsLoaded(qint64 workflowId, const QVector<WorkflowRunSummary> &runs);
   void onWorkflowRunLoaded(const WorkflowRunDetail &detail);
+  void onGenericRecordsLoaded(const QString &endpoint, const QVector<QJsonObject> &records);
+  void onApprovalActionFinished(bool ok, const QString &message);
   void onRequestFailed(const QString &message);
   void onTaskRunResult(bool ok, const QString &message);
   void onTaskSaved(bool ok, const QString &message, bool creating);
@@ -78,6 +87,11 @@ private:
   int selectedRunRow() const;
   int selectedWorkflowRow() const;
   int selectedWorkflowRunRow() const;
+  int selectedGenericRecordRow() const;
+  qint64 selectedGenericRecordId() const;
+  QString selectedGenericEndpoint() const;
+  QString genericRecordSummary(const QJsonObject &record) const;
+  QString genericRecordType(const QJsonObject &record) const;
 
   Ui::MainWindow *ui = nullptr;
   QLabel *statusLabel = nullptr;
@@ -88,6 +102,7 @@ private:
   QStandardItemModel *artifactsModel = nullptr;
   QStandardItemModel *workflowsModel = nullptr;
   QStandardItemModel *workflowRunsModel = nullptr;
+  QStandardItemModel *genericRecordsModel = nullptr;
   QGraphicsScene *workflowScene = nullptr;
   QLineEdit *workflowNameEdit = nullptr;
   QSpinBox *workflowVersionSpin = nullptr;
@@ -97,7 +112,7 @@ private:
   QPushButton *addStepButton = nullptr;
   QPushButton *removeStepButton = nullptr;
   QPushButton *applyStepButton = nullptr;
-  QLineEdit *stepIdEdit = nullptr;
+  QLineEdit *nodeIdEdit = nullptr;
   QSpinBox *stepTaskIdSpin = nullptr;
   QLineEdit *stepNeedsEdit = nullptr;
   QSpinBox *stepRetrySpin = nullptr;
@@ -106,11 +121,18 @@ private:
   QPlainTextEdit *stepMappingsEdit = nullptr;
   QPlainTextEdit *workflowRunDetailEdit = nullptr;
   QTableView *workflowRunsTableView = nullptr;
+  QComboBox *genericRecordTypeCombo = nullptr;
+  QTableView *genericRecordsTableView = nullptr;
+  QPlainTextEdit *genericRecordDetailEdit = nullptr;
+  QPushButton *refreshGenericRecordsButton = nullptr;
+  QPushButton *approveGenericApprovalButton = nullptr;
+  QPushButton *rejectGenericApprovalButton = nullptr;
   QVector<ScheduledTask> tasks;
   QVector<RunSummary> runs;
   QVector<RunArtifact> artifacts;
   QVector<WorkflowDefinition> workflows;
   QVector<WorkflowRunSummary> workflowRuns;
+  QVector<QJsonObject> genericRecords;
   WorkflowRunDetail currentWorkflowRun;
   qint64 selectedRunId = 0;
   qint64 selectedWorkflowRunId = 0;

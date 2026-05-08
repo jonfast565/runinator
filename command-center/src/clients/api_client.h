@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QNetworkAccessManager>
+#include <QJsonObject>
 #include <QObject>
 #include <QUrl>
 #include <QVector>
@@ -28,6 +29,9 @@ public:
   void createWorkflowRun(qint64 workflowId);
   void fetchWorkflowRun(qint64 workflowRunId);
   void fetchWorkflowRuns(qint64 workflowId);
+  void fetchGenericRecords(const QString &endpoint);
+  void approveApproval(qint64 approvalId);
+  void rejectApproval(qint64 approvalId);
 
 signals:
   void tasksLoaded(const QVector<ScheduledTask> &tasks);
@@ -42,9 +46,12 @@ signals:
   void taskRunResult(bool ok, const QString &message);
   void taskSaved(bool ok, const QString &message, bool creating);
   void workflowRunRequested(qint64 workflowRunId);
+  void genericRecordsLoaded(const QString &endpoint, const QVector<QJsonObject> &records);
+  void approvalActionFinished(bool ok, const QString &message);
 
 private:
   QUrl buildUrl(const QString &path) const;
+  void postApprovalAction(qint64 approvalId, const QString &action);
   static bool parseTaskResponse(const QByteArray &body, bool &ok, QString &message);
   static QString extractError(const QByteArray &body, QNetworkReply *reply);
 

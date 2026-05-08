@@ -5,7 +5,7 @@ use runinator_models::{
     core::{ScheduledTask, TaskRun},
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 
@@ -130,7 +130,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
     fn fetch_workflow_runs_by_status(
         &self,
-        status: RunStatus,
+        status: WorkflowStatus,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
     fn fetch_workflow_runs_for_workflow(
         &self,
@@ -139,30 +139,83 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn update_workflow_run_status(
         &self,
         workflow_run_id: i64,
-        status: RunStatus,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
         message: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
     fn fetch_workflow_run(
         &self,
         workflow_run_id: i64,
     ) -> impl Future<Output = Result<Option<WorkflowRun>, SendableError>> + Send;
-    fn create_workflow_step_run(
+    fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,
-        step_id: String,
+        node_id: String,
         parameters: Value,
-    ) -> impl Future<Output = Result<WorkflowStepRun, SendableError>> + Send;
-    fn update_workflow_step_run(
+    ) -> impl Future<Output = Result<WorkflowNodeRun, SendableError>> + Send;
+    fn update_workflow_node_run(
         &self,
-        step_run_id: i64,
-        status: RunStatus,
+        node_run_id: i64,
+        status: WorkflowStatus,
         task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
+        transition_reason: Option<String>,
         message: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
-    fn fetch_workflow_step_runs(
+    fn fetch_workflow_node_runs(
         &self,
         workflow_run_id: i64,
-    ) -> impl Future<Output = Result<Vec<WorkflowStepRun>, SendableError>> + Send;
+    ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
+
+    fn upsert_catalog_item(
+        &self,
+        item: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+    fn fetch_catalog_items(
+        &self,
+        item_type: Option<String>,
+    ) -> impl Future<Output = Result<Vec<Value>, SendableError>> + Send;
+    fn fetch_catalog_item(
+        &self,
+        uri: String,
+    ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    fn create_automation_record(
+        &self,
+        record_type: String,
+        record: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+    fn update_automation_record(
+        &self,
+        record_type: String,
+        record_id: i64,
+        record: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+    fn fetch_automation_records(
+        &self,
+        record_type: String,
+        workflow_run_id: Option<i64>,
+        external_item_id: Option<i64>,
+    ) -> impl Future<Output = Result<Vec<Value>, SendableError>> + Send;
+    fn fetch_automation_record(
+        &self,
+        record_type: String,
+        record_id: i64,
+    ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    fn put_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        result: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+    fn fetch_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+    ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
 }

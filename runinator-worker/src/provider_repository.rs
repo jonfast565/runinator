@@ -8,6 +8,9 @@ use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_sql::SqlProvider;
 
+use crate::automation_providers::{
+    AiCommandProvider, ApprovalProvider, GitHubProvider, GitProvider, JiraProvider,
+};
 use crate::console_provider::ConsoleProvider;
 
 type StaticProvider = Box<dyn Provider + Send + Sync>;
@@ -17,6 +20,11 @@ fn get_providers() -> Vec<StaticProvider> {
         Box::new(ConsoleProvider {}) as StaticProvider,
         Box::new(AwsProvider {}) as StaticProvider,
         Box::new(SqlProvider {}) as StaticProvider,
+        Box::new(JiraProvider {}) as StaticProvider,
+        Box::new(GitHubProvider {}) as StaticProvider,
+        Box::new(GitProvider {}) as StaticProvider,
+        Box::new(AiCommandProvider {}) as StaticProvider,
+        Box::new(ApprovalProvider {}) as StaticProvider,
     ]
 }
 

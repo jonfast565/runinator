@@ -4,7 +4,7 @@ use runinator_models::{
     core::{ScheduledTask, TaskRun},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,7 +30,9 @@ pub enum ApiResponse {
     WorkflowList(Vec<WorkflowDefinition>),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
-    WorkflowStepRun(WorkflowStepRun),
+    WorkflowNodeRun(WorkflowNodeRun),
+    JsonValue(Value),
+    JsonList(Vec<Value>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,27 +65,31 @@ pub struct WorkflowRunRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowRunStatusQuery {
-    pub status: Option<RunStatus>,
+    pub status: Option<WorkflowStatus>,
     pub workflow_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowRunStatusRequest {
-    pub status: RunStatus,
+    pub status: WorkflowStatus,
+    #[serde(default)]
+    pub active_node_id: Option<String>,
+    #[serde(default)]
+    pub state: Option<Value>,
     #[serde(default)]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WorkflowStepRunRequest {
-    pub step_id: String,
+pub struct WorkflowNodeRunRequest {
+    pub node_id: String,
     #[serde(default)]
     pub parameters: Value,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct WorkflowStepRunStatusRequest {
-    pub status: RunStatus,
+pub struct WorkflowNodeRunStatusRequest {
+    pub status: WorkflowStatus,
     #[serde(default)]
     pub task_run_id: Option<i64>,
     #[serde(default)]
@@ -91,11 +97,73 @@ pub struct WorkflowStepRunStatusRequest {
     #[serde(default)]
     pub parameters: Option<Value>,
     #[serde(default)]
+    pub output_json: Option<Value>,
+    #[serde(default)]
+    pub state: Option<Value>,
+    #[serde(default)]
+    pub transition_reason: Option<String>,
+    #[serde(default)]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct WorkflowRunResponse {
     pub run: WorkflowRun,
-    pub steps: Vec<WorkflowStepRun>,
+    pub nodes: Vec<WorkflowNodeRun>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CatalogQuery {
+    pub item_type: Option<String>,
+    pub uri: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutomationRecordQuery {
+    pub workflow_run_id: Option<i64>,
+    pub external_item_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApprovalResolutionRequest {
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub output_json: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IdempotencyRequest {
+    pub scope: String,
+    pub key: String,
+    #[serde(default)]
+    pub result: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CredentialQuery {
+    pub scope: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CredentialPutRequest {
+    pub scope: String,
+    pub name: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookWakeRequest {
+    pub workflow_run_id: i64,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub state: Value,
+    #[serde(default)]
+    pub message: Option<String>,
 }

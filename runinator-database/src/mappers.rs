@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     core::ScheduledTask,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStepRun},
+    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
@@ -167,9 +167,11 @@ macro_rules! workflow_run_from_row {
         WorkflowRun {
             id: $row.get("id"),
             workflow_id: $row.get("workflow_id"),
-            status: RunStatus::try_from($row.get::<String, _>("status").as_str())
-                .unwrap_or(RunStatus::Failed),
+            status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(WorkflowStatus::Failed),
+            active_node_id: $row.get("active_node_id"),
             parameters: parse_json($row.get::<String, _>("parameters")),
+            state: parse_json($row.get::<String, _>("state")),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             started_at: $row
@@ -191,17 +193,22 @@ pub fn postgres_row_to_workflow_run(row: &PgRow) -> WorkflowRun {
     workflow_run_from_row!(row)
 }
 
-macro_rules! workflow_step_run_from_row {
+macro_rules! workflow_node_run_from_row {
     ($row:expr) => {{
-        WorkflowStepRun {
+        WorkflowNodeRun {
             id: $row.get("id"),
             workflow_run_id: $row.get("workflow_run_id"),
-            step_id: $row.get("step_id"),
+            node_id: $row.get("node_id"),
             task_run_id: $row.get("task_run_id"),
-            status: RunStatus::try_from($row.get::<String, _>("status").as_str())
-                .unwrap_or(RunStatus::Failed),
+            status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(WorkflowStatus::Failed),
             attempt: $row.get("attempt"),
             parameters: parse_json($row.get::<String, _>("parameters")),
+            output_json: $row
+                .get::<Option<String>, _>("output_json")
+                .and_then(|raw| serde_json::from_str(&raw).ok()),
+            state: parse_json($row.get::<String, _>("state")),
+            transition_reason: $row.get("transition_reason"),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             started_at: $row
@@ -215,10 +222,95 @@ macro_rules! workflow_step_run_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_step_run(row: &SqliteRow) -> WorkflowStepRun {
-    workflow_step_run_from_row!(row)
+pub fn sqlite_row_to_workflow_node_run(row: &SqliteRow) -> WorkflowNodeRun {
+    workflow_node_run_from_row!(row)
 }
 
-pub fn postgres_row_to_workflow_step_run(row: &PgRow) -> WorkflowStepRun {
-    workflow_step_run_from_row!(row)
+pub fn postgres_row_to_workflow_node_run(row: &PgRow) -> WorkflowNodeRun {
+    workflow_node_run_from_row!(row)
+}
+
+macro_rules! catalog_item_from_row {
+    ($row:expr) => {{
+        serde_json::json!({
+            "id": $row.get::<i64, _>("id"),
+            "uri": $row.get::<String, _>("uri"),
+            "item_type": $row.get::<String, _>("item_type"),
+            "name": $row.get::<String, _>("name"),
+            "version": $row.get::<String, _>("version"),
+            "document": parse_json($row.get::<String, _>("document")),
+            "metadata": parse_json($row.get::<String, _>("metadata")),
+            "created_at": DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0).unwrap_or_else(Utc::now),
+            "updated_at": DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0).unwrap_or_else(Utc::now),
+        })
+    }};
+}
+
+pub fn sqlite_row_to_catalog_item(row: &SqliteRow) -> Value {
+    catalog_item_from_row!(row)
+}
+
+pub fn postgres_row_to_catalog_item(row: &PgRow) -> Value {
+    catalog_item_from_row!(row)
+}
+
+macro_rules! automation_record_from_row {
+    ($row:expr) => {{
+        let mut data = parse_json($row.get::<String, _>("data"));
+        if !data.is_object() {
+            data = Value::Object(Default::default());
+        }
+        if let Some(object) = data.as_object_mut() {
+            object.insert("id".into(), Value::from($row.get::<i64, _>("id")));
+            object.insert(
+                "record_type".into(),
+                Value::from($row.get::<String, _>("record_type")),
+            );
+            object.insert(
+                "created_at".into(),
+                Value::from(
+                    DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
+                        .unwrap_or_else(Utc::now)
+                        .to_rfc3339(),
+                ),
+            );
+            object.insert(
+                "updated_at".into(),
+                Value::from(
+                    DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0)
+                        .unwrap_or_else(Utc::now)
+                        .to_rfc3339(),
+                ),
+            );
+        }
+        data
+    }};
+}
+
+pub fn sqlite_row_to_automation_record(row: &SqliteRow) -> Value {
+    automation_record_from_row!(row)
+}
+
+pub fn postgres_row_to_automation_record(row: &PgRow) -> Value {
+    automation_record_from_row!(row)
+}
+
+macro_rules! idempotency_key_from_row {
+    ($row:expr) => {{
+        serde_json::json!({
+            "id": $row.get::<i64, _>("id"),
+            "scope": $row.get::<String, _>("scope"),
+            "key": $row.get::<String, _>("key"),
+            "result": parse_json($row.get::<String, _>("result")),
+            "created_at": DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0).unwrap_or_else(Utc::now),
+        })
+    }};
+}
+
+pub fn sqlite_row_to_idempotency_key(row: &SqliteRow) -> Value {
+    idempotency_key_from_row!(row)
+}
+
+pub fn postgres_row_to_idempotency_key(row: &PgRow) -> Value {
+    idempotency_key_from_row!(row)
 }

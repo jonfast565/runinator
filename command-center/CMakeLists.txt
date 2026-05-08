@@ -12,13 +12,7 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/dialogs
 )
 
-find_package(Qt6 COMPONENTS Widgets Network QUIET)
-if(Qt6_FOUND)
-  set(QT_PACKAGE Qt6)
-else()
-  find_package(Qt5 COMPONENTS Widgets Network REQUIRED)
-  set(QT_PACKAGE Qt5)
-endif()
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 add_executable(CommandCenter
   src/main.cpp
@@ -32,7 +26,7 @@ add_executable(CommandCenter
   src/ui/dialogs/task_editor_dialog.ui
 )
 
-target_link_libraries(CommandCenter PRIVATE ${QT_PACKAGE}::Widgets ${QT_PACKAGE}::Network)
+target_link_libraries(CommandCenter PRIVATE Qt6::Widgets Qt6::Network)
 
 target_include_directories(CommandCenter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
