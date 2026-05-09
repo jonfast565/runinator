@@ -50,8 +50,21 @@ where
 
     /// Update an existing scheduled task by identifier.
     pub fn update_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
+        self.update_task_with_next_execution_override(task, false)
+    }
+
+    pub fn update_task_with_next_execution_override(
+        &self,
+        task: &ScheduledTask,
+        override_next_execution: bool,
+    ) -> Result<TaskResponse> {
         let id = task.id.ok_or(ApiError::MissingTaskId)?;
-        let url = self.build_url(&format!("/tasks/{id}"))?;
+        let path = if override_next_execution {
+            format!("/tasks/{id}?override_next_execution=true")
+        } else {
+            format!("/tasks/{id}")
+        };
+        let url = self.build_url(&path)?;
         let response = self.client.patch(url.clone()).json(task).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<TaskResponse>()?)

@@ -1,53 +1,105 @@
 # runinator
-Run/schedule the whole world!
 
-## Local Process Monitor (runinator-supervisor)
+Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, scheduler, worker, and importer together.
 
-A lightweight PM2-style supervisor is included to run the local Runinator stack without Docker or Kubernetes.
+## Prerequisites
 
-### 1. Build the binaries
+- Rust toolchain with Cargo.
+- PowerShell 7+ if using `build.ps1`.
+- Qt 6 and CMake only if you want to build the C++ `command-center` app.
+
+## Run Locally
+
+The quickest path on macOS/Linux is:
+
+```bash
+bash scripts/run-local.sh start
+```
+
+That script runs `cargo build --workspace`, starts the supervisor in daemon mode, and prints process status. The web API listens at:
+
+```text
+http://127.0.0.1:8080/
+```
+
+Useful local commands:
+
+```bash
+bash scripts/run-local.sh status
+bash scripts/run-local.sh watch
+bash scripts/run-local.sh sync
+bash scripts/run-local.sh stop
+bash scripts/run-local.sh restart
+```
+
+The supervisor starts the importer with a short local polling interval, so edits to `runinator-importer/tasks/tasks.json` are pushed into the API shortly after the web service is discovered. If the stack is already running and you want an immediate sync, run:
+
+```bash
+bash scripts/run-local.sh sync
+```
+
+You can also run the supervisor directly:
 
 ```bash
 cargo build --workspace
-```
-
-### 2. Start the supervisor (daemon mode)
-
-```bash
 cargo run -p runinator-supervisor -- start
+cargo run -p runinator-supervisor -- status
+cargo run -p runinator-supervisor -- stop
 ```
 
 This uses `runinator-supervisor.json` to start:
+
 - `runinator-broker`
 - `runinator-ws`
 - `runinator-scheduler`
 - `runinator-worker`
 - `runinator-importer`
 
-Failed processes are automatically restarted.
+Runtime files and logs are written under `.runinator-supervisor/`.
 
-### 3. Check process status
+## PowerShell Local Run
 
-```bash
-cargo run -p runinator-supervisor -- status
-```
-
-Watch live:
-
-```bash
-cargo run -p runinator-supervisor -- status --watch
-```
-
-### 4. Stop everything
-
-```bash
-cargo run -p runinator-supervisor -- stop
-```
-
-Runtime files/logs are written under `.runinator-supervisor/`.
-
-The local build script now uses the supervisor automatically when run with local mode and run enabled:
+PowerShell can build and run a local artifact layout:
 
 ```powershell
 ./build.ps1 -Mode Local -Run
+```
+
+This publishes binaries and the seed file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
+
+## Seeded Mock SDLC Workflow
+
+The importer reads `runinator-importer/tasks/tasks.json`. It seeds both scheduled tasks and workflow definitions, including:
+
+- workflow `1001`: `Mock SDLC: Feature Delivery`
+- mock console task IDs `101-106`
+
+In `command-center`, open the Workflows tab, select `Mock SDLC: Feature Delivery`, and run it. The workflow advances through local console-backed SDLC steps, pauses for `review_approval`, continues after approval, then pauses again for `release_gate`. Use the generic Approvals view to approve those requests and let the workflow finish.
+
+The mock task definitions are disabled as scheduled tasks, so they do not run from cron. They are still executable as workflow task nodes.
+
+## Build Command-Center
+
+`command-center` is a separate C++/Qt client. Build it with the existing CMake project:
+
+```bash
+cmake -S command-center -B command-center/build
+cmake --build command-center/build
+```
+
+Then launch the generated app from `command-center/build` and connect to the local service. The default local stack advertises and serves the API on `127.0.0.1:8080`.
+
+## Verification
+
+For importer/workflow seed changes, run:
+
+```bash
+jq empty runinator-importer/tasks/tasks.json
+cargo test -p runinator-importer
+```
+
+To sync the seed file manually against a running local API:
+
+```bash
+bash scripts/run-local.sh sync
 ```

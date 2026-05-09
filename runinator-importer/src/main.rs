@@ -1,4 +1,6 @@
 mod config;
+#[cfg(test)]
+mod tests;
 
 use std::{convert::Infallible, path::Path, time::SystemTime};
 
@@ -9,7 +11,7 @@ use config::Config;
 use log::{error, info};
 use runinator_api::AsyncApiClient;
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
-use runinator_models::core::ScheduledTask;
+use runinator_models::{core::ScheduledTask, workflows::WorkflowDefinition};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::{self, Duration};
@@ -54,8 +56,11 @@ impl runinator_api::ServiceLocator for GossipServiceLocator {
 }
 
 #[derive(Deserialize)]
-struct TaskFile {
+struct ImportFile {
+    #[serde(default)]
     tasks: Vec<TaskDefinition>,
+    #[serde(default)]
+    workflows: Vec<WorkflowDefinition>,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +145,12 @@ async fn main() -> Result<(), DynError> {
         .build()?;
     let api = ApiClient::with_client(discovery.clone(), http_client);
 
+    if config.once {
+        let mut last_modified = None;
+        sync_tasks_if_changed(&config, &api, &mut last_modified).await?;
+        return Ok(());
+    }
+
     let mut interval = time::interval(Duration::from_secs(config.poll_interval_seconds.max(1)));
     let mut last_modified: Option<SystemTime> = None;
 
@@ -174,11 +185,26 @@ async fn sync_tasks_if_changed(
         return Ok(());
     }
 
-    let tasks = load_tasks(path).await?;
-    info!("Seeding {} task(s) from {}", tasks.len(), path.display());
-    for task in tasks {
+    let seed = load_import_file(path).await?;
+    info!(
+        "Seeding {} task(s) from {}",
+        seed.tasks.len(),
+        path.display()
+    );
+    for task in seed.tasks {
         let _ = api
             .upsert_task(&task)
+            .await
+            .map_err(|err| -> DynError { Box::new(err) })?;
+    }
+    info!(
+        "Seeding {} workflow(s) from {}",
+        seed.workflows.len(),
+        path.display()
+    );
+    for workflow in seed.workflows {
+        let _ = api
+            .upsert_workflow(&workflow)
             .await
             .map_err(|err| -> DynError { Box::new(err) })?;
     }
@@ -187,8 +213,16 @@ async fn sync_tasks_if_changed(
     Ok(())
 }
 
-async fn load_tasks(path: &Path) -> Result<Vec<ScheduledTask>, DynError> {
+struct ImportSeed {
+    tasks: Vec<ScheduledTask>,
+    workflows: Vec<WorkflowDefinition>,
+}
+
+async fn load_import_file(path: &Path) -> Result<ImportSeed, DynError> {
     let data = tokio::fs::read_to_string(path).await?;
-    let parsed: TaskFile = serde_json::from_str(&data)?;
-    Ok(parsed.tasks.into_iter().map(Into::into).collect())
+    let parsed: ImportFile = serde_json::from_str(&data)?;
+    Ok(ImportSeed {
+        tasks: parsed.tasks.into_iter().map(Into::into).collect(),
+        workflows: parsed.workflows,
+    })
 }

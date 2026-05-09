@@ -11,10 +11,13 @@ env_logger = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 uuid = { version = "1.18", features = ["v4"] }
 async-trait = "0.1"
 
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 runinator-api = { path = "../runinator-api" }
+
+[dev-dependencies]
+runinator-workflows = { path = "../runinator-workflows" }

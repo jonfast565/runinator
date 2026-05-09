@@ -76,8 +76,13 @@ pub async fn run_scheduler_iteration(
                 if task.immediate {
                     task.immediate = false;
                 }
-                if let Err(err) = db_extensions::set_next_execution_with_cron_statement(api, &mut task).await {
-                    error!("Failed to update next execution for task {}: {}", task_id, err);
+                if let Err(err) =
+                    db_extensions::set_next_execution_with_cron_statement(api, &mut task).await
+                {
+                    error!(
+                        "Failed to update next execution for task {}: {}",
+                        task_id, err
+                    );
                 }
             }
             Err(err) => {
@@ -103,10 +108,16 @@ pub async fn enqueue_task(
     };
     let message = BrokerMessage {
         command,
-        dedupe_key: Some(build_dedupe_key(task.id.unwrap_or_default(), task.next_execution)),
+        dedupe_key: Some(build_dedupe_key(
+            task.id.unwrap_or_default(),
+            task.next_execution,
+        )),
         enqueued_at: Utc::now(),
     };
-    broker.publish(message).await.map_err(|e| broker_error("enqueue", e))
+    broker
+        .publish(message)
+        .await
+        .map_err(|e| broker_error("enqueue", e))
 }
 
 pub async fn enqueue_task_with_dedupe(
@@ -127,7 +138,10 @@ pub async fn enqueue_task_with_dedupe(
         dedupe_key: Some(dedupe_key),
         enqueued_at: Utc::now(),
     };
-    broker.publish(message).await.map_err(|e| broker_error("enqueue_dedupe", e))
+    broker
+        .publish(message)
+        .await
+        .map_err(|e| broker_error("enqueue_dedupe", e))
 }
 
 pub async fn run_external_run_iteration(

@@ -125,10 +125,11 @@ pub async fn process_task_node(
         api.fetch_run(task_run_id).await?
     } else {
         let task_run = api
-            .create_run(
+            .create_workflow_task_run(
                 task_id,
+                workflow_run.id,
+                node.id.clone(),
                 parameters.clone(),
-                format!("workflow:{}", workflow_run.id),
             )
             .await?;
         api.put_idempotency_key(
@@ -137,7 +138,14 @@ pub async fn process_task_node(
             serde_json::json!({ "task_run_id": task_run.id }),
         )
         .await?;
-        crate::iteration::enqueue_task(broker, &task, task_run.id, parameters.clone()).await?;
+        crate::iteration::enqueue_task_with_dedupe(
+            broker,
+            &task,
+            task_run.id,
+            parameters.clone(),
+            format!("run:{}", task_run.id),
+        )
+        .await?;
         task_run
     };
 
@@ -380,7 +388,8 @@ pub async fn process_loop_node(
     let max_iterations = node.max_iterations.unwrap_or(i64::MAX).max(0);
     let index = prior_iterations;
     let exhausted = index >= items.len() as i64 || index >= max_iterations;
-    let node_run = if let Some(latest) = latest.filter(|run| run.status == WorkflowStatus::Running) {
+    let node_run = if let Some(latest) = latest.filter(|run| run.status == WorkflowStatus::Running)
+    {
         latest.clone()
     } else {
         api.create_workflow_node_run(workflow_run.id, &node.id, parameters.clone())

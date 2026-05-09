@@ -82,6 +82,8 @@ impl McpServer {
         let request = RunRequest {
             parameters: arguments,
             trigger: "mcp".into(),
+            workflow_run_id: None,
+            workflow_node_id: None,
         };
 
         let mut run: Value = self

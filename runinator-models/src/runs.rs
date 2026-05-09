@@ -48,6 +48,10 @@ pub struct RunRequest {
     pub parameters: Value,
     #[serde(default = "default_trigger")]
     pub trigger: String,
+    #[serde(default)]
+    pub workflow_run_id: Option<i64>,
+    #[serde(default)]
+    pub workflow_node_id: Option<String>,
 }
 
 fn default_trigger() -> String {

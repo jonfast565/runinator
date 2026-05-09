@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use runinator_models::workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun};
 use runinator_models::core::ScheduledTask;
 use runinator_models::errors::SendableError;
+use runinator_models::workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun};
 use serde_json::Value;
+use std::collections::HashMap;
 
 pub fn latest_node_run<'a>(
     node_runs: &'a [WorkflowNodeRun],

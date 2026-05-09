@@ -186,12 +186,12 @@ pub struct PostgresDb {
 
 impl PostgresDb {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
-        let mut options = PgConnectOptions::from_str(connection_str)?;
-        options.log_statements(log::LevelFilter::Debug);
-        options.log_slow_statements(
-            log::LevelFilter::Warn,
-            Duration::seconds(1).to_std().unwrap(),
-        );
+        let options = PgConnectOptions::from_str(connection_str)?
+            .log_statements(log::LevelFilter::Debug)
+            .log_slow_statements(
+                log::LevelFilter::Warn,
+                Duration::seconds(1).to_std().unwrap(),
+            );
 
         let pool = PgPoolOptions::new().connect_with(options).await?;
         Ok(Self { pool })

@@ -1,5 +1,7 @@
 use super::*;
-use runinator_models::workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus};
+use runinator_models::workflows::{
+    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus,
+};
 use std::collections::HashMap;
 
 fn workflow(definition: serde_json::Value) -> WorkflowDefinition {
@@ -81,7 +83,8 @@ fn evaluates_conditions() {
     });
 
     // Simple equality
-    let cond1 = serde_json::json!({ "value": { "$value": "steps.check.output#/status" }, "equals": "ok" });
+    let cond1 =
+        serde_json::json!({ "value": { "$value": "steps.check.output#/status" }, "equals": "ok" });
     assert!(evaluate_condition(&cond1, &context).unwrap());
 
     // Logical ALL (AND)
@@ -166,11 +169,17 @@ fn test_workflow_state_machine_logic_integration() {
     // 2. Validate the workflow
     let (start, nodes) = validate_workflow(&wf).expect("Workflow should be valid");
     assert_eq!(start, "step1");
-    let node_map: HashMap<String, &WorkflowNode> = nodes.iter().map(|n| (n.id.clone(), n)).collect();
+    let node_map: HashMap<String, &WorkflowNode> =
+        nodes.iter().map(|n| (n.id.clone(), n)).collect();
 
     // 3. Simulate execution - Step 1 succeeds
     let step1_node = node_map.get("step1").unwrap();
-    let next = next_transition(step1_node, WorkflowStatus::Succeeded, &serde_json::json!({})).unwrap();
+    let next = next_transition(
+        step1_node,
+        WorkflowStatus::Succeeded,
+        &serde_json::json!({}),
+    )
+    .unwrap();
     assert_eq!(next.unwrap(), "step2");
 
     // 4. Simulate Step 2 - Condition evaluation
@@ -180,7 +189,7 @@ fn test_workflow_state_machine_logic_integration() {
         m
     };
     let context = outputs_context(&serde_json::json!({}), &outputs);
-    
+
     let step2_node = node_map.get("step2").unwrap();
     let next = next_transition(step2_node, WorkflowStatus::Running, &context).unwrap();
     assert_eq!(next.unwrap(), "success");

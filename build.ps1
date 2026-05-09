@@ -113,6 +113,19 @@ function Get-PluginLibraryName {
     return 'libruninator_plugin_console.so'
 }
 
+function Get-ExecutableName {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return "$Name.exe"
+    }
+
+    return $Name
+}
+
 function Convert-ToLinuxPath {
     param(
         [Parameter(Mandatory)]
@@ -169,18 +182,18 @@ function Publish-Binaries {
     Ensure-Directory -Path $ArtifactsDir
 
     $binaries = @(
-        'runinator-scheduler.exe',
-        'runinator-worker.exe',
-        'runinator-importer.exe',
-        'runinator-ws.exe',
-        'runinator-broker.exe',
-        'runinator-supervisor.exe',
-        'command-center.exe'
+        'runinator-scheduler',
+        'runinator-worker',
+        'runinator-importer',
+        'runinator-ws',
+        'runinator-broker',
+        'runinator-supervisor'
     )
 
     foreach ($binary in $binaries) {
-        $source = Join-Path -Path $TargetDir -ChildPath $binary
-        $destination = Join-Path -Path $ArtifactsDir -ChildPath $binary
+        $fileName = Get-ExecutableName -Name $binary
+        $source = Join-Path -Path $TargetDir -ChildPath $fileName
+        $destination = Join-Path -Path $ArtifactsDir -ChildPath $fileName
 
         if (Test-Path -LiteralPath $source) {
             Copy-Item -Path $source -Destination $destination -Force
@@ -482,7 +495,7 @@ function Write-LocalSupervisorConfig {
     $commands = @(
         [ordered]@{
             name = 'Runinator Test Broker'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-broker.exe')
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-broker'))
             cwd = $WorkspacePath
             env = @{
                 RUST_LOG              = 'info'
@@ -491,7 +504,7 @@ function Write-LocalSupervisorConfig {
         }
         [ordered]@{
             name = 'Runinator Web Service'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-ws.exe')
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-ws'))
             cwd = $WorkspacePath
             args = @(
                 '--database', 'sqlite',
@@ -504,7 +517,7 @@ function Write-LocalSupervisorConfig {
         }
         [ordered]@{
             name = 'Runinator Scheduler'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-scheduler.exe')
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-scheduler'))
             cwd = $WorkspacePath
             args = (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
                 '--scheduler-frequency-seconds', '1',
@@ -519,7 +532,7 @@ function Write-LocalSupervisorConfig {
         }
         [ordered]@{
             name = 'Runinator Worker'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-worker.exe')
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-worker'))
             cwd = $WorkspacePath
             args = @(
                 '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
@@ -534,11 +547,11 @@ function Write-LocalSupervisorConfig {
         }
         [ordered]@{
             name = 'Runinator Importer'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath 'runinator-importer.exe')
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-importer'))
             cwd = $WorkspacePath
             args = @(
                 '--tasks-file', $tasksFile,
-                '--poll-interval-seconds', '30'
+                '--poll-interval-seconds', '2'
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
             env = @{
                 RUST_LOG = 'info'
@@ -574,7 +587,7 @@ function Start-LocalStack {
         [int]$GossipBasePort
     )
 
-    $supervisorBinary = Join-Path -Path $TargetDir -ChildPath 'runinator-supervisor.exe'
+    $supervisorBinary = Join-Path -Path $TargetDir -ChildPath (Get-ExecutableName -Name 'runinator-supervisor')
     if (-not (Test-Path -LiteralPath $supervisorBinary)) {
         throw "Supervisor binary was not found at $supervisorBinary. Build the workspace first."
     }
@@ -807,7 +820,9 @@ try {
     $shouldBuildLocal = ($Mode -eq 'Local' -and -not $SkipBuild)
 
     if ($shouldBuildLocal) {
-        Ensure-RustTarget -WorkspacePath $workspacePath -Target $WindowsTargetTriple
+        if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+            Ensure-RustTarget -WorkspacePath $workspacePath -Target $WindowsTargetTriple
+        }
         Write-Step "Building workspace with cargo profile '$BuildProfile'"
         Invoke-ExternalCommand -FilePath 'cargo' -Arguments @('build', '--profile', $BuildProfile, '--workspace') -WorkingDirectory $workspacePath
     } elseif ($Mode -eq 'Local') {

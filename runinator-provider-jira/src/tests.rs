@@ -1,6 +1,6 @@
 use super::*;
-use serde_json::json;
 use runinator_models::runs::ProviderExecutionRequest;
+use serde_json::json;
 
 #[test]
 fn test_jira_provider_missing_base_url() {

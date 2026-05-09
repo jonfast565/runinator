@@ -31,7 +31,7 @@ use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
 };
 use serde::Deserialize;
-use tokio::sync::Notify;
+use tokio::{net::TcpListener, sync::Notify};
 
 #[derive(Debug, Default, Deserialize)]
 struct TaskMutationParams {
@@ -909,11 +909,11 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
         .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
         .route(
-            "/tasks/:id",
+            "/tasks/{id}",
             patch(update_task::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/tasks/:id",
+            "/tasks/{id}",
             delete(delete_task::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -925,36 +925,36 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
             post(record_task_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/tasks/:id/request_run",
+            "/tasks/{id}/request_run",
             post(request_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/tasks/:id/runs",
+            "/tasks/{id}/runs",
             post(create_run::<T>)
                 .get(get_task_runs_v2::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route("/runs", get(get_runs::<T>).layer(Extension(pool.clone())))
         .route(
-            "/runs/:id",
+            "/runs/{id}",
             get(get_run::<T>)
                 .patch(update_run::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/runs/:id/chunks",
+            "/runs/{id}/chunks",
             get(get_run_chunks::<T>)
                 .post(append_run_chunk::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/runs/:id/artifacts",
+            "/runs/{id}/artifacts",
             get(get_run_artifacts::<T>)
                 .post(add_run_artifact::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/artifacts/:id",
+            "/artifacts/{id}",
             get(get_artifact::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -964,7 +964,7 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workflows/:id",
+            "/workflows/{id}",
             get(get_workflow::<T>)
                 .patch(upsert_workflow::<T>)
                 .delete(delete_workflow::<T>)
@@ -975,21 +975,21 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
             get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflows/:id/runs",
+            "/workflows/{id}/runs",
             post(create_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_runs/:id",
+            "/workflow_runs/{id}",
             get(get_workflow_run::<T>)
                 .patch(update_workflow_run::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_runs/:id/nodes",
+            "/workflow_runs/{id}/nodes",
             post(create_workflow_node_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_node_runs/:id",
+            "/workflow_node_runs/{id}",
             patch(update_workflow_node_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -1047,11 +1047,11 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/approvals/:id/approve",
+            "/approvals/{id}/approve",
             post(approve_request::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/approvals/:id/reject",
+            "/approvals/{id}/reject",
             post(reject_request::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -1081,7 +1081,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
     seed_builtin_catalog(pool.as_ref()).await?;
     let app = build_router(pool);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
-    let server = axum::Server::bind(&addr).serve(app.into_make_service());
+    let listener = TcpListener::bind(addr).await?;
+    let server = axum::serve(listener, app);
     info!("Webserver started at {}:{}", addr.ip(), addr.port());
 
     tokio::select! {

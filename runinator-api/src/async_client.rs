@@ -53,8 +53,22 @@ where
 
     /// Update an existing scheduled task by identifier.
     pub async fn update_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
+        self.update_task_with_next_execution_override(task, false)
+            .await
+    }
+
+    pub async fn update_task_with_next_execution_override(
+        &self,
+        task: &ScheduledTask,
+        override_next_execution: bool,
+    ) -> Result<TaskResponse> {
         let id = task.id.ok_or(ApiError::MissingTaskId)?;
-        let url = self.build_url(&format!("/tasks/{id}")).await?;
+        let path = if override_next_execution {
+            format!("/tasks/{id}?override_next_execution=true")
+        } else {
+            format!("/tasks/{id}")
+        };
+        let url = self.build_url(&path).await?;
         let response = self.client.patch(url.clone()).json(task).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -137,6 +151,22 @@ where
     pub async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition> {
         let url = self.build_url(&format!("/workflows/{workflow_id}")).await?;
         let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn upsert_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition> {
+        let url = match workflow.id {
+            Some(id) => self.build_url(&format!("/workflows/{id}")).await?,
+            None => self.build_url("/workflows").await?,
+        };
+        let response = match workflow.id {
+            Some(_) => self.client.patch(url.clone()).json(workflow).send().await?,
+            None => self.client.post(url.clone()).json(workflow).send().await?,
+        };
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }

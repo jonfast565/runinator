@@ -14,6 +14,19 @@
       <sourceFolder url="file://$MODULE_DIR$/runinator-ws/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/command-center/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-broker/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-comm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-importer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-mcp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-ai/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-approval/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-git/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-github/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-jira/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-supervisor/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-worker/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-workflows/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

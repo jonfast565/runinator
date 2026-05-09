@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 const NAME: &str = "Console\0";
 
-#[ctor]
+#[ctor(unsafe)]
 fn constructor() {
     logger::setup_logger().expect("logger not set up");
 }

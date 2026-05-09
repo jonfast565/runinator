@@ -181,7 +181,7 @@ pub struct SqliteDb {
 
 impl SqliteDb {
     pub async fn new(filename: &str) -> Result<Self, SendableError> {
-        let mut options = SqliteConnectOptions::new()
+        let options = SqliteConnectOptions::new()
             .filename(filename)
             .create_if_missing(true);
         let options_with_logs = options

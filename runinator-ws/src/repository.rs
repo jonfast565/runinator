@@ -129,7 +129,14 @@ pub async fn create_run<T: DatabaseImpl>(
     task_id: i64,
     request: &RunRequest,
 ) -> Result<RunSummary, SendableError> {
-    create_run_with_workflow(db, task_id, request, None, None).await
+    create_run_with_workflow(
+        db,
+        task_id,
+        request,
+        request.workflow_run_id,
+        request.workflow_node_id.clone(),
+    )
+    .await
 }
 
 pub(crate) fn validate_json_schema(schema: &Value, value: &Value) -> Result<(), String> {
@@ -539,4 +546,3 @@ pub async fn resolve_approval<T: DatabaseImpl>(
 
     Ok(updated)
 }
-

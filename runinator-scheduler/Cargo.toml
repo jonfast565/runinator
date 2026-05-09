@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 log = "0.4"
-croner = "2.2.0"
+croner = "3.0.1"
 clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18", features = ["v4"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"

@@ -52,7 +52,7 @@ impl SchedulerApi {
         }
         let _ = self
             .client
-            .update_task(task)
+            .update_task_with_next_execution_override(task, true)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
         Ok(())
@@ -89,6 +89,28 @@ impl SchedulerApi {
         let request = RunRequest {
             parameters,
             trigger: trigger.into(),
+            workflow_run_id: None,
+            workflow_node_id: None,
+        };
+        self.client
+            .create_run(task_id, &request)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn create_workflow_task_run(
+        &self,
+        task_id: i64,
+        workflow_run_id: i64,
+        workflow_node_id: impl Into<String>,
+        parameters: Value,
+    ) -> Result<RunSummary, SendableError> {
+        let workflow_node_id = workflow_node_id.into();
+        let request = RunRequest {
+            parameters,
+            trigger: format!("workflow:{workflow_run_id}"),
+            workflow_run_id: Some(workflow_run_id),
+            workflow_node_id: Some(workflow_node_id),
         };
         self.client
             .create_run(task_id, &request)

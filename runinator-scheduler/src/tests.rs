@@ -1,6 +1,6 @@
 use crate::context::*;
-use runinator_models::workflows::{WorkflowRun, WorkflowNodeRun, WorkflowStatus};
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
+use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
 use serde_json::json;
 
 #[test]
@@ -47,4 +47,13 @@ fn builds_runtime_context() {
     assert_eq!(ctx["steps"]["prev"]["output"]["result"], "ok");
     assert_eq!(ctx["workflow"]["run_id"], 10);
     assert_eq!(ctx["workflow"]["state"]["loop_index"], 0);
+}
+
+#[test]
+fn initializes_next_execution_from_cron_schedule() {
+    let now = Utc.with_ymd_and_hms(2026, 5, 9, 2, 30, 0).unwrap();
+    let next = crate::db_extensions::next_execution_for_cron("0 0,9,12,15,18,21 * * *", now)
+        .expect("cron schedule is valid");
+
+    assert_eq!(next, Utc.with_ymd_and_hms(2026, 5, 9, 9, 0, 0).unwrap());
 }

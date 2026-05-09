@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use runinator_broker::Broker;
 use runinator_models::{
     errors::SendableError,
     workflows::{WorkflowNodeKind, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
+use std::collections::HashMap;
 
-use crate::{api::SchedulerApi, nodes::*, context::latest_node_run};
+use crate::{api::SchedulerApi, context::latest_node_run, nodes::*};
 
 pub async fn run_workflow_iteration(
     broker: &dyn Broker,
