@@ -10,7 +10,7 @@ use clap::Parser;
 
 use crate::{
     cli::{Cli, Commands},
-    display::show_status,
+    display::{show_logs, show_status},
     supervisor::{run_supervisor, start_daemon, stop_supervisor},
     types::DynError,
 };
@@ -29,6 +29,11 @@ fn main() -> Result<(), DynError> {
         }
         Commands::Stop => stop_supervisor(&config, &paths)?,
         Commands::Status { watch } => show_status(&paths, watch)?,
+        Commands::Logs {
+            process,
+            lines,
+            watch,
+        } => show_logs(&paths, process.as_deref(), lines, watch)?,
         Commands::Supervise { foreground } => run_supervisor(&config, &paths, foreground)?,
     }
 

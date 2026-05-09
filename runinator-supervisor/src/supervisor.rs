@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
-    env, fs, io,
+    env, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -56,7 +57,9 @@ struct ManagedProcess {
     last_error: Option<String>,
     next_restart_at: Option<Instant>,
     restart_history: VecDeque<Instant>,
+    logs_dir: PathBuf,
     log_path: PathBuf,
+    start_count: u32,
 }
 
 pub fn start_daemon(paths: &Paths) -> Result<(), DynError> {
@@ -246,7 +249,7 @@ fn build_processes(
 
         let log_path = paths
             .logs_dir
-            .join(format!("{}.log", sanitize_name(&process.name)));
+            .join(format!("not-started__{}.log", sanitize_name(&process.name)));
 
         processes.push(ManagedProcess {
             config: process.clone(),
@@ -261,7 +264,9 @@ fn build_processes(
             last_error: None,
             next_restart_at: None,
             restart_history: VecDeque::new(),
+            logs_dir: paths.logs_dir.clone(),
             log_path,
+            start_count: 0,
         });
     }
     Ok(processes)
@@ -285,11 +290,27 @@ fn sanitize_name(name: &str) -> String {
 
 fn attempt_start(process: &mut ManagedProcess, restart_delay: Duration) -> Result<(), DynError> {
     process.status = ProcStatus::Starting;
+    let started_at = Utc::now();
+    process.start_count = process.start_count.saturating_add(1);
+    process.log_path = process_log_path(
+        &process.logs_dir,
+        &process.config.name,
+        started_at,
+        process.start_count,
+    );
 
-    let stdout = fs::OpenOptions::new()
+    let mut stdout = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&process.log_path)?;
+    writeln!(
+        stdout,
+        "----- {} process={} command={} cwd={} -----",
+        started_at.to_rfc3339(),
+        process.config.name,
+        format_command(&process.command_path, &process.config.args),
+        process.cwd_path.display()
+    )?;
     let stderr = stdout.try_clone()?;
 
     let mut cmd = Command::new(&process.command_path);
@@ -305,7 +326,7 @@ fn attempt_start(process: &mut ManagedProcess, restart_delay: Duration) -> Resul
 
     match cmd.spawn() {
         Ok(child) => {
-            process.started_at_utc = Some(Utc::now());
+            process.started_at_utc = Some(started_at);
             process.started_instant = Some(Instant::now());
             process.last_error = None;
             process.last_exit_code = None;
@@ -320,6 +341,13 @@ fn attempt_start(process: &mut ManagedProcess, restart_delay: Duration) -> Resul
                 err
             ));
             process.status = ProcStatus::Failed;
+            append_process_log_event(
+                process,
+                &format!(
+                    "failed_to_start command={} error={err}",
+                    process.command_path.display()
+                ),
+            );
             schedule_restart(process, restart_delay);
         }
     }
@@ -358,6 +386,7 @@ fn handle_exit(process: &mut ManagedProcess, status: ExitStatus, restart_delay: 
     process.started_at_utc = None;
     process.started_instant = None;
     process.last_exit_code = status.code();
+    append_process_log_event(process, &format!("exited status={status}"));
 
     if status.success() {
         process.status = ProcStatus::Exited;
@@ -423,6 +452,7 @@ fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<
                     process.last_exit_code = status.code();
                     process.child = None;
                     process.status = ProcStatus::Stopped;
+                    append_process_log_event(process, &format!("stopped status={status}"));
                 } else {
                     all_stopped = false;
                 }
@@ -441,6 +471,7 @@ fn stop_children(processes: &mut [ManagedProcess], timeout: Duration) -> Result<
             process.child = None;
             process.status = ProcStatus::Stopped;
             process.last_error = Some("Force-killed during shutdown timeout".to_string());
+            append_process_log_event(process, "force_killed during_shutdown_timeout");
         }
     }
 
@@ -486,6 +517,41 @@ fn format_command(command: &Path, args: &[String]) -> String {
         out.push_str(arg);
     }
     out
+}
+
+fn process_log_path(
+    logs_dir: &Path,
+    process_name: &str,
+    started_at: DateTime<Utc>,
+    attempt: u32,
+) -> PathBuf {
+    let timestamp = started_at.format("%Y-%m-%dT%H-%M-%S%.3fZ");
+    logs_dir.join(format!(
+        "{}__{}__attempt-{}.log",
+        timestamp,
+        sanitize_name(process_name),
+        attempt
+    ))
+}
+
+fn append_process_log_event(process: &ManagedProcess, message: &str) {
+    let now = Utc::now();
+    match fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&process.log_path)
+    {
+        Ok(mut file) => {
+            let _ = writeln!(
+                file,
+                "----- {} process={} {} -----",
+                now.to_rfc3339(),
+                process.config.name,
+                message
+            );
+        }
+        Err(_) => {}
+    }
 }
 
 fn read_pid(path: &Path) -> Result<Option<u32>, DynError> {

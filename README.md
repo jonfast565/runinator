@@ -27,6 +27,9 @@ Useful local commands:
 ```bash
 bash scripts/run-local.sh status
 bash scripts/run-local.sh watch
+bash scripts/run-local.sh logs
+bash scripts/run-local.sh logs --process web-service
+bash scripts/run-local.sh logs-watch --lines 40
 bash scripts/run-local.sh sync
 bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
@@ -55,7 +58,23 @@ This uses `runinator-supervisor.json` to start:
 - `runinator-worker`
 - `runinator-importer`
 
-Runtime files and logs are written under `.runinator-supervisor/`.
+Runtime files are written under `.runinator-supervisor/`. Child process stdout and stderr are collected under `.runinator-supervisor/logs/` with one file per process start:
+
+```text
+YYYY-MM-DDTHH-MM-SS.mmmZ__process-name__attempt-N.log
+```
+
+Each file includes a supervisor start marker with the exact configured process name, command, and working directory, then the app's normal stdout/stderr output.
+
+`watch` refreshes the status table. Use `logs-watch` or `logs --watch` to refresh log tails.
+
+Use the supervisor log tail command to inspect the latest active log files:
+
+```bash
+cargo run -p runinator-supervisor -- logs
+cargo run -p runinator-supervisor -- logs --process web-service --lines 100
+cargo run -p runinator-supervisor -- logs --watch --lines 40
+```
 
 ## PowerShell Local Run
 

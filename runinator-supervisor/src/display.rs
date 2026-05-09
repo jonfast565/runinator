@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{fs, path::Path, thread, time::Duration};
 
 use chrono::{DateTime, Local};
 
@@ -21,6 +21,33 @@ pub fn show_status(paths: &Paths, watch: bool) -> Result<(), DynError> {
                 if watch {
                     clear_screen();
                 }
+                println!("No supervisor state available: {}", err);
+                if !watch {
+                    return Ok(());
+                }
+            }
+        }
+
+        if !watch {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+pub fn show_logs(
+    paths: &Paths,
+    process_filter: Option<&str>,
+    lines: usize,
+    watch: bool,
+) -> Result<(), DynError> {
+    loop {
+        if watch {
+            clear_screen();
+        }
+        match read_snapshot(&paths.state_file) {
+            Ok(snapshot) => render_log_tails(&snapshot, process_filter, lines),
+            Err(err) => {
                 println!("No supervisor state available: {}", err);
                 if !watch {
                     return Ok(());
@@ -76,6 +103,62 @@ pub fn render_snapshot(snapshot: &StateSnapshot) {
     }
 
     print_table(&headers, &rows);
+}
+
+fn render_log_tails(snapshot: &StateSnapshot, process_filter: Option<&str>, lines: usize) {
+    println!("Runinator Supervisor Logs");
+    println!("Config: {}", snapshot.config_path);
+    println!(
+        "Updated: {}",
+        human_time(&snapshot.updated_at).unwrap_or_else(|| snapshot.updated_at.clone())
+    );
+    println!();
+
+    let mut matched = false;
+    for process in &snapshot.processes {
+        if let Some(filter) = process_filter {
+            if process.name != filter {
+                continue;
+            }
+        }
+        matched = true;
+        println!(
+            "===== {} [{}] {} =====",
+            process.name, process.status, process.log_file
+        );
+        print_tail(Path::new(&process.log_file), lines);
+        println!();
+    }
+
+    if !matched {
+        let filter = process_filter.unwrap_or_default();
+        println!("No process matched '{filter}'.");
+    }
+}
+
+fn print_tail(path: &Path, lines: usize) {
+    match fs::read_to_string(path) {
+        Ok(contents) => {
+            let tail = tail_lines(&contents, lines);
+            if tail.is_empty() {
+                println!("(log is empty)");
+                return;
+            }
+            for line in tail {
+                println!("{line}");
+            }
+        }
+        Err(err) => println!("Unable to read log: {err}"),
+    }
+}
+
+fn tail_lines(contents: &str, lines: usize) -> Vec<&str> {
+    if lines == 0 {
+        return Vec::new();
+    }
+    let all = contents.lines().collect::<Vec<_>>();
+    let start = all.len().saturating_sub(lines);
+    all[start..].to_vec()
 }
 
 pub fn clear_screen() {

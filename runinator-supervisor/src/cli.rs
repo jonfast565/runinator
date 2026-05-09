@@ -36,6 +36,18 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         watch: bool,
     },
+    /// Show tails of managed process logs.
+    Logs {
+        /// Exact process name to show. Defaults to all processes.
+        #[arg(short, long)]
+        process: Option<String>,
+        /// Number of lines to show per process.
+        #[arg(short, long, default_value_t = 80)]
+        lines: usize,
+        /// Refresh continuously.
+        #[arg(short, long, default_value_t = false)]
+        watch: bool,
+    },
     #[command(hide = true)]
     Supervise {
         #[arg(long, default_value_t = false)]

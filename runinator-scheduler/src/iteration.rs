@@ -163,10 +163,16 @@ pub async fn run_external_run_iteration(
         };
 
         let dedupe_key = format!("run:{}", run.id);
-        if let Err(err) =
-            enqueue_task_with_dedupe(broker, task, run.id, run.parameters.clone(), dedupe_key).await
+        match enqueue_task_with_dedupe(broker, task, run.id, run.parameters.clone(), dedupe_key)
+            .await
         {
-            error!("Failed to re-enqueue run {}: {}", run.id, err);
+            Ok(()) => {}
+            Err(err) if is_duplicate_broker_error(err.as_ref()) => {
+                debug!("Run {} is already enqueued", run.id);
+            }
+            Err(err) => {
+                error!("Failed to re-enqueue run {}: {}", run.id, err);
+            }
         }
     }
     Ok(())
@@ -185,6 +191,11 @@ pub fn broker_error(context: &'static str, err: BrokerError) -> SendableError {
         format!("broker.{}", context),
         err.to_string(),
     ))
+}
+
+fn is_duplicate_broker_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    err.to_string()
+        .starts_with("broker.enqueue_dedupe: duplicate message")
 }
 
 pub fn is_task_due(task: &ScheduledTask, force: bool, now: DateTime<Utc>) -> bool {
