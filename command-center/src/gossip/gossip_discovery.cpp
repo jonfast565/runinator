@@ -6,6 +6,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+constexpr quint16 DefaultGossipPort = 5513;
+}
+
 GossipDiscovery::GossipDiscovery(QObject *parent) : QObject(parent) {}
 
 void GossipDiscovery::start() {
@@ -18,9 +22,9 @@ void GossipDiscovery::start() {
   bool portOk = false;
   quint16 port = portVar.toUShort(&portOk);
   if (portVar.trimmed().isEmpty()) {
-    port = 5504;
+    port = DefaultGossipPort;
   } else if (!portOk) {
-    port = 5000;
+    port = DefaultGossipPort;
   }
 
   gossipSocket = new QUdpSocket(this);
