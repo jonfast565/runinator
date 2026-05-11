@@ -8,9 +8,9 @@
 </template>
 
 <script setup lang="ts">
-import { listen } from "@tauri-apps/api/event";
 import { onBeforeUnmount, onMounted, watch } from "vue";
 import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi";
+import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useAutoRefresh } from "./composables/useAutoRefresh";
 import { useAppStore } from "./stores/app";
@@ -32,13 +32,17 @@ let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
 
 onMounted(async () => {
-  unlistenUrl = await listen<{ service_url: string | null }>("service-url-changed", (event) => {
+  unlistenUrl = await listenTauri<{ service_url: string | null }>("service-url-changed", (event) => {
     app.serviceUrl = event.payload.service_url;
     tasks.refreshTasks();
     workflows.refreshWorkflows();
     resources.refreshResources();
   });
-  unlistenError = await listen<string>("service-discovery-error", (event) => app.setError(event.payload));
+  unlistenError = await listenTauri<string>("service-discovery-error", (event) => app.setError(event.payload));
+  if (!isTauriRuntime()) {
+    app.setError("Tauri runtime unavailable. Use `pnpm --dir command-center-tauri tauri dev` to connect this UI to Runinator.");
+    return;
+  }
   const status = await getServiceStatus();
   app.serviceUrl = status.service_url;
   await startServiceDiscovery();
