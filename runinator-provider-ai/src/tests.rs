@@ -8,7 +8,6 @@ fn test_ai_command_provider_execution() {
         task_id: Some(1),
         action_name: "ai".into(),
         action_function: "cmd".into(),
-        action_configuration: "".into(),
         parameters: json!({
             "command": "cat",
             "input": { "test": "data" }
@@ -32,7 +31,6 @@ fn test_ai_command_fails_on_nonzero_exit() {
         task_id: Some(1),
         action_name: "ai".into(),
         action_function: "cmd".into(),
-        action_configuration: "".into(),
         parameters: json!({
             "command": "exit 1",
         }),

@@ -8,7 +8,6 @@ fn test_git_provider_unsupported_action() {
         task_id: Some(1),
         action_name: "git".into(),
         action_function: "invalid".into(),
-        action_configuration: "".into(),
         parameters: json!({}),
         timeout_secs: 30,
         artifact_dir: "".into(),

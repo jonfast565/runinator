@@ -2,6 +2,7 @@ use libloading::{Library, Symbol};
 use log::{debug, warn};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::ProviderMetadata,
     runs::{
         ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse,
         TaskExecutionResult,
@@ -25,11 +26,13 @@ use crate::provider::{Provider, ProviderEventSink};
 
 const PLUGIN_MARKER_FN_NAME: &str = "runinator_marker\0";
 const PLUGIN_NAME_FN_NAME: &str = "name\0";
+const PLUGIN_METADATA_FN_NAME: &str = "metadata\0";
 const PLUGIN_ABI_VERSION_FN_NAME: &str = "runinator_abi_version\0";
 const PLUGIN_SERVICE_CALL_FN_NAME: &str = "call_service\0";
 
 type PluginMarkerFn = unsafe extern "C" fn() -> c_int;
 type PluginNameFn = unsafe extern "C" fn() -> *const c_char;
+type PluginMetadataFn = unsafe extern "C" fn() -> *const c_char;
 type PluginAbiVersionFn = unsafe extern "C" fn() -> c_int;
 type PluginServiceCallFn = unsafe extern "C" fn(
     request_json_path: *const c_char,
@@ -45,6 +48,17 @@ pub struct Plugin {
 impl Provider for Plugin {
     fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn metadata(&self) -> ProviderMetadata {
+        self.plugin_metadata().unwrap_or_else(|err| {
+            warn!("Failed to load plugin metadata for {}: {}", self.name, err);
+            ProviderMetadata {
+                name: self.name.clone(),
+                actions: vec![],
+                metadata: Default::default(),
+            }
+        })
     }
 
     fn execute_service(
@@ -144,6 +158,19 @@ impl Plugin {
         let response_file = File::open(&response_path)?;
         let response: ProviderExecutionResponse = serde_json::from_reader(response_file)?;
         Ok(response.into())
+    }
+
+    fn plugin_metadata(&self) -> Result<ProviderMetadata, SendableError> {
+        let lib = unsafe { Library::new(self.file_name.clone())? };
+        let metadata_symbol: Symbol<PluginMetadataFn> =
+            unsafe { lib.get(PLUGIN_METADATA_FN_NAME.as_bytes())? };
+        let metadata = unsafe { metadata_symbol() };
+        let metadata = ffiutils::cstr_to_rust_string(metadata);
+        let mut metadata: ProviderMetadata = serde_json::from_str(&metadata)?;
+        if metadata.name.trim().is_empty() {
+            metadata.name = self.name.clone();
+        }
+        Ok(metadata)
     }
 }
 

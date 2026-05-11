@@ -11,6 +11,13 @@ pub trait CredentialStore: Send + Sync {
     fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError>;
     fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError>;
     fn delete(&self, scope: &str, name: &str) -> Result<(), SendableError>;
+    fn list(&self) -> Result<Vec<CredentialEntry>, SendableError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CredentialEntry {
+    pub scope: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +97,21 @@ impl CredentialStore for LocalEncryptedCredentialStore {
         let mut file = self.load()?;
         file.entries.remove(&Self::entry_key(scope, name));
         self.save(&file)
+    }
+
+    fn list(&self) -> Result<Vec<CredentialEntry>, SendableError> {
+        let file = self.load()?;
+        Ok(file
+            .entries
+            .keys()
+            .filter_map(|key| {
+                let (scope, name) = key.split_once(':')?;
+                Some(CredentialEntry {
+                    scope: scope.to_string(),
+                    name: name.to_string(),
+                })
+            })
+            .collect())
     }
 }
 

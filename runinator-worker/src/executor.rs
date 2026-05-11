@@ -151,7 +151,6 @@ fn build_provider_request(
         run_id,
         action_name: task.action_name.clone(),
         action_function: task.action_function.clone(),
-        action_configuration: task.action_configuration.clone(),
         parameters,
         timeout_secs: task.timeout,
         artifact_dir: artifact_dir.to_string_lossy().into_owned(),

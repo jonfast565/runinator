@@ -14,16 +14,18 @@
       <div class="spinner"></div>
     </div>
 
-    <Handle type="target" position="top" />
-    <Handle type="source" position="bottom" />
+    <Handle type="target" :position="Position.Top" />
+    <Handle type="source" :position="Position.Bottom" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { Handle } from "@vue-flow/core";
+import { Handle, Position } from "@vue-flow/core";
 import { computed, ref } from "vue";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useResourcesStore } from "../../stores/resources";
+import { useAppStore } from "../../stores/app";
+import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { statusClassForNode } from "../../utils/status";
 
 const props = defineProps<{
@@ -37,58 +39,35 @@ const props = defineProps<{
 
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
+const app = useAppStore();
 const submitting = ref(false);
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 
 const isWaiting = computed(() => {
-  const s = props.data.status;
-  return s === "waiting" || s === "approval_required" || s === "approval-required" || s === "pending";
+  return isApprovalWaitingStatus(props.data.status);
 });
 
 async function onApprove() {
-  const detail = workflows.workflowRunDetail;
-  if (!detail) return;
-  const nodeRun = detail.nodes.find(n => n.node_id === props.id && (n.status === "waiting" || n.status === "approval_required"));
-  if (nodeRun) {
-    // If the node run has a task_run_id, prefer it for finding the approval record.
-    // Otherwise fall back to workflow_node_run_id.
-    const approval = resources.resourceRecords.find(r => 
-      (nodeRun.task_run_id && r.task_run_id === nodeRun.task_run_id) || 
-      (r.workflow_node_run_id === nodeRun.id)
-    );
-    if (approval && approval.id) {
-      submitting.value = true;
-      try {
-        await resources.handleApprovalAction(approval.id, "approve");
-        await workflows.fetchWorkflowRunDetail(detail.run.id);
-      } finally {
-        submitting.value = false;
-      }
-    }
-  }
+  await resolveApproval("approve");
 }
 
 async function onReject() {
+  await resolveApproval("reject");
+}
+
+async function resolveApproval(action: ApprovalAction) {
   const detail = workflows.workflowRunDetail;
-  if (!detail) return;
-  const nodeRun = detail.nodes.find(n => n.node_id === props.id && (n.status === "waiting" || n.status === "approval_required"));
-  if (nodeRun) {
-    // If the node run has a task_run_id, prefer it for finding the approval record.
-    // Otherwise fall back to workflow_node_run_id.
-    const approval = resources.resourceRecords.find(r => 
-      (nodeRun.task_run_id && r.task_run_id === nodeRun.task_run_id) || 
-      (r.workflow_node_run_id === nodeRun.id)
-    );
-    if (approval && approval.id) {
-      submitting.value = true;
-      try {
-        await resources.handleApprovalAction(approval.id, "reject");
-        await workflows.fetchWorkflowRunDetail(detail.run.id);
-      } finally {
-        submitting.value = false;
-      }
-    }
+  if (!detail) return app.setError("No workflow run selected");
+  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && isApprovalWaitingStatus(node.status)).at(-1);
+  if (!nodeRun) return app.setError(`No pending approval found for workflow node ${props.id}`);
+
+  submitting.value = true;
+  try {
+    await resources.resolveWorkflowApproval(detail.run.id, props.id, nodeRun, action);
+    await workflows.fetchWorkflowRunDetail(detail.run.id);
+  } finally {
+    submitting.value = false;
   }
 }
 </script>

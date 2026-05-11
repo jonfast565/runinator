@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./tauriRuntime";
 import type {
   JsonRecord,
+  CredentialSummary,
+  ProviderMetadata,
   RunArtifact,
   RunChunk,
   RunSummary,
@@ -75,6 +77,22 @@ export async function fetchWorkflowRun(workflowRunId: number) {
 
 export async function fetchResourceRecords(endpoint: string) {
   return command<JsonRecord[]>("fetch_resource_records", { endpoint });
+}
+
+export async function fetchProviders() {
+  return command<ProviderMetadata[]>("fetch_providers");
+}
+
+export async function fetchCredentials() {
+  return command<CredentialSummary[]>("fetch_credentials");
+}
+
+export async function saveCredential(scope: string, name: string, secret: string) {
+  return command<any>("save_credential", { request: { scope, name, secret } });
+}
+
+export async function deleteCredential(scope: string, name: string) {
+  return command<any>("delete_credential", { scope, name });
 }
 
 export async function approveApproval(approvalId: number) {

@@ -1,5 +1,4 @@
 use reqwest::Url;
-use runinator_models::web::TaskResponse;
 use serde_json::{json, Value};
 
 use crate::{

@@ -1,5 +1,6 @@
 import { useAppStore } from "../stores/app";
 import { useResourcesStore } from "../stores/resources";
+import { useSecretsStore } from "../stores/secrets";
 import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
 
@@ -8,6 +9,7 @@ export function useKeyboardShortcuts() {
   const tasks = useTasksStore();
   const workflows = useWorkflowsStore();
   const resources = useResourcesStore();
+  const secrets = useSecretsStore();
 
   function handleKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
@@ -41,7 +43,8 @@ export function useKeyboardShortcuts() {
     if (app.activeTab === "Tasks") await tasks.refreshTasks();
     else if (app.activeTab === "Runs") await tasks.refreshRunsForSelectedTask();
     else if (app.activeTab === "Workflows") await workflows.refreshWorkflows();
-    else await resources.refreshResources();
+    else if (app.activeTab === "Resources") await resources.refreshResources();
+    else await secrets.refreshSecrets();
   }
 
   function moveSelection(delta: number) {
@@ -51,8 +54,10 @@ export function useKeyboardShortcuts() {
       tasks.moveRunSelection(delta);
     } else if (app.activeTab === "Workflows") {
       workflows.moveWorkflowSelection(delta);
-    } else {
+    } else if (app.activeTab === "Resources") {
       resources.moveResourceSelection(delta);
+    } else {
+      secrets.moveSecretSelection(delta);
     }
   }
 

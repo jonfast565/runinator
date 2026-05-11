@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
+    providers::ProviderMetadata,
 };
 use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_ai::AiCommandProvider;
@@ -47,4 +48,14 @@ pub fn resolve_provider(
         "worker.provider.not_found".into(),
         format!("Cannot find plugin/provider {}", task.action_name),
     )))
+}
+
+pub fn provider_metadata(libraries: &HashMap<String, Plugin>) -> Vec<ProviderMetadata> {
+    let mut providers = get_providers()
+        .into_iter()
+        .map(|provider| provider.metadata())
+        .collect::<Vec<_>>();
+    providers.extend(libraries.values().map(|plugin| plugin.metadata()));
+    providers.sort_by(|left, right| left.name.cmp(&right.name));
+    providers
 }

@@ -1,21 +1,79 @@
 <template>
-  <textarea
-    :value="modelValue"
-    spellcheck="false"
-    class="json-textarea"
-    @input="$emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
-  />
+  <div ref="editorContainer" class="json-editor-container"></div>
 </template>
 
 <script setup lang="ts">
-defineProps<{ modelValue: string }>();
-defineEmits<{ "update:modelValue": [value: string] }>();
+import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { EditorView, basicSetup } from 'codemirror';
+import { json } from '@codemirror/lang-json';
+import { EditorState } from '@codemirror/state';
+
+const props = defineProps<{ 
+  modelValue: string;
+  readonly?: boolean;
+}>();
+
+const emit = defineEmits<{ 
+  "update:modelValue": [value: string] 
+}>();
+
+const editorContainer = ref<HTMLElement | null>(null);
+let view: EditorView | null = null;
+
+onMounted(() => {
+  if (!editorContainer.value) return;
+
+  const startState = EditorState.create({
+    doc: props.modelValue,
+    extensions: [
+      basicSetup,
+      json(),
+      EditorView.lineWrapping,
+      EditorView.editable.of(!props.readonly),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          emit('update:modelValue', update.state.doc.toString());
+        }
+      }),
+      EditorView.theme({
+        "&": { height: "100%" },
+        ".cm-scroller": { overflow: "auto" }
+      })
+    ],
+  });
+
+  view = new EditorView({
+    state: startState,
+    parent: editorContainer.value,
+  });
+});
+
+watch(() => props.modelValue, (newValue) => {
+  if (view && newValue !== view.state.doc.toString()) {
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: newValue }
+    });
+  }
+});
+
+onBeforeUnmount(() => {
+  if (view) {
+    view.destroy();
+  }
+});
 </script>
 
 <style scoped>
-.json-textarea {
+.json-editor-container {
   height: 100%;
-  resize: none;
-  overflow-y: auto;
+  width: 100%;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: #fff;
+}
+
+:deep(.cm-editor) {
+  height: 100%;
 }
 </style>

@@ -3,10 +3,46 @@ use std::sync::Arc;
 
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::{
+        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata,
+    },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Deserialize)]
+struct WorktreeParams {
+    repo: Option<String>,
+    branch: String,
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceParams {
+    workspace: Option<String>,
+    repo: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CommitParams {
+    workspace: Option<String>,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct CleanupParams {
+    repo: Option<String>,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct GitResult {
+    stdout: String,
+    action: String,
+}
 
 #[derive(Clone)]
 pub struct GitProvider;
@@ -16,30 +52,81 @@ impl Provider for GitProvider {
         "git".into()
     }
 
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            name: self.name(),
+            actions: vec![
+                ActionMetadata::new("worktree", "Manage git worktrees")
+                    .with_parameters(vec![
+                        ParameterMetadata::optional("repo", ParameterValueType::String)
+                            .with_default(json!(".")),
+                        ParameterMetadata::required("branch", ParameterValueType::String),
+                        ParameterMetadata::required("path", ParameterValueType::String),
+                    ])
+                    .with_results(git_results()),
+                ActionMetadata::new("branch", "Get current branch name")
+                    .with_parameters(vec![
+                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                            .with_default(json!(".")),
+                    ])
+                    .with_results(git_results()),
+                ActionMetadata::new("commit", "Add and commit all changes")
+                    .with_parameters(vec![
+                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                            .with_default(json!(".")),
+                        ParameterMetadata::required("message", ParameterValueType::String),
+                    ])
+                    .with_results(git_results()),
+                ActionMetadata::new("diff", "Get git diff summary")
+                    .with_parameters(vec![
+                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                            .with_default(json!(".")),
+                    ])
+                    .with_results(git_results()),
+                ActionMetadata::new("cleanup", "Remove git worktree")
+                    .with_parameters(vec![
+                        ParameterMetadata::optional("repo", ParameterValueType::String)
+                            .with_default(json!(".")),
+                        ParameterMetadata::required("path", ParameterValueType::String),
+                    ])
+                    .with_results(git_results()),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        }
+    }
+
     fn execute_service(
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
     ) -> Result<TaskExecutionResult, SendableError> {
         let function = request.action_function.as_str();
-        let repo = str_param(&request.parameters, "repo").unwrap_or(".");
-        let workspace = str_param(&request.parameters, "workspace").unwrap_or(repo);
-        let output = match function {
+        let stdout = match function {
             "create_or_resume_worktree" | "worktree" => {
-                let branch = required(&request.parameters, "branch")?;
-                let path = required(&request.parameters, "path")?;
-                run_command("git", &["-C", repo, "worktree", "add", "-B", branch, path])?
+                let params: WorktreeParams = parse_params(&request)?;
+                let repo = params.repo.as_deref().unwrap_or(".");
+                run_command("git", &["-C", repo, "worktree", "add", "-B", &params.branch, &params.path])?
             }
-            "branch" => run_command("git", &["-C", workspace, "branch", "--show-current"])?,
+            "branch" => {
+                let params: WorkspaceParams = parse_params(&request)?;
+                let ws = params.workspace.as_deref().or(params.repo.as_deref()).unwrap_or(".");
+                run_command("git", &["-C", ws, "branch", "--show-current"])?
+            }
             "commit" => {
-                let message = required(&request.parameters, "message")?;
-                run_command("git", &["-C", workspace, "add", "."])?;
-                run_command("git", &["-C", workspace, "commit", "-m", message])?
+                let params: CommitParams = parse_params(&request)?;
+                let ws = params.workspace.as_deref().unwrap_or(".");
+                run_command("git", &["-C", ws, "add", "."])?;
+                run_command("git", &["-C", ws, "commit", "-m", &params.message])?
             }
-            "diff" => run_command("git", &["-C", workspace, "diff", "--stat"])?,
+            "diff" => {
+                let params: WorkspaceParams = parse_params(&request)?;
+                let ws = params.workspace.as_deref().or(params.repo.as_deref()).unwrap_or(".");
+                run_command("git", &["-C", ws, "diff", "--stat"])?
+            }
             "cleanup" => {
-                let path = required(&request.parameters, "path")?;
-                run_command("git", &["-C", repo, "worktree", "remove", path])?
+                let params: CleanupParams = parse_params(&request)?;
+                let repo = params.repo.as_deref().unwrap_or(".");
+                run_command("git", &["-C", repo, "worktree", "remove", &params.path])?
             }
             other => {
                 return Err(Box::new(RuntimeError::new(
@@ -48,13 +135,20 @@ impl Provider for GitProvider {
                 )));
             }
         };
+        let result = GitResult { stdout, action: function.to_string() };
         Ok(TaskExecutionResult {
             message: Some(format!("Git action {function} completed")),
-            output_json: Some(json!({ "stdout": output, "action": function })),
+            output_json: serde_json::to_value(result).ok(),
             chunks: Vec::new(),
             artifacts: Vec::new(),
         })
     }
+}
+
+fn parse_params<T: serde::de::DeserializeOwned>(request: &ProviderExecutionRequest) -> Result<T, SendableError> {
+    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+        Box::new(RuntimeError::new("git.invalid_params".into(), e.to_string())) as SendableError
+    })
 }
 
 fn run_command(program: &str, args: &[&str]) -> Result<String, SendableError> {
@@ -68,17 +162,11 @@ fn run_command(program: &str, args: &[&str]) -> Result<String, SendableError> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, SendableError> {
-    str_param(value, key).ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "provider.missing_parameter".into(),
-            format!("Missing required parameter '{key}'"),
-        )) as SendableError
-    })
-}
-
-fn str_param<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
+fn git_results() -> Vec<ResultMetadata> {
+    vec![
+        ResultMetadata::new("stdout", ParameterValueType::String),
+        ResultMetadata::new("action", ParameterValueType::String),
+    ]
 }
 
 #[cfg(test)]

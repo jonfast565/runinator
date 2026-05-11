@@ -4,13 +4,15 @@ mod executor;
 mod output_sink;
 mod provider_repository;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use config::parse_config;
 use log::{error, info, warn};
-use runinator_api::{
-    AsyncApiClient, RunStatusPayload, StaticLocator, TaskRunPayload,
-};
+use runinator_api::{AsyncApiClient, RunStatusPayload, StaticLocator, TaskRunPayload};
 use runinator_broker::{Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker};
 use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_models::runs::RunStatus;
@@ -31,6 +33,7 @@ async fn main() -> Result<(), SendableError> {
     let libraries = Arc::new(load_libraries(&config.dll_path)?);
     let broker = build_broker(&config)?;
     let api_client = build_api_client(&config)?;
+    publish_provider_metadata(&api_client, &libraries).await;
 
     let shutdown = Arc::new(Notify::new());
     let worker_task = {
@@ -130,6 +133,21 @@ fn build_api_client(
     })
 }
 
+async fn publish_provider_metadata(
+    api_client: &AsyncApiClient<StaticLocator>,
+    libraries: &HashMap<String, Plugin>,
+) {
+    for provider in provider_repository::provider_metadata(libraries) {
+        match api_client.upsert_provider(&provider).await {
+            Ok(_) => info!("Registered provider metadata for {}", provider.name),
+            Err(err) => warn!(
+                "Failed to register provider metadata for {}: {}",
+                provider.name, err
+            ),
+        }
+    }
+}
+
 async fn run_worker_loop(
     broker: Arc<dyn Broker>,
     consumer_id: String,
@@ -191,6 +209,31 @@ async fn process_delivery(
             error!("Failed to mark run {} running: {}", run_id, err);
         }
     }
+    let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
+        Ok(parameters) => parameters,
+        Err(err) => {
+            let message = format!("Failed to resolve task secrets: {err}");
+            error!("{}", message);
+            if let Some(run_id) = command.run_id {
+                let payload = RunStatusPayload {
+                    status: RunStatus::Failed,
+                    output_json: Some(json!({
+                        "success": false,
+                        "message": message,
+                    })),
+                    message: Some(message),
+                };
+                if let Err(err) = api_client.update_run(run_id, &payload).await {
+                    error!("Failed to mark run {} failed: {}", run_id, err);
+                }
+            }
+            broker
+                .ack(consumer_id, delivery.delivery_id)
+                .await
+                .map_err(|err| broker_error("ack", err))?;
+            return Ok(());
+        }
+    };
     let sink = RunOutputSink::new(
         command.run_id,
         api_client.clone(),
@@ -201,7 +244,7 @@ async fn process_delivery(
         command.command_id,
         task.clone(),
         command.run_id,
-        command.parameters.clone(),
+        parameters,
         Some(Arc::new(sink.clone())),
     )
     .await;
@@ -291,6 +334,119 @@ async fn process_delivery(
         .ack(consumer_id, delivery.delivery_id)
         .await
         .map_err(|err| broker_error("ack", err))
+}
+
+async fn resolve_secret_refs(
+    api_client: &AsyncApiClient<StaticLocator>,
+    parameters: serde_json::Value,
+) -> Result<serde_json::Value, SendableError> {
+    let mut refs = BTreeSet::new();
+    collect_secret_refs(&parameters, &mut refs);
+    if refs.is_empty() {
+        return Ok(parameters);
+    }
+
+    let mut secrets = HashMap::new();
+    for secret_ref in refs {
+        let secret = api_client
+            .fetch_credential(&secret_ref.scope, &secret_ref.name)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        secrets.insert(secret_ref, secret);
+    }
+
+    Ok(replace_secret_refs(parameters, &secrets))
+}
+
+fn collect_secret_refs(value: &serde_json::Value, refs: &mut BTreeSet<SecretRef>) {
+    match value {
+        serde_json::Value::String(raw) => {
+            if let Some(secret_ref) = parse_secret_ref(raw) {
+                refs.insert(secret_ref);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_secret_refs(value, refs);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for value in object.values() {
+                collect_secret_refs(value, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_secret_refs(
+    value: serde_json::Value,
+    secrets: &HashMap<SecretRef, String>,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(raw) => parse_secret_ref(&raw)
+            .and_then(|secret_ref| secrets.get(&secret_ref).cloned())
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::String(raw)),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|value| replace_secret_refs(value, secrets))
+                .collect(),
+        ),
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, replace_secret_refs(value, secrets)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SecretRef {
+    scope: String,
+    name: String,
+}
+
+fn parse_secret_ref(raw: &str) -> Option<SecretRef> {
+    let path = raw.strip_prefix("secret://")?;
+    let (scope, name) = path.split_once('/')?;
+    if scope.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(SecretRef {
+        scope: percent_decode(scope)?,
+        name: percent_decode(name)?,
+    })
+}
+
+fn percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hi = hex_value(*bytes.get(index + 1)?)?;
+            let lo = hex_value(*bytes.get(index + 2)?)?;
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn broker_error(context: &'static str, err: BrokerError) -> SendableError {

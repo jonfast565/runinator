@@ -23,6 +23,7 @@
 import { computed } from "vue";
 import { useAppStore } from "../../stores/app";
 import { resources, useResourcesStore } from "../../stores/resources";
+import { useSecretsStore } from "../../stores/secrets";
 import { useTasksStore } from "../../stores/tasks";
 import { useWorkflowsStore } from "../../stores/workflows";
 
@@ -32,11 +33,13 @@ const app = useAppStore();
 const tasks = useTasksStore();
 const workflows = useWorkflowsStore();
 const resourcesStore = useResourcesStore();
+const secrets = useSecretsStore();
 
 const activeSubtitle = computed(() => {
   if (app.activeTab === "Tasks") return tasks.selectedTask?.name ?? `${tasks.tasks.length} tasks`;
   if (app.activeTab === "Runs") return tasks.selectedRunId ? `Run ${tasks.selectedRunId}` : "Selected task runs";
   if (app.activeTab === "Workflows") return workflows.selectedWorkflow?.name ?? `${workflows.workflows.length} workflows`;
-  return resources.find((resource) => resource.endpoint === resourcesStore.selectedResourceEndpoint)?.label ?? "Resources";
+  if (app.activeTab === "Resources") return resources.find((resource) => resource.endpoint === resourcesStore.selectedResourceEndpoint)?.label ?? "Resources";
+  return `${secrets.secrets.length} secrets`;
 });
 </script>

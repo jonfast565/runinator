@@ -9,6 +9,8 @@
       </template>
       <template #second>
       <div class="panel details">
+        <h2>Structured Result</h2>
+        <pre class="output">{{ selectedOutput }}</pre>
         <h2>Run Output Chunks</h2>
         <pre class="output">{{ tasks.runOutput }}</pre>
         <h2>Artifacts</h2>
@@ -44,7 +46,9 @@
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useTasksStore } from "../stores/tasks";
-import { formatDate } from "../utils/format";
+import { formatDate, pretty } from "../utils/format";
+import { computed } from "vue";
 
 const tasks = useTasksStore();
+const selectedOutput = computed(() => pretty(tasks.selectedRun?.output_json ?? {}));
 </script>

@@ -65,7 +65,7 @@ textarea {
   line-height: 1.45;
 }
 
-.json-section .json-textarea {
+.json-section .json-editor-container {
   min-height: 120px;
 }
 

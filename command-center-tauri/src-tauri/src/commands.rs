@@ -1,5 +1,6 @@
 use runinator_models::{
     core::ScheduledTask,
+    providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunSummary},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowRun},
@@ -13,7 +14,8 @@ use crate::{
     error::{CommandError, CommandResult},
     state::CommandCenterState,
     types::{
-        SaveTaskRequest, SaveTaskResponse, ServiceStatus, WorkflowRunCreated, WorkflowRunDetail,
+        CredentialPutRequest, CredentialSummary, SaveTaskRequest, SaveTaskResponse, ServiceStatus,
+        WorkflowRunCreated, WorkflowRunDetail,
     },
 };
 
@@ -194,6 +196,46 @@ pub async fn fetch_resource_records(
     endpoint: String,
 ) -> CommandResult<Vec<Value>> {
     get_json(&state, &endpoint).await
+}
+
+#[tauri::command]
+pub async fn fetch_providers(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<ProviderMetadata>> {
+    get_json(&state, "providers").await
+}
+
+#[tauri::command]
+pub async fn fetch_credentials(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<CredentialSummary>> {
+    get_json(&state, "credentials").await
+}
+
+#[tauri::command]
+pub async fn save_credential(
+    state: State<'_, CommandCenterState>,
+    request: CredentialPutRequest,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, "credentials").await?;
+    let response = state.client.post(url.clone()).json(&request).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_credential(
+    state: State<'_, CommandCenterState>,
+    scope: String,
+    name: String,
+) -> CommandResult<Value> {
+    let mut url = build_state_url(&state, "credentials").await?;
+    url.query_pairs_mut()
+        .append_pair("scope", &scope)
+        .append_pair("name", &name);
+    let response = state.client.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
 }
 
 #[tauri::command]

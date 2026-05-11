@@ -12,7 +12,7 @@ import {
 import type { JsonRecord, RunArtifact, RunChunk, RunSummary, WorkflowDefinition, WorkflowRunDetail } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredObject } from "../utils/json";
-import { buildGraphEdges, buildGraphNodes } from "../utils/workflows";
+import { buildGraphEdges, buildGraphNodes, normalizeWorkflowDefinition } from "../utils/workflows";
 import { useAppStore } from "./app";
 import { useResourcesStore } from "./resources";
 import { useTasksStore } from "./tasks";
@@ -23,6 +23,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowDraft = reactive<WorkflowDefinition>(newWorkflowDraft());
   const workflowJson = ref("{}");
   const workflowConcurrency = ref(1);
+  const workflowSettingsOpen = ref(false);
   const workflowEditorMode = ref<"graph" | "json">("graph");
   const workflowInspectorMode = ref<"step" | "runs" | "detail">("step");
   const workflowRuns = ref<RunSummary[]>([]);
@@ -71,6 +72,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const app = useAppStore();
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
+  const canRemoveSelectedStep = computed(() => {
+    const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
+    return Boolean(node && node.kind !== "start" && node.kind !== "end");
+  });
   const filteredWorkflows = computed(() => {
     const query = app.normalizedSearch;
     if (!query) return workflows.value;
@@ -129,9 +134,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       // but if refreshWorkflows calls this, we already check !isDirty.
     }
     selectedWorkflowId.value = workflow.id;
-    Object.assign(workflowDraft, cloneJson(workflow));
-    if (!workflowDraft.definition) workflowDraft.definition = { nodes: [] };
-    if (!workflowDraft.definition.nodes) workflowDraft.definition.nodes = [];
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflow)));
     
     workflowConcurrency.value = Number(workflowDraft.definition?.concurrency ?? 1);
     workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
@@ -151,6 +154,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   async function saveSelectedWorkflow() {
     if (!syncWorkflowJson()) return;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
+    workflowJson.value = pretty(workflowDraft.definition);
     const saved = await app.runOperation("Saving workflow", () => saveWorkflow(workflowDraft));
     app.setStatus(`Workflow saved: ${saved.name}`);
     isDirty.value = false;
@@ -202,21 +207,29 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const nodes = ensureWorkflowNodes();
     const tasks = useTasksStore();
     const id = `node_${nodes.length + 1}`;
-    nodes.push({
+    const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
+    const newNode = {
       id,
       kind: "task",
       task_id: tasks.tasks[0]?.id ?? 1,
       parameters: {},
       retry: { max_attempts: 1 },
-      transitions: {}
-    });
-    if (!workflowDraft.definition.start) workflowDraft.definition.start = id;
+      transitions: endNode?.id ? { on_success: endNode.id } : {}
+    };
+    const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
+    if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
+    else nodes.push(newNode);
+    const startNode = nodes.find((node: JsonRecord) => node.kind === "start");
+    if (startNode) {
+      startNode.transitions = startNode.transitions ?? {};
+      if (!startNode.transitions.next || startNode.transitions.next === endNode?.id) startNode.transitions.next = id;
+    }
     syncWorkflowDraftToJson();
     populateStepEditor(id);
   }
 
   function removeWorkflowStep() {
-    if (!selectedStepId.value) return;
+    if (!selectedStepId.value || !canRemoveSelectedStep.value) return;
     workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== selectedStepId.value);
     selectedStepId.value = "";
     syncWorkflowDraftToJson();
@@ -289,12 +302,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function onGraphNodeDragStop(event: any) {
     const node = event?.node;
     if (!node?.id) return;
-    const definition = workflowDraft.definition;
-    definition.ui = definition.ui ?? {};
-    definition.ui.layout = definition.ui.layout ?? {};
-    definition.ui.layout.nodes = definition.ui.layout.nodes ?? {};
-    definition.ui.layout.nodes[node.id] = { x: node.position.x, y: node.position.y };
+    setGraphNodePosition(node.id, node.position);
     syncWorkflowDraftToJson();
+  }
+
+  function onGraphNodesChange(changes: any[]) {
+    let changed = false;
+    for (const change of changes) {
+      if (change.type !== "position" || !change.id || !change.position || change.dragging) continue;
+      setGraphNodePosition(change.id, change.position);
+      changed = true;
+    }
+    if (changed) syncWorkflowDraftToJson();
   }
 
   function onGraphConnect(connection: any) {
@@ -358,12 +377,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     workflowDraft.definition = parsed;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
     isDirty.value = true;
     return true;
   }
 
   function syncWorkflowDraftToJson() {
     workflowDraft.definition.concurrency = workflowConcurrency.value;
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
     workflowJson.value = pretty(workflowDraft.definition);
     isDirty.value = true;
   }
@@ -381,6 +402,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectWorkflow(list[boundedIndex(current, delta, list.length)]);
   }
 
+  function setGraphNodePosition(nodeId: string, position: { x: number; y: number }) {
+    const definition = workflowDraft.definition;
+    definition.ui = definition.ui ?? {};
+    definition.ui.layout = definition.ui.layout ?? {};
+    definition.ui.layout.nodes = definition.ui.layout.nodes ?? {};
+    definition.ui.layout.nodes[nodeId] = { x: Number(position.x ?? 0), y: Number(position.y ?? 0) };
+  }
+
+  function openWorkflowSettings() {
+    workflowSettingsOpen.value = true;
+  }
+
+  function closeWorkflowSettings() {
+    workflowSettingsOpen.value = false;
+  }
+
+  function markWorkflowDirty() {
+    isDirty.value = true;
+  }
+
   return {
     recentWorkflowRuns,
     getTransition,
@@ -390,6 +431,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowDraft,
     workflowJson,
     workflowConcurrency,
+    workflowSettingsOpen,
     workflowEditorMode,
     workflowInspectorMode,
     workflowRuns,
@@ -401,6 +443,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor,
     selectedWorkflow,
     canRunWorkflow,
+    canRemoveSelectedStep,
     filteredWorkflows,
     workflowRunDetailText,
     stepNeeds,
@@ -421,13 +464,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     updateSelectedWorkflowNodeDetail,
     onGraphNodeClick,
     onGraphNodeDragStop,
+    onGraphNodesChange,
     onGraphConnect,
     onGraphEdgesChange,
     isDirty,
     syncWorkflowJson,
     syncWorkflowDraftToJson,
     ensureWorkflowNodes,
-    moveWorkflowSelection
+    moveWorkflowSelection,
+    openWorkflowSettings,
+    closeWorkflowSettings,
+    markWorkflowDirty
   };
 });
 
@@ -438,7 +485,21 @@ export function newWorkflowDraft(): WorkflowDefinition {
     version: 1,
     enabled: true,
     input_schema: { type: "object", additionalProperties: true },
-    definition: { start: "node_1", nodes: [] }
+    definition: {
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: "end" } },
+        { id: "end", kind: "end" }
+      ],
+      ui: {
+        layout: {
+          nodes: {
+            start: { x: 0, y: 0 },
+            end: { x: 0, y: 120 }
+          }
+        }
+      }
+    }
   };
 }
 

@@ -4,6 +4,7 @@
     <RunsView v-show="app.activeTab === 'Runs'" />
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <ResourcesView v-show="app.activeTab === 'Resources'" />
+    <SecretsView v-show="app.activeTab === 'Secrets'" />
   </AppShell>
 </template>
 
@@ -15,17 +16,22 @@ import AppShell from "./components/shell/AppShell.vue";
 import { useAutoRefresh } from "./composables/useAutoRefresh";
 import { useAppStore } from "./stores/app";
 import { useResourcesStore } from "./stores/resources";
+import { useSecretsStore } from "./stores/secrets";
 import { useTasksStore } from "./stores/tasks";
 import { useWorkflowsStore } from "./stores/workflows";
+import { useProvidersStore } from "./stores/providers";
 import TasksView from "./views/TasksView.vue";
 import RunsView from "./views/RunsView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
 import ResourcesView from "./views/ResourcesView.vue";
+import SecretsView from "./views/SecretsView.vue";
 
 const app = useAppStore();
 const tasks = useTasksStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
+const secrets = useSecretsStore();
+const providers = useProvidersStore();
 useAutoRefresh();
 
 let unlistenUrl: (() => void) | undefined;
@@ -39,7 +45,8 @@ onMounted(async () => {
     Promise.all([
       tasks.refreshTasks(),
       workflows.refreshWorkflows(),
-      resources.refreshResources()
+      resources.refreshResources(),
+      secrets.refreshSecrets()
     ]);
   });
   unlistenError = await listenTauri<string>("service-discovery-error", (event) => {
@@ -60,7 +67,9 @@ onMounted(async () => {
     await Promise.all([
       tasks.refreshTasks().catch(() => {}),
       workflows.refreshWorkflows().catch(() => {}),
-      resources.refreshResources().catch(() => {})
+      resources.refreshResources().catch(() => {}),
+      secrets.refreshSecrets().catch(() => {}),
+      providers.fetchProviders().catch(() => {})
     ]);
   } catch (err) {
     app.setError(String(err));
@@ -76,11 +85,12 @@ watch(
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (tab === "Runs") tasks.refreshRunsForSelectedTask();
     if (tab === "Resources") resources.refreshResources();
+    if (tab === "Secrets") secrets.refreshSecrets();
   }
 );
 
 watch(
-  () => [tasks.tasks.length, workflows.workflows.length, resources.resourceRecords.length],
+  () => [tasks.tasks.length, workflows.workflows.length, resources.resourceRecords.length, secrets.secrets.length],
   () => {
     refreshServiceStatus();
   }

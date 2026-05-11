@@ -13,7 +13,7 @@ use runinator_api::AsyncApiClient;
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::{core::ScheduledTask, workflows::WorkflowDefinition};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -70,7 +70,8 @@ struct TaskDefinition {
     cron_schedule: String,
     action_name: String,
     action_function: String,
-    action_configuration: String,
+    #[serde(default)]
+    action_configuration: Option<Value>,
     timeout: i64,
     #[serde(default = "default_enabled")]
     enabled: bool,
@@ -82,10 +83,12 @@ struct TaskDefinition {
     blackout_start: Option<DateTime<Utc>>,
     #[serde(default)]
     blackout_end: Option<DateTime<Utc>>,
+    #[allow(dead_code)]
     #[serde(default = "default_input_schema")]
     input_schema: Value,
     #[serde(default = "default_json_object")]
     default_parameters: Value,
+    #[allow(dead_code)]
     #[serde(default)]
     output_schema: Option<Value>,
     #[serde(default)]
@@ -110,26 +113,50 @@ fn default_json_object() -> Value {
 
 impl From<TaskDefinition> for ScheduledTask {
     fn from(def: TaskDefinition) -> Self {
+        let default_parameters =
+            merge_legacy_parameters(def.action_configuration, def.default_parameters);
         ScheduledTask {
             id: Some(def.id),
             name: def.name,
             cron_schedule: def.cron_schedule,
             action_name: def.action_name,
             action_function: def.action_function,
-            action_configuration: def.action_configuration,
             timeout: def.timeout,
             next_execution: def.next_execution,
             enabled: def.enabled,
             immediate: def.immediate,
             blackout_start: def.blackout_start,
             blackout_end: def.blackout_end,
-            input_schema: def.input_schema,
-            default_parameters: def.default_parameters,
-            output_schema: def.output_schema,
+            default_parameters,
             mcp_enabled: def.mcp_enabled,
             metadata: def.metadata,
             tags: def.tags,
         }
+    }
+}
+
+fn merge_legacy_parameters(
+    action_configuration: Option<Value>,
+    default_parameters: Value,
+) -> Value {
+    let Some(action_configuration) = action_configuration else {
+        return default_parameters;
+    };
+    let legacy = match action_configuration {
+        Value::String(raw) => serde_json::from_str::<Value>(&raw)
+            .ok()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({ "command": raw })),
+        Value::Object(_) => action_configuration,
+        Value::Null => Value::Object(Map::new()),
+        other => serde_json::json!({ "value": other }),
+    };
+    match (legacy, default_parameters) {
+        (Value::Object(mut legacy), Value::Object(defaults)) => {
+            legacy.extend(defaults);
+            Value::Object(legacy)
+        }
+        (_, defaults) => defaults,
     }
 }
 

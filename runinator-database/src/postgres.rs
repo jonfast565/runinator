@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     cron_schedule TEXT NOT NULL,
     action_name TEXT NOT NULL,
     action_function TEXT NOT NULL,
-    action_configuration TEXT NOT NULL,
+    action_configuration TEXT NOT NULL DEFAULT '',
     timeout BIGINT NOT NULL,
     next_execution BIGINT NULL,
     enabled BOOLEAN NOT NULL,
@@ -265,9 +265,7 @@ impl DatabaseImpl for PostgresDb {
                         immediate,
                         blackout_start,
                         blackout_end,
-                        input_schema,
                         default_parameters,
-                        output_schema,
                         mcp_enabled,
                         metadata,
                         tags
@@ -287,9 +285,7 @@ impl DatabaseImpl for PostgresDb {
                         $13,
                         $14,
                         $15,
-                        $16,
-                        $17,
-                        $18
+                        $16
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
@@ -303,9 +299,7 @@ impl DatabaseImpl for PostgresDb {
                         immediate = EXCLUDED.immediate,
                         blackout_start = EXCLUDED.blackout_start,
                         blackout_end = EXCLUDED.blackout_end,
-                        input_schema = EXCLUDED.input_schema,
                         default_parameters = EXCLUDED.default_parameters,
-                        output_schema = EXCLUDED.output_schema,
                         mcp_enabled = EXCLUDED.mcp_enabled,
                         metadata = EXCLUDED.metadata,
                         tags = EXCLUDED.tags",
@@ -315,16 +309,14 @@ impl DatabaseImpl for PostgresDb {
                 .bind(&task.cron_schedule)
                 .bind(&task.action_name)
                 .bind(&task.action_function)
-                .bind(&task.action_configuration)
+                .bind("")
                 .bind(task.timeout)
                 .bind(task.next_execution.map(|dt| dt.timestamp()))
                 .bind(task.enabled)
                 .bind(task.immediate)
                 .bind(task.blackout_start.map(|dt| dt.timestamp()))
                 .bind(task.blackout_end.map(|dt| dt.timestamp()))
-                .bind(task.input_schema.to_string())
                 .bind(task.default_parameters.to_string())
-                .bind(task.output_schema.as_ref().map(|v| v.to_string()))
                 .bind(task.mcp_enabled)
                 .bind(task.metadata.to_string())
                 .bind(serde_json::to_string(&task.tags)?),
@@ -347,16 +339,13 @@ impl DatabaseImpl for PostgresDb {
                     cron_schedule,
                     action_name,
                     action_function,
-                    action_configuration,
                     timeout,
                     next_execution,
                     enabled,
                     immediate,
                     blackout_start,
                     blackout_end,
-                    input_schema,
                     default_parameters,
-                    output_schema,
                     mcp_enabled,
                     metadata,
                     tags
@@ -379,16 +368,13 @@ impl DatabaseImpl for PostgresDb {
                     cron_schedule,
                     action_name,
                     action_function,
-                    action_configuration,
                     timeout,
                     next_execution,
                     enabled,
                     immediate,
                     blackout_start,
                     blackout_end,
-                    input_schema,
                     default_parameters,
-                    output_schema,
                     mcp_enabled,
                     metadata,
                     tags

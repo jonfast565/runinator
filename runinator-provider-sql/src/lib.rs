@@ -11,6 +11,10 @@ use connector::postgres::PostgresConnector;
 use log::info;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::{
+        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata,
+    },
     runs::{NewRunArtifact, ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
@@ -29,13 +33,43 @@ impl Provider for SqlProvider {
         "SQL".to_string()
     }
 
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            name: self.name(),
+            actions: vec![
+                ActionMetadata::new(
+                    "dump_data",
+                    "Execute SQL queries and export results to Excel/CSV",
+                )
+                .with_parameters(vec![
+                    ParameterMetadata::required("database", ParameterValueType::String),
+                    ParameterMetadata::required("connection_string", ParameterValueType::String)
+                        .secret(),
+                    ParameterMetadata::required("dump_folder", ParameterValueType::String),
+                    ParameterMetadata::required("queries", ParameterValueType::Object),
+                    ParameterMetadata::optional("file_prefix", ParameterValueType::String),
+                    ParameterMetadata::optional("format", ParameterValueType::String)
+                        .with_default(json!("excel")),
+                ])
+                .with_results(vec![
+                    ResultMetadata::new("provider", ParameterValueType::String),
+                    ResultMetadata::new("exports", ParameterValueType::Object),
+                ]),
+            ],
+            metadata: ProviderRuntimeMetadata {
+                credential_scopes: vec!["sql".into()],
+                contract: None,
+            },
+        }
+    }
+
     fn execute_service(
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
-            "dump_data" => self.dump_data(request.action_configuration, request.timeout_secs),
+            "dump_data" => self.dump_data(request.parameters, request.timeout_secs),
             _ => Err(Box::new(RuntimeError::new(
                 "UNSUPPORTED_CALL".to_string(),
                 format!(
@@ -50,11 +84,11 @@ impl Provider for SqlProvider {
 impl SqlProvider {
     fn dump_data(
         &self,
-        args: String,
+        parameters: serde_json::Value,
         timeout_secs: i64,
     ) -> Result<TaskExecutionResult, SendableError> {
         let request: DumpDataRequest =
-            serde_json::from_str(&args).map_err(|err| to_sendable(err))?;
+            serde_json::from_value(parameters).map_err(|err| to_sendable(err))?;
 
         if request.queries.is_empty() {
             return Err(Box::new(RuntimeError::new(

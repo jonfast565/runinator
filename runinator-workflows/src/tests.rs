@@ -20,8 +20,9 @@ fn workflow(definition: serde_json::Value) -> WorkflowDefinition {
 #[test]
 fn validates_state_machine_workflow() {
     let wf = workflow(serde_json::json!({
-        "start": "build",
+        "start": "start",
         "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": "build" } },
             { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "done" } },
             { "id": "done", "kind": "end" }
         ]
@@ -33,8 +34,10 @@ fn validates_state_machine_workflow() {
 #[test]
 fn rejects_missing_transition_target() {
     let wf = workflow(serde_json::json!({
-        "start": "build",
+        "start": "start",
         "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": "build" } },
+            { "id": "done", "kind": "end" },
             { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "missing" } }
         ]
     }));
@@ -58,21 +61,43 @@ fn resolves_value_refs() {
 }
 
 #[test]
+fn resolves_template_refs() {
+    let context = serde_json::json!({
+        "prev": { "ticket_id": "RUN-123", "count": 3 }
+    });
+
+    assert_eq!(
+        resolve_value_refs(
+            &serde_json::json!("Ticket {{ prev#/ticket_id }}"),
+            &context
+        )
+        .unwrap(),
+        serde_json::Value::String("Ticket RUN-123".into())
+    );
+    assert_eq!(
+        resolve_value_refs(&serde_json::json!("{{ prev#/count }}"), &context).unwrap(),
+        serde_json::Value::from(3)
+    );
+}
+
+#[test]
 fn expands_local_defs_with_overlay() {
     let wf = workflow(serde_json::json!({
         "$defs": {
             "approval": { "kind": "approval", "parameters": { "type": "merge" } }
         },
-        "start": "approve",
+        "start": "start",
         "nodes": [
-            { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } } }
+            { "id": "start", "kind": "start", "transitions": { "next": "approve" } },
+            { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } }, "transitions": { "next": "done" } },
+            { "id": "done", "kind": "end" }
         ]
     }));
 
     let (_, nodes) = parse_nodes(&wf).unwrap();
-    assert_eq!(nodes[0].kind, WorkflowNodeKind::Approval);
-    assert_eq!(nodes[0].parameters["type"], "merge");
-    assert_eq!(nodes[0].parameters["prompt"], "ok?");
+    assert_eq!(nodes[1].kind, WorkflowNodeKind::Approval);
+    assert_eq!(nodes[1].parameters["type"], "merge");
+    assert_eq!(nodes[1].parameters["prompt"], "ok?");
 }
 
 #[test]
@@ -109,8 +134,9 @@ fn evaluates_conditions() {
 #[test]
 fn validates_node_transitions() {
     let wf = workflow(serde_json::json!({
-        "start": "a",
+        "start": "start",
         "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": "a" } },
             {
                 "id": "a",
                 "kind": "condition",
@@ -132,8 +158,13 @@ fn validates_node_transitions() {
 fn test_workflow_state_machine_logic_integration() {
     // 1. Define a simple state-machine workflow
     let definition = serde_json::json!({
-        "start": "step1",
+        "start": "start",
         "nodes": [
+            {
+                "id": "start",
+                "kind": "start",
+                "transitions": { "next": "step1" }
+            },
             {
                 "id": "step1",
                 "kind": "task",
@@ -168,7 +199,7 @@ fn test_workflow_state_machine_logic_integration() {
 
     // 2. Validate the workflow
     let (start, nodes) = validate_workflow(&wf).expect("Workflow should be valid");
-    assert_eq!(start, "step1");
+    assert_eq!(start, "start");
     let node_map: HashMap<String, &WorkflowNode> =
         nodes.iter().map(|n| (n.id.clone(), n)).collect();
 
@@ -203,4 +234,33 @@ fn test_workflow_state_machine_logic_integration() {
     let context_fail = outputs_context(&serde_json::json!({}), &outputs_fail);
     let next_fail = next_transition(step2_node, WorkflowStatus::Running, &context_fail).unwrap();
     assert_eq!(next_fail.unwrap(), "failed");
+}
+
+#[test]
+fn normalizes_legacy_workflow_with_start_and_end_nodes() {
+    let wf = workflow(serde_json::json!({
+        "start": "build",
+        "nodes": [
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": {} }
+        ],
+        "ui": {
+            "layout": {
+                "build": { "x": 10, "y": 20 }
+            }
+        }
+    }));
+
+    let normalized = normalize_workflow(&wf);
+    let definition = normalized.definition.as_object().unwrap();
+    assert_eq!(definition["start"], "start");
+    assert_eq!(definition["ui"]["layout"]["nodes"]["build"]["x"], 10);
+    let (_, nodes) = validate_workflow(&normalized).expect("normalized workflow is valid");
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.kind == WorkflowNodeKind::Start)
+    );
+    assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::End));
+    let build = nodes.iter().find(|node| node.id == "build").unwrap();
+    assert_eq!(build.transitions.next.as_deref(), Some("end"));
 }

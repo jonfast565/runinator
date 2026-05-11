@@ -26,6 +26,10 @@ pub fn run() {
             crate::commands::fetch_workflow_runs,
             crate::commands::fetch_workflow_run,
             crate::commands::fetch_resource_records,
+            crate::commands::fetch_providers,
+            crate::commands::fetch_credentials,
+            crate::commands::save_credential,
+            crate::commands::delete_credential,
             crate::commands::approve_approval,
             crate::commands::reject_approval
         ])

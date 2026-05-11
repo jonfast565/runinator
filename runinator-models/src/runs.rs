@@ -129,7 +129,6 @@ pub struct ProviderExecutionRequest {
     pub run_id: Option<i64>,
     pub action_name: String,
     pub action_function: String,
-    pub action_configuration: String,
     #[serde(default)]
     pub parameters: Value,
     pub timeout_secs: i64,

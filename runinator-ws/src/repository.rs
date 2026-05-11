@@ -108,12 +108,6 @@ pub async fn create_run_with_workflow<T: DatabaseImpl>(
         )) as SendableError
     })?;
     let parameters = merge_json_object(&task.default_parameters, &request.parameters);
-    validate_json_schema(&task.input_schema, &parameters).map_err(|message| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            message,
-        )) as SendableError
-    })?;
     db.create_task_run(
         task_id,
         parameters,
@@ -139,6 +133,7 @@ pub async fn create_run<T: DatabaseImpl>(
     .await
 }
 
+#[allow(dead_code)]
 pub(crate) fn validate_json_schema(schema: &Value, value: &Value) -> Result<(), String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(());
@@ -281,22 +276,42 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
-    runinator_workflows::validate_workflow(workflow)
+    let workflow = runinator_workflows::normalize_workflow(workflow);
+    runinator_workflows::validate_workflow(&workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    db.upsert_workflow(workflow).await
+    db.upsert_workflow(&workflow).await
 }
 
 pub async fn fetch_workflows<T: DatabaseImpl>(
     db: &T,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
-    db.fetch_workflows().await
+    let workflows = db.fetch_workflows().await?;
+    let mut normalized = Vec::with_capacity(workflows.len());
+    for workflow in workflows {
+        normalized.push(normalize_persisted_workflow(db, workflow).await?);
+    }
+    Ok(normalized)
 }
 
 pub async fn fetch_workflow<T: DatabaseImpl>(
     db: &T,
     workflow_id: i64,
 ) -> Result<Option<WorkflowDefinition>, SendableError> {
-    db.fetch_workflow(workflow_id).await
+    let Some(workflow) = db.fetch_workflow(workflow_id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(normalize_persisted_workflow(db, workflow).await?))
+}
+
+async fn normalize_persisted_workflow<T: DatabaseImpl>(
+    db: &T,
+    workflow: WorkflowDefinition,
+) -> Result<WorkflowDefinition, SendableError> {
+    let normalized = runinator_workflows::normalize_workflow(&workflow);
+    if normalized.definition == workflow.definition {
+        return Ok(workflow);
+    }
+    db.upsert_workflow(&normalized).await
 }
 
 pub async fn delete_workflow<T: DatabaseImpl>(

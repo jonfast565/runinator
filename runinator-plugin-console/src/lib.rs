@@ -4,8 +4,9 @@ mod windows;
 
 use ctor::ctor;
 use log::{error, info, warn};
-use runinator_models::runs::{
-    ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse,
+use runinator_models::{
+    providers::{ActionMetadata, ProviderMetadata},
+    runs::{ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse},
 };
 use runinator_utilities::{ffiutils, logger};
 use std::ffi::{c_char, c_int};
@@ -22,6 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const NAME: &str = "Console\0";
+const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"run\",\"description\":\"Run a shell command\",\"parameters\":[{\"name\":\"command\",\"value_type\":\"string\",\"required\":true}],\"results\":[{\"name\":\"success\",\"value_type\":\"boolean\"},{\"name\":\"exit_code\",\"value_type\":\"integer\"},{\"name\":\"command\",\"value_type\":\"string\"}]}],\"metadata\":{}}\0";
 
 #[ctor(unsafe)]
 fn constructor() {
@@ -36,6 +38,19 @@ pub extern "C" fn runinator_marker() -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn name() -> *const c_char {
     ffiutils::str_to_c_string(NAME)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn metadata() -> *const c_char {
+    let _: ProviderMetadata =
+        serde_json::from_str(METADATA.trim_end_matches('\0')).unwrap_or_else(|_| {
+            ProviderMetadata {
+                name: "Console".into(),
+                actions: vec![ActionMetadata::new("run", "Run a shell command")],
+                metadata: Default::default(),
+            }
+        });
+    ffiutils::str_to_c_string(METADATA)
 }
 
 #[unsafe(no_mangle)]
@@ -73,7 +88,7 @@ fn execute_request(
                 .get("args")
                 .and_then(|value| value.as_str())
         })
-        .unwrap_or(&request.action_configuration)
+        .ok_or("Console plugin requires a command parameter")?
         .to_string();
 
     info!(

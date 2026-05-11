@@ -1,7 +1,7 @@
 use runinator_broker::Broker;
 use runinator_models::{
     errors::SendableError,
-    workflows::{WorkflowNodeKind, WorkflowRun, WorkflowStatus},
+    workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -56,6 +56,9 @@ pub async fn process_workflow_run(
     };
     let latest = latest_node_run(&node_runs, &active_node_id);
     match node.kind {
+        WorkflowNodeKind::Start => {
+            process_start_node(api, &workflow_run, node, latest, &node_runs).await?
+        }
         WorkflowNodeKind::Task => {
             process_task_node(broker, api, &workflow_run, node, latest, &node_runs).await?
         }
@@ -75,6 +78,7 @@ pub async fn process_workflow_run(
             process_subflow_node(api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::End => {
+            ensure_completed_node_run(api, &workflow_run, node, latest, "end_reached").await?;
             if let Some(loop_node) = workflow_run
                 .state
                 .pointer("/loop/return_to")
@@ -102,4 +106,66 @@ pub async fn process_workflow_run(
     };
 
     Ok(())
+}
+
+async fn process_start_node(
+    api: &SchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let created;
+    let node_run = if let Some(latest) = latest {
+        latest
+    } else {
+        created = api
+            .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+            .await?;
+        &created
+    };
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        node_run,
+        WorkflowStatus::Succeeded,
+        None,
+        Some("start_reached".into()),
+        node_runs,
+    )
+    .await
+}
+
+async fn ensure_completed_node_run(
+    api: &SchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    reason: &str,
+) -> Result<(), SendableError> {
+    if latest.is_some_and(|run| run.status == WorkflowStatus::Succeeded) {
+        return Ok(());
+    }
+    let created;
+    let node_run = if let Some(latest) = latest {
+        latest
+    } else {
+        created = api
+            .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+            .await?;
+        &created
+    };
+    api.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Succeeded,
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        None,
+        None,
+        Some(reason.into()),
+        None,
+    )
+    .await
 }

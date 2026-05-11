@@ -45,6 +45,7 @@ fn builds_runtime_context() {
     let ctx = runtime_context(&workflow_run, &node_runs);
     assert_eq!(ctx["input"]["name"], "foo");
     assert_eq!(ctx["steps"]["prev"]["output"]["result"], "ok");
+    assert_eq!(ctx["prev"]["result"], "ok");
     assert_eq!(ctx["workflow"]["run_id"], 10);
     assert_eq!(ctx["workflow"]["state"]["loop_index"], 0);
 }

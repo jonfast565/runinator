@@ -8,7 +8,6 @@ fn test_github_provider_missing_token() {
         task_id: Some(1),
         action_name: "github".into(),
         action_function: "create_pr".into(),
-        action_configuration: "".into(),
         parameters: json!({
             "owner": "test",
             "repo": "test"

@@ -9,6 +9,7 @@ fn bundled_seed_file_contains_valid_workflows() {
     assert!(!parsed.workflows.is_empty());
 
     for workflow in parsed.workflows {
+        let workflow = runinator_workflows::normalize_workflow(&workflow);
         runinator_workflows::validate_workflow(&workflow).expect("workflow is valid");
     }
 }

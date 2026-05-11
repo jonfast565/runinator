@@ -4,13 +4,6 @@
   "name": "SDLC Automation Pack",
   "version": "1",
   "document": {
-    "imports": {
-      "jira": "runinator://providers/jira",
-      "github": "runinator://providers/github",
-      "git": "runinator://providers/git",
-      "ai": "runinator://providers/ai-command",
-      "approval": "runinator://providers/approval"
-    },
     "workflows": {
       "implement_review_qa_until_done": {
         "start": "find_items",

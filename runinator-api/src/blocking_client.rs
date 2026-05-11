@@ -2,7 +2,7 @@ use reqwest::{
     blocking::{Client, Response},
     Url,
 };
-use runinator_models::{core::ScheduledTask, web::TaskResponse};
+use runinator_models::{core::ScheduledTask, providers::ProviderMetadata, web::TaskResponse};
 
 use crate::{
     error::{ApiError, Result},
@@ -38,6 +38,22 @@ where
         let response = self.client.get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<Vec<ScheduledTask>>()?)
+    }
+
+    /// Fetch provider/action metadata for task authoring.
+    pub fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
+        let url = self.build_url("/providers")?;
+        let response = self.client.get(url.clone()).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<Vec<ProviderMetadata>>()?)
+    }
+
+    /// Register provider/action metadata with the web service.
+    pub fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
+        let url = self.build_url("/providers")?;
+        let response = self.client.post(url.clone()).json(provider).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<ProviderMetadata>()?)
     }
 
     /// Create or replace a scheduled task.

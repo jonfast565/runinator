@@ -6,19 +6,61 @@ export interface ScheduledTask {
   cron_schedule: string;
   action_name: string;
   action_function: string;
-  action_configuration: string;
   timeout: number;
   next_execution: string | null;
   enabled: boolean;
   immediate: boolean;
   blackout_start: string | null;
   blackout_end: string | null;
-  input_schema: JsonRecord;
   default_parameters: JsonRecord;
-  output_schema?: JsonRecord | null;
   mcp_enabled: boolean;
   metadata: JsonRecord;
   tags: string[];
+}
+
+export interface ActionMetadata {
+  function_name: string;
+  description?: string | null;
+  parameters: ActionParameterMetadata[];
+  results: ActionResultMetadata[];
+}
+
+export type ParameterValueType =
+  | "string"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "string_array"
+  | "number_array"
+  | "object"
+  | "json";
+
+export interface ActionParameterMetadata {
+  name: string;
+  value_type: ParameterValueType;
+  label?: string | null;
+  description?: string | null;
+  required: boolean;
+  default_value?: any;
+  secret: boolean;
+}
+
+export interface ActionResultMetadata {
+  name: string;
+  value_type: ParameterValueType;
+  label?: string | null;
+  description?: string | null;
+}
+
+export interface ProviderRuntimeMetadata {
+  credential_scopes: string[];
+  contract?: string | null;
+}
+
+export interface ProviderMetadata {
+  name: string;
+  actions: ActionMetadata[];
+  metadata: ProviderRuntimeMetadata;
 }
 
 export interface RunSummary {
@@ -26,12 +68,16 @@ export interface RunSummary {
   task_id?: number;
   workflow_id?: number;
   status: string;
+  parameters?: JsonRecord;
+  output_json?: any;
+  message?: string | null;
   trigger?: string;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
   workflow_run_id?: number | null;
   workflow_node_id?: string | null;
+  active_node_id?: string | null;
 }
 
 export interface RunChunk {
@@ -65,6 +111,13 @@ export interface WorkflowNodeRun {
   task_run_id: number | null;
   status: string;
   attempt: number;
+  parameters: JsonRecord;
+  output_json?: any;
+  state?: JsonRecord;
+  transition_reason?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   message: string | null;
 }
 
@@ -80,6 +133,11 @@ export interface TaskResponse {
 
 export interface SaveTaskResponse extends TaskResponse {
   creating: boolean;
+}
+
+export interface CredentialSummary {
+  scope: string;
+  name: string;
 }
 
 export interface WorkflowRunCreated {

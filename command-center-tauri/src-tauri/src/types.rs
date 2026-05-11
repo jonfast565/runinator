@@ -42,3 +42,16 @@ pub struct SaveTaskResponse {
 pub struct WorkflowRunCreated {
     pub id: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialSummary {
+    pub scope: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialPutRequest {
+    pub scope: String,
+    pub name: String,
+    pub secret: String,
+}

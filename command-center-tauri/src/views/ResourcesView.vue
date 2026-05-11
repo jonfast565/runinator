@@ -12,8 +12,10 @@
               </option>
             </select>
             <button @click="resourcesStore.refreshResources">Refresh</button>
-            <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('approve')">Approve</button>
-            <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('reject')">Reject</button>
+            <template v-if="resourcesStore.selectedResourceEndpoint === 'approvals'">
+              <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('approve')">Approve</button>
+              <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('reject')">Reject</button>
+            </template>
           </div>
         </div>
         <DataTable>

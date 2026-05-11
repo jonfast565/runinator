@@ -31,18 +31,13 @@ macro_rules! scheduled_task_from_row {
             cron_schedule: $row.get::<String, _>("cron_schedule"),
             action_name: $row.get::<String, _>("action_name"),
             action_function: $row.get::<String, _>("action_function"),
-            action_configuration: $row.get::<String, _>("action_configuration"),
             timeout: $row.get::<i64, _>("timeout"),
             next_execution,
             enabled: $row.get::<bool, _>("enabled"),
             immediate: $row.get::<bool, _>("immediate"),
             blackout_start,
             blackout_end,
-            input_schema: parse_json($row.get::<String, _>("input_schema")),
             default_parameters: parse_json($row.get::<String, _>("default_parameters")),
-            output_schema: $row
-                .get::<Option<String>, _>("output_schema")
-                .and_then(|raw| serde_json::from_str(&raw).ok()),
             mcp_enabled: $row.get::<bool, _>("mcp_enabled"),
             metadata: parse_json($row.get::<String, _>("metadata")),
             tags: serde_json::from_str(&$row.get::<String, _>("tags")).unwrap_or_default(),

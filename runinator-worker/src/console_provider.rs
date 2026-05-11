@@ -12,10 +12,27 @@ use std::{
 use log::warn;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::{
+        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata,
+    },
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+struct ConsoleParams {
+    command: String,
+}
+
+#[derive(Serialize)]
+struct ConsoleResult {
+    success: bool,
+    exit_code: i32,
+    duration_ms: i64,
+    command: String,
+}
 
 #[derive(Clone)]
 pub struct ConsoleProvider;
@@ -23,6 +40,26 @@ pub struct ConsoleProvider;
 impl Provider for ConsoleProvider {
     fn name(&self) -> String {
         "Console".to_string()
+    }
+
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            name: self.name(),
+            actions: vec![
+                ActionMetadata::new("run", "Run a shell command")
+                    .with_parameters(vec![ParameterMetadata::required(
+                        "command",
+                        ParameterValueType::String,
+                    )])
+                    .with_results(vec![
+                        ResultMetadata::new("success", ParameterValueType::Boolean),
+                        ResultMetadata::new("exit_code", ParameterValueType::Integer),
+                        ResultMetadata::new("duration_ms", ParameterValueType::Integer),
+                        ResultMetadata::new("command", ParameterValueType::String),
+                    ]),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        }
     }
 
     fn execute_service(
@@ -34,11 +71,18 @@ impl Provider for ConsoleProvider {
     }
 }
 
+fn parse_params(request: &ProviderExecutionRequest) -> Result<ConsoleParams, SendableError> {
+    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+        Box::new(RuntimeError::new("console.invalid_params".into(), e.to_string())) as SendableError
+    })
+}
+
 fn execute_command(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let command_text = command_text(request);
+    let params = parse_params(request)?;
+    let command_text = params.command;
     let started = Instant::now();
 
     #[cfg(target_os = "windows")]
@@ -82,17 +126,17 @@ fn execute_command(
 
     let exit_code = status.code().unwrap_or(-1);
     let duration_ms = started.elapsed().as_millis() as i64;
-    let output_json = json!({
-        "success": status.success(),
-        "exit_code": exit_code,
-        "duration_ms": duration_ms,
-        "command": command_text,
-    });
+    let result = ConsoleResult {
+        success: status.success(),
+        exit_code,
+        duration_ms,
+        command: command_text,
+    };
 
-    if status.success() {
+    if result.success {
         Ok(TaskExecutionResult {
             message: Some(format!("Console command exited with code {exit_code}")),
-            output_json: Some(output_json),
+            output_json: serde_json::to_value(result).ok(),
             chunks: Vec::new(),
             artifacts: Vec::new(),
         })
@@ -102,21 +146,6 @@ fn execute_command(
             format!("Console command exited with code {exit_code}"),
         )))
     }
-}
-
-fn command_text(request: &ProviderExecutionRequest) -> String {
-    request
-        .parameters
-        .get("command")
-        .and_then(|value| value.as_str())
-        .or_else(|| {
-            request
-                .parameters
-                .get("args")
-                .and_then(|value| value.as_str())
-        })
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| request.action_configuration.clone())
 }
 
 fn spawn_output_thread<R: std::io::Read + Send + 'static>(

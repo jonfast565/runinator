@@ -8,6 +8,7 @@ use clap::Parser;
 use reqwest::blocking::Client;
 use runinator_models::{
     core::ScheduledTask,
+    providers::ProviderMetadata,
     runs::{RunRequest, RunStatus},
 };
 use serde_json::{Value, json};
@@ -64,7 +65,8 @@ impl McpServer {
 
     fn tools_list(&self) -> Result<Value, String> {
         let tasks = self.fetch_tasks()?;
-        Ok(json!({ "tools": tools_from_tasks(tasks) }))
+        let providers = self.fetch_providers().unwrap_or_default();
+        Ok(json!({ "tools": tools_from_tasks(tasks, &providers) }))
     }
 
     fn tools_call(&self, params: Value) -> Result<Value, String> {
@@ -239,6 +241,17 @@ impl McpServer {
             .map_err(|err| err.to_string())
     }
 
+    fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, String> {
+        self.client
+            .get(self.url("providers"))
+            .send()
+            .map_err(|err| err.to_string())?
+            .error_for_status()
+            .map_err(|err| err.to_string())?
+            .json()
+            .map_err(|err| err.to_string())
+    }
+
     fn recent_resource_entries(&self) -> Result<Vec<Value>, String> {
         let mut runs = Vec::new();
         for status in [
@@ -295,16 +308,22 @@ impl McpServer {
     }
 }
 
-fn tools_from_tasks(tasks: Vec<ScheduledTask>) -> Vec<Value> {
+fn tools_from_tasks(tasks: Vec<ScheduledTask>, providers: &[ProviderMetadata]) -> Vec<Value> {
     tasks
         .into_iter()
         .filter(|task| task.enabled && task.mcp_enabled)
         .filter_map(|task| {
             let id = task.id?;
+            let input_schema = providers
+                .iter()
+                .find(|p| p.name == task.action_name)
+                .and_then(|p| p.actions.iter().find(|a| a.function_name == task.action_function))
+                .map(|a| a.to_json_schema())
+                .unwrap_or_else(|| json!({ "type": "object" }));
             Some(json!({
                 "name": tool_name(&task, id),
                 "description": format!("Run Runinator task '{}'", task.name),
-                "inputSchema": task.input_schema,
+                "inputSchema": input_schema,
             }))
         })
         .collect()
@@ -432,16 +451,13 @@ mod tests {
             cron_schedule: "* * * * *".into(),
             action_name: "Console".into(),
             action_function: "exec".into(),
-            action_configuration: "true".into(),
             timeout: 30,
             next_execution: None,
             enabled,
             immediate: false,
             blackout_start: None,
             blackout_end: None,
-            input_schema: json!({ "type": "object" }),
             default_parameters: json!({}),
-            output_schema: None,
             mcp_enabled,
             metadata: json!({}),
             tags: Vec::new(),
@@ -454,7 +470,7 @@ mod tests {
             task(1, "Allowed", true, true),
             task(2, "Disabled", false, true),
             task(3, "Hidden", true, false),
-        ]);
+        ], &[]);
 
         assert_eq!(tools.len(), 1);
         assert_eq!(

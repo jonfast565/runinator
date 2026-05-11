@@ -5,7 +5,7 @@ import { validateTask } from "../tasks";
 describe("task validation", () => {
   it("requires core task fields", () => {
     const task = newTaskDraft();
-    expect(validateTask(task, { input_schema: "{}", default_parameters: "{}", metadata: "{}" })).toBe("Name is required");
+    expect(validateTask(task, { default_parameters: "{}", metadata: "{}" })).toBe("Name is required");
   });
 
   it("accepts a complete task with object JSON fields", () => {
@@ -15,10 +15,9 @@ describe("task validation", () => {
       cron_schedule: "* * * * *",
       action_name: "provider",
       action_function: "run",
-      action_configuration: "{}",
       timeout: 1000
     };
-    expect(validateTask(task, { input_schema: "{}", default_parameters: "{}", metadata: "{}" })).toBe("");
+    expect(validateTask(task, { default_parameters: "{}", metadata: "{}" })).toBe("");
   });
 
   it("rejects non-object JSON fields", () => {
@@ -28,9 +27,8 @@ describe("task validation", () => {
       cron_schedule: "* * * * *",
       action_name: "provider",
       action_function: "run",
-      action_configuration: "{}",
       timeout: 1000
     };
-    expect(validateTask(task, { input_schema: "[]", default_parameters: "{}", metadata: "{}" })).toContain("JSON objects");
+    expect(validateTask(task, { default_parameters: "[]", metadata: "{}" })).toContain("JSON objects");
   });
 });

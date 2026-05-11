@@ -26,13 +26,13 @@ export const useTasksStore = defineStore("tasks", () => {
   const taskEditorError = ref("");
   const taskDraft = reactive<ScheduledTask>(newTaskDraft());
   const taskJson = reactive({
-    input_schema: "{}",
     default_parameters: "{}",
     metadata: "{}"
   });
 
   const app = useAppStore();
   const selectedTask = computed(() => tasks.value.find((task) => task.id === selectedTaskId.value) ?? null);
+  const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) ?? null);
   const canRunTask = computed(() => Boolean(selectedTask.value?.enabled && selectedTask.value.id));
   const runOutput = computed(() => chunks.value.map((chunk) => `[${chunk.stream}] ${chunk.content}`).join("\n"));
   const filteredTasks = computed(() => {
@@ -109,7 +109,6 @@ export const useTasksStore = defineStore("tasks", () => {
 
   function openNewTask() {
     Object.assign(taskDraft, newTaskDraft());
-    taskJson.input_schema = pretty(taskDraft.input_schema);
     taskJson.default_parameters = pretty(taskDraft.default_parameters);
     taskJson.metadata = pretty(taskDraft.metadata);
     editingTaskCreating.value = true;
@@ -123,7 +122,6 @@ export const useTasksStore = defineStore("tasks", () => {
 
   function openTask(task: ScheduledTask) {
     Object.assign(taskDraft, cloneJson(task));
-    taskJson.input_schema = pretty(task.input_schema ?? {});
     taskJson.default_parameters = pretty(task.default_parameters ?? {});
     taskJson.metadata = pretty(task.metadata ?? {});
     editingTaskCreating.value = false;
@@ -142,7 +140,6 @@ export const useTasksStore = defineStore("tasks", () => {
       return;
     }
     const task = cloneJson(taskDraft);
-    task.input_schema = parseObject(taskJson.input_schema, {});
     task.default_parameters = parseObject(taskJson.default_parameters, {});
     task.metadata = parseObject(taskJson.metadata, {});
     if (!task.next_execution) task.next_execution = new Date().toISOString();
@@ -190,6 +187,7 @@ export const useTasksStore = defineStore("tasks", () => {
     taskDraft,
     taskJson,
     selectedTask,
+    selectedRun,
     canRunTask,
     runOutput,
     filteredTasks,
@@ -216,16 +214,13 @@ export function newTaskDraft(): ScheduledTask {
     cron_schedule: "",
     action_name: "",
     action_function: "",
-    action_configuration: "",
     timeout: 1,
     next_execution: null,
     enabled: true,
     immediate: false,
     blackout_start: null,
     blackout_end: null,
-    input_schema: { type: "object", additionalProperties: true },
     default_parameters: {},
-    output_schema: null,
     mcp_enabled: false,
     metadata: {},
     tags: []

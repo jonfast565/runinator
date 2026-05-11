@@ -12,6 +12,7 @@
       :edges="workflows.graphEdges"
       @node-click="workflows.onGraphNodeClick"
       @node-drag-stop="workflows.onGraphNodeDragStop"
+      @nodes-change="workflows.onGraphNodesChange"
       @connect="workflows.onGraphConnect"
       @edges-change="workflows.onGraphEdgesChange"
       delete-key-code="Delete"

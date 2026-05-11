@@ -24,8 +24,11 @@ use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tokio::time;
 
-pub fn run_dynamo_dump(args: &str, timeout_secs: i64) -> Result<DynamoDumpResult, SendableError> {
-    let request: DynamoDumpRequest = serde_json::from_str(args).map_err(to_sendable)?;
+pub fn run_dynamo_dump(
+    parameters: JsonValue,
+    timeout_secs: i64,
+) -> Result<DynamoDumpResult, SendableError> {
+    let request: DynamoDumpRequest = serde_json::from_value(parameters).map_err(to_sendable)?;
     let timeout = normalize_timeout(timeout_secs);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

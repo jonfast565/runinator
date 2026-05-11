@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
+    providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
@@ -31,6 +32,8 @@ pub enum ApiResponse {
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
+    Provider(ProviderMetadata),
+    ProviderList(Vec<ProviderMetadata>),
     JsonValue(Value),
     JsonList(Vec<Value>),
 }
@@ -144,8 +147,8 @@ pub struct IdempotencyRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CredentialQuery {
-    pub scope: String,
-    pub name: String,
+    pub scope: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

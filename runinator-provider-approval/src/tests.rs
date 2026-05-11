@@ -8,7 +8,6 @@ fn test_approval_provider_execution() {
         task_id: Some(1),
         action_name: "approval".into(),
         action_function: "prepare".into(),
-        action_configuration: "".into(),
         parameters: json!({
             "approval_type": "deploy",
             "prompt": "Approve production deployment?"

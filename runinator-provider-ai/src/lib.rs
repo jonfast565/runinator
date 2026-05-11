@@ -4,10 +4,21 @@ use std::sync::Arc;
 
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::{
+        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata,
+    },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[derive(Deserialize)]
+struct AiCommandParams {
+    command: String,
+    input: Option<Value>,
+}
 
 #[derive(Clone)]
 pub struct AiCommandProvider;
@@ -17,20 +28,37 @@ impl Provider for AiCommandProvider {
         "ai-command".into()
     }
 
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            name: self.name(),
+            actions: vec![
+                ActionMetadata::new("execute", "Run an AI command via shell")
+                    .with_parameters(vec![
+                        ParameterMetadata::required("command", ParameterValueType::String),
+                        ParameterMetadata::optional("input", ParameterValueType::Json),
+                    ])
+                    .with_results(vec![ResultMetadata::new(
+                        "response",
+                        ParameterValueType::Json,
+                    )]),
+            ],
+            metadata: ProviderRuntimeMetadata {
+                credential_scopes: Vec::new(),
+                contract: Some("stdin/stdout JSON".into()),
+            },
+        }
+    }
+
     fn execute_service(
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
     ) -> Result<TaskExecutionResult, SendableError> {
-        let command = required(&request.parameters, "command")?;
-        let input = request
-            .parameters
-            .get("input")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        let params = parse_params(&request)?;
+        let input = params.input.unwrap_or_else(|| json!({}));
         let mut child = Command::new("sh")
             .arg("-c")
-            .arg(command)
+            .arg(&params.command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -61,17 +89,10 @@ impl Provider for AiCommandProvider {
     }
 }
 
-fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, SendableError> {
-    str_param(value, key).ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "provider.missing_parameter".into(),
-            format!("Missing required parameter '{key}'"),
-        )) as SendableError
+fn parse_params(request: &ProviderExecutionRequest) -> Result<AiCommandParams, SendableError> {
+    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+        Box::new(RuntimeError::new("ai_command.invalid_params".into(), e.to_string())) as SendableError
     })
-}
-
-fn str_param<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
 }
 
 #[cfg(test)]

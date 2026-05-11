@@ -1,4 +1,4 @@
-use crate::workflows::*;
+use crate::{providers::ProviderMetadata, workflows::*};
 use serde_json::json;
 
 #[test]
@@ -44,4 +44,19 @@ fn workflow_node_serialization() {
     assert_eq!(node.kind, WorkflowNodeKind::Task);
     assert_eq!(node.task_id, Some(123));
     assert_eq!(node.transitions.on_success, Some("next-node".to_string()));
+}
+
+#[test]
+fn provider_metadata_accepts_catalog_provider_name() {
+    let metadata: ProviderMetadata = serde_json::from_value(json!({
+        "provider_name": "git",
+        "actions": [
+            { "function_name": "diff", "description": "Get diff" }
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(metadata.name, "git");
+    assert_eq!(metadata.actions[0].function_name, "diff");
+    assert!(metadata.metadata.credential_scopes.is_empty());
 }

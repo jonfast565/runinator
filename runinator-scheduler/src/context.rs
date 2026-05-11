@@ -27,6 +27,10 @@ pub fn build_node_parameters(
 }
 
 pub fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) -> Value {
+    let prev_output = node_runs
+        .iter()
+        .filter_map(|run| run.output_json.clone())
+        .last();
     let outputs = node_runs
         .iter()
         .filter_map(|run| {
@@ -45,6 +49,9 @@ pub fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]
                 "state": workflow_run.state,
             }),
         );
+        if let Some(prev) = prev_output {
+            object.insert("prev".into(), prev);
+        }
     }
     context
 }

@@ -1,6 +1,7 @@
 use reqwest::{Client, Response, Url};
 use runinator_models::{
     core::ScheduledTask,
+    providers::ProviderMetadata,
     runs::{RunRequest, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
@@ -41,6 +42,22 @@ where
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ScheduledTask>>().await?)
+    }
+
+    /// Fetch provider/action metadata for task authoring.
+    pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
+        let url = self.build_url("/providers").await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ProviderMetadata>>().await?)
+    }
+
+    /// Register provider/action metadata with the web service.
+    pub async fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
+        let url = self.build_url("/providers").await?;
+        let response = self.client.post(url.clone()).json(provider).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ProviderMetadata>().await?)
     }
 
     /// Create or replace a scheduled task.
@@ -342,6 +359,20 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_credential(&self, scope: &str, name: &str) -> Result<String> {
+        let mut url = self.build_url("/credentials").await?;
+        url.query_pairs_mut()
+            .append_pair("scope", scope)
+            .append_pair("name", name);
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("secret")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
     }
 
     /// Record execution metadata for a scheduled task run.

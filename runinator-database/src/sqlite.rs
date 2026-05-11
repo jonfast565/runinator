@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     cron_schedule TEXT NOT NULL,
     action_name TEXT NOT NULL,
     action_function TEXT NOT NULL,
-    action_configuration BLOB NOT NULL,
+    action_configuration TEXT NOT NULL DEFAULT '',
     timeout INTEGER NOT NULL,
     next_execution INTEGER NULL,
     enabled BOOL NOT NULL,
@@ -251,8 +251,8 @@ fn json_metadata(value: &Value) -> String {
 impl DatabaseImpl for SqliteDb {
     async fn upsert_task(&self, task: &ScheduledTask) -> Result<(), SendableError> {
         self.pool.execute(sqlx::query(
-            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, input_schema, default_parameters, output_schema, mcp_enabled, metadata, tags)
-             VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch('now')), ?, COALESCE(?, 0), ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO scheduled_tasks (id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, default_parameters, mcp_enabled, metadata, tags)
+             VALUES (?, ?, ?, ?, ?, '', ?, COALESCE(?, unixepoch('now')), ?, COALESCE(?, 0), ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 cron_schedule = excluded.cron_schedule,
@@ -265,9 +265,7 @@ impl DatabaseImpl for SqliteDb {
                 immediate = excluded.immediate,
                 blackout_start = excluded.blackout_start,
                 blackout_end = excluded.blackout_end,
-                input_schema = excluded.input_schema,
                 default_parameters = excluded.default_parameters,
-                output_schema = excluded.output_schema,
                 mcp_enabled = excluded.mcp_enabled,
                 metadata = excluded.metadata,
                 tags = excluded.tags",
@@ -277,16 +275,13 @@ impl DatabaseImpl for SqliteDb {
         .bind(&task.cron_schedule)
         .bind(&task.action_name)
         .bind(&task.action_function)
-        .bind(&task.action_configuration)
         .bind(task.timeout)
         .bind(task.next_execution.map(|dt| dt.timestamp()))
         .bind(task.enabled)
         .bind(task.immediate)
         .bind(task.blackout_start.map(|dt| dt.timestamp()))
         .bind(task.blackout_end.map(|dt| dt.timestamp()))
-        .bind(task.input_schema.to_string())
         .bind(task.default_parameters.to_string())
-        .bind(task.output_schema.as_ref().map(|v| v.to_string()))
         .bind(task.mcp_enabled)
         .bind(task.metadata.to_string())
         .bind(serde_json::to_string(&task.tags)?))
@@ -303,7 +298,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_all_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, input_schema, default_parameters, output_schema, mcp_enabled, metadata, tags 
+            "SELECT id, name, cron_schedule, action_name, action_function, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, default_parameters, mcp_enabled, metadata, tags
             FROM scheduled_tasks",
         )
         .fetch_all(&self.pool)
@@ -318,7 +313,7 @@ impl DatabaseImpl for SqliteDb {
 
     async fn fetch_task_by_id(&self, task_id: i64) -> Result<Option<ScheduledTask>, SendableError> {
         let row = sqlx::query(
-            "SELECT id, name, cron_schedule, action_name, action_function, action_configuration, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, input_schema, default_parameters, output_schema, mcp_enabled, metadata, tags
+            "SELECT id, name, cron_schedule, action_name, action_function, timeout, next_execution, enabled, immediate, blackout_start, blackout_end, default_parameters, mcp_enabled, metadata, tags
             FROM scheduled_tasks WHERE id = ?",
         )
         .bind(task_id)

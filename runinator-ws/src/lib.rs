@@ -23,6 +23,7 @@ use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
     core::ScheduledTask,
     errors::SendableError,
+    providers::ProviderMetadata,
     runs::{NewRunArtifact, NewRunChunk, RunRequest},
     web::TaskResponse,
     workflows::WorkflowDefinition,
@@ -63,6 +64,15 @@ fn api_error(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
 fn not_found(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
     (
         StatusCode::NOT_FOUND,
+        Json(ApiResponse::ApiError(ApiError {
+            message: message.into(),
+        })),
+    )
+}
+
+fn bad_request(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
         Json(ApiResponse::ApiError(ApiError {
             message: message.into(),
         })),
@@ -760,12 +770,37 @@ fn credential_store() -> LocalEncryptedCredentialStore {
 }
 
 async fn get_credential(Query(query): Query<CredentialQuery>) -> (StatusCode, Json<ApiResponse>) {
-    match credential_store().get(&query.scope, &query.name) {
+    let store = credential_store();
+    let (scope, name) = match (query.scope, query.name) {
+        (Some(scope), Some(name)) => (scope, name),
+        (None, None) => {
+            return match store.list() {
+                Ok(entries) => (
+                    StatusCode::OK,
+                    Json(ApiResponse::JsonList(
+                        entries
+                            .into_iter()
+                            .map(|entry| {
+                                serde_json::json!({
+                                    "scope": entry.scope,
+                                    "name": entry.name,
+                                })
+                            })
+                            .collect(),
+                    )),
+                ),
+                Err(err) => api_error(err.to_string()),
+            };
+        }
+        _ => return bad_request("credential lookup requires both scope and name"),
+    };
+
+    match store.get(&scope, &name) {
         Ok(Some(secret)) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(serde_json::json!({
-                "scope": query.scope,
-                "name": query.name,
+                "scope": scope,
+                "name": name,
                 "secret": String::from_utf8_lossy(&secret)
             }))),
         ),
@@ -793,7 +828,11 @@ async fn put_credential(
 async fn delete_credential(
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match credential_store().delete(&query.scope, &query.name) {
+    let (Some(scope), Some(name)) = (query.scope, query.name) else {
+        return bad_request("credential deletion requires both scope and name");
+    };
+
+    match credential_store().delete(&scope, &name) {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
@@ -803,6 +842,61 @@ async fn delete_credential(
         ),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+async fn get_providers<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into())).await {
+        Ok(items) => match provider_metadata_from_items(items) {
+            Ok(providers) => (StatusCode::OK, Json(ApiResponse::ProviderList(providers))),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn upsert_provider<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(provider): Json<ProviderMetadata>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let item = provider_catalog_item(&provider);
+    match repository::upsert_catalog_item(db.as_ref(), item).await {
+        Ok(item) => match provider_metadata_from_item(item) {
+            Ok(provider) => (StatusCode::OK, Json(ApiResponse::Provider(provider))),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+fn provider_metadata_from_items(
+    items: Vec<serde_json::Value>,
+) -> Result<Vec<ProviderMetadata>, serde_json::Error> {
+    let mut providers = items
+        .into_iter()
+        .map(provider_metadata_from_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    providers.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(providers)
+}
+
+fn provider_metadata_from_item(
+    item: serde_json::Value,
+) -> Result<ProviderMetadata, serde_json::Error> {
+    let document = item.get("document").cloned().unwrap_or(item);
+    serde_json::from_value(document)
+}
+
+fn provider_catalog_item(provider: &ProviderMetadata) -> serde_json::Value {
+    serde_json::json!({
+        "uri": format!("runinator://providers/{}", provider.name),
+        "item_type": "provider_metadata",
+        "name": provider.name,
+        "version": "1",
+        "document": provider,
+        "metadata": {}
+    })
 }
 
 async fn webhook_wake<T: DatabaseImpl>(
@@ -1067,6 +1161,12 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
                 .delete(delete_credential),
         )
         .route(
+            "/providers",
+            get(get_providers::<T>)
+                .post(upsert_provider::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
             "/webhooks/wake",
             post(webhook_wake::<T>).layer(Extension(pool.clone())),
         )
@@ -1101,14 +1201,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
 }
 
 async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
-    for raw in [
-        include_str!("../../packs/providers/github.json"),
-        include_str!("../../packs/providers/jira.json"),
-        include_str!("../../packs/providers/git.json"),
-        include_str!("../../packs/providers/ai-command.json"),
-        include_str!("../../packs/providers/approval.json"),
-        include_str!("../../packs/sdlc/workflow-pack.json"),
-    ] {
+    for raw in [include_str!("../../packs/sdlc/workflow-pack.json")] {
         let item: serde_json::Value = serde_json::from_str(raw)?;
         db.upsert_catalog_item(item).await?;
     }

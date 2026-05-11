@@ -5,56 +5,63 @@
       "name": "Test: Hello World",
       "cron_schedule": "*/1 * * * *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'Hello World!'",
+      "action_function": "run",
       "timeout": 1000,
       "enabled": true,
       "immediate": false,
-      "next_execution": null
+      "next_execution": null,
+      "default_parameters": {
+        "command": "echo 'Hello World!'"
+      }
     },
     {
       "id": 2,
       "name": "AWS Login",
       "cron_schedule": "0 0,9,12,15,18,21 * * *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "aws sso login",
+      "action_function": "run",
       "timeout": 100000,
       "enabled": true,
       "immediate": false,
-      "next_execution": null
+      "next_execution": null,
+      "default_parameters": {
+        "command": "aws sso login"
+      }
     },
     {
       "id": 3,
       "name": "Powershell: Sync Repositories",
       "cron_schedule": "0 0,9,12,15,18,21 * * *",
       "action_name": "Console",
-      "action_function": "run_powershell",
-      "action_configuration": "pwsh ./task-scripts/sync-repos.ps1 \"C:\\Repos\"",
+      "action_function": "run",
       "timeout": 100000,
       "enabled": true,
       "immediate": false,
-      "next_execution": null
+      "next_execution": null,
+      "default_parameters": {
+        "command": "pwsh ./task-scripts/sync-repos.ps1 \"C:\\Repos\""
+      }
     },
     {
       "id": 4,
       "name": "SDM Login",
       "cron_schedule": "0 0,9,12,15,18,21 * * *",
       "action_name": "Console",
-      "action_function": "run_powershell",
-      "action_configuration": "pwsh ./task-scripts/sdm-login.ps1",
+      "action_function": "run",
       "timeout": 100000,
       "enabled": true,
       "immediate": false,
-      "next_execution": null
+      "next_execution": null,
+      "default_parameters": {
+        "command": "pwsh ./task-scripts/sdm-login.ps1"
+      }
     },
     {
       "id": 101,
       "name": "Mock SDLC: Intake Ticket",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock intake'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,
@@ -73,8 +80,7 @@
       "name": "Mock SDLC: Create Branch",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock branch'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,
@@ -93,8 +99,7 @@
       "name": "Mock SDLC: Implement Change",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock implementation'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,
@@ -113,8 +118,7 @@
       "name": "Mock SDLC: Run Unit Tests",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock tests'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,
@@ -133,8 +137,7 @@
       "name": "Mock SDLC: QA Verification",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock qa'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,
@@ -153,8 +156,7 @@
       "name": "Mock SDLC: Deploy Release",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "Console",
-      "action_function": "run_console",
-      "action_configuration": "echo 'mock deploy'",
+      "action_function": "run",
       "timeout": 30,
       "enabled": false,
       "immediate": false,

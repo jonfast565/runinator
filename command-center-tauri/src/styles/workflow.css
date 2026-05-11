@@ -36,6 +36,20 @@
   padding: 10px;
 }
 
+.workflow-title {
+  display: grid;
+  min-width: 220px;
+  flex: 1;
+  color: #4b5663;
+  font-size: 12px;
+  gap: 2px;
+}
+
+.workflow-title strong {
+  color: #17202a;
+  font-size: 14px;
+}
+
 .workflow-toolbar label {
   display: grid;
   min-width: 92px;
@@ -149,7 +163,7 @@
   gap: 4px;
 }
 
-.step-editor .json-textarea {
+.step-editor .json-editor-container {
   min-height: 150px;
 }
 
