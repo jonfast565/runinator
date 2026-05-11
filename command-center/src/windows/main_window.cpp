@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QBrush>
+#include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
 #include <QFormLayout>
@@ -20,6 +21,51 @@
 #include <QShortcut>
 #include <QSizePolicy>
 #include <QVBoxLayout>
+#include <functional>
+
+namespace {
+constexpr int NodeIdRole = 0;
+constexpr int EdgeFromRole = 1;
+constexpr int EdgeToRole = 2;
+constexpr int EdgeLabelRole = 3;
+constexpr int NodeWidth = 150;
+constexpr int NodeHeight = 54;
+
+class WorkflowNodeItem : public QGraphicsRectItem {
+public:
+  using QGraphicsRectItem::QGraphicsRectItem;
+
+  std::function<void()> geometryChanged;
+
+protected:
+  QVariant itemChange(GraphicsItemChange change, const QVariant &value) override {
+    const QVariant result = QGraphicsRectItem::itemChange(change, value);
+    if (change == QGraphicsItem::ItemPositionHasChanged && geometryChanged) {
+      geometryChanged();
+    }
+    return result;
+  }
+};
+
+QPointF edgeEndpoint(const QRectF &from, const QRectF &to, bool source) {
+  const QPointF delta = to.center() - from.center();
+  if (qAbs(delta.x()) >= qAbs(delta.y())) {
+    if (source) {
+      return delta.x() >= 0 ? QPointF(from.right(), from.center().y())
+                            : QPointF(from.left(), from.center().y());
+    }
+    return delta.x() >= 0 ? QPointF(to.left(), to.center().y())
+                          : QPointF(to.right(), to.center().y());
+  }
+
+  if (source) {
+    return delta.y() >= 0 ? QPointF(from.center().x(), from.bottom())
+                          : QPointF(from.center().x(), from.top());
+  }
+  return delta.y() >= 0 ? QPointF(to.center().x(), to.top())
+                        : QPointF(to.center().x(), to.bottom());
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow) {
   ui->setupUi(this);
@@ -1051,8 +1097,6 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
                                      .value("layout").toObject()
                                      .value("nodes").toObject();
   QMap<QString, QPointF> positions;
-  const int nodeWidth = 150;
-  const int nodeHeight = 54;
   const int xGap = 220;
   const int yGap = 90;
 
@@ -1069,33 +1113,6 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
 
   QPen edgePen(QColor("#7f8c8d"));
   edgePen.setWidth(2);
-  for (const auto &value : nodes) {
-    const QJsonObject step = value.toObject();
-    const QString id = step.value("id").toString();
-    const QPointF from = positions.value(id) + QPointF(nodeWidth, nodeHeight / 2);
-    const QJsonObject transitions = step.value("transitions").toObject();
-    QStringList targets;
-    for (const QString &key : {"next", "on_success", "on_failure", "on_timeout", "on_reject"}) {
-      const QString target = transitions.value(key).toString();
-      if (!target.isEmpty()) {
-        targets.push_back(target);
-      }
-    }
-    for (const auto &branch : transitions.value("branches").toArray()) {
-      const QString target = branch.toObject().value("target").toString();
-      if (!target.isEmpty()) {
-        targets.push_back(target);
-      }
-    }
-    for (const QString &target : targets) {
-      if (!positions.contains(target)) {
-        continue;
-      }
-      const QPointF to = positions.value(target) + QPointF(0, nodeHeight / 2);
-      workflowScene->addLine(QLineF(from, to), edgePen);
-    }
-  }
-
   QMap<QString, WorkflowNodeRun> nodeRunById;
   if (selectedWorkflowRunId > 0 && currentWorkflowRun.id == selectedWorkflowRunId &&
       workflow.id.has_value() && currentWorkflowRun.workflowId == workflow.id.value()) {
@@ -1125,22 +1142,113 @@ void MainWindow::renderWorkflowGraph(const WorkflowDefinition &workflow) {
         fill = QColor("#eaf2f8");
       }
     }
-    QGraphicsRectItem *node =
-        workflowScene->addRect(QRectF(QPointF(0, 0), QSizeF(nodeWidth, nodeHeight)), nodePen, QBrush(fill));
+    auto *node = new WorkflowNodeItem(QRectF(QPointF(0, 0), QSizeF(NodeWidth, NodeHeight)));
+    node->setPen(nodePen);
+    node->setBrush(QBrush(fill));
+    workflowScene->addItem(node);
     node->setPos(pos);
-    node->setData(0, id);
-    node->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
+    node->setData(NodeIdRole, id);
+    node->setZValue(1);
+    node->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable |
+                   QGraphicsItem::ItemSendsGeometryChanges);
+    node->geometryChanged = [this]() { updateWorkflowGraphGeometry(); };
     const QString kind = step.value("kind").toString("task");
     const QString detail = kind == "task"
                                ? QString("Task %1").arg(step.value("task_id").toVariant().toLongLong())
                                : kind;
-    QGraphicsTextItem *label = workflowScene->addText(QString("%1\n%2%3").arg(id, detail, statusLine));
+    QGraphicsTextItem *label = new QGraphicsTextItem(QString("%1\n%2%3").arg(id, detail, statusLine), node);
     label->setDefaultTextColor(QColor("#2c3e50"));
-    label->setPos(pos + QPointF(8, 6));
-    label->setData(0, id);
+    label->setPos(QPointF(8, 6));
+    label->setData(NodeIdRole, id);
   }
+
+  for (const auto &value : nodes) {
+    const QJsonObject step = value.toObject();
+    const QString id = step.value("id").toString();
+    const QJsonObject transitions = step.value("transitions").toObject();
+    QVector<QPair<QString, QString>> targets;
+    for (const QString &key : {"next", "on_success", "on_failure", "on_timeout", "on_reject"}) {
+      const QString target = transitions.value(key).toString();
+      if (!target.isEmpty()) {
+        targets.push_back(qMakePair(key, target));
+      }
+    }
+    for (const auto &branch : transitions.value("branches").toArray()) {
+      const QJsonObject branchObject = branch.toObject();
+      const QString target = branchObject.value("target").toString();
+      if (!target.isEmpty()) {
+        const QString label = branchObject.value("label").toString("branch");
+        targets.push_back(qMakePair(label, target));
+      }
+    }
+    for (const auto &target : targets) {
+      if (!positions.contains(target.second)) {
+        continue;
+      }
+      QGraphicsLineItem *edge = workflowScene->addLine(QLineF(), edgePen);
+      edge->setData(EdgeFromRole, id);
+      edge->setData(EdgeToRole, target.second);
+      edge->setZValue(0);
+
+      QGraphicsTextItem *edgeLabel = workflowScene->addText(target.first);
+      edgeLabel->setDefaultTextColor(QColor("#59636e"));
+      edgeLabel->setData(EdgeFromRole, id);
+      edgeLabel->setData(EdgeToRole, target.second);
+      edgeLabel->setData(EdgeLabelRole, true);
+      edgeLabel->setZValue(2);
+    }
+  }
+
+  updateWorkflowGraphGeometry();
   ui->workflowGraphView->fitInView(workflowScene->itemsBoundingRect().adjusted(-24, -24, 24, 24),
                                   Qt::KeepAspectRatio);
+}
+
+void MainWindow::updateWorkflowGraphGeometry() {
+  QMap<QString, QGraphicsRectItem *> nodes;
+  for (QGraphicsItem *item : workflowScene->items()) {
+    auto *node = qgraphicsitem_cast<QGraphicsRectItem *>(item);
+    if (!node || !node->parentItem()) {
+      const QString nodeId = item->data(NodeIdRole).toString();
+      if (node && !nodeId.isEmpty()) {
+        nodes.insert(nodeId, node);
+      }
+    }
+  }
+
+  for (QGraphicsItem *item : workflowScene->items()) {
+    auto *edge = qgraphicsitem_cast<QGraphicsLineItem *>(item);
+    if (!edge) {
+      continue;
+    }
+    const QString fromId = edge->data(EdgeFromRole).toString();
+    const QString toId = edge->data(EdgeToRole).toString();
+    if (!nodes.contains(fromId) || !nodes.contains(toId)) {
+      continue;
+    }
+    const QRectF fromRect = nodes.value(fromId)->sceneBoundingRect();
+    const QRectF toRect = nodes.value(toId)->sceneBoundingRect();
+    edge->setLine(QLineF(edgeEndpoint(fromRect, toRect, true), edgeEndpoint(fromRect, toRect, false)));
+  }
+
+  for (QGraphicsItem *item : workflowScene->items()) {
+    auto *label = qgraphicsitem_cast<QGraphicsTextItem *>(item);
+    if (!label || !label->data(EdgeLabelRole).toBool()) {
+      continue;
+    }
+    const QString fromId = label->data(EdgeFromRole).toString();
+    const QString toId = label->data(EdgeToRole).toString();
+    if (!nodes.contains(fromId) || !nodes.contains(toId)) {
+      continue;
+    }
+    const QRectF fromRect = nodes.value(fromId)->sceneBoundingRect();
+    const QRectF toRect = nodes.value(toId)->sceneBoundingRect();
+    const QPointF from = edgeEndpoint(fromRect, toRect, true);
+    const QPointF to = edgeEndpoint(fromRect, toRect, false);
+    const QPointF midpoint = (from + to) / 2.0;
+    label->setPos(midpoint - QPointF(label->boundingRect().width() / 2.0,
+                                     label->boundingRect().height() / 2.0));
+  }
 }
 
 int MainWindow::selectedRow() const {

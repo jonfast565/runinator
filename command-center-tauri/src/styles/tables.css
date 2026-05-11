@@ -1,0 +1,68 @@
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #ffffff;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e4e9ef;
+  padding: 7px 9px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f9fb;
+  color: #4b5663;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+tbody tr {
+  cursor: default;
+}
+
+tbody tr:hover td {
+  background: #f4f8fc;
+}
+
+tr.selected td {
+  background: #dceeff;
+}
+
+tr.muted td {
+  color: #7f8c8d;
+}
+
+tr.danger td {
+  color: #a33a2f;
+}
+
+tr.success td {
+  color: #1f6f49;
+}
+
+.table-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #edf1f5;
+  border-radius: 6px;
+}
+
+.compact-scroll {
+  flex: 0 0 220px;
+}
+
+.compact th,
+.compact td {
+  padding: 5px 6px;
+  font-size: 12px;
+}

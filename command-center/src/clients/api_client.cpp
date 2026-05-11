@@ -19,11 +19,20 @@ QUrl ApiClient::buildUrl(const QString &path) const {
   if (trimmed.startsWith('/')) {
     trimmed.remove(0, 1);
   }
+  const int queryStart = trimmed.indexOf('?');
+  QString query;
+  if (queryStart >= 0) {
+    query = trimmed.mid(queryStart + 1);
+    trimmed = trimmed.left(queryStart);
+  }
   QString basePath = base.path();
   if (!basePath.endsWith('/')) {
     basePath += "/";
   }
   base.setPath(basePath + trimmed);
+  if (!query.isEmpty()) {
+    base.setQuery(query);
+  }
   return base;
 }
 

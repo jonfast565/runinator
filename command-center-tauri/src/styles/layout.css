@@ -1,0 +1,258 @@
+.app-shell {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: 220px minmax(0, 1fr);
+  outline: none;
+}
+
+.sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
+  border-right: 1px solid #cbd5df;
+  background: #15202b;
+  color: #f7fafc;
+  padding: 16px 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 720;
+}
+
+.brand-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  background: #4ea1ff;
+  color: #ffffff;
+}
+
+.nav-list {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-list button {
+  display: flex;
+  justify-content: space-between;
+  border: 0;
+  background: transparent;
+  color: #d8e0e8;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.nav-list button.active,
+.nav-list button:hover {
+  background: #223142;
+  color: #ffffff;
+}
+
+.nav-count {
+  min-width: 24px;
+  border-radius: 999px;
+  background: #314255;
+  color: #cbd5df;
+  font-size: 12px;
+  text-align: center;
+}
+
+.workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto auto 1fr;
+}
+
+.topbar,
+.connection-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #d3dbe4;
+  background: #ffffff;
+  padding: 10px 14px;
+}
+
+.view-title {
+  min-width: 210px;
+}
+
+.view-title h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.view-title span,
+.service-url,
+.last-refresh {
+  color: #66717e;
+  font-size: 12px;
+}
+
+.toolbar-search {
+  width: min(360px, 34vw);
+}
+
+.actions,
+.panel-toolbar > div,
+.workflow-toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.actions {
+  margin-left: auto;
+}
+
+.connection-strip {
+  min-height: 38px;
+  padding-block: 7px;
+}
+
+.service-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main {
+  min-height: 0;
+}
+
+.pane {
+  height: 100%;
+  padding: 10px;
+}
+
+.split,
+.tasks-dashboard {
+  display: grid;
+  height: 100%;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
+}
+
+.panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid #d4dde7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.panel h3 {
+  margin: 0;
+  color: #374151;
+  font-size: 13px;
+}
+
+.panel-toolbar,
+.workflow-toolbar,
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail-header span {
+  color: #66717e;
+  font-size: 12px;
+}
+
+.details {
+  overflow: auto;
+}
+
+.output {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid #d5dde5;
+  border-radius: 6px;
+  background: #f8fafc;
+  margin: 0;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metrics-row div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e5ebf1;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.metrics-row span {
+  color: #66717e;
+  font-size: 12px;
+}
+
+.metrics-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  max-width: min(520px, calc(100vw - 40px));
+  border: 1px solid #bde5c8;
+  border-radius: 8px;
+  background: #f0fbf4;
+  color: #1f6f49;
+  padding: 10px 12px;
+  box-shadow: 0 10px 28px rgba(23, 32, 42, 0.18);
+}
+
+.toast.error {
+  border-color: #f1b8b2;
+  background: #fff1f0;
+  color: #a33a2f;
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .workflow-layout,
+  .split,
+  .tasks-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-list,
+  .inspector-panel {
+    min-height: 260px;
+  }
+}

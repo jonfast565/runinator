@@ -1,0 +1,124 @@
+.workflow-layout {
+  display: grid;
+  height: 100%;
+  gap: 10px;
+  grid-template-columns: 260px minmax(460px, 1fr) 380px;
+}
+
+.workflow-list table,
+.inspector-panel table {
+  font-size: 12px;
+}
+
+.workflow-canvas-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.workflow-toolbar {
+  align-items: end;
+  padding: 10px;
+}
+
+.workflow-toolbar label {
+  display: grid;
+  min-width: 92px;
+  color: #4b5663;
+  font-size: 12px;
+  gap: 3px;
+}
+
+.workflow-toolbar label:first-child {
+  min-width: 240px;
+  flex: 1;
+}
+
+.workflow-mode-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e2e8ef;
+  padding: 0 10px 8px;
+}
+
+.inspector-panel .workflow-mode-tabs {
+  padding-top: 0;
+}
+
+.workflow-mode-tabs button {
+  border-color: transparent;
+  background: #f3f6f9;
+}
+
+.workflow-mode-tabs button.active {
+  background: #17202a;
+  color: #ffffff;
+}
+
+.workflow-graph,
+.workflow-json-editor {
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 0 0 8px 8px;
+  background: #f8fafc;
+}
+
+.workflow-json-editor {
+  height: 100%;
+  padding: 12px;
+}
+
+.vue-flow__node {
+  width: 150px;
+  border: 1px solid #34495e;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #2c3e50;
+  white-space: pre-line;
+  font-size: 12px;
+}
+
+.vue-flow__node.selected {
+  box-shadow: 0 0 0 2px #4ea1ff;
+}
+
+.vue-flow__node.node-success {
+  background: #dff5e7;
+}
+
+.vue-flow__node.node-danger {
+  background: #fde2df;
+}
+
+.vue-flow__node.node-running {
+  background: #fff2cc;
+}
+
+.vue-flow__node.node-active {
+  background: #e1efff;
+}
+
+.inspector-panel {
+  overflow: hidden;
+}
+
+.step-editor,
+.inspector-section {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.step-editor label {
+  display: grid;
+  color: #4b5663;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.step-editor textarea {
+  min-height: 74px;
+}

@@ -55,6 +55,7 @@ private:
   void removeWorkflowStep();
   WorkflowDefinition currentWorkflowDraft() const;
   void renderWorkflowGraph(const WorkflowDefinition &workflow);
+  void updateWorkflowGraphGeometry();
   void updateRunNowState();
   void updateWorkflowActionState();
   void requestRunSelected();

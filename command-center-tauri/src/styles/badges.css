@@ -1,0 +1,44 @@
+.badge {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.connection-pill {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.connection-pill.connected,
+.status-succeeded {
+  background: #dff5e7;
+  color: #1f6f49;
+}
+
+.connection-pill.waiting,
+.status-running {
+  background: #fff2cc;
+  color: #84620d;
+}
+
+.status-failed {
+  background: #fde2df;
+  color: #a33a2f;
+}
+
+.status-waiting {
+  background: #e1efff;
+  color: #1d5b9f;
+}
+
+.status-muted {
+  background: #eef2f6;
+  color: #66717e;
+}
