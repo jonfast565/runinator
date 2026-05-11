@@ -77,7 +77,7 @@ pub async fn save_task(
 pub async fn request_task_run(
     state: State<'_, CommandCenterState>,
     task_id: i64,
-) -> CommandResult<TaskResponse> {
+) -> CommandResult<Value> {
     post_empty(&state, &format!("tasks/{task_id}/request_run")).await
 }
 
@@ -200,7 +200,7 @@ pub async fn fetch_resource_records(
 pub async fn approve_approval(
     state: State<'_, CommandCenterState>,
     approval_id: i64,
-) -> CommandResult<TaskResponse> {
+) -> CommandResult<Value> {
     post_empty(&state, &format!("approvals/{approval_id}/approve")).await
 }
 
@@ -208,6 +208,6 @@ pub async fn approve_approval(
 pub async fn reject_approval(
     state: State<'_, CommandCenterState>,
     approval_id: i64,
-) -> CommandResult<TaskResponse> {
+) -> CommandResult<Value> {
     post_empty(&state, &format!("approvals/{approval_id}/reject")).await
 }

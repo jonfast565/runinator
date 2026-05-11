@@ -1,6 +1,7 @@
 <template>
   <section class="pane workflows-pane">
-    <div class="workflow-layout">
+    <SplitPane class="workflow-layout" storage-key="command-center.workflows.list-split" :initial-first-pct="20" :min-first="240" :min-second="720">
+      <template #first>
       <div class="panel workflow-list">
         <div class="panel-toolbar">
           <h2>Workflows</h2>
@@ -30,10 +31,19 @@
           </table>
         </DataTable>
       </div>
+      </template>
 
-      <WorkflowCanvas />
-      <WorkflowInspector />
-    </div>
+      <template #second>
+        <SplitPane class="workflow-main-split" storage-key="command-center.workflows.inspector-split" :initial-first-pct="64" :min-first="360" :min-second="320">
+          <template #first>
+            <WorkflowCanvas />
+          </template>
+          <template #second>
+            <WorkflowInspector />
+          </template>
+        </SplitPane>
+      </template>
+    </SplitPane>
   </section>
 </template>
 
@@ -41,6 +51,7 @@
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import DataTable from "../components/shared/DataTable.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../stores/workflows";
 

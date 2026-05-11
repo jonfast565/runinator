@@ -1,6 +1,7 @@
 <template>
   <section class="pane resources-pane">
-    <div class="split">
+    <SplitPane class="split" storage-key="command-center.resources.split" :initial-first-pct="58" :min-first="420" :min-second="340">
+      <template #first>
       <div class="panel">
         <div class="panel-toolbar">
           <h2>Resources</h2>
@@ -45,16 +46,20 @@
           </table>
         </DataTable>
       </div>
+      </template>
+      <template #second>
       <div class="panel details">
         <h2>Record Detail</h2>
         <pre class="output">{{ resourcesStore.selectedResourceRecord ? pretty(resourcesStore.selectedResourceRecord) : "" }}</pre>
       </div>
-    </div>
+      </template>
+    </SplitPane>
   </section>
 </template>
 
 <script setup lang="ts">
 import DataTable from "../components/shared/DataTable.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";
 import { pretty } from "../utils/format";

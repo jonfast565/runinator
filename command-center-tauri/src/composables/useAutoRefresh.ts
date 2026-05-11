@@ -13,6 +13,7 @@ export function useAutoRefresh() {
   const refreshTimer = window.setInterval(() => {
     if (!tasks.taskEditorOpen) {
       tasks.refreshTasks();
+      if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
       if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId);
       if (app.activeTab === "Resources") resources.refreshResources();
     }

@@ -13,6 +13,13 @@ body {
   margin: 0;
 }
 
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
 button,
 input,
 select,
@@ -56,6 +63,10 @@ textarea {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.json-section .json-textarea {
+  min-height: 120px;
 }
 
 .error {

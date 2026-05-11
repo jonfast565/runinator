@@ -10,10 +10,18 @@
       class="workflow-graph"
       :nodes="workflows.graphNodes"
       :edges="workflows.graphEdges"
-      fit-view-on-init
       @node-click="workflows.onGraphNodeClick"
       @node-drag-stop="workflows.onGraphNodeDragStop"
-    />
+      @connect="workflows.onGraphConnect"
+      @edges-change="workflows.onGraphEdgesChange"
+      delete-key-code="Delete"
+      :snap-to-grid="true"
+      :snap-grid="[15, 15]"
+    >
+      <template #node-workflow="nodeProps">
+        <WorkflowNode v-bind="nodeProps" />
+      </template>
+    </VueFlow>
     <JsonEditor
       v-show="workflows.workflowEditorMode === 'json'"
       v-model="workflows.workflowJson"
@@ -24,10 +32,30 @@
 </template>
 
 <script setup lang="ts">
-import { VueFlow } from "@vue-flow/core";
+import { onMounted, watch, nextTick } from "vue";
+import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../stores/workflows";
 import JsonEditor from "../shared/JsonEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
+import WorkflowNode from "./WorkflowNode.vue";
 
 const workflows = useWorkflowsStore();
+const { fitView, onPaneReady } = useVueFlow();
+
+async function recenter() {
+  await nextTick();
+  fitView();
+}
+
+onPaneReady(() => {
+  recenter();
+});
+
+watch(() => workflows.selectedWorkflowId, () => {
+  recenter();
+});
+
+watch(() => workflows.selectedWorkflowRunId, () => {
+  recenter();
+});
 </script>

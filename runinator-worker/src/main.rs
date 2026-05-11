@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use config::parse_config;
 use log::{error, info, warn};
 use runinator_api::{
-    AsyncApiClient, RunChunkPayload, RunStatusPayload, StaticLocator, TaskRunPayload,
+    AsyncApiClient, RunStatusPayload, StaticLocator, TaskRunPayload,
 };
 use runinator_broker::{Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker};
 use runinator_models::errors::{RuntimeError, SendableError};
@@ -213,17 +213,12 @@ async fn process_delivery(
 
     if task_result.success {
         if let Some(run_id) = command.run_id {
-            let chunk = RunChunkPayload {
-                stream: "log".into(),
-                content: format!(
-                    "Task {} completed successfully in {} ms",
-                    task.id.unwrap_or_default(),
-                    task_result.duration_ms()
-                ),
-            };
-            if let Err(err) = api_client.append_run_chunk(run_id, &chunk).await {
-                error!("Failed to append run {} chunk: {}", run_id, err);
-            }
+            sink.emit_log(format!(
+                "Task {} completed successfully in {} ms.",
+                task.id.unwrap_or_default(),
+                task_result.duration_ms()
+            ));
+
             let output_json = result
                 .execution_result
                 .as_ref()
@@ -265,15 +260,13 @@ async fn process_delivery(
         }
     } else {
         if let Some(run_id) = command.run_id {
-            let chunk = RunChunkPayload {
-                stream: "stderr".into(),
-                content: provider_message
-                    .clone()
-                    .unwrap_or_else(|| "Task failed without a provider message".into()),
-            };
-            if let Err(err) = api_client.append_run_chunk(run_id, &chunk).await {
-                error!("Failed to append run {} failure chunk: {}", run_id, err);
-            }
+            sink.emit_log(format!(
+                "Task {} failed after {} ms: {}.",
+                task.id.unwrap_or_default(),
+                task_result.duration_ms(),
+                provider_message.as_deref().unwrap_or("No error message")
+            ));
+
             let payload = RunStatusPayload {
                 status: result.status,
                 output_json: Some(json!({

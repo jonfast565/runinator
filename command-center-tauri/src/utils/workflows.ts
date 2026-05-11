@@ -1,4 +1,4 @@
-import type { Edge, Node } from "@vue-flow/core";
+import { MarkerType, type Edge, type Node } from "@vue-flow/core";
 import type { JsonRecord, WorkflowDefinition, WorkflowRunDetail } from "../types/models";
 import { statusClassForNode } from "./status";
 
@@ -14,8 +14,13 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
     const status = run?.status;
     return {
       id,
+      type: "workflow",
       position: { x: Number(position.x ?? 0), y: Number(position.y ?? 0) },
-      data: { label: `${id}\n${node.kind === "task" || !node.kind ? `Task ${node.task_id ?? ""}` : node.kind}${run ? `\n${run.status} a${run.attempt}` : ""}` },
+      data: {
+        label: `${id}\n${node.kind === "task" || !node.kind ? `Task ${node.task_id ?? ""}` : node.kind}${run ? `\n${run.status} a${run.attempt}` : ""}`,
+        running: status === "running" || status === "queued",
+        status
+      },
       class: statusClassForNode(status)
     };
   });
@@ -32,12 +37,29 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
     for (const key of ["next", "on_success", "on_failure", "on_timeout", "on_reject"]) {
       const target = transitions[key];
       if (target && nodeIds.has(String(target))) {
-        edges.push({ id: `${source}-${key}-${target}`, source, target: String(target), label: key });
+        edges.push({
+          id: `${source}-${key}-${target}`,
+          source,
+          target: String(target),
+          label: key,
+          updatable: true,
+          markerEnd: MarkerType.ArrowClosed,
+          events: {
+            // Vue Flow doesn't automatically handle deletion on backspace/delete key unless we configure it,
+            // but we can add a delete button or use the built-in edges-change.
+          }
+        });
       }
     }
     for (const branch of transitions.branches ?? []) {
       if (branch.target && nodeIds.has(String(branch.target))) {
-        edges.push({ id: `${source}-branch-${branch.target}`, source, target: String(branch.target), label: branch.label ?? "branch" });
+        edges.push({
+          id: `${source}-branch-${branch.target}`,
+          source,
+          target: String(branch.target),
+          label: branch.label ?? "branch",
+          markerEnd: MarkerType.ArrowClosed
+        });
       }
     }
   }

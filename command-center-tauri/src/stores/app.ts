@@ -7,6 +7,8 @@ export const tabs: AppTab[] = ["Tasks", "Runs", "Workflows", "Resources"];
 export const useAppStore = defineStore("app", () => {
   const activeTab = ref<AppTab>("Tasks");
   const serviceUrl = ref<string | null>(null);
+  const backendReachable = ref(false);
+  const initialLoading = ref(true);
   const loading = ref(false);
   const opLabel = ref("");
   const statusText = ref("");
@@ -22,6 +24,8 @@ export const useAppStore = defineStore("app", () => {
     if (loading.value || opLabel.value) return `${opLabel.value || "Working"}...`;
     return statusText.value || "Ready.";
   });
+  const serviceLabel = computed(() => serviceUrl.value ?? (backendReachable.value ? "Service reachable" : "No service discovered"));
+  const serviceConnected = computed(() => Boolean(serviceUrl.value || backendReachable.value));
 
   function setStatus(text: string) {
     statusText.value = text;
@@ -34,6 +38,17 @@ export const useAppStore = defineStore("app", () => {
   function setError(text: string) {
     errorText.value = text;
     statusText.value = "";
+    initialLoading.value = false;
+  }
+
+  function markBackendReachable() {
+    backendReachable.value = true;
+  }
+
+  function setServiceUrl(url: string | null | undefined) {
+    if (!url) return;
+    serviceUrl.value = url;
+    markBackendReachable();
   }
 
   async function runOperation<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -41,7 +56,9 @@ export const useAppStore = defineStore("app", () => {
     opLabel.value = label;
     errorText.value = "";
     try {
-      return await operation();
+      const result = await operation();
+      markBackendReachable();
+      return result;
     } catch (error) {
       setError(String(error));
       throw error;
@@ -58,6 +75,8 @@ export const useAppStore = defineStore("app", () => {
   return {
     activeTab,
     serviceUrl,
+    backendReachable,
+    initialLoading,
     loading,
     opLabel,
     statusText,
@@ -67,8 +86,12 @@ export const useAppStore = defineStore("app", () => {
     normalizedSearch,
     lastRefreshText,
     statusLine,
+    serviceLabel,
+    serviceConnected,
     setStatus,
     setError,
+    markBackendReachable,
+    setServiceUrl,
     runOperation,
     dispose
   };

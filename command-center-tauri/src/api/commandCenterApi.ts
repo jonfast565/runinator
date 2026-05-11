@@ -38,7 +38,7 @@ export async function saveTask(task: ScheduledTask, creating: boolean) {
 }
 
 export async function requestTaskRun(taskId: number) {
-  return command<TaskResponse>("request_task_run", { taskId });
+  return command<any>("request_task_run", { taskId });
 }
 
 export async function fetchTaskRuns(taskId: number) {
@@ -78,9 +78,9 @@ export async function fetchResourceRecords(endpoint: string) {
 }
 
 export async function approveApproval(approvalId: number) {
-  return command<TaskResponse>("approve_approval", { approvalId });
+  return command<any>("approve_approval", { approvalId });
 }
 
 export async function rejectApproval(approvalId: number) {
-  return command<TaskResponse>("reject_approval", { approvalId });
+  return command<any>("reject_approval", { approvalId });
 }

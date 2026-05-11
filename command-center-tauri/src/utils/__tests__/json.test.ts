@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseObject, parseRequiredObject } from "../json";
+import { reactive } from "vue";
+import { cloneJson, parseObject, parseRequiredObject } from "../json";
 
 describe("json utils", () => {
   it("parses JSON objects", () => {
@@ -12,5 +13,12 @@ describe("json utils", () => {
 
   it("falls back for invalid JSON", () => {
     expect(parseObject("{", { fallback: true })).toEqual({ fallback: true });
+  });
+
+  it("clones reactive JSON-compatible values", () => {
+    const source = reactive({ definition: { nodes: [{ id: "start" }] } });
+    const cloned = cloneJson(source);
+    expect(cloned).toEqual({ definition: { nodes: [{ id: "start" }] } });
+    expect(cloned).not.toBe(source);
   });
 });

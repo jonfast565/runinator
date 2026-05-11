@@ -39,14 +39,18 @@ export const useResourcesStore = defineStore("resources", () => {
     selectedResourceRecord.value = resourceRecords.value[0] ?? null;
   }
 
-  async function resolveApproval(action: "approve" | "reject") {
-    if (!canResolveApproval.value) return app.setError("No approval selected");
-    const approvalId = Number(selectedResourceRecord.value?.id);
+  async function handleApprovalAction(approvalId: number, action: "approve" | "reject") {
     const response = await app.runOperation(`${action === "approve" ? "Approving" : "Rejecting"} approval`, () =>
       action === "approve" ? approveApproval(approvalId) : rejectApproval(approvalId)
     );
-    app.setStatus(response.message);
+    app.setStatus(response.message || `Approval ${action}d`);
     await refreshResources();
+  }
+
+  async function resolveApproval(action: "approve" | "reject") {
+    if (!canResolveApproval.value) return app.setError("No approval selected");
+    const approvalId = Number(selectedResourceRecord.value?.id);
+    await handleApprovalAction(approvalId, action);
   }
 
   function recordType(record: JsonRecord) {
@@ -72,6 +76,7 @@ export const useResourcesStore = defineStore("resources", () => {
     canResolveApproval,
     filteredResourceRecords,
     refreshResources,
+    handleApprovalAction,
     resolveApproval,
     recordType,
     recordSummary,

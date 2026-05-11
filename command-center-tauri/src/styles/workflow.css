@@ -1,8 +1,24 @@
 .workflow-layout {
   display: grid;
   height: 100%;
-  gap: 10px;
-  grid-template-columns: 260px minmax(460px, 1fr) 380px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workflow-list {
+  overflow: auto;
+}
+
+.workflow-main-split {
+  height: 100%;
+}
+
+.workflow-canvas-panel {
+  min-width: 360px;
+}
+
+.inspector-panel {
+  overflow: auto;
 }
 
 .workflow-list table,
@@ -82,20 +98,34 @@
   box-shadow: 0 0 0 2px #4ea1ff;
 }
 
-.vue-flow__node.node-success {
+.vue-flow__node.node-success,
+.workflow-node-content.node-success {
   background: #dff5e7;
+  border-color: #2ecc71;
 }
 
-.vue-flow__node.node-danger {
+.vue-flow__node.node-danger,
+.workflow-node-content.node-danger {
   background: #fde2df;
+  border-color: #e74c3c;
 }
 
-.vue-flow__node.node-running {
+.vue-flow__node.node-running,
+.workflow-node-content.node-running {
   background: #fff2cc;
+  border-color: #f39c12;
 }
 
-.vue-flow__node.node-active {
+.vue-flow__node.node-warning,
+.workflow-node-content.node-warning {
+  background: #fef9e7;
+  border-color: #f1c40f;
+}
+
+.vue-flow__node.node-active,
+.workflow-node-content.node-active {
   background: #e1efff;
+  border-color: #3498db;
 }
 
 .inspector-panel {
@@ -117,6 +147,10 @@
   color: #4b5663;
   font-size: 12px;
   gap: 4px;
+}
+
+.step-editor .json-textarea {
+  min-height: 150px;
 }
 
 .step-editor textarea {

@@ -46,22 +46,8 @@ impl RunOutputSink {
             return;
         };
 
-        for chunk in &result.chunks {
-            if let Err(err) = self
-                .api_client
-                .append_run_chunk(
-                    run_id,
-                    &RunChunkPayload {
-                        stream: chunk.stream.clone(),
-                        content: chunk.content.clone(),
-                    },
-                )
-                .await
-            {
-                error!("Failed to append run {} result chunk: {}", run_id, err);
-            }
-        }
-
+        // We only persist artifacts because chunks are typically streamed via events.jsonl
+        // If we also persisted chunks here, they would be duplicated for most providers.
         for artifact in &result.artifacts {
             if let Err(err) = self
                 .api_client
@@ -80,6 +66,10 @@ impl RunOutputSink {
                 error!("Failed to add run {} result artifact: {}", run_id, err);
             }
         }
+    }
+
+    pub fn emit_log(&self, content: String) {
+        self.emit_chunk("log".into(), content);
     }
 
     fn emit_chunk(&self, stream: String, content: String) {

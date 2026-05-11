@@ -67,7 +67,44 @@
   display: grid;
   min-width: 0;
   min-height: 0;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
   grid-template-rows: auto auto 1fr;
+}
+
+.app-loader-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(2px);
+}
+
+.app-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-loader-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #4ea1ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .topbar,
@@ -126,10 +163,13 @@
 
 main {
   min-height: 0;
+  overflow: hidden;
 }
 
 .pane {
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 10px;
 }
 
@@ -137,8 +177,58 @@ main {
 .tasks-dashboard {
   display: grid;
   height: 100%;
-  gap: 10px;
-  grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-pane {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-section {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-section > .panel,
+.split-section > .split-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-handle {
+  position: relative;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.split-handle::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: #c8d2dd;
+  content: "";
+  transition:
+    background 120ms ease,
+    width 120ms ease,
+    left 120ms ease;
+}
+
+.split-handle:hover::before,
+.split-handle:focus-visible::before {
+  left: 3px;
+  width: 4px;
+  background: #4ea1ff;
 }
 
 .panel {
@@ -151,6 +241,7 @@ main {
   border-radius: 8px;
   background: #ffffff;
   padding: 10px;
+  overflow: hidden;
 }
 
 .panel h2 {
@@ -179,7 +270,7 @@ main {
 }
 
 .details {
-  overflow: auto;
+  overflow: hidden;
 }
 
 .output {
@@ -248,7 +339,12 @@ main {
   .workflow-layout,
   .split,
   .tasks-dashboard {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .split-handle {
+    display: none;
   }
 
   .workflow-list,

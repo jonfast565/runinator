@@ -1,6 +1,7 @@
 <template>
   <section class="pane tasks-pane">
-    <div class="tasks-dashboard">
+    <SplitPane class="tasks-dashboard" storage-key="command-center.tasks.split" :initial-first-pct="56" :min-first="420" :min-second="360">
+      <template #first>
       <div class="panel task-list-panel">
         <div class="panel-toolbar">
           <h2>Tasks</h2>
@@ -40,7 +41,9 @@
           </table>
         </DataTable>
       </div>
+      </template>
 
+      <template #second>
       <div class="panel selected-detail-panel">
         <div class="detail-header">
           <div>
@@ -52,11 +55,12 @@
         <div class="metrics-row">
           <div><span>Cron</span><strong>{{ tasks.selectedTask?.cron_schedule ?? "-" }}</strong></div>
           <div><span>Next</span><strong>{{ formatDate(tasks.selectedTask?.next_execution) }}</strong></div>
-          <div><span>Runs</span><strong>{{ tasks.runs.length }}</strong></div>
+          <div><span>Runs</span><strong>{{ tasks.recentRuns.length }}</strong></div>
         </div>
-        <RunTable :runs="tasks.runs" :selected-run-id="tasks.selectedRunId" @select="tasks.selectRun" />
+        <RunTable :runs="tasks.recentRuns" :selected-run-id="tasks.selectedRunId" @select="tasks.selectRun" />
       </div>
-    </div>
+      </template>
+    </SplitPane>
   </section>
 </template>
 
@@ -65,6 +69,7 @@ import { useTasksStore } from "../stores/tasks";
 import { formatDate } from "../utils/format";
 import DataTable from "../components/shared/DataTable.vue";
 import RunTable from "../components/shared/RunTable.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 
 const tasks = useTasksStore();

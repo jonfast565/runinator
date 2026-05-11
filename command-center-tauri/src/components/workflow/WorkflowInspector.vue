@@ -10,7 +10,7 @@
 
     <div v-show="workflows.workflowInspectorMode === 'runs'" class="inspector-section">
       <h2>Run History</h2>
-      <RunTable :runs="workflows.workflowRuns" :selected-run-id="workflows.selectedWorkflowRunId" compact @select="workflows.selectWorkflowRun" />
+      <RunTable :runs="workflows.recentWorkflowRuns" :selected-run-id="workflows.selectedWorkflowRunId" compact @select="workflows.selectWorkflowRun" />
     </div>
 
     <WorkflowRunDetail v-show="workflows.workflowInspectorMode === 'detail'" />

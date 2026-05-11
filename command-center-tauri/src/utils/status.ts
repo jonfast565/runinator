@@ -15,9 +15,10 @@ export function statusBadgeClass(status?: string) {
 }
 
 export function statusClassForNode(status?: string) {
-  if (status === "succeeded") return "node-success";
-  if (["failed", "timed_out", "canceled"].includes(status ?? "")) return "node-danger";
+  if (["succeeded", "passed", "approved"].includes(status ?? "")) return "node-success";
+  if (["failed", "rejected", "timed_out", "canceled", "blocked"].includes(status ?? "")) return "node-danger";
   if (status === "running") return "node-running";
+  if (["waiting", "approval_required", "approval-required", "pending"].includes(status ?? "")) return "node-warning";
   if (status) return "node-active";
   return "";
 }

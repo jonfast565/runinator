@@ -9,7 +9,7 @@ import {
   saveTask
 } from "../api/commandCenterApi";
 import type { RunArtifact, RunChunk, RunSummary, ScheduledTask } from "../types/models";
-import { parseObject } from "../utils/json";
+import { cloneJson, parseObject } from "../utils/json";
 import { pretty } from "../utils/format";
 import { validateTask } from "../utils/tasks";
 import { useAppStore } from "./app";
@@ -43,11 +43,23 @@ export const useTasksStore = defineStore("tasks", () => {
     );
   });
 
+  const recentRuns = computed(() => {
+    const query = app.normalizedSearch;
+    let list = runs.value;
+    if (query) {
+      list = list.filter(r => 
+        String(r.id).includes(query) || 
+        (r.status && r.status.toLowerCase().includes(query))
+      );
+    }
+    return list.slice(0, 50);
+  });
+
   async function refreshTasks() {
     const loaded = await app.runOperation("Refreshing tasks", () => fetchTasks()).catch(() => []);
     tasks.value = loaded;
     if (!selectedTaskId.value && loaded.length > 0) selectedTaskId.value = loaded[0].id;
-    if (selectedTaskId.value) await refreshRunsForSelectedTask();
+    if (selectedTaskId.value && !taskEditorOpen.value) await refreshRunsForSelectedTask();
     app.setStatus("Refreshed.");
   }
 
@@ -68,21 +80,31 @@ export const useTasksStore = defineStore("tasks", () => {
 
   async function selectRun(run: RunSummary) {
     selectedRunId.value = run.id;
-    chunks.value = await app.runOperation("Loading chunks", () => fetchRunChunks(run.id)).catch(() => []);
-    artifacts.value = await app.runOperation("Loading artifacts", () => fetchRunArtifacts(run.id)).catch(() => []);
+    const [loadedChunks, loadedArtifacts] = await Promise.all([
+      app.runOperation("Loading chunks", () => fetchRunChunks(run.id)).catch(() => []),
+      app.runOperation("Loading artifacts", () => fetchRunArtifacts(run.id)).catch(() => [])
+    ]);
+    chunks.value = loadedChunks;
+    artifacts.value = loadedArtifacts;
   }
 
-  function selectTask(task: ScheduledTask) {
+  async function selectTask(task: ScheduledTask) {
+    if (taskEditorOpen.value && selectedTaskId.value !== task.id) {
+       // Optionally warn or just don't allow changing task if editor is open and it's a different task
+       // But usually the UI should prevent this. 
+       // For now, let's just allow it but maybe it will overwrite the editor.
+       // The user said "if you make changes, don't overwrite with refreshes".
+    }
     selectedTaskId.value = task.id;
-    refreshRunsForSelectedTask();
+    return refreshRunsForSelectedTask();
   }
 
   async function runSelectedTask() {
     const task = selectedTask.value;
     if (!task?.id || !task.enabled) return app.setError(task ? "Task is disabled" : "No task selected");
     const response = await app.runOperation(`Running ${task.name}`, () => requestTaskRun(task.id!));
-    app.setStatus(`${response.success ? "OK" : "ERR"}: ${response.message}`);
-    await refreshTasks();
+    app.setStatus(`${response.success === false ? "ERR" : "OK"}: ${response.message || 'Run requested'}`);
+    await refreshRunsForSelectedTask();
   }
 
   function openNewTask() {
@@ -100,7 +122,7 @@ export const useTasksStore = defineStore("tasks", () => {
   }
 
   function openTask(task: ScheduledTask) {
-    Object.assign(taskDraft, structuredClone(task));
+    Object.assign(taskDraft, cloneJson(task));
     taskJson.input_schema = pretty(task.input_schema ?? {});
     taskJson.default_parameters = pretty(task.default_parameters ?? {});
     taskJson.metadata = pretty(task.metadata ?? {});
@@ -119,7 +141,7 @@ export const useTasksStore = defineStore("tasks", () => {
       taskEditorError.value = error;
       return;
     }
-    const task = structuredClone(taskDraft);
+    const task = cloneJson(taskDraft);
     task.input_schema = parseObject(taskJson.input_schema, {});
     task.default_parameters = parseObject(taskJson.default_parameters, {});
     task.metadata = parseObject(taskJson.metadata, {});
@@ -127,12 +149,12 @@ export const useTasksStore = defineStore("tasks", () => {
     const response = await app.runOperation(editingTaskCreating.value ? "Creating task" : "Updating task", () =>
       saveTask(task, editingTaskCreating.value)
     );
-    if (!response.success) {
+    if (response.success === false) {
       taskEditorError.value = response.message;
       return;
     }
     closeTaskEditor();
-    app.setStatus(`OK: ${response.message}`);
+    app.setStatus(`OK: ${response.message || 'Task saved'}`);
     await refreshTasks();
   }
 
@@ -155,6 +177,7 @@ export const useTasksStore = defineStore("tasks", () => {
   }
 
   return {
+    recentRuns,
     tasks,
     selectedTaskId,
     runs,

@@ -1,10 +1,13 @@
 <template>
   <section class="pane runs-pane">
-    <div class="split">
+    <SplitPane class="split" storage-key="command-center.runs.split" :initial-first-pct="42" :min-first="340" :min-second="380">
+      <template #first>
       <div class="panel">
         <h2>Runs</h2>
-        <RunTable :runs="tasks.runs" :selected-run-id="tasks.selectedRunId" @select="tasks.selectRun" />
+        <RunTable :runs="tasks.recentRuns" :selected-run-id="tasks.selectedRunId" @select="tasks.selectRun" />
       </div>
+      </template>
+      <template #second>
       <div class="panel details">
         <h2>Run Output Chunks</h2>
         <pre class="output">{{ tasks.runOutput }}</pre>
@@ -32,12 +35,14 @@
           </table>
         </div>
       </div>
-    </div>
+      </template>
+    </SplitPane>
   </section>
 </template>
 
 <script setup lang="ts">
 import RunTable from "../components/shared/RunTable.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import { useTasksStore } from "../stores/tasks";
 import { formatDate } from "../utils/format";
 

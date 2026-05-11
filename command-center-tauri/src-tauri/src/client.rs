@@ -17,7 +17,7 @@ where
     Ok(response.json::<T>().await?)
 }
 
-pub async fn post_empty(state: &CommandCenterState, path: &str) -> CommandResult<TaskResponse> {
+pub async fn post_empty(state: &CommandCenterState, path: &str) -> CommandResult<Value> {
     let url = build_state_url(state, path).await?;
     let response = state
         .client
@@ -26,7 +26,7 @@ pub async fn post_empty(state: &CommandCenterState, path: &str) -> CommandResult
         .send()
         .await?;
     let response = handle_response(url, response).await?;
-    Ok(response.json::<TaskResponse>().await?)
+    Ok(response.json::<Value>().await?)
 }
 
 pub async fn build_state_url(state: &CommandCenterState, path: &str) -> CommandResult<Url> {

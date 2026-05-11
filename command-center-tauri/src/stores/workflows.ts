@@ -11,9 +11,10 @@ import {
 } from "../api/commandCenterApi";
 import type { JsonRecord, RunArtifact, RunChunk, RunSummary, WorkflowDefinition, WorkflowRunDetail } from "../types/models";
 import { pretty } from "../utils/format";
-import { parseObject, parseRequiredObject } from "../utils/json";
+import { cloneJson, parseObject, parseRequiredObject } from "../utils/json";
 import { buildGraphEdges, buildGraphNodes } from "../utils/workflows";
 import { useAppStore } from "./app";
+import { useResourcesStore } from "./resources";
 import { useTasksStore } from "./tasks";
 
 export const useWorkflowsStore = defineStore("workflows", () => {
@@ -25,6 +26,32 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowEditorMode = ref<"graph" | "json">("graph");
   const workflowInspectorMode = ref<"step" | "runs" | "detail">("step");
   const workflowRuns = ref<RunSummary[]>([]);
+  const workflowRunsByRunId = computed(() => {
+    const groups: Record<number, RunSummary[]> = {};
+    for (const run of workflowRuns.value) {
+      const runId = run.id;
+      if (!groups[runId]) groups[runId] = [];
+      groups[runId].push(run);
+    }
+    return groups;
+  });
+  const recentWorkflowRuns = computed(() => {
+    // Only return the first instance of each run ID to avoid duplicates if backend returns them separately (though unlikely for workflow runs)
+    // Actually, task runs have multiple for same task, but workflow runs should be unique.
+    // If user meant "concurrent runs", they might share some ID? No, each run has unique ID.
+    // The issue says "completed workflows are not divided up by runs (say I ran the workflow two times concurrently)".
+    // This implies the list might be confusing if multiple runs exist.
+    
+    const query = app.normalizedSearch;
+    let list = workflowRuns.value;
+    if (query) {
+      list = list.filter(r => 
+        String(r.id).includes(query) || 
+        (r.status && r.status.toLowerCase().includes(query))
+      );
+    }
+    return list.slice(0, 50); // Limit to 50 recent runs
+  });
   const selectedWorkflowRunId = ref(0);
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
   const workflowNodeDetailExtra = ref("");
@@ -38,6 +65,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     parameters_json: "{}",
     transitions_json: "{}"
   });
+
+  const isDirty = ref(false);
 
   const app = useAppStore();
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
@@ -75,17 +104,42 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflows.value = await app.runOperation("Refreshing workflows", () => fetchWorkflows()).catch(() => []);
     if (!selectedWorkflowId.value && workflows.value.length > 0) selectedWorkflowId.value = workflows.value[0].id;
     const workflow = workflows.value.find((item) => item.id === selectedWorkflowId.value) ?? workflows.value[0];
-    if (workflow) selectWorkflow(workflow);
+    if (workflow && !isDirty.value) await selectWorkflow(workflow);
+  }
+
+  function getTransition(key: string): string {
+    const transitions = parseObject(stepEditor.transitions_json, {});
+    return transitions[key] ?? "";
+  }
+
+  function setTransition(key: string, value: string) {
+    const transitions = parseObject(stepEditor.transitions_json, {});
+    if (value) {
+      transitions[key] = value;
+    } else {
+      delete transitions[key];
+    }
+    stepEditor.transitions_json = pretty(transitions);
+    isDirty.value = true;
   }
 
   function selectWorkflow(workflow: WorkflowDefinition) {
+    if (isDirty.value && selectedWorkflowId.value !== workflow.id) {
+      // If we're changing workflows while dirty, we might want to warn,
+      // but if refreshWorkflows calls this, we already check !isDirty.
+    }
     selectedWorkflowId.value = workflow.id;
-    Object.assign(workflowDraft, structuredClone(workflow));
+    Object.assign(workflowDraft, cloneJson(workflow));
+    if (!workflowDraft.definition) workflowDraft.definition = { nodes: [] };
+    if (!workflowDraft.definition.nodes) workflowDraft.definition.nodes = [];
+    
     workflowConcurrency.value = Number(workflowDraft.definition?.concurrency ?? 1);
     workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
     selectedStepId.value = "";
     workflowRunDetail.value = null;
-    if (workflow.id) fetchWorkflowRunsForSelected(workflow.id);
+    isDirty.value = false;
+    if (workflow.id) return fetchWorkflowRunsForSelected(workflow.id);
+    return Promise.resolve();
   }
 
   function addWorkflow() {
@@ -99,6 +153,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     const saved = await app.runOperation("Saving workflow", () => saveWorkflow(workflowDraft));
     app.setStatus(`Workflow saved: ${saved.name}`);
+    isDirty.value = false;
     selectedWorkflowId.value = saved.id;
     await refreshWorkflows();
   }
@@ -122,13 +177,24 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   async function selectWorkflowRun(run: RunSummary) {
     selectedWorkflowRunId.value = run.id;
-    await fetchWorkflowRunDetail(run.id);
+    return fetchWorkflowRunDetail(run.id);
   }
 
   async function fetchWorkflowRunDetail(workflowRunId: number) {
     workflowRunDetail.value = await app.runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId)).catch(() => null);
     workflowNodeDetailExtra.value = "";
-    if (workflowRunDetail.value) workflowInspectorMode.value = "detail";
+    if (workflowRunDetail.value) {
+      workflowInspectorMode.value = "detail";
+
+      const resources = useResourcesStore();
+      const hasWaiting = workflowRunDetail.value.nodes.some(n => 
+        n.status === "waiting" || n.status === "approval_required" || n.status === "pending"
+      );
+      if (hasWaiting) {
+        // Run in background to not block the detail view
+        resources.refreshResources();
+      }
+    }
   }
 
   function addWorkflowStep() {
@@ -188,7 +254,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.timeout_seconds = Number(node.timeout_seconds ?? 0);
     stepEditor.parameters_json = pretty(node.parameters ?? {});
     stepEditor.transitions_json = pretty(node.transitions ?? {});
-    workflowInspectorMode.value = "step";
+    // If we're in detail mode, stay there, otherwise switch to step
+    if (workflowInspectorMode.value !== "detail") {
+      workflowInspectorMode.value = "step";
+    }
     updateSelectedWorkflowNodeDetail();
   }
 
@@ -228,6 +297,59 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     syncWorkflowDraftToJson();
   }
 
+  function onGraphConnect(connection: any) {
+    const { source, target } = connection;
+    if (!source || !target) return;
+    const nodes = ensureWorkflowNodes();
+    const sourceNode = nodes.find((n: JsonRecord) => n.id === source);
+    if (!sourceNode) return;
+    sourceNode.transitions = sourceNode.transitions ?? {};
+    // Default to 'next' if it's empty, otherwise don't overwrite existing unless they are different?
+    // Actually, Vue Flow 'connect' usually means creating a new edge.
+    // We'll use 'next' as the default transition type.
+    if (!sourceNode.transitions.next) {
+      sourceNode.transitions.next = target;
+    } else if (!sourceNode.transitions.on_success) {
+      sourceNode.transitions.on_success = target;
+    } else {
+      // If next and on_success are taken, maybe use a generic transition if it were supported,
+      // but here we stick to the known keys.
+      sourceNode.transitions.next = target;
+    }
+    syncWorkflowDraftToJson();
+    if (selectedStepId.value === source) {
+      populateStepEditor(source);
+    }
+  }
+
+  function onGraphEdgesChange(changes: any[]) {
+    let changed = false;
+    for (const change of changes) {
+      if (change.type === "remove") {
+        const edgeId = change.id;
+        // Edge ID is constructed as `${source}-${key}-${target}` in utils/workflows.ts
+        const parts = edgeId.split("-");
+        if (parts.length >= 3) {
+          const source = parts[0];
+          const key = parts[1];
+          const target = parts[2];
+          const nodes = ensureWorkflowNodes();
+          const sourceNode = nodes.find((n: JsonRecord) => n.id === source);
+          if (sourceNode && sourceNode.transitions && sourceNode.transitions[key] === target) {
+            delete sourceNode.transitions[key];
+            changed = true;
+          }
+        }
+      }
+    }
+    if (changed) {
+      syncWorkflowDraftToJson();
+      if (selectedStepId.value) {
+        populateStepEditor(selectedStepId.value);
+      }
+    }
+  }
+
   function syncWorkflowJson(): boolean {
     const parsed = parseRequiredObject(workflowJson.value);
     if (!parsed) {
@@ -236,12 +358,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     workflowDraft.definition = parsed;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
+    isDirty.value = true;
     return true;
   }
 
   function syncWorkflowDraftToJson() {
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     workflowJson.value = pretty(workflowDraft.definition);
+    isDirty.value = true;
   }
 
   function ensureWorkflowNodes(): JsonRecord[] {
@@ -258,6 +382,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   return {
+    recentWorkflowRuns,
+    getTransition,
+    setTransition,
     workflows,
     selectedWorkflowId,
     workflowDraft,
@@ -294,6 +421,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     updateSelectedWorkflowNodeDetail,
     onGraphNodeClick,
     onGraphNodeDragStop,
+    onGraphConnect,
+    onGraphEdgesChange,
+    isDirty,
     syncWorkflowJson,
     syncWorkflowDraftToJson,
     ensureWorkflowNodes,
