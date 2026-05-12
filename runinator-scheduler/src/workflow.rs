@@ -6,11 +6,11 @@ use runinator_models::{
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::{api::SchedulerApi, context::latest_node_run, nodes::*};
+use crate::{api::WorkflowSchedulerApi, context::latest_node_run, nodes::*};
 
 pub async fn run_workflow_iteration(
     broker: &dyn Broker,
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
 ) -> Result<(), SendableError> {
     for status in [
         WorkflowStatus::Queued,
@@ -28,7 +28,7 @@ pub async fn run_workflow_iteration(
 
 pub async fn process_workflow_run(
     broker: &dyn Broker,
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: WorkflowRun,
 ) -> Result<(), SendableError> {
     let workflow = api.fetch_workflow(workflow_run.workflow_id).await?;
@@ -68,12 +68,31 @@ pub async fn process_workflow_run(
         WorkflowNodeKind::Condition => {
             process_condition_node(api, &workflow_run, node, &node_runs).await?
         }
+        WorkflowNodeKind::Switch => {
+            process_switch_node(api, &workflow_run, node, &node_runs).await?
+        }
         WorkflowNodeKind::Approval => {
             process_approval_node(api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::Loop => {
             process_loop_node(api, &workflow_run, node, latest, &node_runs).await?
         }
+        WorkflowNodeKind::Parallel => {
+            process_parallel_node(api, &workflow_run, node, latest).await?
+        }
+        WorkflowNodeKind::Join => {
+            process_join_node(api, &workflow_run, node, latest, &node_runs).await?
+        }
+        WorkflowNodeKind::Try => {
+            process_try_node(api, &workflow_run, node, latest, &node_runs).await?
+        }
+        WorkflowNodeKind::Map => {
+            process_map_node(api, &workflow_run, node, latest, &node_runs).await?
+        }
+        WorkflowNodeKind::Race => {
+            process_race_node(api, &workflow_run, node, latest, &node_runs).await?
+        }
+        WorkflowNodeKind::Emit => process_emit_node(api, &workflow_run, node, &node_runs).await?,
         WorkflowNodeKind::Subflow => {
             process_subflow_node(api, &workflow_run, node, latest, &node_runs).await?
         }
@@ -109,7 +128,7 @@ pub async fn process_workflow_run(
 }
 
 async fn process_start_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -138,7 +157,7 @@ async fn process_start_node(
 }
 
 async fn ensure_completed_node_run(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,

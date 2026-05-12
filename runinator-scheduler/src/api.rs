@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;
 use runinator_api::{AsyncApiClient, TaskRunPayload};
@@ -12,6 +13,87 @@ use runinator_models::{
 use serde_json::Value;
 
 use crate::worker_comm::WorkerManager;
+
+#[async_trait]
+pub trait WorkflowSchedulerApi: Send + Sync {
+    async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError>;
+
+    async fn create_workflow_task_run(
+        &self,
+        task_id: i64,
+        workflow_run_id: i64,
+        workflow_node_id: String,
+        parameters: Value,
+    ) -> Result<RunSummary, SendableError>;
+
+    async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError>;
+
+    async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition, SendableError>;
+
+    async fn create_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+    ) -> Result<WorkflowRun, SendableError>;
+
+    async fn fetch_workflow_runs_by_status(
+        &self,
+        status: WorkflowStatus,
+    ) -> Result<Vec<WorkflowRun>, SendableError>;
+
+    async fn update_workflow_run(
+        &self,
+        workflow_run_id: i64,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), SendableError>;
+
+    async fn fetch_workflow_run(
+        &self,
+        workflow_run_id: i64,
+    ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>), SendableError>;
+
+    async fn create_workflow_node_run(
+        &self,
+        workflow_run_id: i64,
+        node_id: &str,
+        parameters: Value,
+    ) -> Result<WorkflowNodeRun, SendableError>;
+
+    async fn update_workflow_node_run(
+        &self,
+        node_run_id: i64,
+        status: WorkflowStatus,
+        task_run_id: Option<i64>,
+        attempt: Option<i64>,
+        parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
+        transition_reason: Option<String>,
+        message: Option<String>,
+    ) -> Result<(), SendableError>;
+
+    async fn create_automation_record(
+        &self,
+        path: &str,
+        record: Value,
+    ) -> Result<Value, SendableError>;
+
+    async fn fetch_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+    ) -> Result<Option<Value>, SendableError>;
+
+    async fn put_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        result: Value,
+    ) -> Result<Value, SendableError>;
+}
 
 #[derive(Clone)]
 pub struct SchedulerApi {
@@ -264,5 +346,139 @@ impl SchedulerApi {
             .put_idempotency_key(scope, key, result)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
+    }
+}
+
+#[async_trait]
+impl WorkflowSchedulerApi for SchedulerApi {
+    async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
+        SchedulerApi::fetch_tasks(self).await
+    }
+
+    async fn create_workflow_task_run(
+        &self,
+        task_id: i64,
+        workflow_run_id: i64,
+        workflow_node_id: String,
+        parameters: Value,
+    ) -> Result<RunSummary, SendableError> {
+        SchedulerApi::create_workflow_task_run(
+            self,
+            task_id,
+            workflow_run_id,
+            workflow_node_id,
+            parameters,
+        )
+        .await
+    }
+
+    async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError> {
+        SchedulerApi::fetch_run(self, run_id).await
+    }
+
+    async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition, SendableError> {
+        SchedulerApi::fetch_workflow(self, workflow_id).await
+    }
+
+    async fn create_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+    ) -> Result<WorkflowRun, SendableError> {
+        SchedulerApi::create_workflow_run(self, workflow_id, parameters).await
+    }
+
+    async fn fetch_workflow_runs_by_status(
+        &self,
+        status: WorkflowStatus,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        SchedulerApi::fetch_workflow_runs_by_status(self, status).await
+    }
+
+    async fn update_workflow_run(
+        &self,
+        workflow_run_id: i64,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::update_workflow_run(
+            self,
+            workflow_run_id,
+            status,
+            active_node_id,
+            state,
+            message,
+        )
+        .await
+    }
+
+    async fn fetch_workflow_run(
+        &self,
+        workflow_run_id: i64,
+    ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>), SendableError> {
+        SchedulerApi::fetch_workflow_run(self, workflow_run_id).await
+    }
+
+    async fn create_workflow_node_run(
+        &self,
+        workflow_run_id: i64,
+        node_id: &str,
+        parameters: Value,
+    ) -> Result<WorkflowNodeRun, SendableError> {
+        SchedulerApi::create_workflow_node_run(self, workflow_run_id, node_id, parameters).await
+    }
+
+    async fn update_workflow_node_run(
+        &self,
+        node_run_id: i64,
+        status: WorkflowStatus,
+        task_run_id: Option<i64>,
+        attempt: Option<i64>,
+        parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
+        transition_reason: Option<String>,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::update_workflow_node_run(
+            self,
+            node_run_id,
+            status,
+            task_run_id,
+            attempt,
+            parameters,
+            output_json,
+            state,
+            transition_reason,
+            message,
+        )
+        .await
+    }
+
+    async fn create_automation_record(
+        &self,
+        path: &str,
+        record: Value,
+    ) -> Result<Value, SendableError> {
+        SchedulerApi::create_automation_record(self, path, record).await
+    }
+
+    async fn fetch_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+    ) -> Result<Option<Value>, SendableError> {
+        SchedulerApi::fetch_idempotency_key(self, scope, key).await
+    }
+
+    async fn put_idempotency_key(
+        &self,
+        scope: &str,
+        key: &str,
+        result: Value,
+    ) -> Result<Value, SendableError> {
+        SchedulerApi::put_idempotency_key(self, scope, key, result).await
     }
 }

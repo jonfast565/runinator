@@ -27,6 +27,52 @@ describe("workflow graph utils", () => {
     expect(buildGraphEdges(workflow)).toMatchObject([{ source: "a", target: "b", label: "next" }]);
   });
 
+  it("builds rich control-flow parameter edges", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "route",
+            kind: "switch",
+            parameters: {
+              cases: [{ target: "fanout" }],
+              default: "done"
+            }
+          },
+          { id: "fanout", kind: "parallel", parameters: { branches: ["a", "b"] } },
+          { id: "join", kind: "join", parameters: { wait_for: ["a", "b"] } },
+          { id: "guard", kind: "try", parameters: { body: "body", catch: "recover", finally: "cleanup" } },
+          { id: "batch", kind: "map", parameters: { target: "item" } },
+          { id: "race", kind: "race", parameters: { branches: ["fast", "slow"] } },
+          { id: "a", kind: "emit" },
+          { id: "b", kind: "emit" },
+          { id: "body", kind: "emit" },
+          { id: "recover", kind: "emit" },
+          { id: "cleanup", kind: "emit" },
+          { id: "item", kind: "emit" },
+          { id: "fast", kind: "emit" },
+          { id: "slow", kind: "emit" },
+          { id: "done", kind: "end" }
+        ]
+      }
+    };
+
+    expect(buildGraphEdges(rich)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "route", target: "fanout", label: "case 1" }),
+        expect.objectContaining({ source: "route", target: "done", label: "default" }),
+        expect.objectContaining({ source: "fanout", target: "a", label: "branch" }),
+        expect.objectContaining({ source: "join", target: "b", label: "wait_for" }),
+        expect.objectContaining({ source: "guard", target: "body", label: "body" }),
+        expect.objectContaining({ source: "guard", target: "recover", label: "catch" }),
+        expect.objectContaining({ source: "guard", target: "cleanup", label: "finally" }),
+        expect.objectContaining({ source: "batch", target: "item", label: "target" }),
+        expect.objectContaining({ source: "race", target: "fast", label: "race" })
+      ])
+    );
+  });
+
   it("normalizes legacy definitions with required start and end nodes", () => {
     const normalized = normalizeWorkflowDefinition(workflow);
     expect(normalized.definition.start).toBe("start");

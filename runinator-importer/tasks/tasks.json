@@ -302,6 +302,177 @@
           }
         }
       }
+    },
+    {
+      "id": 1002,
+      "name": "Rich Workflow Syntax Demo",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {},
+      "definition": {
+        "start": "route_mode",
+        "metadata": {
+          "domain": "workflow-dsl",
+          "description": "Demonstrates switch, parallel, join, try, map, race, and emit nodes."
+        },
+        "nodes": [
+          {
+            "id": "route_mode",
+            "kind": "switch",
+            "parameters": {
+              "value": { "$value": "input#/mode" },
+              "cases": [
+                { "equals": "batch", "target": "process_items" },
+                { "equals": "race", "target": "first_ready" }
+              ],
+              "default": "start_checks"
+            }
+          },
+          {
+            "id": "start_checks",
+            "kind": "parallel",
+            "parameters": {
+              "branches": ["lint_check", "unit_check"]
+            }
+          },
+          {
+            "id": "lint_check",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "check.completed",
+              "data": { "name": "lint", "status": "ok" }
+            },
+            "transitions": { "next": "checks_joined" }
+          },
+          {
+            "id": "unit_check",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "check.completed",
+              "data": { "name": "unit", "status": "ok" }
+            },
+            "transitions": { "next": "checks_joined" }
+          },
+          {
+            "id": "checks_joined",
+            "kind": "join",
+            "parameters": {
+              "wait_for": ["lint_check", "unit_check"],
+              "mode": "all"
+            },
+            "transitions": { "next": "guarded_release" }
+          },
+          {
+            "id": "guarded_release",
+            "kind": "try",
+            "parameters": {
+              "body": "release_body",
+              "catch": "release_recovery",
+              "finally": "release_cleanup"
+            },
+            "transitions": { "next": "done" }
+          },
+          {
+            "id": "release_body",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "release.body",
+              "data": { "status": "ok" }
+            },
+            "transitions": { "next": "guarded_release" }
+          },
+          {
+            "id": "release_recovery",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "release.recovery",
+              "data": { "status": "recovered" }
+            },
+            "transitions": { "next": "guarded_release" }
+          },
+          {
+            "id": "release_cleanup",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "release.cleanup",
+              "data": { "status": "done" }
+            },
+            "transitions": { "next": "guarded_release" }
+          },
+          {
+            "id": "process_items",
+            "kind": "map",
+            "parameters": {
+              "items": { "$value": "input#/items" },
+              "target": "process_item",
+              "concurrency": 1
+            },
+            "transitions": { "next": "done" }
+          },
+          {
+            "id": "process_item",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "item.processed",
+              "data": {
+                "index": { "$value": "workflow.state#/map/index" },
+                "item": { "$value": "workflow.state#/map/item" }
+              }
+            },
+            "transitions": { "next": "process_items" }
+          },
+          {
+            "id": "first_ready",
+            "kind": "race",
+            "parameters": {
+              "branches": ["fast_signal", "slow_signal"],
+              "winner": "first_success"
+            },
+            "transitions": { "next": "done" }
+          },
+          {
+            "id": "fast_signal",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "signal.ready",
+              "data": { "source": "fast" }
+            },
+            "transitions": { "next": "first_ready" }
+          },
+          {
+            "id": "slow_signal",
+            "kind": "emit",
+            "parameters": {
+              "event_type": "signal.ready",
+              "data": { "source": "slow" }
+            },
+            "transitions": { "next": "first_ready" }
+          },
+          {
+            "id": "done",
+            "kind": "end"
+          }
+        ],
+        "ui": {
+          "layout": {
+            "route_mode": { "x": 0, "y": 0 },
+            "start_checks": { "x": 240, "y": 0 },
+            "lint_check": { "x": 480, "y": -100 },
+            "unit_check": { "x": 480, "y": 100 },
+            "checks_joined": { "x": 720, "y": 0 },
+            "guarded_release": { "x": 960, "y": 0 },
+            "release_body": { "x": 1200, "y": -120 },
+            "release_recovery": { "x": 1200, "y": 0 },
+            "release_cleanup": { "x": 1200, "y": 120 },
+            "process_items": { "x": 240, "y": 300 },
+            "process_item": { "x": 480, "y": 300 },
+            "first_ready": { "x": 240, "y": 520 },
+            "fast_signal": { "x": 480, "y": 460 },
+            "slow_signal": { "x": 480, "y": 580 },
+            "done": { "x": 1440, "y": 0 }
+          }
+        }
+      }
     }
   ]
 }

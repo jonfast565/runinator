@@ -19,5 +19,6 @@ members = [
     "runinator-broker",
     "runinator-supervisor",
     "runinator-mcp",
-    "runinator-workflows"
+    "runinator-workflows",
+    "runinator-e2e"
 ]

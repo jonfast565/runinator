@@ -91,11 +91,27 @@ This publishes binaries and the seed file under `target/artifacts/`, writes `tar
 The importer reads `runinator-importer/tasks/tasks.json`. It seeds both scheduled tasks and workflow definitions, including:
 
 - workflow `1001`: `Mock SDLC: Feature Delivery`
+- workflow `1002`: `Rich Workflow Syntax Demo`
 - mock console task IDs `101-106`
 
 In `command-center`, open the Workflows tab, select `Mock SDLC: Feature Delivery`, and run it. The workflow advances through local console-backed SDLC steps, pauses for `review_approval`, continues after approval, then pauses again for `release_gate`. Use the generic Approvals view to approve those requests and let the workflow finish.
 
 The mock task definitions are disabled as scheduled tasks, so they do not run from cron. They are still executable as workflow task nodes.
+
+Workflow syntax now includes richer declarative control-flow nodes:
+
+- `switch` routes by ordered cases and an optional default target.
+- `parallel` starts branch roots, with branch nodes returning to a `join`.
+- `join` waits for named upstream nodes using `all`, `any`, or `first_success`.
+- `try` runs a body, optional catch, and optional finally node; those nodes transition back to the `try` controller.
+- `map` runs one target node for each resolved item and exposes the current item under `workflow.state.map`.
+- `race` starts branch roots until one satisfies the winner policy; v1 does not cancel already dispatched work.
+- `emit` records structured node output without calling a provider.
+
+The v1 control-flow runtime is controller-driven and still uses one `active_node_id`.
+`parallel` and `race` advance branch roots sequentially through persisted workflow state,
+and `map.concurrency` is reserved for a future multi-active-node runtime. Branch/body/item
+nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
 
 ## Build Command-Center
 
@@ -121,4 +137,10 @@ To sync the seed file manually against a running local API:
 
 ```bash
 bash scripts/run-local.sh sync
+```
+
+To verify the rich workflow demo end-to-end against an isolated local stack:
+
+```bash
+RUNINATOR_E2E=1 cargo test -p runinator-e2e -- --ignored
 ```

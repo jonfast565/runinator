@@ -47,6 +47,27 @@ fn workflow_node_serialization() {
 }
 
 #[test]
+fn workflow_node_kind_accepts_rich_control_flow_nodes() {
+    for (kind, expected) in [
+        ("switch", WorkflowNodeKind::Switch),
+        ("parallel", WorkflowNodeKind::Parallel),
+        ("join", WorkflowNodeKind::Join),
+        ("try", WorkflowNodeKind::Try),
+        ("map", WorkflowNodeKind::Map),
+        ("race", WorkflowNodeKind::Race),
+        ("emit", WorkflowNodeKind::Emit),
+    ] {
+        let node: WorkflowNode = serde_json::from_value(json!({
+            "id": kind,
+            "kind": kind,
+            "parameters": {}
+        }))
+        .unwrap();
+        assert_eq!(node.kind, expected);
+    }
+}
+
+#[test]
 fn provider_metadata_accepts_catalog_provider_name() {
     let metadata: ProviderMetadata = serde_json::from_value(json!({
         "provider_name": "git",

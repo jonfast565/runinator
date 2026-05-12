@@ -38,31 +38,15 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
     for (const key of ["next", "on_success", "on_failure", "on_timeout", "on_reject"]) {
       const target = transitions[key];
       if (target && nodeIds.has(String(target))) {
-        edges.push({
-          id: `${source}-${key}-${target}`,
-          source,
-          target: String(target),
-          label: key,
-          updatable: true,
-          markerEnd: MarkerType.ArrowClosed,
-          events: {
-            // Vue Flow doesn't automatically handle deletion on backspace/delete key unless we configure it,
-            // but we can add a delete button or use the built-in edges-change.
-          }
-        });
+        edges.push(graphEdge(source, String(target), key, true));
       }
     }
     for (const branch of transitions.branches ?? []) {
       if (branch.target && nodeIds.has(String(branch.target))) {
-        edges.push({
-          id: `${source}-branch-${branch.target}`,
-          source,
-          target: String(branch.target),
-          label: branch.label ?? "branch",
-          markerEnd: MarkerType.ArrowClosed
-        });
+        edges.push(graphEdge(source, String(branch.target), branch.label ?? "branch"));
       }
     }
+    edges.push(...controlFlowEdges(node, nodeIds));
   }
   return edges;
 }
@@ -147,8 +131,11 @@ function ensureNextTransition(node: JsonRecord, target: string) {
 
 function hasSuccessTransition(node: JsonRecord): boolean {
   const transitions = node.transitions;
-  if (!isRecord(transitions)) return false;
-  return Boolean(transitions.next || transitions.on_success || (Array.isArray(transitions.branches) && transitions.branches.length > 0));
+  return Boolean(
+    (isRecord(transitions) &&
+      (transitions.next || transitions.on_success || (Array.isArray(transitions.branches) && transitions.branches.length > 0))) ||
+      controlFlowTargetValues(node).length > 0
+  );
 }
 
 function inferredNodeStatus(node: JsonRecord, id: string, detail: WorkflowRunDetail | null): string | undefined {
@@ -188,4 +175,58 @@ function cloneRecord(value: JsonRecord): JsonRecord {
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function graphEdge(source: string, target: string, label: string, updatable = false): Edge {
+  return {
+    id: `${source}-${label}-${target}`,
+    source,
+    target,
+    label,
+    updatable,
+    markerEnd: MarkerType.ArrowClosed
+  };
+}
+
+function controlFlowEdges(node: JsonRecord, nodeIds: Set<string>): Edge[] {
+  const source = String(node.id ?? "");
+  return controlFlowTargetValues(node)
+    .filter(({ target }) => nodeIds.has(target))
+    .map(({ target, label }) => graphEdge(source, target, label));
+}
+
+function controlFlowTargetValues(node: JsonRecord): Array<{ target: string; label: string }> {
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  switch (node.kind) {
+    case "switch": {
+      const cases = Array.isArray(parameters.cases) ? parameters.cases : [];
+      const targets = cases
+        .filter(isRecord)
+        .filter((item) => item.target)
+        .map((item, index) => ({ target: String(item.target), label: item.label ? String(item.label) : `case ${index + 1}` }));
+      if (parameters.default) targets.push({ target: String(parameters.default), label: "default" });
+      return targets;
+    }
+    case "parallel":
+      return stringArray(parameters.branches).map((target) => ({ target, label: "branch" }));
+    case "join":
+      return stringArray(parameters.wait_for).map((target) => ({ target, label: "wait_for" }));
+    case "try": {
+      const targets: Array<{ target: string; label: string }> = [];
+      if (parameters.body) targets.push({ target: String(parameters.body), label: "body" });
+      if (parameters.catch) targets.push({ target: String(parameters.catch), label: "catch" });
+      if (parameters.finally) targets.push({ target: String(parameters.finally), label: "finally" });
+      return targets;
+    }
+    case "map":
+      return parameters.target ? [{ target: String(parameters.target), label: "target" }] : [];
+    case "race":
+      return stringArray(parameters.branches).map((target) => ({ target, label: "race" }));
+    default:
+      return [];
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.length > 0) : [];
 }

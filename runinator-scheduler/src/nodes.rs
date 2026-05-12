@@ -5,13 +5,14 @@ use runinator_models::{
     runs::RunStatus,
     workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
-use serde_json::Value;
+use runinator_workflows::BranchPolicy;
+use serde_json::{Map, Value};
 
-use crate::{api::SchedulerApi, context::*};
+use crate::{api::WorkflowSchedulerApi, context::*};
 
 pub async fn process_task_node(
     broker: &dyn Broker,
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -174,7 +175,7 @@ pub async fn process_task_node(
 }
 
 pub async fn process_wait_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -263,7 +264,7 @@ pub async fn process_wait_node(
 }
 
 pub async fn process_condition_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
@@ -299,8 +300,94 @@ pub async fn process_condition_node(
     .await
 }
 
+pub async fn process_switch_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = api
+        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .await?;
+    let params = runinator_workflows::parse_switch_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let context = runtime_context(workflow_run, node_runs);
+    let target = runinator_workflows::evaluate_switch(&params, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let output = serde_json::json!({ "target": target });
+    api.update_workflow_node_run(
+        node_run.id,
+        if target.is_some() {
+            WorkflowStatus::Succeeded
+        } else {
+            WorkflowStatus::Blocked
+        },
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        Some(output),
+        None,
+        Some("switch_evaluated".into()),
+        None,
+    )
+    .await?;
+    if let Some(target) = target {
+        api.update_workflow_run(
+            workflow_run.id,
+            WorkflowStatus::Running,
+            Some(target),
+            None,
+            None,
+        )
+        .await
+    } else {
+        transition_from_node(
+            api,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Blocked,
+            None,
+            Some("Switch did not match a target".into()),
+            node_runs,
+        )
+        .await
+    }
+}
+
+pub async fn process_emit_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = api
+        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .await?;
+    let params = runinator_workflows::parse_emit_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let context = runtime_context(workflow_run, node_runs);
+    let data = runinator_workflows::resolve_value_refs(&params.data, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let output = serde_json::json!({
+        "event_type": params.event_type,
+        "data": data
+    });
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        &node_run,
+        WorkflowStatus::Succeeded,
+        Some(output),
+        Some("emit_recorded".into()),
+        node_runs,
+    )
+    .await
+}
+
 pub async fn process_approval_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -367,7 +454,7 @@ pub async fn process_approval_node(
 }
 
 pub async fn process_loop_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -454,8 +541,463 @@ pub async fn process_loop_node(
     Ok(())
 }
 
+pub async fn process_parallel_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+) -> Result<(), SendableError> {
+    if latest.is_some() {
+        return Ok(());
+    }
+    let params = runinator_workflows::parse_parallel_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let Some(first) = params.branches.first().cloned() else {
+        return block_node(api, workflow_run, node, "Parallel node has no branches").await;
+    };
+    let remaining = params.branches.iter().skip(1).cloned().collect::<Vec<_>>();
+    let node_run = api
+        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .await?;
+    let output = serde_json::json!({ "branches": params.branches });
+    let state = merge_state(
+        &workflow_run.state,
+        "parallel",
+        serde_json::json!({
+            "node_id": node.id,
+            "remaining": remaining,
+        }),
+    );
+    api.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Succeeded,
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        Some(output),
+        None,
+        Some("parallel_started".into()),
+        None,
+    )
+    .await?;
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Running,
+        Some(first),
+        Some(state),
+        None,
+    )
+    .await
+}
+
+pub async fn process_join_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let params = runinator_workflows::parse_join_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    if join_satisfied(&params.wait_for, params.mode, node_runs) {
+        let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+        let output = serde_json::json!({
+            "wait_for": params.wait_for,
+            "mode": branch_policy_name(params.mode)
+        });
+        return transition_from_node(
+            api,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output),
+            Some("join_satisfied".into()),
+            node_runs,
+        )
+        .await;
+    }
+    if let Some(next_branch) = pop_state_queue(&workflow_run.state, "parallel", "remaining") {
+        api.update_workflow_run(
+            workflow_run.id,
+            WorkflowStatus::Running,
+            Some(next_branch.target),
+            Some(next_branch.state),
+            Some("join_waiting_for_parallel_branch".into()),
+        )
+        .await?;
+        return Ok(());
+    }
+    let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    api.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Waiting,
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        None,
+        None,
+        Some("join_waiting".into()),
+        None,
+    )
+    .await?;
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Waiting,
+        Some(node.id.clone()),
+        None,
+        None,
+    )
+    .await
+}
+
+pub async fn process_map_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let params = runinator_workflows::parse_map_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let mut frame = workflow_run.state.get("map").cloned();
+    let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    if frame
+        .as_ref()
+        .and_then(|frame| frame.get("node_id"))
+        .and_then(Value::as_str)
+        != Some(node.id.as_str())
+    {
+        let context = runtime_context(workflow_run, node_runs);
+        let items = runinator_workflows::resolve_value_refs(&params.items, &context)
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        let items = items.as_array().cloned().unwrap_or_default();
+        frame = Some(serde_json::json!({
+            "node_id": node.id,
+            "target": params.target,
+            "items": items,
+            "index": 0,
+            "outputs": [],
+            "concurrency": params.concurrency.unwrap_or(1)
+        }));
+    } else {
+        if let Some(status) = latest_status(&params.target, node_runs) {
+            if status != WorkflowStatus::Succeeded {
+                return transition_from_node(
+                    api,
+                    workflow_run,
+                    node,
+                    &node_run,
+                    status,
+                    None,
+                    Some("map_item_failed".into()),
+                    node_runs,
+                )
+                .await;
+            }
+        }
+        frame = append_completed_map_item(frame, &params.target, node_runs);
+    }
+    let Some(frame_value) = frame else {
+        return block_node(
+            api,
+            workflow_run,
+            node,
+            "Map state could not be initialized",
+        )
+        .await;
+    };
+    let items = frame_value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let index = frame_value
+        .get("index")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    if index >= items.len() as i64 {
+        let output = serde_json::json!({
+            "count": items.len(),
+            "outputs": frame_value.get("outputs").cloned().unwrap_or_else(|| serde_json::json!([]))
+        });
+        return transition_from_node(
+            api,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output),
+            Some("map_exhausted".into()),
+            node_runs,
+        )
+        .await;
+    }
+    let mut next_frame = frame_value;
+    if let Some(object) = next_frame.as_object_mut() {
+        object.insert("item".into(), items[index as usize].clone());
+    }
+    api.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Running,
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        None,
+        Some(next_frame.clone()),
+        Some("map_iteration".into()),
+        None,
+    )
+    .await?;
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Running,
+        Some(params.target),
+        Some(merge_state(&workflow_run.state, "map", next_frame)),
+        None,
+    )
+    .await
+}
+
+pub async fn process_race_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let params = runinator_workflows::parse_race_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    if let Some(winner) = race_winner(&params.branches, params.winner, node_runs) {
+        let output = serde_json::json!({ "winner": winner });
+        return transition_from_node(
+            api,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output),
+            Some("race_won".into()),
+            node_runs,
+        )
+        .await;
+    }
+    let next = if workflow_run
+        .state
+        .get("race")
+        .and_then(|frame| frame.get("node_id"))
+        .and_then(Value::as_str)
+        == Some(node.id.as_str())
+    {
+        pop_state_queue(&workflow_run.state, "race", "remaining")
+    } else {
+        let remaining = params.branches.iter().skip(1).cloned().collect::<Vec<_>>();
+        Some(QueuedState {
+            target: params.branches[0].clone(),
+            state: merge_state(
+                &workflow_run.state,
+                "race",
+                serde_json::json!({
+                    "node_id": node.id,
+                    "remaining": remaining,
+                }),
+            ),
+        })
+    };
+    if let Some(next) = next {
+        api.update_workflow_node_run(
+            node_run.id,
+            WorkflowStatus::Running,
+            None,
+            Some(node_run.attempt + 1),
+            None,
+            None,
+            None,
+            Some("race_branch_started".into()),
+            None,
+        )
+        .await?;
+        return api
+            .update_workflow_run(
+                workflow_run.id,
+                WorkflowStatus::Running,
+                Some(next.target),
+                Some(next.state),
+                None,
+            )
+            .await;
+    }
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        &node_run,
+        WorkflowStatus::Failed,
+        None,
+        Some("Race completed without a winning branch".into()),
+        node_runs,
+    )
+    .await
+}
+
+pub async fn process_try_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let params = runinator_workflows::parse_try_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    let frame = workflow_run.state.get("try").cloned().unwrap_or_else(|| {
+        serde_json::json!({
+            "node_id": node.id,
+            "phase": "body"
+        })
+    });
+    let phase = frame.get("phase").and_then(Value::as_str).unwrap_or("body");
+    if latest.is_none() {
+        return start_try_phase(
+            api,
+            workflow_run,
+            &node_run,
+            node,
+            &params.body,
+            "body",
+            None,
+        )
+        .await;
+    }
+    match phase {
+        "body" => {
+            let Some(status) = latest_status(&params.body, node_runs) else {
+                return Ok(());
+            };
+            if status == WorkflowStatus::Succeeded {
+                if let Some(finally) = params.finally {
+                    return start_try_phase(
+                        api,
+                        workflow_run,
+                        &node_run,
+                        node,
+                        &finally,
+                        "finally",
+                        Some(status),
+                    )
+                    .await;
+                }
+                return transition_from_node(
+                    api,
+                    workflow_run,
+                    node,
+                    &node_run,
+                    status,
+                    None,
+                    Some("try_body_succeeded".into()),
+                    node_runs,
+                )
+                .await;
+            }
+            if let Some(catch) = params.catch {
+                return start_try_phase(
+                    api,
+                    workflow_run,
+                    &node_run,
+                    node,
+                    &catch,
+                    "catch",
+                    Some(status),
+                )
+                .await;
+            }
+            if let Some(finally) = params.finally {
+                return start_try_phase(
+                    api,
+                    workflow_run,
+                    &node_run,
+                    node,
+                    &finally,
+                    "finally",
+                    Some(status),
+                )
+                .await;
+            }
+            transition_from_node(
+                api,
+                workflow_run,
+                node,
+                &node_run,
+                status,
+                None,
+                Some("try_body_failed".into()),
+                node_runs,
+            )
+            .await
+        }
+        "catch" => {
+            let Some(status) = params
+                .catch
+                .as_deref()
+                .and_then(|catch| latest_status(catch, node_runs))
+            else {
+                return Ok(());
+            };
+            if let Some(finally) = params.finally {
+                return start_try_phase(
+                    api,
+                    workflow_run,
+                    &node_run,
+                    node,
+                    &finally,
+                    "finally",
+                    Some(status),
+                )
+                .await;
+            }
+            transition_from_node(
+                api,
+                workflow_run,
+                node,
+                &node_run,
+                status,
+                None,
+                Some("try_catch_completed".into()),
+                node_runs,
+            )
+            .await
+        }
+        "finally" => {
+            let Some(finally) = params.finally.as_deref() else {
+                return Ok(());
+            };
+            if latest_status(finally, node_runs).is_none() {
+                return Ok(());
+            }
+            let status = frame
+                .get("pending_status")
+                .and_then(Value::as_str)
+                .and_then(parse_workflow_status)
+                .unwrap_or(WorkflowStatus::Succeeded);
+            transition_from_node(
+                api,
+                workflow_run,
+                node,
+                &node_run,
+                status,
+                None,
+                Some("try_finally_completed".into()),
+                node_runs,
+            )
+            .await
+        }
+        _ => block_node(api, workflow_run, node, "Try node has invalid phase").await,
+    }
+}
+
 pub async fn process_subflow_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -552,7 +1094,7 @@ pub async fn process_subflow_node(
 }
 
 pub async fn block_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     message: &str,
@@ -582,8 +1124,178 @@ pub async fn block_node(
     .await
 }
 
+struct QueuedState {
+    target: String,
+    state: Value,
+}
+
+async fn ensure_node_run(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+) -> Result<WorkflowNodeRun, SendableError> {
+    if let Some(latest) = latest {
+        return Ok(latest.clone());
+    }
+    api.create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .await
+}
+
+fn merge_state(base: &Value, key: &str, value: Value) -> Value {
+    let mut object = base.as_object().cloned().unwrap_or_default();
+    object.insert(key.into(), value);
+    Value::Object(object)
+}
+
+fn pop_state_queue(state: &Value, frame_key: &str, queue_key: &str) -> Option<QueuedState> {
+    let mut root = state.as_object().cloned().unwrap_or_default();
+    let mut frame = root.get(frame_key)?.as_object()?.clone();
+    let mut remaining = frame.get(queue_key)?.as_array()?.clone();
+    if remaining.is_empty() {
+        return None;
+    }
+    let target = remaining.remove(0).as_str()?.to_string();
+    frame.insert(queue_key.into(), Value::Array(remaining));
+    root.insert(frame_key.into(), Value::Object(frame));
+    Some(QueuedState {
+        target,
+        state: Value::Object(root),
+    })
+}
+
+fn join_satisfied(wait_for: &[String], mode: BranchPolicy, node_runs: &[WorkflowNodeRun]) -> bool {
+    match mode {
+        BranchPolicy::All => wait_for
+            .iter()
+            .all(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded)),
+        BranchPolicy::Any | BranchPolicy::FirstSuccess => wait_for
+            .iter()
+            .any(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded)),
+    }
+}
+
+fn race_winner(
+    branches: &[String],
+    winner: BranchPolicy,
+    node_runs: &[WorkflowNodeRun],
+) -> Option<String> {
+    match winner {
+        BranchPolicy::All => {
+            if branches
+                .iter()
+                .all(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
+            {
+                branches.last().cloned()
+            } else {
+                None
+            }
+        }
+        BranchPolicy::Any | BranchPolicy::FirstSuccess => branches
+            .iter()
+            .find(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
+            .cloned(),
+    }
+}
+
+fn latest_status(node_id: &str, node_runs: &[WorkflowNodeRun]) -> Option<WorkflowStatus> {
+    latest_node_run(node_runs, node_id).map(|run| run.status)
+}
+
+fn append_completed_map_item(
+    frame: Option<Value>,
+    target: &str,
+    node_runs: &[WorkflowNodeRun],
+) -> Option<Value> {
+    let mut frame = frame?;
+    let latest = latest_node_run(node_runs, target)?;
+    if latest.status != WorkflowStatus::Succeeded {
+        return Some(frame);
+    }
+    let object = frame.as_object_mut()?;
+    let index = object
+        .get("index")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let outputs = object
+        .entry("outputs")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(outputs) = outputs.as_array_mut() else {
+        return Some(Value::Object(object.clone()));
+    };
+    if outputs.len() as i64 <= index {
+        outputs.push(latest.output_json.clone().unwrap_or(Value::Null));
+        object.insert("index".into(), Value::from(index + 1));
+    }
+    Some(frame)
+}
+
+async fn start_try_phase(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node_run: &WorkflowNodeRun,
+    node: &WorkflowNode,
+    target: &str,
+    phase: &str,
+    pending_status: Option<WorkflowStatus>,
+) -> Result<(), SendableError> {
+    let mut frame = Map::new();
+    frame.insert("node_id".into(), Value::String(node.id.clone()));
+    frame.insert("phase".into(), Value::String(phase.into()));
+    if let Some(status) = pending_status {
+        frame.insert(
+            "pending_status".into(),
+            Value::String(status.as_str().into()),
+        );
+    }
+    let state = merge_state(&workflow_run.state, "try", Value::Object(frame.clone()));
+    api.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Running,
+        None,
+        Some(node_run.attempt + 1),
+        None,
+        None,
+        Some(Value::Object(frame)),
+        Some(format!("try_{phase}_started")),
+        None,
+    )
+    .await?;
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Running,
+        Some(target.into()),
+        Some(state),
+        None,
+    )
+    .await
+}
+
+fn parse_workflow_status(value: &str) -> Option<WorkflowStatus> {
+    match value {
+        "queued" => Some(WorkflowStatus::Queued),
+        "running" => Some(WorkflowStatus::Running),
+        "waiting" => Some(WorkflowStatus::Waiting),
+        "approval_required" => Some(WorkflowStatus::ApprovalRequired),
+        "blocked" => Some(WorkflowStatus::Blocked),
+        "succeeded" => Some(WorkflowStatus::Succeeded),
+        "failed" => Some(WorkflowStatus::Failed),
+        "timed_out" => Some(WorkflowStatus::TimedOut),
+        "canceled" => Some(WorkflowStatus::Canceled),
+        _ => None,
+    }
+}
+
+fn branch_policy_name(policy: BranchPolicy) -> &'static str {
+    match policy {
+        BranchPolicy::All => "all",
+        BranchPolicy::Any => "any",
+        BranchPolicy::FirstSuccess => "first_success",
+    }
+}
+
 pub async fn retry_or_transition(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
@@ -629,7 +1341,7 @@ pub async fn retry_or_transition(
 }
 
 pub async fn transition_from_node(
-    api: &SchedulerApi,
+    api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,

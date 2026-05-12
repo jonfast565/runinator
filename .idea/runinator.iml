@@ -27,6 +27,9 @@
       <sourceFolder url="file://$MODULE_DIR$/runinator-supervisor/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-worker/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-workflows/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/command-center-tauri/src-tauri/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-e2e/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-e2e/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
