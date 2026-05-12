@@ -42,9 +42,13 @@
       <h3>Result: {{ workflows.selectedStepId }}</h3>
       <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
         <div v-for="field in resultFields" :key="field.name" class="result-field-row">
-          <span class="result-field-name">{{ field.label || field.name }}</span>
-          <span class="result-field-type">{{ field.value_type }}</span>
-          <span class="result-field-value">{{ formatResultValue(selectedNodeOutput[field.name]) }}</span>
+          <div class="result-field-key">
+            <span class="result-field-name">{{ field.label || field.name }}</span>
+            <span class="result-field-type">{{ field.value_type }}</span>
+          </div>
+          <div class="result-field-value" :class="{ empty: selectedNodeOutput[field.name] == null }">
+            {{ formatResultValue(selectedNodeOutput[field.name]) }}
+          </div>
         </div>
         <details v-if="hasExtraFields" class="result-extra">
           <summary>Raw JSON</summary>
@@ -142,33 +146,76 @@ function formatResultValue(value: any): string {
 .result-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 10px;
   font-size: 12px;
 }
 .result-field-row {
   display: grid;
-  grid-template-columns: 1fr auto 2fr;
-  gap: 8px;
-  align-items: baseline;
-  padding: 2px 0;
-  border-bottom: 1px solid #f0f0f0;
+  grid-template-columns: 160px 1fr;
+  min-height: 28px;
+}
+.result-field-row + .result-field-row {
+  border-top: 1px solid #f0f4f8;
+}
+.result-field-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
 }
 .result-field-name {
   font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .result-field-type {
-  color: #66717e;
-  font-size: 11px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #7b8794;
+  background: #e9eef4;
+  border-radius: 3px;
+  padding: 1px 4px;
+  line-height: 1.4;
 }
 .result-field-value {
-  font-family: monospace;
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: #17202a;
   word-break: break-all;
+  background: #fff;
+}
+.result-field-value.empty {
+  color: #97a1ad;
+  font-style: italic;
+  font-family: inherit;
+}
+.result-extra {
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 .result-extra summary {
   cursor: pointer;
-  color: #66717e;
+  padding: 4px 10px;
+  color: #7b8794;
   font-size: 11px;
-  margin-top: 4px;
+  user-select: none;
+}
+.result-extra summary:hover {
+  color: #374151;
+}
+.result-extra pre {
+  margin: 0;
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0;
 }
 </style>
