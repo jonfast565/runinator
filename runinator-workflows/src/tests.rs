@@ -22,13 +22,13 @@ fn validates_state_machine_workflow() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "build" } },
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "done" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
 
-    assert!(validate_workflow(&wf).is_ok());
+    validate_workflow(&wf).expect("rich control flow validates");
 }
 
 #[test]
@@ -36,9 +36,9 @@ fn rejects_missing_transition_target() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "build" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
             { "id": "done", "kind": "end" },
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": "missing" } }
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "missing" } } }
         ]
     }));
 
@@ -49,11 +49,40 @@ fn rejects_missing_transition_target() {
 }
 
 #[test]
+fn rejects_old_reference_syntax() {
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": "build" } },
+            { "id": "build", "kind": "task", "task_id": 1 },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidNode(_))
+    ));
+
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            { "id": "build", "kind": "emit", "parameters": { "data": { "$value": "input#/value" } }, "transitions": { "next": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidValueRef(_))
+    ));
+}
+
+#[test]
 fn resolves_value_refs() {
     let context = serde_json::json!({
         "steps": { "find": { "output": { "items": [{ "key": "A-1" }] } } }
     });
-    let value = serde_json::json!({ "$value": "steps.find.output#/items/0/key" });
+    let value = serde_json::json!({ "$ref": { "node": "find", "output": ["items", 0, "key"] } });
     assert_eq!(
         resolve_value_refs(&value, &context).unwrap(),
         serde_json::Value::String("A-1".into())
@@ -67,11 +96,19 @@ fn resolves_template_refs() {
     });
 
     assert_eq!(
-        resolve_value_refs(&serde_json::json!("Ticket {{ prev#/ticket_id }}"), &context).unwrap(),
+        resolve_value_refs(
+            &serde_json::json!({ "$concat": ["Ticket ", { "$ref": { "prev": ["ticket_id"] } }] }),
+            &context
+        )
+        .unwrap(),
         serde_json::Value::String("Ticket RUN-123".into())
     );
     assert_eq!(
-        resolve_value_refs(&serde_json::json!("{{ prev#/count }}"), &context).unwrap(),
+        resolve_value_refs(
+            &serde_json::json!({ "$ref": { "prev": ["count"] } }),
+            &context
+        )
+        .unwrap(),
         serde_json::Value::from(3)
     );
 }
@@ -84,8 +121,8 @@ fn expands_local_defs_with_overlay() {
         },
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "approve" } },
-            { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } }, "transitions": { "next": "done" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "approve" } } },
+            { "id": "approve", "$ref": "#/$defs/approval", "with": { "parameters": { "prompt": "ok?" } }, "transitions": { "next": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -104,15 +141,14 @@ fn evaluates_conditions() {
     });
 
     // Simple equality
-    let cond1 =
-        serde_json::json!({ "value": { "$value": "steps.check.output#/status" }, "equals": "ok" });
+    let cond1 = serde_json::json!({ "value": { "$ref": { "node": "check", "output": ["status"] } }, "equals": "ok" });
     assert!(evaluate_condition(&cond1, &context).unwrap());
 
     // Logical ALL (AND)
     let cond3 = serde_json::json!({
         "all": [
-            { "value": { "$value": "input#/env" }, "equals": "prod" },
-            { "value": { "$value": "steps.check.output#/status" }, "equals": "ok" }
+            { "value": { "$ref": { "input": ["env"] } }, "equals": "prod" },
+            { "value": { "$ref": { "node": "check", "output": ["status"] } }, "equals": "ok" }
         ]
     });
     assert!(evaluate_condition(&cond3, &context).unwrap());
@@ -120,8 +156,8 @@ fn evaluates_conditions() {
     // Logical ANY (OR)
     let cond4 = serde_json::json!({
         "any": [
-            { "value": { "$value": "input#/env" }, "equals": "dev" },
-            { "value": { "$value": "steps.check.output#/count" }, "equals": 10 }
+            { "value": { "$ref": { "input": ["env"] } }, "equals": "dev" },
+            { "value": { "$ref": { "node": "check", "output": ["count"] } }, "equals": 10 }
         ]
     });
     assert!(evaluate_condition(&cond4, &context).unwrap());
@@ -132,22 +168,20 @@ fn validates_node_transitions() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "a" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "a" } } },
             {
                 "id": "a",
                 "kind": "condition",
                 "transitions": {
-                    "branches": [
-                        { "when": { "value": { "$value": "foo" }, "equals": "bar" }, "target": "b" }
-                    ],
-                    "next": "c"
+                    "branches": [{ "when": { "value": { "$ref": { "input": ["foo"] } }, "equals": "bar" }, "target": { "$node": "b" } }],
+                    "next": { "$node": "c" }
                 }
             },
             { "id": "b", "kind": "end" },
             { "id": "c", "kind": "end" }
         ]
     }));
-    assert!(validate_workflow(&wf).is_ok());
+    validate_workflow(&wf).expect("rich control flow validates");
 }
 
 #[test]
@@ -155,38 +189,38 @@ fn validates_rich_control_flow_node_targets() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "route" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "route" } } },
             {
                 "id": "route",
                 "kind": "switch",
                 "parameters": {
-                    "value": { "$value": "input#/mode" },
+                    "value": { "$ref": { "input": ["mode"] } },
                     "cases": [
-                        { "equals": "fanout", "target": "fanout" },
-                        { "equals": "batch", "target": "batch" }
+                        { "equals": "fanout", "target": { "$node": "fanout" } },
+                        { "equals": "batch", "target": { "$node": "batch" } }
                     ],
-                    "default": "emit"
+                    "default": { "$node": "emit" }
                 }
             },
-            { "id": "fanout", "kind": "parallel", "parameters": { "branches": ["check_a", "check_b"] } },
-            { "id": "check_a", "kind": "emit", "parameters": { "data": { "check": "a" } }, "transitions": { "next": "joined" } },
-            { "id": "check_b", "kind": "emit", "parameters": { "data": { "check": "b" } }, "transitions": { "next": "joined" } },
-            { "id": "joined", "kind": "join", "parameters": { "wait_for": ["check_a", "check_b"], "mode": "all" }, "transitions": { "next": "guarded" } },
-            { "id": "guarded", "kind": "try", "parameters": { "body": "body", "catch": "catch", "finally": "finally" }, "transitions": { "next": "done" } },
-            { "id": "body", "kind": "emit", "parameters": { "data": "body" }, "transitions": { "next": "guarded" } },
-            { "id": "catch", "kind": "emit", "parameters": { "data": "catch" }, "transitions": { "next": "guarded" } },
-            { "id": "finally", "kind": "emit", "parameters": { "data": "finally" }, "transitions": { "next": "guarded" } },
-            { "id": "batch", "kind": "map", "parameters": { "items": [1, 2], "target": "map_item", "concurrency": 1 }, "transitions": { "next": "race" } },
-            { "id": "map_item", "kind": "emit", "parameters": { "data": { "$value": "workflow.state#/map/item" } }, "transitions": { "next": "batch" } },
-            { "id": "race", "kind": "race", "parameters": { "branches": ["fast", "slow"], "winner": "first_success" }, "transitions": { "next": "done" } },
-            { "id": "fast", "kind": "emit", "parameters": { "data": "fast" }, "transitions": { "next": "race" } },
-            { "id": "slow", "kind": "emit", "parameters": { "data": "slow" }, "transitions": { "next": "race" } },
-            { "id": "emit", "kind": "emit", "parameters": { "event_type": "workflow.routed", "data": { "ok": true } }, "transitions": { "next": "done" } },
+            { "id": "fanout", "kind": "parallel", "parameters": { "branches": [{ "$node": "check_a" }, { "$node": "check_b" }] } },
+            { "id": "check_a", "kind": "emit", "parameters": { "data": { "check": "a" } }, "transitions": { "next": { "$node": "joined" } } },
+            { "id": "check_b", "kind": "emit", "parameters": { "data": { "check": "b" } }, "transitions": { "next": { "$node": "joined" } } },
+            { "id": "joined", "kind": "join", "parameters": { "wait_for": [{ "$node": "check_a" }, { "$node": "check_b" }], "mode": "all" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "guarded", "kind": "try", "parameters": { "body": { "$node": "body" }, "catch": { "$node": "catch" }, "finally": { "$node": "finally" } }, "transitions": { "next": { "$node": "done" } } },
+            { "id": "body", "kind": "emit", "parameters": { "data": "body" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "catch", "kind": "emit", "parameters": { "data": "catch" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "finally", "kind": "emit", "parameters": { "data": "finally" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "batch", "kind": "map", "parameters": { "items": [1, 2], "target": { "$node": "map_item" }, "concurrency": 1 }, "transitions": { "next": { "$node": "race" } } },
+            { "id": "map_item", "kind": "emit", "parameters": { "data": { "$ref": { "workflow": ["state", "map", "item"] } } }, "transitions": { "next": { "$node": "batch" } } },
+            { "id": "race", "kind": "race", "parameters": { "branches": [{ "$node": "fast" }, { "$node": "slow" }], "winner": "first_success" }, "transitions": { "next": { "$node": "done" } } },
+            { "id": "fast", "kind": "emit", "parameters": { "data": "fast" }, "transitions": { "next": { "$node": "race" } } },
+            { "id": "slow", "kind": "emit", "parameters": { "data": "slow" }, "transitions": { "next": { "$node": "race" } } },
+            { "id": "emit", "kind": "emit", "parameters": { "event_type": "workflow.routed", "data": { "ok": true } }, "transitions": { "next": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
 
-    assert!(validate_workflow(&wf).is_ok());
+    validate_workflow(&wf).expect("rich control flow validates");
 }
 
 #[test]
@@ -194,13 +228,13 @@ fn rejects_missing_control_flow_target() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "route" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "route" } } },
             {
                 "id": "route",
                 "kind": "switch",
                 "parameters": {
                     "value": "mode",
-                    "cases": [{ "equals": "missing", "target": "missing" }]
+                    "cases": [{ "equals": "missing", "target": { "$node": "missing" } }]
                 }
             },
             { "id": "done", "kind": "end" }
@@ -218,9 +252,9 @@ fn rejects_invalid_map_concurrency() {
     let wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": "batch" } },
-            { "id": "batch", "kind": "map", "parameters": { "items": [], "target": "item", "concurrency": 0 } },
-            { "id": "item", "kind": "emit", "parameters": { "data": null }, "transitions": { "next": "batch" } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "batch" } } },
+            { "id": "batch", "kind": "map", "parameters": { "items": [], "target": { "$node": "item" }, "concurrency": 0 } },
+            { "id": "item", "kind": "emit", "parameters": { "data": null }, "transitions": { "next": { "$node": "batch" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -237,12 +271,12 @@ fn evaluates_switch_cases_and_default() {
         "id": "route",
         "kind": "switch",
         "parameters": {
-            "value": { "$value": "input#/mode" },
+            "value": { "$ref": { "input": ["mode"] } },
             "cases": [
-                { "equals": "fast", "target": "fast_path" },
-                { "equals": "slow", "target": "slow_path" }
+                { "equals": "fast", "target": { "$node": "fast_path" } },
+                { "equals": "slow", "target": { "$node": "slow_path" } }
             ],
-            "default": "fallback"
+            "default": { "$node": "fallback" }
         }
     }))
     .unwrap();
@@ -271,22 +305,20 @@ fn test_workflow_state_machine_logic_integration() {
             {
                 "id": "start",
                 "kind": "start",
-                "transitions": { "next": "step1" }
+                "transitions": { "next": { "$node": "step1" } }
             },
             {
                 "id": "step1",
                 "kind": "task",
                 "task_id": 1,
-                "transitions": { "on_success": "step2", "on_failure": "failed" }
+                "transitions": { "on_success": { "$node": "step2" }, "on_failure": { "$node": "failed" } }
             },
             {
                 "id": "step2",
                 "kind": "condition",
                 "transitions": {
-                    "branches": [
-                        { "when": { "value": { "$value": "steps.step1.output#/ok" }, "equals": true }, "target": "success" }
-                    ],
-                    "next": "failed"
+                    "branches": [{ "when": { "value": { "$ref": { "node": "step1", "output": ["ok"] } }, "equals": true }, "target": { "$node": "success" } }],
+                    "next": { "$node": "failed" }
                 }
             },
             { "id": "success", "kind": "end" },
@@ -370,5 +402,12 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
     );
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::End));
     let build = nodes.iter().find(|node| node.id == "build").unwrap();
-    assert_eq!(build.transitions.next.as_deref(), Some("end"));
+    assert_eq!(
+        build
+            .transitions
+            .next
+            .as_ref()
+            .map(|target| target.as_str()),
+        Some("end")
+    );
 }

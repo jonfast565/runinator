@@ -57,9 +57,9 @@
       <p v-if="errors[parameter.name]" class="error">{{ errors[parameter.name] }}</p>
     </div>
     <p class="hint">
-      Workflow step strings can reference prior results with templates like
-      <code v-text="'{{ prev#/ticket_id }}'"></code> or named steps like
-      <code v-text="'{{ steps.create_ticket.output#/ticket_id }}'"></code>.
+      Workflow parameters can reference prior results with tagged refs like
+      <code>{ "$ref": { "prev": ["ticket_id"] } }</code> or named steps like
+      <code>{ "$ref": { "node": "create_ticket", "output": ["ticket_id"] } }</code>.
       Secret parameters use <code>secret://scope/name</code> references.
     </p>
   </div>

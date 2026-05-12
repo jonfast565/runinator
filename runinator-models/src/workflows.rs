@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -108,6 +109,99 @@ pub enum WorkflowNodeKind {
     End,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WorkflowNodeId(String);
+
+impl WorkflowNodeId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for WorkflowNodeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl From<String> for WorkflowNodeId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for WorkflowNodeId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WorkflowNodeRef(WorkflowNodeId);
+
+impl WorkflowNodeRef {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(WorkflowNodeId::new(value))
+    }
+
+    pub fn id(&self) -> &WorkflowNodeId {
+        &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn into_string(self) -> String {
+        self.0.into_string()
+    }
+}
+
+impl Serialize for WorkflowNodeRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("$node", self.as_str())?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowNodeRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("node reference must be an object"))?;
+        if object.len() != 1 || !object.contains_key("$node") {
+            return Err(serde::de::Error::custom(
+                "node reference must be { \"$node\": \"node_id\" }",
+            ));
+        }
+        let node = object
+            .get("$node")
+            .and_then(Value::as_str)
+            .filter(|node| !node.is_empty())
+            .ok_or_else(|| serde::de::Error::custom("$node must be a non-empty string"))?;
+        Ok(Self::new(node))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRetry {
     #[serde(default = "default_max_attempts")]
@@ -129,15 +223,15 @@ fn default_max_attempts() -> i64 {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowTransitions {
     #[serde(default)]
-    pub next: Option<String>,
+    pub next: Option<WorkflowNodeRef>,
     #[serde(default)]
-    pub on_success: Option<String>,
+    pub on_success: Option<WorkflowNodeRef>,
     #[serde(default)]
-    pub on_failure: Option<String>,
+    pub on_failure: Option<WorkflowNodeRef>,
     #[serde(default)]
-    pub on_timeout: Option<String>,
+    pub on_timeout: Option<WorkflowNodeRef>,
     #[serde(default)]
-    pub on_reject: Option<String>,
+    pub on_reject: Option<WorkflowNodeRef>,
     #[serde(default)]
     pub branches: Vec<WorkflowBranch>,
 }
@@ -145,7 +239,7 @@ pub struct WorkflowTransitions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowBranch {
     pub when: Value,
-    pub target: String,
+    pub target: WorkflowNodeRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -34,6 +34,7 @@
 .workflow-toolbar {
   align-items: end;
   padding: 10px;
+  flex-wrap: wrap;
 }
 
 .workflow-title {
@@ -61,6 +62,22 @@
 .workflow-toolbar label:first-child {
   min-width: 240px;
   flex: 1;
+}
+
+.workflow-actions,
+.workflow-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-palette {
+  flex-basis: 100%;
+}
+
+.workflow-palette button {
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .workflow-mode-tabs {
@@ -99,7 +116,7 @@
 }
 
 .vue-flow__node {
-  width: 150px;
+  width: 180px;
   border: 1px solid #34495e;
   border-radius: 6px;
   background: #f8fafc;
@@ -169,4 +186,10 @@
 
 .step-editor textarea {
   min-height: 74px;
+}
+
+.step-editor h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 13px;
 }

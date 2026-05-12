@@ -36,14 +36,20 @@ fn workflow_node_serialization() {
         "kind": "task",
         "task_id": 123,
         "transitions": {
-            "on_success": "next-node"
+            "on_success": { "$node": "next-node" }
         }
     });
     let node: WorkflowNode = serde_json::from_value(node_json).unwrap();
     assert_eq!(node.id, "test-node");
     assert_eq!(node.kind, WorkflowNodeKind::Task);
     assert_eq!(node.task_id, Some(123));
-    assert_eq!(node.transitions.on_success, Some("next-node".to_string()));
+    assert_eq!(
+        node.transitions
+            .on_success
+            .as_ref()
+            .map(WorkflowNodeRef::as_str),
+        Some("next-node")
+    );
 }
 
 #[test]

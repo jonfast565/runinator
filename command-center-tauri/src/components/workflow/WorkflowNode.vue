@@ -1,6 +1,12 @@
 <template>
   <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting }]">
-    <div class="node-label">{{ data.label }}</div>
+    <div class="node-topline">
+      <span class="node-kind">{{ data.kind }}</span>
+      <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
+    </div>
+    <div class="node-title">{{ data.title }}</div>
+    <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
+    <div v-if="isWaiting && data.approvalPrompt" class="node-prompt">{{ data.approvalPrompt }}</div>
     <div v-if="data.running" class="node-loader">
       <div class="spinner"></div>
     </div>
@@ -15,7 +21,7 @@
     </div>
 
     <Handle type="target" :position="Position.Top" />
-    <Handle type="source" :position="Position.Bottom" />
+    <Handle v-for="handle in sourceHandles" :key="handle.id" type="source" :id="handle.id" :position="Position.Bottom" :style="{ left: handle.left }" />
   </div>
 </template>
 
@@ -31,9 +37,14 @@ import { statusClassForNode } from "../../utils/status";
 const props = defineProps<{
   id: string;
   data: {
-    label: string;
+    title: string;
+    kind: string;
+    summary?: string;
+    statusLabel?: string;
+    approvalPrompt?: string;
     running?: boolean;
     status?: string;
+    protected?: boolean;
   };
 }>();
 
@@ -46,6 +57,26 @@ const statusClass = computed(() => statusClassForNode(props.data.status));
 
 const isWaiting = computed(() => {
   return isApprovalWaitingStatus(props.data.status);
+});
+const sourceHandles = computed(() => {
+  if (props.data.kind === "end") return [];
+  if (props.data.kind === "approval") {
+    return [
+      { id: "on_success", left: "35%" },
+      { id: "on_reject", left: "65%" }
+    ];
+  }
+  if (props.data.kind === "condition") {
+    return [
+      { id: "next", left: "35%" },
+      { id: "branches", left: "65%" }
+    ];
+  }
+  return [
+    { id: "next", left: "25%" },
+    { id: "on_success", left: "50%" },
+    { id: "on_failure", left: "75%" }
+  ];
 });
 
 async function onApprove() {
@@ -90,10 +121,39 @@ async function resolveApproval(action: ApprovalAction) {
   border-width: 2px;
 }
 
-.node-label {
+.node-topline {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 6px;
+  color: #66717e;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.node-title {
+  max-width: 100%;
+  overflow: hidden;
+  color: #17202a;
+  font-weight: 700;
   text-align: center;
-  font-size: 12px;
-  margin-bottom: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-summary,
+.node-prompt {
+  max-width: 100%;
+  overflow: hidden;
+  color: #4b5663;
+  font-size: 11px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-prompt {
+  color: #8a5a00;
 }
 
 .node-loader {

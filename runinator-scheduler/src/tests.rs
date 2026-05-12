@@ -75,9 +75,9 @@ async fn switch_routes_matching_default_and_unmatched_cases() {
         "id": "route",
         "kind": "switch",
         "parameters": {
-            "value": { "$value": "input#/mode" },
-            "cases": [{ "equals": "fast", "target": "fast_path" }],
-            "default": "fallback"
+            "value": { "$ref": { "input": ["mode"] } },
+            "cases": [{ "equals": "fast", "target": { "$node": "fast_path" } }],
+            "default": { "$node": "fallback" }
         }
     }));
 
@@ -99,8 +99,8 @@ async fn switch_routes_matching_default_and_unmatched_cases() {
         "id": "route",
         "kind": "switch",
         "parameters": {
-            "value": { "$value": "input#/mode" },
-            "cases": [{ "equals": "fast", "target": "fast_path" }]
+            "value": { "$ref": { "input": ["mode"] } },
+            "cases": [{ "equals": "fast", "target": { "$node": "fast_path" } }]
         }
     }));
     let api = MockWorkflowApi::default();
@@ -123,9 +123,9 @@ async fn emit_resolves_output_and_advances() {
         "kind": "emit",
         "parameters": {
             "event_type": "ticket.ready",
-            "data": { "ticket": { "$value": "input#/ticket" } }
+            "data": { "ticket": { "$ref": { "input": ["ticket"] } } }
         },
-        "transitions": { "next": "done" }
+        "transitions": { "next": { "$node": "done" } }
     }));
 
     process_emit_node(&api, &run, &node, &[]).await.unwrap();
@@ -145,7 +145,7 @@ async fn parallel_progresses_branches_into_join_all() {
     let parallel = node(json!({
         "id": "fanout",
         "kind": "parallel",
-        "parameters": { "branches": ["a", "b"] }
+        "parameters": { "branches": [{ "$node": "a" }, { "$node": "b" }] }
     }));
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "fanout");
@@ -160,8 +160,8 @@ async fn parallel_progresses_branches_into_join_all() {
     let join = node(json!({
         "id": "join",
         "kind": "join",
-        "parameters": { "wait_for": ["a", "b"], "mode": "all" },
-        "transitions": { "next": "done" }
+        "parameters": { "wait_for": [{ "$node": "a" }, { "$node": "b" }], "mode": "all" },
+        "transitions": { "next": { "$node": "done" } }
     }));
     let run = workflow_run(json!({}), update.state.clone(), "join");
     let api = MockWorkflowApi::default();
@@ -201,8 +201,8 @@ async fn join_any_succeeds_with_one_completed_branch() {
     let join = node(json!({
         "id": "join",
         "kind": "join",
-        "parameters": { "wait_for": ["a", "b"], "mode": "any" },
-        "transitions": { "next": "done" }
+        "parameters": { "wait_for": [{ "$node": "a" }, { "$node": "b" }], "mode": "any" },
+        "transitions": { "next": { "$node": "done" } }
     }));
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "join");
@@ -227,8 +227,8 @@ async fn try_routes_body_success_failure_and_finally() {
     let try_node = node(json!({
         "id": "guard",
         "kind": "try",
-        "parameters": { "body": "body", "catch": "recover", "finally": "cleanup" },
-        "transitions": { "next": "done" }
+        "parameters": { "body": { "$node": "body" }, "catch": { "$node": "recover" }, "finally": { "$node": "cleanup" } },
+        "transitions": { "next": { "$node": "done" } }
     }));
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "guard");
@@ -288,8 +288,8 @@ async fn map_exposes_item_aggregates_output_and_propagates_failure() {
     let map = node(json!({
         "id": "batch",
         "kind": "map",
-        "parameters": { "items": ["a", "b"], "target": "item", "concurrency": 1 },
-        "transitions": { "next": "done" }
+        "parameters": { "items": ["a", "b"], "target": { "$node": "item" }, "concurrency": 1 },
+        "transitions": { "next": { "$node": "done" } }
     }));
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "batch");
@@ -387,8 +387,8 @@ async fn race_records_first_success_and_starts_remaining_branches_sequentially()
     let race = node(json!({
         "id": "race",
         "kind": "race",
-        "parameters": { "branches": ["fast", "slow"], "winner": "first_success" },
-        "transitions": { "next": "done" }
+        "parameters": { "branches": [{ "$node": "fast" }, { "$node": "slow" }], "winner": "first_success" },
+        "transitions": { "next": { "$node": "done" } }
     }));
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "race");

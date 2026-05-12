@@ -1,5 +1,47 @@
 export type JsonRecord = Record<string, any>;
 
+export type WorkflowNodeKind =
+  | "start"
+  | "task"
+  | "wait"
+  | "condition"
+  | "switch"
+  | "approval"
+  | "loop"
+  | "parallel"
+  | "join"
+  | "try"
+  | "map"
+  | "race"
+  | "emit"
+  | "subflow"
+  | "end";
+
+export type WorkflowDirectTransitionKey = "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
+export type WorkflowNodeId = string;
+export interface WorkflowNodeRef {
+  "$node": WorkflowNodeId;
+}
+export type WorkflowPathSegment = string | number;
+
+export type WorkflowEditorEdgeKind = "direct" | "branch" | "control";
+
+export interface WorkflowEditorEdgeData {
+  kind: WorkflowEditorEdgeKind;
+  transitionKey?: WorkflowDirectTransitionKey;
+  branchIndex?: number;
+  parameterKey?: string;
+  parameterIndex?: number;
+  editable: boolean;
+}
+
+export interface WorkflowEditorNodeRecord extends JsonRecord {
+  id: string;
+  kind: WorkflowNodeKind;
+  transitions?: JsonRecord;
+  parameters?: JsonRecord;
+}
+
 export interface ScheduledTask {
   id: number | null;
   name: string;

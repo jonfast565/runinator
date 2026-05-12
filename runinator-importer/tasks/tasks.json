@@ -200,7 +200,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] intake accepted ticket RUN-101 for local workflow test'"
             },
-            "transitions": { "on_success": "create_branch" }
+            "transitions": { "on_success": { "$node": "create_branch" } }
           },
           {
             "id": "create_branch",
@@ -209,7 +209,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] branch feature/mock-sdlc-run created'"
             },
-            "transitions": { "on_success": "implement_change" }
+            "transitions": { "on_success": { "$node": "implement_change" } }
           },
           {
             "id": "implement_change",
@@ -218,7 +218,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] feature implemented with tests and release notes'"
             },
-            "transitions": { "on_success": "run_unit_tests" }
+            "transitions": { "on_success": { "$node": "run_unit_tests" } }
           },
           {
             "id": "run_unit_tests",
@@ -227,7 +227,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] cargo test passed for feature branch'"
             },
-            "transitions": { "on_success": "tests_passed" },
+            "transitions": { "on_success": { "$node": "tests_passed" } },
             "retry": { "max_attempts": 2 },
             "timeout_seconds": 30
           },
@@ -235,11 +235,11 @@
             "id": "tests_passed",
             "kind": "condition",
             "condition": {
-              "value": { "$value": "steps.run_unit_tests.output#/success" },
+              "value": { "$ref": { "node": "run_unit_tests", "output": ["success"] } },
               "equals": true
             },
             "transitions": {
-              "on_success": "review_approval"
+              "on_success": { "$node": "review_approval" }
             }
           },
           {
@@ -250,7 +250,7 @@
               "prompt": "Approve the mock pull request for QA."
             },
             "transitions": {
-              "on_success": "qa_verification"
+              "on_success": { "$node": "qa_verification" }
             }
           },
           {
@@ -260,7 +260,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] qa verification completed against staging build'"
             },
-            "transitions": { "on_success": "release_gate" }
+            "transitions": { "on_success": { "$node": "release_gate" } }
           },
           {
             "id": "release_gate",
@@ -270,7 +270,7 @@
               "prompt": "Approve staging deployment for the mock SDLC workflow."
             },
             "transitions": {
-              "on_success": "deploy_release"
+              "on_success": { "$node": "deploy_release" }
             }
           },
           {
@@ -280,7 +280,7 @@
             "parameters": {
               "command": "echo '[mock-sdlc] release deployed and ticket moved to Done'"
             },
-            "transitions": { "on_success": "done" }
+            "transitions": { "on_success": { "$node": "done" } }
           },
           {
             "id": "done",
@@ -320,19 +320,19 @@
             "id": "route_mode",
             "kind": "switch",
             "parameters": {
-              "value": { "$value": "input#/mode" },
+              "value": { "$ref": { "input": ["mode"] } },
               "cases": [
-                { "equals": "batch", "target": "process_items" },
-                { "equals": "race", "target": "first_ready" }
+                { "equals": "batch", "target": { "$node": "process_items" } },
+                { "equals": "race", "target": { "$node": "first_ready" } }
               ],
-              "default": "start_checks"
+              "default": { "$node": "start_checks" }
             }
           },
           {
             "id": "start_checks",
             "kind": "parallel",
             "parameters": {
-              "branches": ["lint_check", "unit_check"]
+              "branches": [{ "$node": "lint_check" }, { "$node": "unit_check" }]
             }
           },
           {
@@ -342,7 +342,7 @@
               "event_type": "check.completed",
               "data": { "name": "lint", "status": "ok" }
             },
-            "transitions": { "next": "checks_joined" }
+            "transitions": { "next": { "$node": "checks_joined" } }
           },
           {
             "id": "unit_check",
@@ -351,26 +351,26 @@
               "event_type": "check.completed",
               "data": { "name": "unit", "status": "ok" }
             },
-            "transitions": { "next": "checks_joined" }
+            "transitions": { "next": { "$node": "checks_joined" } }
           },
           {
             "id": "checks_joined",
             "kind": "join",
             "parameters": {
-              "wait_for": ["lint_check", "unit_check"],
+              "wait_for": [{ "$node": "lint_check" }, { "$node": "unit_check" }],
               "mode": "all"
             },
-            "transitions": { "next": "guarded_release" }
+            "transitions": { "next": { "$node": "guarded_release" } }
           },
           {
             "id": "guarded_release",
             "kind": "try",
             "parameters": {
-              "body": "release_body",
-              "catch": "release_recovery",
-              "finally": "release_cleanup"
+              "body": { "$node": "release_body" },
+              "catch": { "$node": "release_recovery" },
+              "finally": { "$node": "release_cleanup" }
             },
-            "transitions": { "next": "done" }
+            "transitions": { "next": { "$node": "done" } }
           },
           {
             "id": "release_body",
@@ -379,7 +379,7 @@
               "event_type": "release.body",
               "data": { "status": "ok" }
             },
-            "transitions": { "next": "guarded_release" }
+            "transitions": { "next": { "$node": "guarded_release" } }
           },
           {
             "id": "release_recovery",
@@ -388,7 +388,7 @@
               "event_type": "release.recovery",
               "data": { "status": "recovered" }
             },
-            "transitions": { "next": "guarded_release" }
+            "transitions": { "next": { "$node": "guarded_release" } }
           },
           {
             "id": "release_cleanup",
@@ -397,17 +397,17 @@
               "event_type": "release.cleanup",
               "data": { "status": "done" }
             },
-            "transitions": { "next": "guarded_release" }
+            "transitions": { "next": { "$node": "guarded_release" } }
           },
           {
             "id": "process_items",
             "kind": "map",
             "parameters": {
-              "items": { "$value": "input#/items" },
-              "target": "process_item",
+              "items": { "$ref": { "input": ["items"] } },
+              "target": { "$node": "process_item" },
               "concurrency": 1
             },
-            "transitions": { "next": "done" }
+            "transitions": { "next": { "$node": "done" } }
           },
           {
             "id": "process_item",
@@ -415,20 +415,20 @@
             "parameters": {
               "event_type": "item.processed",
               "data": {
-                "index": { "$value": "workflow.state#/map/index" },
-                "item": { "$value": "workflow.state#/map/item" }
+                "index": { "$ref": { "workflow": ["state", "map", "index"] } },
+                "item": { "$ref": { "workflow": ["state", "map", "item"] } }
               }
             },
-            "transitions": { "next": "process_items" }
+            "transitions": { "next": { "$node": "process_items" } }
           },
           {
             "id": "first_ready",
             "kind": "race",
             "parameters": {
-              "branches": ["fast_signal", "slow_signal"],
+              "branches": [{ "$node": "fast_signal" }, { "$node": "slow_signal" }],
               "winner": "first_success"
             },
-            "transitions": { "next": "done" }
+            "transitions": { "next": { "$node": "done" } }
           },
           {
             "id": "fast_signal",
@@ -437,7 +437,7 @@
               "event_type": "signal.ready",
               "data": { "source": "fast" }
             },
-            "transitions": { "next": "first_ready" }
+            "transitions": { "next": { "$node": "first_ready" } }
           },
           {
             "id": "slow_signal",
@@ -446,7 +446,7 @@
               "event_type": "signal.ready",
               "data": { "source": "slow" }
             },
-            "transitions": { "next": "first_ready" }
+            "transitions": { "next": { "$node": "first_ready" } }
           },
           {
             "id": "done",

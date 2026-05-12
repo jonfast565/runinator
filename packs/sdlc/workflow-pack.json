@@ -16,71 +16,71 @@
             "kind": "task",
             "parameters": {
               "labels": ["automation"],
-              "assigned_to": { "$value": "input#/operator_id" }
+              "assigned_to": { "$ref": { "input": ["operator_id"] } }
             },
-            "transitions": { "on_success": "for_each_item" }
+            "transitions": { "on_success": { "$node": "for_each_item" } }
           },
           {
             "id": "for_each_item",
             "kind": "loop",
             "parameters": {
-              "items": { "$value": "steps.find_items.output#/items" }
+              "items": { "$ref": { "node": "find_items", "output": ["items"] } }
             },
             "max_iterations": 20,
             "transitions": {
-              "next": "create_workspace",
-              "on_success": "done"
+              "next": { "$node": "create_workspace" },
+              "on_success": { "$node": "done" }
             }
           },
           {
             "id": "create_workspace",
             "kind": "task",
             "parameters": {
-              "item": { "$value": "steps.for_each_item.output#/item" }
+              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } }
             },
-            "transitions": { "on_success": "implement_change" }
+            "transitions": { "on_success": { "$node": "implement_change" } }
           },
           {
             "id": "implement_change",
             "kind": "task",
             "parameters": {
-              "item": { "$value": "steps.for_each_item.output#/item" },
-              "workspace": { "$value": "steps.create_workspace.output#/workspace" }
+              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } },
+              "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } }
             },
-            "transitions": { "on_success": "create_pr" }
+            "transitions": { "on_success": { "$node": "create_pr" } }
           },
           {
             "id": "create_pr",
             "kind": "task",
             "parameters": {
-              "workspace": { "$value": "steps.create_workspace.output#/workspace" },
-              "change_set": { "$value": "steps.implement_change.output#/change_set" }
+              "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } },
+              "change_set": { "$ref": { "node": "implement_change", "output": ["change_set"] } }
             },
-            "transitions": { "on_success": "wait_for_checks" }
+            "transitions": { "on_success": { "$node": "wait_for_checks" } }
           },
           {
             "id": "wait_for_checks",
             "kind": "wait",
             "wait": { "seconds": 60 },
-            "transitions": { "next": "read_checks" }
+            "transitions": { "next": { "$node": "read_checks" } }
           },
           {
             "id": "read_checks",
             "kind": "task",
             "parameters": {
-              "pull_request": { "$value": "steps.create_pr.output#/pull_request" }
+              "pull_request": { "$ref": { "node": "create_pr", "output": ["pull_request"] } }
             },
             "transitions": {
               "branches": [
                 {
                   "when": {
-                    "value": { "$value": "steps.read_checks.output#/status" },
+                    "value": { "$ref": { "node": "read_checks", "output": ["status"] } },
                     "equals": "passed"
                   },
-                  "target": "merge_approval"
+                  "target": { "$node": "merge_approval" }
                 }
               ],
-              "on_failure": "wait_for_checks"
+              "on_failure": { "$node": "wait_for_checks" }
             }
           },
           {
@@ -91,18 +91,18 @@
               "prompt": "Approve merge for generated PR"
             },
             "transitions": {
-              "on_success": "transition_done",
-              "on_failure": "for_each_item"
+              "on_success": { "$node": "transition_done" },
+              "on_failure": { "$node": "for_each_item" }
             }
           },
           {
             "id": "transition_done",
             "kind": "task",
             "parameters": {
-              "item": { "$value": "steps.for_each_item.output#/item" },
+              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } },
               "status": "Done"
             },
-            "transitions": { "on_success": "for_each_item" }
+            "transitions": { "on_success": { "$node": "for_each_item" } }
           },
           {
             "id": "done",

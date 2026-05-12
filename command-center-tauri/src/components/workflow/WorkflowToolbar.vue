@@ -4,10 +4,16 @@
       <strong>{{ workflows.workflowDraft.name }}</strong>
       <span>v{{ workflows.workflowDraft.version }} · concurrency {{ workflows.workflowConcurrency }}</span>
     </div>
-    <button @click="workflows.openWorkflowSettings">Settings</button>
-    <button @click="workflows.saveSelectedWorkflow">Save</button>
-    <button @click="workflows.addWorkflowStep">Add Step</button>
-    <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove Step</button>
+    <div class="workflow-actions">
+      <button @click="workflows.openWorkflowSettings">Settings</button>
+      <button @click="workflows.saveSelectedWorkflow">Save</button>
+      <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
+    </div>
+    <div class="workflow-palette" aria-label="Workflow node palette">
+      <button v-for="kind in workflows.workflowNodeKinds" :key="kind" :title="`Add ${kind} node`" @click="workflows.addWorkflowNode(kind)">
+        {{ kind }}
+      </button>
+    </div>
     <WorkflowSettingsModal v-if="workflows.workflowSettingsOpen" />
   </div>
 </template>

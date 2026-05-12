@@ -522,7 +522,12 @@ pub async fn process_loop_node(
         )
         .await?;
     } else {
-        let return_to = node.transitions.next.clone().unwrap_or(node.id.clone());
+        let return_to = node
+            .transitions
+            .next
+            .as_ref()
+            .map(|target| target.as_str().to_string())
+            .unwrap_or_else(|| node.id.clone());
         api.update_workflow_run(
             workflow_run.id,
             WorkflowStatus::Running,
@@ -555,11 +560,18 @@ pub async fn process_parallel_node(
     let Some(first) = params.branches.first().cloned() else {
         return block_node(api, workflow_run, node, "Parallel node has no branches").await;
     };
-    let remaining = params.branches.iter().skip(1).cloned().collect::<Vec<_>>();
+    let remaining = params
+        .branches
+        .iter()
+        .skip(1)
+        .map(|branch| branch.as_str().to_string())
+        .collect::<Vec<_>>();
     let node_run = api
         .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
         .await?;
-    let output = serde_json::json!({ "branches": params.branches });
+    let output = serde_json::json!({
+        "branches": params.branches.iter().map(|branch| branch.as_str()).collect::<Vec<_>>()
+    });
     let state = merge_state(
         &workflow_run.state,
         "parallel",
@@ -583,7 +595,7 @@ pub async fn process_parallel_node(
     api.update_workflow_run(
         workflow_run.id,
         WorkflowStatus::Running,
-        Some(first),
+        Some(first.into_string()),
         Some(state),
         None,
     )
@@ -599,10 +611,18 @@ pub async fn process_join_node(
 ) -> Result<(), SendableError> {
     let params = runinator_workflows::parse_join_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    if join_satisfied(&params.wait_for, params.mode, node_runs) {
+    if join_satisfied(
+        &params
+            .wait_for
+            .iter()
+            .map(|target| target.as_str().to_string())
+            .collect::<Vec<_>>(),
+        params.mode,
+        node_runs,
+    ) {
         let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
         let output = serde_json::json!({
-            "wait_for": params.wait_for,
+            "wait_for": params.wait_for.iter().map(|target| target.as_str()).collect::<Vec<_>>(),
             "mode": branch_policy_name(params.mode)
         });
         return transition_from_node(
@@ -674,14 +694,14 @@ pub async fn process_map_node(
         let items = items.as_array().cloned().unwrap_or_default();
         frame = Some(serde_json::json!({
             "node_id": node.id,
-            "target": params.target,
+            "target": params.target.as_str(),
             "items": items,
             "index": 0,
             "outputs": [],
             "concurrency": params.concurrency.unwrap_or(1)
         }));
     } else {
-        if let Some(status) = latest_status(&params.target, node_runs) {
+        if let Some(status) = latest_status(params.target.as_str(), node_runs) {
             if status != WorkflowStatus::Succeeded {
                 return transition_from_node(
                     api,
@@ -696,7 +716,7 @@ pub async fn process_map_node(
                 .await;
             }
         }
-        frame = append_completed_map_item(frame, &params.target, node_runs);
+        frame = append_completed_map_item(frame, params.target.as_str(), node_runs);
     }
     let Some(frame_value) = frame else {
         return block_node(
@@ -752,7 +772,7 @@ pub async fn process_map_node(
     api.update_workflow_run(
         workflow_run.id,
         WorkflowStatus::Running,
-        Some(params.target),
+        Some(params.target.into_string()),
         Some(merge_state(&workflow_run.state, "map", next_frame)),
         None,
     )
@@ -769,7 +789,12 @@ pub async fn process_race_node(
     let params = runinator_workflows::parse_race_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
-    if let Some(winner) = race_winner(&params.branches, params.winner, node_runs) {
+    let branches = params
+        .branches
+        .iter()
+        .map(|branch| branch.as_str().to_string())
+        .collect::<Vec<_>>();
+    if let Some(winner) = race_winner(&branches, params.winner, node_runs) {
         let output = serde_json::json!({ "winner": winner });
         return transition_from_node(
             api,
@@ -792,9 +817,9 @@ pub async fn process_race_node(
     {
         pop_state_queue(&workflow_run.state, "race", "remaining")
     } else {
-        let remaining = params.branches.iter().skip(1).cloned().collect::<Vec<_>>();
+        let remaining = branches.iter().skip(1).cloned().collect::<Vec<_>>();
         Some(QueuedState {
-            target: params.branches[0].clone(),
+            target: branches[0].clone(),
             state: merge_state(
                 &workflow_run.state,
                 "race",
@@ -864,7 +889,7 @@ pub async fn process_try_node(
             workflow_run,
             &node_run,
             node,
-            &params.body,
+            params.body.as_str(),
             "body",
             None,
         )
@@ -872,7 +897,7 @@ pub async fn process_try_node(
     }
     match phase {
         "body" => {
-            let Some(status) = latest_status(&params.body, node_runs) else {
+            let Some(status) = latest_status(params.body.as_str(), node_runs) else {
                 return Ok(());
             };
             if status == WorkflowStatus::Succeeded {
@@ -882,7 +907,7 @@ pub async fn process_try_node(
                         workflow_run,
                         &node_run,
                         node,
-                        &finally,
+                        finally.as_str(),
                         "finally",
                         Some(status),
                     )
@@ -906,7 +931,7 @@ pub async fn process_try_node(
                     workflow_run,
                     &node_run,
                     node,
-                    &catch,
+                    catch.as_str(),
                     "catch",
                     Some(status),
                 )
@@ -918,7 +943,7 @@ pub async fn process_try_node(
                     workflow_run,
                     &node_run,
                     node,
-                    &finally,
+                    finally.as_str(),
                     "finally",
                     Some(status),
                 )
@@ -939,8 +964,8 @@ pub async fn process_try_node(
         "catch" => {
             let Some(status) = params
                 .catch
-                .as_deref()
-                .and_then(|catch| latest_status(catch, node_runs))
+                .as_ref()
+                .and_then(|catch| latest_status(catch.as_str(), node_runs))
             else {
                 return Ok(());
             };
@@ -950,7 +975,7 @@ pub async fn process_try_node(
                     workflow_run,
                     &node_run,
                     node,
-                    &finally,
+                    finally.as_str(),
                     "finally",
                     Some(status),
                 )
@@ -969,7 +994,7 @@ pub async fn process_try_node(
             .await
         }
         "finally" => {
-            let Some(finally) = params.finally.as_deref() else {
+            let Some(finally) = params.finally.as_ref().map(|target| target.as_str()) else {
                 return Ok(());
             };
             if latest_status(finally, node_runs).is_none() {
