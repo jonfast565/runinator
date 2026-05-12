@@ -4,14 +4,19 @@ mod repository;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query},
+    extract::{
+        Path, Query,
+        ws::{Message, WebSocketUpgrade},
+    },
     http::StatusCode,
+    response::Response,
     routing::{delete, get, patch, post},
 };
+use futures::{SinkExt, StreamExt};
 use log::info;
 use models::{
     ApiError, ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, CatalogQuery,
@@ -31,8 +36,25 @@ use runinator_models::{
 use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
 };
-use serde::Deserialize;
-use tokio::{net::TcpListener, sync::Notify};
+use serde::{Deserialize, Serialize};
+use tokio::{net::TcpListener, sync::{broadcast, Notify}};
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AppEvent {
+    TasksChanged,
+    RunStatusChanged { run_id: i64 },
+    RunChunkAdded { run_id: i64 },
+    WorkflowsChanged,
+    WorkflowRunChanged { run_id: i64 },
+    WorkflowRunActivity,
+}
+
+type EventSender = broadcast::Sender<AppEvent>;
+
+fn emit(events: &EventSender, event: AppEvent) {
+    let _ = events.send(event);
+}
 
 #[derive(Debug, Default, Deserialize)]
 struct TaskMutationParams {
@@ -101,6 +123,7 @@ async fn preserve_next_execution_if_needed<T: DatabaseImpl>(
 
 async fn add_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Query(params): Query<TaskMutationParams>,
     Json(mut task_input): Json<ScheduledTask>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -112,13 +135,17 @@ async fn add_task<T: DatabaseImpl>(
     }
 
     match repository::add_task(db.as_ref(), &task_input).await {
-        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Ok(r) => {
+            emit(&events, AppEvent::TasksChanged);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
 
 async fn update_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(task_id): Path<i64>,
     Query(params): Query<TaskMutationParams>,
     Json(mut task_input): Json<ScheduledTask>,
@@ -136,19 +163,26 @@ async fn update_task<T: DatabaseImpl>(
     }
 
     match repository::update_task(db.as_ref(), &task_input).await {
-        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Ok(r) => {
+            emit(&events, AppEvent::TasksChanged);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
 
 async fn delete_task<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(task_id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("Deleting task with ID: {}", task_id);
     let r = repository::delete_task(db.as_ref(), task_id).await;
     match r {
-        Ok(r) => (StatusCode::OK, Json(ApiResponse::TaskResponse(r))),
+        Ok(r) => {
+            emit(&events, AppEvent::TasksChanged);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiResponse::ApiError(ApiError {
@@ -270,6 +304,7 @@ async fn get_run<T: DatabaseImpl>(
 
 async fn update_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(run_id): Path<i64>,
     Json(request): Json<RunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -282,7 +317,10 @@ async fn update_run<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Ok(resp) => {
+            emit(&events, AppEvent::RunStatusChanged { run_id });
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -307,11 +345,15 @@ async fn get_run_chunks<T: DatabaseImpl>(
 
 async fn append_run_chunk<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(run_id): Path<i64>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
-        Ok(resp) => (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(resp))),
+        Ok(resp) => {
+            emit(&events, AppEvent::RunChunkAdded { run_id });
+            (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(resp)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -355,10 +397,14 @@ async fn get_artifact<T: DatabaseImpl>(
 
 async fn upsert_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Json(workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::upsert_workflow(db.as_ref(), &workflow).await {
-        Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
+        Ok(workflow) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -438,6 +484,7 @@ async fn get_workflow_runs<T: DatabaseImpl>(
 
 async fn update_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(workflow_run_id): Path<i64>,
     Json(request): Json<WorkflowRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -451,7 +498,10 @@ async fn update_workflow_run<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Ok(resp) => {
+            emit(&events, AppEvent::WorkflowRunChanged { run_id: workflow_run_id });
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -480,6 +530,7 @@ async fn get_workflow_run<T: DatabaseImpl>(
 
 async fn create_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(workflow_run_id): Path<i64>,
     Json(request): Json<WorkflowNodeRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -491,16 +542,17 @@ async fn create_workflow_node_run<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(step) => (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowNodeRun(step)),
-        ),
+        Ok(step) => {
+            emit(&events, AppEvent::WorkflowRunChanged { run_id: workflow_run_id });
+            (StatusCode::ACCEPTED, Json(ApiResponse::WorkflowNodeRun(step)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
 
 async fn update_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(node_run_id): Path<i64>,
     Json(request): Json<WorkflowNodeRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -518,7 +570,10 @@ async fn update_workflow_node_run<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Ok(resp) => {
+            emit(&events, AppEvent::WorkflowRunActivity);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -998,8 +1053,140 @@ async fn record_task_run<T: DatabaseImpl>(
     }
 }
 
-pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
+async fn ws_events(
+    Extension(events): Extension<EventSender>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let mut rx = events.subscribe();
+    ws.on_upgrade(move |socket| async move {
+        let (mut tx, _rx) = socket.split();
+        while let Ok(event) = rx.recv().await {
+            if let Ok(payload) = serde_json::to_string(&event) {
+                if tx.send(Message::Text(payload.into())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    })
+}
+
+async fn ws_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(run_id): Path<i64>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        let (mut tx, mut rx_ws) = socket.split();
+        // Send initial state
+        if let Ok(Some((run, nodes))) = repository::fetch_workflow_run(db.as_ref(), run_id).await {
+            if let Ok(payload) = serde_json::to_string(&models::WorkflowRunResponse { run, nodes }) {
+                let _ = tx.send(Message::Text(payload.into())).await;
+            }
+        }
+        let mut event_rx = events.subscribe();
+        loop {
+            tokio::select! {
+                Ok(event) = event_rx.recv() => {
+                    let relevant = matches!(&event,
+                        AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
+                    ) || matches!(&event, AppEvent::WorkflowRunActivity);
+                    if relevant {
+                        match repository::fetch_workflow_run(db.as_ref(), run_id).await {
+                            Ok(Some((run, nodes))) => {
+                                let terminal = run.status.is_terminal();
+                                if let Ok(payload) = serde_json::to_string(&models::WorkflowRunResponse { run, nodes }) {
+                                    if tx.send(Message::Text(payload.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                if terminal { break; }
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+                msg = rx_ws.next() => {
+                    match msg {
+                        Some(Ok(Message::Close(_))) | None => break,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn ws_run_stream<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(run_id): Path<i64>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        let (mut tx, mut rx_ws) = socket.split();
+        let mut cursor: Option<i64> = None;
+        // Send any existing chunks first
+        if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 500).await {
+            for chunk in &chunks {
+                if let Ok(payload) = serde_json::to_string(chunk) {
+                    if tx.send(Message::Text(payload.into())).await.is_err() {
+                        return;
+                    }
+                }
+                cursor = Some(chunk.sequence);
+            }
+        }
+        let mut event_rx = events.subscribe();
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
+        loop {
+            tokio::select! {
+                Ok(event) = event_rx.recv() => {
+                    let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
+                    let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id } if *id == run_id);
+                    if is_chunk || is_done {
+                        if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 100).await {
+                            for chunk in &chunks {
+                                if let Ok(payload) = serde_json::to_string(chunk) {
+                                    if tx.send(Message::Text(payload.into())).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                cursor = Some(chunk.sequence);
+                            }
+                        }
+                        if is_done { break; }
+                    }
+                }
+                _ = poll_interval.tick() => {
+                    // Fallback poll in case events are missed
+                    if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 100).await {
+                        for chunk in &chunks {
+                            if let Ok(payload) = serde_json::to_string(chunk) {
+                                if tx.send(Message::Text(payload.into())).await.is_err() {
+                                    return;
+                                }
+                            }
+                            cursor = Some(chunk.sequence);
+                        }
+                    }
+                }
+                msg = rx_ws.next() => {
+                    match msg {
+                        Some(Ok(Message::Close(_))) | None => return,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })
+}
+
+pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Router {
     Router::new()
+        .route("/ws/events", get(ws_events))
+        .route("/ws/workflow-runs/:id", get(ws_workflow_run::<T>))
+        .route("/ws/runs/:id/stream", get(ws_run_stream::<T>))
         .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
         .route(
@@ -1170,6 +1357,7 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>) -> Router {
             "/webhooks/wake",
             post(webhook_wake::<T>).layer(Extension(pool.clone())),
         )
+        .layer(Extension(events))
 }
 
 pub async fn run_webserver<T: DatabaseImpl>(
@@ -1179,7 +1367,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
-    let app = build_router(pool);
+    let (events_tx, _) = broadcast::channel::<AppEvent>(256);
+    let app = build_router(pool, events_tx);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(listener, app);

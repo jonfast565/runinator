@@ -12,7 +12,7 @@
         <h2>Structured Result</h2>
         <pre class="output">{{ selectedOutput }}</pre>
         <h2>Run Output Chunks</h2>
-        <pre class="output">{{ tasks.runOutput }}</pre>
+        <pre class="output">{{ logOutput }}</pre>
         <h2>Artifacts</h2>
         <div class="table-scroll compact-scroll">
           <table>
@@ -46,9 +46,18 @@
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useTasksStore } from "../stores/tasks";
+import { useRunLogStream } from "../composables/useRunLogStream";
 import { formatDate, pretty } from "../utils/format";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 const tasks = useTasksStore();
 const selectedOutput = computed(() => pretty(tasks.selectedRun?.output_json ?? {}));
+
+const selectedRunIdRef = ref(tasks.selectedRunId);
+watch(() => tasks.selectedRunId, (id) => { selectedRunIdRef.value = id; });
+const { chunks: logChunks } = useRunLogStream(selectedRunIdRef);
+const logOutput = computed(() => {
+  if (logChunks.value.length > 0) return logChunks.value.map(c => `[${c.stream}] ${c.content}`).join("\n");
+  return tasks.runOutput;
+});
 </script>

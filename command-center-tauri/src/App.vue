@@ -13,7 +13,7 @@ import { onBeforeUnmount, onMounted, watch } from "vue";
 import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi";
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
-import { useAutoRefresh } from "./composables/useAutoRefresh";
+import { useEventStream } from "./composables/useEventStream";
 import { useAppStore } from "./stores/app";
 import { useResourcesStore } from "./stores/resources";
 import { useSecretsStore } from "./stores/secrets";
@@ -32,7 +32,7 @@ const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
-useAutoRefresh();
+useEventStream();
 
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;

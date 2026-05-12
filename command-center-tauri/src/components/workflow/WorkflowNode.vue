@@ -7,10 +7,10 @@
     <div class="node-title">{{ data.title }}</div>
     <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
     <div v-if="isWaiting && data.approvalPrompt" class="node-prompt">{{ data.approvalPrompt }}</div>
-    <div v-if="data.running" class="node-loader">
+    <div v-if="isNodeRunning" class="node-loader">
       <div class="spinner"></div>
     </div>
-    
+
     <div v-if="isWaiting && !submitting" class="node-actions">
       <button class="node-btn approve" @click.stop="onApprove">Approve</button>
       <button class="node-btn reject" @click.stop="onReject">Reject</button>
@@ -19,6 +19,7 @@
     <div v-if="submitting" class="node-loader">
       <div class="spinner"></div>
     </div>
+
 
     <Handle type="target" :position="Position.Top" />
     <Handle v-for="handle in sourceHandles" :key="handle.id" type="source" :id="handle.id" :position="Position.Bottom" :style="{ left: handle.left }" />
@@ -54,6 +55,12 @@ const app = useAppStore();
 const submitting = ref(false);
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
+
+const isNodeRunning = computed(() => {
+  const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
+  if (run) return run.status === "running" || run.status === "queued";
+  return props.data.running ?? false;
+});
 
 const isWaiting = computed(() => {
   return isApprovalWaitingStatus(props.data.status);

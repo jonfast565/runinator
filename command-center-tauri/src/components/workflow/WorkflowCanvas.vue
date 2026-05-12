@@ -36,12 +36,14 @@
 import { onMounted, watch, nextTick } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../stores/workflows";
+import { useWorkflowRunStream } from "../../composables/useWorkflowRunStream";
 import JsonEditor from "../shared/JsonEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 
 const workflows = useWorkflowsStore();
 const { fitView, onPaneReady } = useVueFlow();
+useWorkflowRunStream();
 
 async function recenter() {
   await nextTick();

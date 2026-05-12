@@ -157,17 +157,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function selectWorkflow(workflow: WorkflowDefinition) {
-    if (isDirty.value && selectedWorkflowId.value !== workflow.id) {
-      // If we're changing workflows while dirty, we might want to warn,
-      // but if refreshWorkflows calls this, we already check !isDirty.
-    }
+    const isSwitch = selectedWorkflowId.value !== workflow.id;
     selectedWorkflowId.value = workflow.id;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflow)));
-    
     workflowConcurrency.value = Number(workflowDraft.definition?.concurrency ?? 1);
     workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
-    selectedStepId.value = "";
-    workflowRunDetail.value = null;
+    if (isSwitch) {
+      selectedStepId.value = "";
+      workflowRunDetail.value = null;
+    }
     isDirty.value = false;
     if (workflow.id) return fetchWorkflowRunsForSelected(workflow.id);
     return Promise.resolve();
@@ -213,20 +211,27 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return fetchWorkflowRunDetail(run.id);
   }
 
-  async function fetchWorkflowRunDetail(workflowRunId: number) {
-    workflowRunDetail.value = await app.runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId)).catch(() => null);
-    workflowNodeDetailExtra.value = "";
-    if (workflowRunDetail.value) {
-      workflowInspectorMode.value = "detail";
+  async function fetchWorkflowRunDetail(workflowRunId: number, silent = false) {
+    const detail = silent
+      ? await fetchWorkflowRun(workflowRunId).catch(() => null)
+      : await app.runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId)).catch(() => null);
+    applyWorkflowRunDetail(detail);
+  }
 
+  function setWorkflowRunDetail(detail: WorkflowRunDetail | null) {
+    applyWorkflowRunDetail(detail);
+  }
+
+  function applyWorkflowRunDetail(detail: WorkflowRunDetail | null) {
+    workflowRunDetail.value = detail;
+    workflowNodeDetailExtra.value = "";
+    if (detail) {
+      workflowInspectorMode.value = "detail";
       const resources = useResourcesStore();
-      const hasWaiting = workflowRunDetail.value.nodes.some(n => 
+      const hasWaiting = detail.nodes.some(n =>
         n.status === "waiting" || n.status === "approval_required" || n.status === "pending"
       );
-      if (hasWaiting) {
-        // Run in background to not block the detail view
-        resources.refreshResources();
-      }
+      if (hasWaiting) resources.refreshResources();
     }
   }
 
@@ -520,6 +525,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     fetchWorkflowRunsForSelected,
     selectWorkflowRun,
     fetchWorkflowRunDetail,
+    setWorkflowRunDetail,
     addWorkflowStep,
     addWorkflowNode,
     removeWorkflowStep,
