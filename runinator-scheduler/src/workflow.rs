@@ -55,6 +55,31 @@ pub async fn process_workflow_run(
         return Ok(());
     };
     let latest = latest_node_run(&node_runs, &active_node_id);
+    if let Some(decision) = reentry_exhaustion(node, latest, &node_runs) {
+        match decision {
+            ReentryExhaustion::Route(target) => {
+                api.update_workflow_run(
+                    workflow_run.id,
+                    WorkflowStatus::Running,
+                    Some(target),
+                    None,
+                    Some("Reentry visit limit exhausted".into()),
+                )
+                .await?;
+            }
+            ReentryExhaustion::Block => {
+                api.update_workflow_run(
+                    workflow_run.id,
+                    WorkflowStatus::Blocked,
+                    Some(active_node_id),
+                    None,
+                    Some("Reentry visit limit exhausted".into()),
+                )
+                .await?;
+            }
+        }
+        return Ok(());
+    }
     match node.kind {
         WorkflowNodeKind::Start => {
             process_start_node(api, &workflow_run, node, latest, &node_runs).await?
@@ -125,6 +150,39 @@ pub async fn process_workflow_run(
     };
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReentryExhaustion {
+    Route(String),
+    Block,
+}
+
+pub(crate) fn reentry_exhaustion(
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Option<ReentryExhaustion> {
+    if !node.reentry.enabled {
+        return None;
+    }
+    if latest.is_some_and(|run| run.status.is_active()) {
+        return None;
+    }
+    let visits = node_runs
+        .iter()
+        .filter(|run| run.node_id == node.id)
+        .count() as i64;
+    if visits < node.reentry.max_visits {
+        return None;
+    }
+    Some(
+        node.reentry
+            .on_exhausted
+            .as_ref()
+            .map(|target| ReentryExhaustion::Route(target.as_str().to_string()))
+            .unwrap_or(ReentryExhaustion::Block),
+    )
 }
 
 async fn process_start_node(

@@ -39,3 +39,51 @@ fn metadata_includes_merge_pr_action() {
             .any(|parameter| parameter.name == "pull_number" && parameter.required)
     );
 }
+
+#[test]
+fn metadata_includes_checks_summary_action() {
+    let provider = GitHubProvider;
+    let metadata = provider.metadata();
+
+    let checks_summary = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "checks_summary")
+        .expect("checks_summary action is advertised");
+
+    assert!(
+        checks_summary
+            .results
+            .iter()
+            .any(|result| result.name == "status")
+    );
+}
+
+#[test]
+fn summarizes_check_runs() {
+    let passed = summarize_check_runs(json!({
+        "check_runs": [
+            { "status": "completed", "conclusion": "success" },
+            { "status": "completed", "conclusion": "neutral" }
+        ]
+    }));
+    assert_eq!(passed["status"], "passed");
+    assert_eq!(passed["passed"], 2);
+
+    let pending = summarize_check_runs(json!({
+        "check_runs": [
+            { "status": "queued", "conclusion": null },
+            { "status": "completed", "conclusion": "success" }
+        ]
+    }));
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["pending"], 1);
+
+    let failed = summarize_check_runs(json!({
+        "check_runs": [
+            { "status": "completed", "conclusion": "failure" }
+        ]
+    }));
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["failed"], 1);
+}

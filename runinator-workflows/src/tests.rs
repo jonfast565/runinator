@@ -312,6 +312,87 @@ fn rejects_invalid_map_concurrency() {
 }
 
 #[test]
+fn validates_explicit_bounded_reentry_cycle() {
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            {
+                "id": "build",
+                "kind": "task",
+                "task_id": 1,
+                "reentry": { "enabled": true, "max_visits": 3, "on_exhausted": { "$node": "deferred" } },
+                "transitions": { "on_success": { "$node": "review" } }
+            },
+            { "id": "review", "kind": "approval", "transitions": { "on_success": { "$node": "done" }, "on_failure": { "$node": "build" } } },
+            { "id": "deferred", "kind": "end" },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow(&wf).expect("bounded reentry cycle validates");
+}
+
+#[test]
+fn rejects_unbounded_reentry_cycle() {
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "review" } } },
+            { "id": "review", "kind": "approval", "transitions": { "on_failure": { "$node": "build" }, "on_success": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::RefCycle(_))
+    ));
+}
+
+#[test]
+fn rejects_invalid_reentry_configuration() {
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            {
+                "id": "build",
+                "kind": "task",
+                "task_id": 1,
+                "reentry": { "enabled": true, "max_visits": 0 },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidReentry(_))
+    ));
+
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            {
+                "id": "build",
+                "kind": "task",
+                "task_id": 1,
+                "reentry": { "enabled": true, "max_visits": 2, "on_exhausted": { "$node": "missing" } },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::MissingTransition { .. })
+    ));
+}
+
+#[test]
 fn evaluates_switch_cases_and_default() {
     let node: WorkflowNode = serde_json::from_value(serde_json::json!({
         "id": "route",

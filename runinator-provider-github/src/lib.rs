@@ -134,6 +134,20 @@ impl Provider for GitHubProvider {
                         ParameterMetadata::required("ref", ParameterValueType::String),
                     ])
                     .with_results(json_results()),
+                ActionMetadata::new("checks_summary", "Summarize check runs for a reference")
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::required("ref", ParameterValueType::String),
+                    ])
+                    .with_results(vec![
+                        ResultMetadata::new("status", ParameterValueType::String),
+                        ResultMetadata::new("passed", ParameterValueType::Integer),
+                        ResultMetadata::new("pending", ParameterValueType::Integer),
+                        ResultMetadata::new("failed", ParameterValueType::Integer),
+                        ResultMetadata::new("raw", ParameterValueType::Json),
+                    ]),
                 ActionMetadata::new("dispatch", "Dispatch a workflow run")
                     .with_parameters(vec![
                         auth_param(),
@@ -170,20 +184,52 @@ impl Provider for GitHubProvider {
             "create_or_update_pr" | "create_pr" => {
                 let p: CreatePrParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
-                client
-                    .post(format!(
-                        "{api}/repos/{}/{}/pulls",
-                        p.base.owner, p.base.repo
-                    ))
+                let head = if p.head.contains(':') {
+                    p.head.clone()
+                } else {
+                    format!("{}:{}", p.base.owner, p.head)
+                };
+                let pulls_url = reqwest::Url::parse_with_params(
+                    &format!("{api}/repos/{}/{}/pulls", p.base.owner, p.base.repo),
+                    &[("state", "open"), ("head", head.as_str())],
+                )?;
+                let existing = client
+                    .get(pulls_url)
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
-                    .json(&json!({
-                        "title": p.title,
-                        "head": p.head,
-                        "base": p.base_branch.as_deref().unwrap_or("main"),
-                        "body": p.body.as_deref().unwrap_or("")
-                    }))
-                    .send()?
+                    .send()?;
+                if !existing.status().is_success() {
+                    existing
+                } else if let Some(number) = first_pull_number(existing)? {
+                    client
+                        .patch(format!(
+                            "{api}/repos/{}/{}/pulls/{number}",
+                            p.base.owner, p.base.repo
+                        ))
+                        .header("Authorization", &auth)
+                        .header("Accept", "application/vnd.github+json")
+                        .json(&json!({
+                            "title": p.title,
+                            "base": p.base_branch.as_deref().unwrap_or("main"),
+                            "body": p.body.as_deref().unwrap_or("")
+                        }))
+                        .send()?
+                } else {
+                    client
+                        .post(format!(
+                            "{api}/repos/{}/{}/pulls",
+                            p.base.owner, p.base.repo
+                        ))
+                        .header("Authorization", &auth)
+                        .header("Accept", "application/vnd.github+json")
+                        .json(&json!({
+                            "title": p.title,
+                            "head": p.head,
+                            "base": p.base_branch.as_deref().unwrap_or("main"),
+                            "body": p.body.as_deref().unwrap_or("")
+                        }))
+                        .send()?
+                }
             }
             "read_reviews" | "reviews" => {
                 let p: PrNumberParams = parse_params(&request)?;
@@ -248,6 +294,19 @@ impl Provider for GitHubProvider {
                     .header("Accept", "application/vnd.github+json")
                     .send()?
             }
+            "checks_summary" => {
+                let p: RefParams = parse_params(&request)?;
+                let auth = format!("Bearer {}", p.base.token);
+                let response = client
+                    .get(format!(
+                        "{api}/repos/{}/{}/commits/{}/check-runs",
+                        p.base.owner, p.base.repo, p.git_ref
+                    ))
+                    .header("Authorization", &auth)
+                    .header("Accept", "application/vnd.github+json")
+                    .send()?;
+                return checks_summary_response(response);
+            }
             "dispatch_workflow" | "dispatch" => {
                 let p: DispatchParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
@@ -292,6 +351,94 @@ fn parse_params<T: serde::de::DeserializeOwned>(
             "github.invalid_params".into(),
             e.to_string(),
         )) as SendableError
+    })
+}
+
+fn first_pull_number(response: reqwest::blocking::Response) -> Result<Option<i64>, SendableError> {
+    let text = response.text()?;
+    let value: Value = serde_json::from_str(&text).map_err(|err| {
+        RuntimeError::new(
+            "github.invalid_json".into(),
+            format!("GitHub pull request list response was not JSON: {err}"),
+        )
+    })?;
+    Ok(value
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("number"))
+        .and_then(Value::as_i64))
+}
+
+fn checks_summary_response(
+    response: reqwest::blocking::Response,
+) -> Result<TaskExecutionResult, SendableError> {
+    let status = response.status();
+    let text = response.text()?;
+    if !status.is_success() {
+        return Err(Box::new(RuntimeError::new(
+            "github.http_error".into(),
+            format!("HTTP {status}: {text}"),
+        )));
+    }
+    let raw: Value = serde_json::from_str(&text)
+        .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }));
+    let summary = summarize_check_runs(raw);
+    Ok(TaskExecutionResult {
+        message: Some("github checks summary completed".into()),
+        output_json: Some(summary),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
+}
+
+pub(crate) fn summarize_check_runs(raw: Value) -> Value {
+    let mut passed = 0;
+    let mut pending = 0;
+    let mut failed = 0;
+    let check_runs = raw
+        .get("check_runs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    for run in &check_runs {
+        let status = run
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let conclusion = run
+            .get("conclusion")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(
+            conclusion,
+            "failure" | "timed_out" | "cancelled" | "action_required"
+        ) {
+            failed += 1;
+        } else if status != "completed" || conclusion.is_empty() {
+            pending += 1;
+        } else if matches!(conclusion, "success" | "neutral" | "skipped") {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+
+    let status = if failed > 0 {
+        "failed"
+    } else if pending > 0 || check_runs.is_empty() {
+        "pending"
+    } else {
+        "passed"
+    };
+
+    json!({
+        "status": status,
+        "passed": passed,
+        "pending": pending,
+        "failed": failed,
+        "total": check_runs.len(),
+        "raw": raw
     })
 }
 

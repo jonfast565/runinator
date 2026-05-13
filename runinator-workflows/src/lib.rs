@@ -33,6 +33,10 @@ pub enum WorkflowValidationError {
     InvalidTimeout(String),
     #[error("workflow node '{0}' max_iterations must be greater than zero")]
     InvalidLoopLimit(String),
+    #[error(
+        "workflow node '{0}' reentry.max_visits must be greater than zero when reentry is enabled"
+    )]
+    InvalidReentry(String),
     #[error("workflow node '{0}' uses unsupported local $ref cycle")]
     RefCycle(String),
     #[error("workflow $ref '{0}' could not be resolved")]
@@ -265,6 +269,11 @@ pub fn validate_workflow(
                 node.id.as_str().to_string(),
             ));
         }
+        if node.reentry.enabled && node.reentry.max_visits <= 0 {
+            return Err(WorkflowValidationError::InvalidReentry(
+                node.id.as_str().to_string(),
+            ));
+        }
         validate_condition(&node.condition)?;
         validate_control_node_parameters(node)?;
         for target in transition_targets(&node.transitions) {
@@ -291,6 +300,14 @@ pub fn validate_workflow(
                         target: target.into_string(),
                     });
                 }
+            }
+        }
+        if let Some(target) = node.reentry.on_exhausted.as_ref() {
+            if !ids.contains(target.as_str()) {
+                return Err(WorkflowValidationError::MissingTransition {
+                    node: node.id.as_str().to_string(),
+                    target: target.clone().into_string(),
+                });
             }
         }
     }
@@ -474,15 +491,15 @@ fn validate_graph_cycles(
 
         if let Some(node) = node_map.get(id) {
             for target in transition_targets(&node.transitions) {
-                if stack.contains(target.as_str())
-                    && node_map.get(target.as_str()).is_some_and(|target_node| {
+                if stack.contains(target.as_str()) {
+                    if node_map.get(target.as_str()).is_some_and(|target_node| {
                         matches!(
                             target_node.kind,
                             WorkflowNodeKind::Try | WorkflowNodeKind::Map | WorkflowNodeKind::Race
-                        )
-                    })
-                {
-                    continue;
+                        ) || target_node.reentry.enabled
+                    }) {
+                        continue;
+                    }
                 }
                 visit(target.as_str(), node_map, visited, stack)?;
             }

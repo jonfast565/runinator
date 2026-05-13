@@ -53,6 +53,31 @@ fn workflow_node_serialization() {
 }
 
 #[test]
+fn workflow_node_accepts_reentry_configuration() {
+    let node: WorkflowNode = serde_json::from_value(json!({
+        "id": "build",
+        "kind": "task",
+        "task_id": 123,
+        "reentry": {
+            "enabled": true,
+            "max_visits": 3,
+            "on_exhausted": { "$node": "deferred" }
+        }
+    }))
+    .unwrap();
+
+    assert!(node.reentry.enabled);
+    assert_eq!(node.reentry.max_visits, 3);
+    assert_eq!(
+        node.reentry
+            .on_exhausted
+            .as_ref()
+            .map(WorkflowNodeRef::as_str),
+        Some("deferred")
+    );
+}
+
+#[test]
 fn workflow_node_kind_accepts_rich_control_flow_nodes() {
     for (kind, expected) in [
         ("switch", WorkflowNodeKind::Switch),

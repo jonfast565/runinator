@@ -221,6 +221,16 @@ fn default_max_attempts() -> i64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowReentry {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub max_visits: i64,
+    #[serde(default)]
+    pub on_exhausted: Option<WorkflowNodeRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowTransitions {
     #[serde(default)]
     pub next: Option<WorkflowNodeRef>,
@@ -264,6 +274,8 @@ pub struct WorkflowNode {
     pub max_iterations: Option<i64>,
     #[serde(default)]
     pub subflow_id: Option<i64>,
+    #[serde(default)]
+    pub reentry: WorkflowReentry,
     #[serde(default)]
     pub metadata: Value,
 }

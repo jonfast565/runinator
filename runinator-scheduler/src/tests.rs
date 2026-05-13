@@ -419,6 +419,54 @@ async fn race_records_first_success_and_starts_remaining_branches_sequentially()
     assert_eq!(api.last_node_update().output_json["winner"], "fast");
 }
 
+#[test]
+fn reentry_exhaustion_routes_after_max_visits() {
+    let node = node(json!({
+        "id": "implement",
+        "kind": "task",
+        "task_id": 1,
+        "reentry": {
+            "enabled": true,
+            "max_visits": 2,
+            "on_exhausted": { "$node": "deferred" }
+        }
+    }));
+    let runs = vec![
+        node_run_with_id(1, "implement", WorkflowStatus::Succeeded, None, json!({})),
+        node_run_with_id(2, "implement", WorkflowStatus::Failed, None, json!({})),
+    ];
+
+    assert_eq!(
+        crate::workflow::reentry_exhaustion(&node, Some(&runs[1]), &runs),
+        Some(crate::workflow::ReentryExhaustion::Route("deferred".into()))
+    );
+}
+
+#[test]
+fn reentry_exhaustion_ignores_active_latest_visit() {
+    let node = node(json!({
+        "id": "implement",
+        "kind": "task",
+        "task_id": 1,
+        "reentry": { "enabled": true, "max_visits": 1 }
+    }));
+    let running = node_run_with_id(1, "implement", WorkflowStatus::Running, None, json!({}));
+
+    assert_eq!(
+        crate::workflow::reentry_exhaustion(&node, Some(&running), &[running.clone()]),
+        None
+    );
+}
+
+#[test]
+fn task_idempotency_key_includes_node_run_id() {
+    let first = workflow_task_idempotency_key(10, "implement", 1, 1);
+    let second = workflow_task_idempotency_key(10, "implement", 2, 1);
+
+    assert_ne!(first, second);
+    assert_eq!(first, "10:implement:1:1");
+}
+
 #[derive(Debug, Clone)]
 struct WorkflowRunUpdate {
     status: WorkflowStatus,

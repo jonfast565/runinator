@@ -108,7 +108,8 @@ pub async fn process_task_node(
     let parameters = build_node_parameters(&task, node, workflow_run, node_runs)?;
     let attempt = node_run.attempt + 1;
     let idempotency_scope = "workflow_task_node";
-    let idempotency_key = format!("{}:{}:{}", workflow_run.id, node.id, attempt);
+    let idempotency_key =
+        workflow_task_idempotency_key(workflow_run.id, &node.id, node_run.id, attempt);
     let task_run = if let Some(record) = api
         .fetch_idempotency_key(idempotency_scope, &idempotency_key)
         .await?
@@ -172,6 +173,15 @@ pub async fn process_task_node(
     )
     .await?;
     Ok(())
+}
+
+pub(crate) fn workflow_task_idempotency_key(
+    workflow_run_id: i64,
+    node_id: &str,
+    workflow_node_run_id: i64,
+    attempt: i64,
+) -> String {
+    format!("{workflow_run_id}:{node_id}:{workflow_node_run_id}:{attempt}")
 }
 
 pub async fn process_wait_node(

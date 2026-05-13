@@ -257,10 +257,10 @@
     },
     {
       "id": 206,
-      "name": "SDLC: Read Pull Request Checks",
+      "name": "SDLC: Summarize Pull Request Checks",
       "cron_schedule": "0 0 1 1 *",
       "action_name": "github",
-      "action_function": "checks",
+      "action_function": "checks_summary",
       "timeout": 60,
       "enabled": false,
       "immediate": false,
@@ -307,6 +307,77 @@
         "stage": "merge"
       },
       "tags": ["sdlc", "github"]
+    },
+    {
+      "id": 209,
+      "name": "SDLC: Push Branch",
+      "cron_schedule": "0 0 1 1 *",
+      "action_name": "git",
+      "action_function": "push",
+      "timeout": 120,
+      "enabled": false,
+      "immediate": false,
+      "next_execution": null,
+      "default_parameters": {
+        "remote": "origin",
+        "set_upstream": true
+      },
+      "metadata": {
+        "domain": "sdlc",
+        "stage": "publish"
+      },
+      "tags": ["sdlc", "git"]
+    },
+    {
+      "id": 210,
+      "name": "SDLC: Add Jira Comment",
+      "cron_schedule": "0 0 1 1 *",
+      "action_name": "jira",
+      "action_function": "comment",
+      "timeout": 60,
+      "enabled": false,
+      "immediate": false,
+      "next_execution": null,
+      "default_parameters": {},
+      "metadata": {
+        "domain": "sdlc",
+        "stage": "feedback"
+      },
+      "tags": ["sdlc", "jira"]
+    },
+    {
+      "id": 211,
+      "name": "SDLC: Cleanup Worktree",
+      "cron_schedule": "0 0 1 1 *",
+      "action_name": "git",
+      "action_function": "cleanup",
+      "timeout": 60,
+      "enabled": false,
+      "immediate": false,
+      "next_execution": null,
+      "default_parameters": {},
+      "metadata": {
+        "domain": "sdlc",
+        "stage": "cleanup"
+      },
+      "tags": ["sdlc", "git"]
+    },
+    {
+      "id": 212,
+      "name": "SDLC: Transition Item To Rework",
+      "cron_schedule": "0 0 1 1 *",
+      "action_name": "jira",
+      "action_function": "transition",
+      "timeout": 60,
+      "enabled": false,
+      "immediate": false,
+      "next_execution": null,
+      "default_parameters": {},
+      "metadata": {
+        "domain": "sdlc",
+        "stage": "rework"
+      },
+      "tags": ["sdlc", "jira"]
     }
   ],
   "workflows": [
@@ -454,6 +525,7 @@
           "jira_token",
           "jira_jql",
           "jira_done_transition_id",
+          "jira_rework_transition_id",
           "git_repo",
           "workspace_root",
           "implementation_command",
@@ -467,6 +539,7 @@
           "jira_email": { "type": "string" },
           "jira_jql": { "type": "string" },
           "jira_done_transition_id": { "type": "string" },
+          "jira_rework_transition_id": { "type": "string" },
           "git_repo": { "type": "string" },
           "workspace_root": { "type": "string" },
           "implementation_command": { "type": "string" },
@@ -481,7 +554,7 @@
         "concurrency": 1,
         "metadata": {
           "domain": "sdlc",
-          "description": "Find Jira automation items, create isolated worktrees, run an implementation command, open PRs, wait for checks, request approvals, merge approved PRs, and transition completed items."
+          "description": "Find Jira automation items and process each issue through an isolated SDLC subflow."
         },
         "nodes": [
           {
@@ -501,11 +574,64 @@
             "kind": "map",
             "parameters": {
               "items": { "$ref": { "node": "discover_ready_issues", "output": ["issues"] } },
-              "target": { "$node": "create_worktree" },
+              "target": { "$node": "process_issue" },
               "concurrency": 1
             },
             "transitions": { "next": { "$node": "complete" } }
           },
+          {
+            "id": "process_issue",
+            "kind": "subflow",
+            "subflow_id": 1004,
+            "parameters": {
+              "issue": { "$ref": { "workflow": ["state", "map", "item"] } },
+              "jira_base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "jira_token": { "$ref": { "input": ["jira_token"] } },
+              "jira_email": { "$ref": { "input": ["jira_email"] } },
+              "jira_done_transition_id": { "$ref": { "input": ["jira_done_transition_id"] } },
+              "jira_rework_transition_id": { "$ref": { "input": ["jira_rework_transition_id"] } },
+              "git_repo": { "$ref": { "input": ["git_repo"] } },
+              "workspace_root": { "$ref": { "input": ["workspace_root"] } },
+              "implementation_command": { "$ref": { "input": ["implementation_command"] } },
+              "github_token": { "$ref": { "input": ["github_token"] } },
+              "github_owner": { "$ref": { "input": ["github_owner"] } },
+              "github_repo": { "$ref": { "input": ["github_repo"] } },
+              "github_base_branch": { "$ref": { "input": ["github_base_branch"] } }
+            },
+            "transitions": { "on_success": { "$node": "process_each_issue" } }
+          },
+          {
+            "id": "complete",
+            "kind": "end"
+          }
+        ],
+        "ui": {
+          "layout": {
+            "discover_ready_issues": { "x": 0, "y": 0 },
+            "process_each_issue": { "x": 240, "y": 0 },
+            "process_issue": { "x": 480, "y": 0 },
+            "complete": { "x": 720, "y": 0 }
+          }
+        }
+      }
+    },
+    {
+      "id": 1004,
+      "name": "SDLC: Process Issue",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "create_worktree",
+        "concurrency": 1,
+        "metadata": {
+          "domain": "sdlc",
+          "description": "Process one Jira issue through implementation, PR checks, QA, merge, cleanup, and bounded rework."
+        },
+        "nodes": [
           {
             "id": "create_worktree",
             "kind": "task",
@@ -513,16 +639,13 @@
             "parameters": {
               "repo": { "$ref": { "input": ["git_repo"] } },
               "branch": {
-                "$concat": [
-                  "codex/",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
-                ]
+                "$concat": ["codex/", { "$ref": { "input": ["issue", "key"] } }]
               },
               "path": {
                 "$concat": [
                   { "$ref": { "input": ["workspace_root"] } },
                   "/",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
+                  { "$ref": { "input": ["issue", "key"] } }
                 ]
               }
             },
@@ -532,15 +655,20 @@
             "id": "implement_change",
             "kind": "task",
             "task_id": 203,
+            "reentry": {
+              "enabled": true,
+              "max_visits": 3,
+              "on_exhausted": { "$node": "comment_rework_exhausted" }
+            },
             "parameters": {
               "command": { "$ref": { "input": ["implementation_command"] } },
               "input": {
-                "issue": { "$ref": { "workflow": ["state", "map", "item"] } },
+                "issue": { "$ref": { "input": ["issue"] } },
                 "workspace": {
                   "$concat": [
                     { "$ref": { "input": ["workspace_root"] } },
                     "/",
-                    { "$ref": { "workflow": ["state", "map", "item", "key"] } }
+                    { "$ref": { "input": ["issue", "key"] } }
                   ]
                 }
               }
@@ -556,15 +684,32 @@
                 "$concat": [
                   { "$ref": { "input": ["workspace_root"] } },
                   "/",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
+                  { "$ref": { "input": ["issue", "key"] } }
                 ]
               },
               "message": {
-                "$concat": [
-                  "Implement ",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
-                ]
+                "$concat": ["Implement ", { "$ref": { "input": ["issue", "key"] } }]
               }
+            },
+            "transitions": { "on_success": { "$node": "push_branch" } }
+          },
+          {
+            "id": "push_branch",
+            "kind": "task",
+            "task_id": 209,
+            "parameters": {
+              "workspace": {
+                "$concat": [
+                  { "$ref": { "input": ["workspace_root"] } },
+                  "/",
+                  { "$ref": { "input": ["issue", "key"] } }
+                ]
+              },
+              "branch": {
+                "$concat": ["codex/", { "$ref": { "input": ["issue", "key"] } }]
+              },
+              "remote": "origin",
+              "set_upstream": true
             },
             "transitions": { "on_success": { "$node": "open_pull_request" } }
           },
@@ -578,15 +723,12 @@
               "repo": { "$ref": { "input": ["github_repo"] } },
               "title": {
                 "$concat": [
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } },
+                  { "$ref": { "input": ["issue", "key"] } },
                   ": automated implementation"
                 ]
               },
               "head": {
-                "$concat": [
-                  "codex/",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
-                ]
+                "$concat": ["codex/", { "$ref": { "input": ["issue", "key"] } }]
               },
               "base_branch": { "$ref": { "input": ["github_base_branch"] } },
               "body": "Created by Runinator SDLC automation."
@@ -597,10 +739,15 @@
             "id": "wait_for_checks",
             "kind": "wait",
             "wait": { "seconds": 60 },
-            "transitions": { "next": { "$node": "review_check_results" } }
+            "reentry": {
+              "enabled": true,
+              "max_visits": 20,
+              "on_exhausted": { "$node": "comment_checks_failed" }
+            },
+            "transitions": { "next": { "$node": "summarize_checks" } }
           },
           {
-            "id": "review_check_results",
+            "id": "summarize_checks",
             "kind": "task",
             "task_id": 206,
             "parameters": {
@@ -608,13 +755,25 @@
               "owner": { "$ref": { "input": ["github_owner"] } },
               "repo": { "$ref": { "input": ["github_repo"] } },
               "ref": {
-                "$concat": [
-                  "codex/",
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } }
-                ]
+                "$concat": ["codex/", { "$ref": { "input": ["issue", "key"] } }]
               }
             },
-            "transitions": { "on_success": { "$node": "qa_approval" } }
+            "transitions": {
+              "on_success": { "$node": "route_check_status" },
+              "on_failure": { "$node": "comment_checks_failed" }
+            }
+          },
+          {
+            "id": "route_check_status",
+            "kind": "switch",
+            "parameters": {
+              "value": { "$ref": { "node": "summarize_checks", "output": ["status"] } },
+              "cases": [
+                { "equals": "failed", "target": { "$node": "comment_checks_failed" } },
+                { "equals": "pending", "target": { "$node": "wait_for_checks" } }
+              ],
+              "default": { "$node": "qa_approval" }
+            }
           },
           {
             "id": "qa_approval",
@@ -625,7 +784,7 @@
             },
             "transitions": {
               "on_success": { "$node": "merge_approval" },
-              "on_failure": { "$node": "process_each_issue" }
+              "on_failure": { "$node": "comment_qa_rejected" }
             }
           },
           {
@@ -633,11 +792,11 @@
             "kind": "approval",
             "parameters": {
               "approval_type": "merge",
-              "prompt": "Approve handoff for merge of the generated pull request."
+              "prompt": "Approve merge of the generated pull request."
             },
             "transitions": {
               "on_success": { "$node": "merge_pull_request" },
-              "on_failure": { "$node": "process_each_issue" }
+              "on_failure": { "$node": "comment_merge_rejected" }
             }
           },
           {
@@ -657,7 +816,7 @@
               "merge_method": "squash",
               "commit_title": {
                 "$concat": [
-                  { "$ref": { "workflow": ["state", "map", "item", "key"] } },
+                  { "$ref": { "input": ["issue", "key"] } },
                   ": automated implementation"
                 ]
               },
@@ -673,10 +832,108 @@
               "base_url": { "$ref": { "input": ["jira_base_url"] } },
               "token": { "$ref": { "input": ["jira_token"] } },
               "email": { "$ref": { "input": ["jira_email"] } },
-              "key": { "$ref": { "workflow": ["state", "map", "item", "key"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
               "transition_id": { "$ref": { "input": ["jira_done_transition_id"] } }
             },
-            "transitions": { "on_success": { "$node": "process_each_issue" } }
+            "transitions": { "on_success": { "$node": "cleanup_worktree" } }
+          },
+          {
+            "id": "cleanup_worktree",
+            "kind": "task",
+            "task_id": 211,
+            "parameters": {
+              "repo": { "$ref": { "input": ["git_repo"] } },
+              "path": {
+                "$concat": [
+                  { "$ref": { "input": ["workspace_root"] } },
+                  "/",
+                  { "$ref": { "input": ["issue", "key"] } }
+                ]
+              }
+            },
+            "transitions": { "on_success": { "$node": "complete" } }
+          },
+          {
+            "id": "comment_checks_failed",
+            "kind": "task",
+            "task_id": 210,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "body": "Runinator checks failed or timed out; returning this issue for rework."
+            },
+            "transitions": { "on_success": { "$node": "transition_to_rework" } }
+          },
+          {
+            "id": "comment_qa_rejected",
+            "kind": "task",
+            "task_id": 210,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "body": "QA rejected the generated pull request; returning this issue for rework."
+            },
+            "transitions": { "on_success": { "$node": "transition_to_rework" } }
+          },
+          {
+            "id": "comment_merge_rejected",
+            "kind": "task",
+            "task_id": 210,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "body": "Merge approval was rejected; returning this issue for rework."
+            },
+            "transitions": { "on_success": { "$node": "transition_to_rework" } }
+          },
+          {
+            "id": "comment_rework_exhausted",
+            "kind": "task",
+            "task_id": 210,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "body": "Runinator exhausted automated rework attempts; leaving this issue for manual follow-up."
+            },
+            "transitions": { "on_success": { "$node": "transition_rework_deferred" } }
+          },
+          {
+            "id": "transition_to_rework",
+            "kind": "task",
+            "task_id": 212,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "transition_id": { "$ref": { "input": ["jira_rework_transition_id"] } }
+            },
+            "transitions": { "on_success": { "$node": "implement_change" } }
+          },
+          {
+            "id": "transition_rework_deferred",
+            "kind": "task",
+            "task_id": 212,
+            "parameters": {
+              "base_url": { "$ref": { "input": ["jira_base_url"] } },
+              "token": { "$ref": { "input": ["jira_token"] } },
+              "email": { "$ref": { "input": ["jira_email"] } },
+              "key": { "$ref": { "input": ["issue", "key"] } },
+              "transition_id": { "$ref": { "input": ["jira_rework_transition_id"] } }
+            },
+            "transitions": { "on_success": { "$node": "deferred" } }
+          },
+          {
+            "id": "deferred",
+            "kind": "end"
           },
           {
             "id": "complete",
@@ -685,19 +942,27 @@
         ],
         "ui": {
           "layout": {
-            "discover_ready_issues": { "x": 0, "y": 0 },
-            "process_each_issue": { "x": 240, "y": 0 },
-            "create_worktree": { "x": 480, "y": 0 },
-            "implement_change": { "x": 720, "y": 0 },
-            "commit_work": { "x": 960, "y": 0 },
-            "open_pull_request": { "x": 1200, "y": 0 },
-            "wait_for_checks": { "x": 1440, "y": 0 },
-            "review_check_results": { "x": 1680, "y": 0 },
+            "create_worktree": { "x": 0, "y": 0 },
+            "implement_change": { "x": 240, "y": 0 },
+            "commit_work": { "x": 480, "y": 0 },
+            "push_branch": { "x": 720, "y": 0 },
+            "open_pull_request": { "x": 960, "y": 0 },
+            "wait_for_checks": { "x": 1200, "y": 0 },
+            "summarize_checks": { "x": 1440, "y": 0 },
+            "route_check_status": { "x": 1680, "y": 0 },
             "qa_approval": { "x": 1920, "y": 0 },
             "merge_approval": { "x": 2160, "y": 0 },
             "merge_pull_request": { "x": 2400, "y": 0 },
             "move_issue_to_done": { "x": 2640, "y": 0 },
-            "complete": { "x": 2880, "y": 0 }
+            "cleanup_worktree": { "x": 2880, "y": 0 },
+            "comment_checks_failed": { "x": 1440, "y": 220 },
+            "comment_qa_rejected": { "x": 1920, "y": 220 },
+            "comment_merge_rejected": { "x": 2160, "y": 220 },
+            "transition_to_rework": { "x": 2160, "y": 420 },
+            "comment_rework_exhausted": { "x": 240, "y": 220 },
+            "transition_rework_deferred": { "x": 480, "y": 220 },
+            "deferred": { "x": 720, "y": 220 },
+            "complete": { "x": 3120, "y": 0 }
           }
         }
       }
