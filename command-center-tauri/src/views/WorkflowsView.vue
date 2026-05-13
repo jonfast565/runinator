@@ -44,12 +44,14 @@
         </SplitPane>
       </template>
     </SplitPane>
+    <WorkflowStepEditorModal v-if="workflows.stepEditorOpen" />
   </section>
 </template>
 
 <script setup lang="ts">
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
+import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";

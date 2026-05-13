@@ -18,6 +18,7 @@ export type WorkflowNodeKind =
   | "end";
 
 export type WorkflowDirectTransitionKey = "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
+export type WorkflowConnectionHandle = "top" | "right" | "bottom" | "left";
 export type WorkflowNodeId = string;
 export interface WorkflowNodeRef {
   "$node": WorkflowNodeId;
@@ -32,6 +33,8 @@ export interface WorkflowEditorEdgeData {
   branchIndex?: number;
   parameterKey?: string;
   parameterIndex?: number;
+  sourceHandle?: WorkflowConnectionHandle;
+  targetHandle?: WorkflowConnectionHandle;
   editable: boolean;
 }
 
@@ -40,6 +43,11 @@ export interface WorkflowEditorNodeRecord extends JsonRecord {
   kind: WorkflowNodeKind;
   transitions?: JsonRecord;
   parameters?: JsonRecord;
+}
+
+export interface WorkflowLayoutPosition {
+  x: number;
+  y: number;
 }
 
 export interface ScheduledTask {
@@ -175,6 +183,23 @@ export interface TaskResponse {
 
 export interface SaveTaskResponse extends TaskResponse {
   creating: boolean;
+}
+
+export interface WorkflowBundleTaskDraft {
+  node_id: string;
+  temporary_id: number | null;
+  task: ScheduledTask;
+}
+
+export interface WorkflowBundleSaveRequest {
+  workflow: WorkflowDefinition;
+  tasks: WorkflowBundleTaskDraft[];
+}
+
+export interface WorkflowBundleSaveResponse {
+  workflow: WorkflowDefinition;
+  task_id_map: Record<string, number>;
+  tasks: ScheduledTask[];
 }
 
 export interface CredentialSummary {

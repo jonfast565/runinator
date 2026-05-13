@@ -11,10 +11,13 @@
       :nodes="workflows.graphNodes"
       :edges="workflows.graphEdges"
       @node-click="workflows.onGraphNodeClick"
+      @node-double-click="workflows.onGraphNodeDoubleClick"
       @node-drag-stop="workflows.onGraphNodeDragStop"
       @nodes-change="workflows.onGraphNodesChange"
       @connect="workflows.onGraphConnect"
+      @edge-update="workflows.onGraphEdgeUpdate"
       @edges-change="workflows.onGraphEdgesChange"
+      :edges-updatable="true"
       delete-key-code="Delete"
       :snap-to-grid="true"
       :snap-grid="[15, 15]"
@@ -59,6 +62,10 @@ watch(() => workflows.selectedWorkflowId, () => {
 });
 
 watch(() => workflows.selectedWorkflowRunId, () => {
+  recenter();
+});
+
+watch(() => workflows.workflowLayoutVersion, () => {
   recenter();
 });
 </script>

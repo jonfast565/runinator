@@ -1,261 +1,469 @@
 <template>
-  <div class="step-editor">
-    <h2>{{ workflows.selectedStepId || "Step" }}</h2>
-    <label>Step ID <input v-model="workflows.stepEditor.id" /></label>
-    <label>
-      Node Kind
-      <select v-model="workflows.stepEditor.kind" :disabled="isProtectedNode">
-        <option value="start">start</option>
-        <option v-for="kind in workflows.workflowNodeKinds" :key="kind" :value="kind">{{ kind }}</option>
-        <option value="end">end</option>
-      </select>
-    </label>
+  <div class="step-editor step-detail">
+    <template v-if="node">
+      <header class="step-detail-header">
+        <div>
+          <span class="node-kind">{{ node.kind }}</span>
+          <h2>{{ node.id }}</h2>
+          <p>{{ headline }}</p>
+        </div>
+        <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+      </header>
 
-    <label v-if="workflows.stepEditor.kind === 'task'">
-      Task
-      <select v-model.number="workflows.stepEditor.task_id">
-        <option :value="0">(none)</option>
-        <option v-for="task in tasksStore.tasks" :key="task.id ?? task.name" :value="task.id">
-          {{ task.name }} ({{ task.action_name }}.{{ task.action_function }})
-        </option>
-      </select>
-    </label>
-    <div v-if="workflows.stepEditor.kind === 'task' && selectedTask" class="step-task-info">
-      <span>{{ selectedTask.action_name }}.{{ selectedTask.action_function }}</span>
-      <p v-if="currentProvider?.actions.find(a => a.function_name === selectedTask?.action_function)?.description" class="action-desc">
-        {{ currentProvider.actions.find(a => a.function_name === selectedTask?.action_function)?.description }}
-      </p>
-    </div>
-    <label>Needs <input :value="workflows.stepNeeds" disabled /></label>
-    <label v-if="workflows.stepEditor.kind === 'task'">Max Attempts <input v-model.number="workflows.stepEditor.max_attempts" type="number" min="1" /></label>
-    <label v-if="workflows.stepEditor.kind === 'task'">Timeout Seconds <input v-model.number="workflows.stepEditor.timeout_seconds" type="number" min="0" /></label>
-    <TypedParameterEditor
-      v-if="workflows.stepEditor.kind === 'task' && selectedTask"
-      v-model="stepParameters"
-      :parameters="selectedAction?.parameters ?? []"
-      :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
-    />
-    <p v-if="selectedAction?.results?.length" class="result-metadata">
-      Results:
-      <span v-for="result in selectedAction.results" :key="result.name">
-        {{ result.name }} ({{ result.value_type }})
-      </span>
-    </p>
+      <section v-if="nodeRun || taskDraft" class="detail-band">
+        <div v-if="nodeRun" class="metric">
+          <span>Run</span>
+          <strong>{{ nodeRun.status }}</strong>
+          <small>attempt {{ nodeRun.attempt }}</small>
+        </div>
+        <div v-if="nodeRun?.task_run_id" class="metric">
+          <span>Task Run</span>
+          <strong>#{{ nodeRun.task_run_id }}</strong>
+        </div>
+        <div v-if="taskDraft" class="metric">
+          <span>Task</span>
+          <strong>{{ taskDraft.name || `Task ${taskDraft.id ?? "-"}` }}</strong>
+          <small>{{ taskDraft.enabled ? "enabled" : "disabled" }}</small>
+        </div>
+      </section>
 
-    <div v-if="workflows.stepEditor.kind === 'approval'" class="form-section">
-      <h3>Approval</h3>
-      <label>Approval Type <input v-model="workflows.stepEditor.approval_type" /></label>
-      <label>Prompt <textarea v-model="workflows.stepEditor.approval_prompt"></textarea></label>
-      <div v-if="workflows.selectedNodePendingApproval" class="pending-approval">
-        <strong>Pending approval</strong>
-        <span>{{ workflows.selectedNodePendingApproval.status }}</span>
-        <span v-if="workflows.selectedNodePendingApproval.message">{{ workflows.selectedNodePendingApproval.message }}</span>
+      <section v-for="section in detailSections" :key="section.title" class="detail-section">
+        <h3>{{ section.title }}</h3>
+        <div v-if="section.items.length" class="detail-grid">
+          <div v-for="item in section.items" :key="item.label" class="detail-item">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </div>
+        <div v-if="section.chips.length" class="chip-row">
+          <span v-for="chip in section.chips" :key="chip" class="detail-chip">{{ chip }}</span>
+        </div>
+        <div v-if="section.rows.length" class="detail-rows">
+          <div v-for="row in section.rows" :key="row.label + row.value" class="detail-row">
+            <span>{{ row.label }}</span>
+            <strong>{{ row.value }}</strong>
+            <small v-if="row.note">{{ row.note }}</small>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="resultFields.length" class="detail-section">
+        <h3>Outputs</h3>
+        <div class="chip-row">
+          <span v-for="field in resultFields" :key="field" class="detail-chip">{{ field }}</span>
+        </div>
+      </section>
+
+      <div class="step-summary-actions">
+        <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
+        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
       </div>
-      <div class="approval-actions" v-if="workflows.selectedNodePendingApproval">
-        <button @click="resolveSelectedApproval('approve')">Approve</button>
-        <button @click="resolveSelectedApproval('reject')">Reject</button>
+    </template>
+    <template v-else>
+      <div class="empty-detail">
+        <h2>No Step Selected</h2>
+        <p>Select a node on the graph or add a node from the workflow toolbar.</p>
+        <button @click="workflows.addWorkflowNode('task')">Add Task Node</button>
       </div>
-    </div>
-
-    <div v-if="workflows.stepEditor.kind === 'condition'" class="form-section">
-      <h3>Condition Branches</h3>
-      <div v-for="(branch, index) in workflows.stepEditor.condition_branches" :key="index" class="condition-branch-row">
-        <label>When <JsonEditor v-model="branch.when_json" /></label>
-        <label>
-          Target
-          <select v-model="branch.target">
-            <option value="">(none)</option>
-            <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
-          </select>
-        </label>
-        <button @click="workflows.removeConditionBranchEditor(index)">Remove</button>
-      </div>
-      <button @click="workflows.addConditionBranchEditor">Add Branch</button>
-      <label>
-        Fallback
-        <select v-model="workflows.stepEditor.condition_fallback">
-          <option value="">(none)</option>
-          <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
-        </select>
-      </label>
-    </div>
-
-    <label v-if="workflows.stepEditor.kind === 'wait'">Wait JSON <JsonEditor v-model="workflows.stepEditor.wait_json" /></label>
-    <label v-if="usesParameters">Advanced Parameters JSON <JsonEditor v-model="workflows.stepEditor.parameters_json" /></label>
-    <label>Transitions JSON <JsonEditor v-model="workflows.stepEditor.transitions_json" /></label>
-
-    <div v-if="workflows.selectedStepId" class="transition-helpers">
-      <h3>Quick Transitions</h3>
-      <div v-for="key in workflows.directTransitionKeys" :key="key" class="transition-field">
-        <span>{{ key }}</span>
-        <select :value="workflows.getTransition(key)" @change="workflows.setTransition(key, ($event.target as HTMLSelectElement).value)">
-          <option value="">(none)</option>
-          <option v-for="node in workflows.workflowDraft.definition.nodes" :key="node.id" :value="node.id">
-            {{ node.id }}
-          </option>
-        </select>
-      </div>
-    </div>
-
-    <div v-if="stepRefs.length" class="ref-builder">
-      <h3>Available References</h3>
-      <div v-for="ref in stepRefs" :key="ref.template" class="ref-row">
-        <code class="ref-template" @click="copyRef(ref.template)" :title="'Click to copy'">{{ ref.template }}</code>
-        <span class="ref-desc">{{ ref.label }} → {{ ref.field }}</span>
-      </div>
-    </div>
-
-    <button :disabled="!workflows.selectedStepId" @click="workflows.applyStepEditor">Apply Step</button>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useWorkflowsStore } from "../../stores/workflows";
-import { useProvidersStore } from "../../stores/providers";
-import { useResourcesStore } from "../../stores/resources";
-import { useTasksStore } from "../../stores/tasks";
-import JsonEditor from "../shared/JsonEditor.vue";
-import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import { computed } from "vue";
-import { pretty } from "../../utils/format";
-import { parseObject } from "../../utils/json";
-import type { ApprovalAction } from "../../utils/approvals";
+import { useProvidersStore } from "../../stores/providers";
+import { useTasksStore } from "../../stores/tasks";
+import { useWorkflowsStore } from "../../stores/workflows";
+import type { JsonRecord } from "../../types/models";
+import { directTransitionKeys, nodeRefId } from "../../utils/workflows";
+
+interface DetailItem {
+  label: string;
+  value: string;
+}
+
+interface DetailRow extends DetailItem {
+  note?: string;
+}
+
+interface DetailSection {
+  title: string;
+  items: DetailItem[];
+  chips: string[];
+  rows: DetailRow[];
+}
 
 const workflows = useWorkflowsStore();
-const providersStore = useProvidersStore();
 const tasksStore = useTasksStore();
-const resourcesStore = useResourcesStore();
+const providersStore = useProvidersStore();
 
-const selectedTask = computed(() =>
-  tasksStore.tasks.find(t => t.id === workflows.stepEditor.task_id)
+const node = computed<JsonRecord | null>(() => workflows.selectedNode);
+const nodeRun = computed(() =>
+  workflows.workflowRunDetail?.nodes.find((item) => item.node_id === workflows.selectedStepId) ?? null
 );
+const taskDraft = computed(() => {
+  const current = node.value;
+  if (!current || current.kind !== "task") return null;
+  return workflows.workflowTaskDrafts[current.id] ?? tasksStore.tasks.find((task) => task.id === Number(current.task_id)) ?? null;
+});
+const provider = computed(() => taskDraft.value ? providersStore.providers.find((item) => item.name === taskDraft.value?.action_name) : null);
+const action = computed(() => provider.value?.actions.find((item) => item.function_name === taskDraft.value?.action_function) ?? null);
 
-const currentProvider = computed(() =>
-  selectedTask.value ? providersStore.providers.find(p => p.name === selectedTask.value?.action_name) : null
-);
-const selectedAction = computed(() =>
-  currentProvider.value?.actions.find(action => action.function_name === selectedTask.value?.action_function) ?? null
-);
-const stepParameters = computed({
-  get: () => parseObject(workflows.stepEditor.parameters_json, {}),
-  set: (value) => {
-    workflows.stepEditor.parameters_json = pretty(value);
+const headline = computed(() => {
+  const current = node.value;
+  if (!current) return "";
+  switch (current.kind) {
+    case "task":
+      return taskDraft.value ? `${taskDraft.value.action_name || "provider"} · ${taskDraft.value.action_function || "action"}` : `Task ${current.task_id ?? "-"}`;
+    case "approval":
+      return String(current.parameters?.prompt ?? "Approval required");
+    case "condition":
+      return `${branchRows(current).length} conditional route${branchRows(current).length === 1 ? "" : "s"}`;
+    case "wait":
+      return waitSummary(current.wait);
+    case "start":
+      return "Workflow entry point";
+    case "end":
+      return "Terminal workflow step";
+    default:
+      return `${current.kind} control node`;
   }
 });
-const isProtectedNode = computed(() => ["start", "end"].includes(workflows.selectedNode?.kind ?? ""));
-const usesParameters = computed(() => !["start", "end", "wait", "condition"].includes(workflows.stepEditor.kind));
-const targetNodes = computed(() => {
-  const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
-  return nodes.filter((node) => node.id !== workflows.selectedStepId);
+
+const resultFields = computed(() =>
+  (action.value?.results ?? []).map((result) => `${result.label || result.name}: ${result.value_type}`)
+);
+
+const detailSections = computed<DetailSection[]>(() => {
+  const current = node.value;
+  if (!current) return [];
+  const sections = [kindSection(current), transitionsSection(current), runtimeSection(current)].filter(Boolean) as DetailSection[];
+  return sections.filter((section) => section.items.length || section.chips.length || section.rows.length);
 });
 
-interface StepRef {
-  template: string;
-  label: string;
-  field: string;
-}
-
-const prevStepId = computed<string | null>(() => {
-  const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
-  const currentId = workflows.selectedStepId;
-  if (!currentId) return null;
-  const predecessor = nodes.find((node: any) => {
-    const t = node.transitions ?? {};
-    return [t.next, t.on_success, t.on_failure, t.on_timeout]
-      .filter(Boolean)
-      .includes(currentId);
-  });
-  return predecessor?.id ?? null;
-});
-
-const stepRefs = computed<StepRef[]>(() => {
-  const refs: StepRef[] = [];
-  const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
-  const currentId = workflows.selectedStepId;
-  const prev = prevStepId.value;
-
-  for (const node of nodes) {
-    if (node.kind !== "task" || node.id === currentId) continue;
-    const task = tasksStore.tasks.find(t => t.id === node.task_id);
-    if (!task) continue;
-    const provider = providersStore.providers.find(p => p.name === task.action_name);
-    const action = provider?.actions.find(a => a.function_name === task.action_function);
-    if (!action?.results?.length) continue;
-
-    for (const result of action.results) {
-      const isPrev = node.id === prev;
-      const template = isPrev
-        ? JSON.stringify({ "$ref": { prev: [result.name] } })
-        : JSON.stringify({ "$ref": { node: node.id, output: [result.name] } });
-      refs.push({
-        template,
-        label: isPrev ? `prev (${node.id})` : node.id,
-        field: `${result.name}: ${result.value_type}`,
-      });
-    }
+function kindSection(current: JsonRecord): DetailSection {
+  switch (current.kind) {
+    case "task":
+      return taskSection(current);
+    case "approval":
+      return section("Approval", [
+        item("Type", current.parameters?.approval_type ?? current.parameters?.type ?? "generic"),
+        item("Prompt", current.parameters?.prompt ?? "Approval required")
+      ]);
+    case "condition":
+      return section("Conditions", [], [], branchRows(current));
+    case "wait":
+      return section("Wait", waitItems(current.wait));
+    case "loop":
+      return section("Loop", [
+        item("Items", valueLabel(current.parameters?.items)),
+        item("Target", refLabel(current.parameters?.target)),
+        item("Max Iterations", current.max_iterations ?? 10)
+      ]);
+    case "switch":
+      return section("Switch", [item("Value", valueLabel(current.parameters?.value))], [], switchRows(current));
+    case "parallel":
+      return section("Parallel", [], nodeRefArray(current.parameters?.branches).map((target) => `branch -> ${target}`));
+    case "join":
+      return section("Join", [item("Mode", current.parameters?.mode ?? "all")], nodeRefArray(current.parameters?.wait_for).map((target) => `wait for ${target}`));
+    case "try":
+      return section("Try", [
+        item("Body", refLabel(current.parameters?.body)),
+        item("Catch", refLabel(current.parameters?.catch)),
+        item("Finally", refLabel(current.parameters?.finally))
+      ]);
+    case "map":
+      return section("Map", [
+        item("Items", valueLabel(current.parameters?.items)),
+        item("Target", refLabel(current.parameters?.target)),
+        item("Concurrency", current.parameters?.concurrency ?? "-")
+      ]);
+    case "race":
+      return section("Race", [item("Winner", current.parameters?.winner ?? "first_success")], nodeRefArray(current.parameters?.branches).map((target) => `race -> ${target}`));
+    case "emit":
+      return section("Emit", [
+        item("Event", current.parameters?.event_type ?? "workflow.event"),
+        item("Data", valueLabel(current.parameters?.data))
+      ]);
+    case "subflow":
+      return section("Subflow", [
+        item("Workflow ID", current.subflow_id ?? "-"),
+        item("Parameters", valueLabel(current.parameters))
+      ]);
+    case "start":
+      return section("Start", [item("Starts At", refLabel(current.transitions?.next))]);
+    case "end":
+      return section("End", [item("Terminal", "yes")]);
+    default:
+      return section(String(current.kind ?? "Node"), [item("Parameters", valueLabel(current.parameters))]);
   }
-  return refs;
-});
-
-function copyRef(template: string) {
-  navigator.clipboard.writeText(template).catch(() => {});
 }
 
-async function resolveSelectedApproval(action: ApprovalAction) {
-  const detail = workflows.workflowRunDetail;
-  const nodeRun = workflows.selectedNodePendingApproval;
-  if (!detail || !nodeRun || !workflows.selectedStepId) return;
-  await resourcesStore.resolveWorkflowApproval(detail.run.id, workflows.selectedStepId, nodeRun, action);
-  await workflows.fetchWorkflowRunDetail(detail.run.id);
+function taskSection(current: JsonRecord): DetailSection {
+  const task = taskDraft.value;
+  if (!task) return section("Task", [item("Task ID", current.task_id ?? "-")]);
+  return section(
+    "Task",
+    [
+      item("Name", task.name || "-"),
+      item("Provider", task.action_name || "-"),
+      item("Action", task.action_function || "-"),
+      item("Schedule", task.cron_schedule || "-"),
+      item("Timeout", `${task.timeout}s`),
+      item("Retries", current.retry?.max_attempts ?? 1),
+      item("Step Parameters", valueLabel(current.parameters))
+    ],
+    [
+      task.enabled ? "scheduled" : "workflow-only",
+      task.mcp_enabled ? "mcp" : "",
+      ...(action.value?.parameters ?? []).filter((param) => param.required).map((param) => `requires ${param.name}`)
+    ].filter(Boolean)
+  );
+}
+
+function transitionsSection(current: JsonRecord): DetailSection {
+  const transitions = current.transitions ?? {};
+  const rows: DetailRow[] = [];
+  for (const key of directTransitionKeys) {
+    const target = nodeRefId(transitions[key]);
+    if (target) rows.push({ label: key, value: target });
+  }
+  if (Array.isArray(transitions.branches)) {
+    transitions.branches.forEach((branch: JsonRecord, index: number) => {
+      const target = nodeRefId(branch.target);
+      if (target) rows.push({ label: branch.label ?? `branch ${index + 1}`, value: target, note: conditionLabel(branch.when) });
+    });
+  }
+  return section("Transitions", [], [], rows);
+}
+
+function runtimeSection(current: JsonRecord): DetailSection {
+  const run = nodeRun.value;
+  if (!run) return section("Runtime", []);
+  return section("Runtime", [
+    item("Status", run.status),
+    item("Attempt", run.attempt),
+    item("Message", run.message || "-"),
+    item("Parameters", valueLabel(run.parameters)),
+    item("Output", valueLabel(run.output_json)),
+    item("Reason", run.transition_reason || "-")
+  ]);
+}
+
+function branchRows(current: JsonRecord): DetailRow[] {
+  const branches = Array.isArray(current.transitions?.branches) ? current.transitions.branches : [];
+  return branches.map((branch: JsonRecord, index: number) => ({
+    label: branch.label ?? `branch ${index + 1}`,
+    value: refLabel(branch.target),
+    note: conditionLabel(branch.when)
+  }));
+}
+
+function switchRows(current: JsonRecord): DetailRow[] {
+  const cases = Array.isArray(current.parameters?.cases) ? current.parameters.cases : [];
+  const rows = cases.map((switchCase: JsonRecord, index: number) => ({
+    label: switchCase.label ?? `case ${index + 1}`,
+    value: refLabel(switchCase.target),
+    note: conditionLabel(switchCase.when ?? switchCase.condition)
+  }));
+  if (current.parameters?.default) rows.push({ label: "default", value: refLabel(current.parameters.default) });
+  return rows;
+}
+
+function waitItems(wait: unknown): DetailItem[] {
+  const record = isRecord(wait) ? wait : {};
+  return [
+    item("Seconds", record.seconds ?? "-"),
+    item("Until", record.until ?? "-")
+  ];
+}
+
+function nodeRefArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(nodeRefId).filter((target): target is string => Boolean(target)) : [];
+}
+
+function conditionLabel(value: unknown): string {
+  if (!isRecord(value)) return valueLabel(value);
+  if ("equals" in value) return `${valueLabel(value.value)} equals ${valueLabel(value.equals)}`;
+  if ("not_equals" in value) return `${valueLabel(value.value)} not equals ${valueLabel(value.not_equals)}`;
+  if ("exists" in value) return `${valueLabel(value.exists)} exists`;
+  return valueLabel(value);
+}
+
+function refLabel(value: unknown): string {
+  return nodeRefId(value) ?? "-";
+}
+
+function valueLabel(value: unknown): string {
+  if (value == null) return "-";
+  if (typeof value === "string") return value || "-";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.length ? value.map(valueLabel).join(", ") : "empty list";
+  if (!isRecord(value)) return String(value);
+  if (nodeRefId(value)) return `node ${nodeRefId(value)}`;
+  if (isRecord(value.$ref)) return refExpressionLabel(value.$ref);
+  if (Array.isArray(value.$concat)) return `concat ${value.$concat.length} part${value.$concat.length === 1 ? "" : "s"}`;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return "none";
+  return entries.slice(0, 4).map(([key, nested]) => `${key}: ${valueLabel(nested)}`).join("; ") + (entries.length > 4 ? `; +${entries.length - 4} more` : "");
+}
+
+function refExpressionLabel(ref: JsonRecord): string {
+  for (const source of ["input", "prev", "workflow", "output"]) {
+    if (Array.isArray(ref[source])) return `${source}.${ref[source].join(".")}`;
+  }
+  if (typeof ref.node === "string" && Array.isArray(ref.output)) return `${ref.node}.output.${ref.output.join(".")}`;
+  return "reference";
+}
+
+function waitSummary(wait: unknown): string {
+  const record = isRecord(wait) ? wait : {};
+  if (record.seconds) return `Wait ${record.seconds}s`;
+  if (record.until) return `Wait until ${record.until}`;
+  return "Wait for external timing";
+}
+
+function item(label: string, raw: unknown): DetailItem {
+  return { label, value: valueLabel(raw) };
+}
+
+function section(title: string, items: DetailItem[] = [], chips: string[] = [], rows: DetailRow[] = []): DetailSection {
+  return { title, items: items.filter((entry) => entry.value !== "-"), chips, rows };
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 </script>
 
 <style scoped>
-.transition-helpers {
-  margin: 12px 0;
-  padding: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
+.step-detail {
+  gap: 12px;
+  padding: 12px;
 }
-.transition-field {
+
+.step-detail-header,
+.step-summary-actions,
+.detail-band {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-  font-size: 12px;
+  gap: 10px;
 }
-.transition-field select {
-  width: 120px;
+
+.step-detail-header h2,
+.step-detail-header p {
+  margin: 0;
 }
-.result-metadata {
+
+.node-kind {
   color: #66717e;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.step-detail-header p,
+.detail-item span,
+.detail-row span,
+.metric span,
+.metric small,
+.empty-detail p {
+  color: #66717e;
+}
+
+.detail-band {
+  border: 1px solid #dbe5ef;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.metric {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.metric strong,
+.detail-item strong,
+.detail-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17202a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-section {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #e5ebf1;
+  padding-top: 10px;
+}
+
+.detail-section h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 13px;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-item,
+.detail-row {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.detail-item span,
+.detail-row span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.detail-row {
+  border-left: 3px solid #dbe5ef;
+  padding-left: 8px;
+}
+
+.detail-row small {
+  overflow: hidden;
+  color: #4b5663;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-rows,
+.chip-row {
+  display: grid;
+  gap: 6px;
+}
+
+.chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  font-size: 12px;
 }
-.condition-branch-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px auto;
-  gap: 8px;
-  align-items: end;
-}
-.condition-branch-row .json-editor-container {
-  min-height: 96px;
-}
-.pending-approval {
-  display: grid;
-  gap: 3px;
-  border: 1px solid #f1c40f;
-  border-radius: 6px;
-  background: #fef9e7;
-  padding: 8px;
+
+.detail-chip {
+  border: 1px solid #dbe5ef;
+  border-radius: 999px;
+  background: #ffffff;
   color: #4b5663;
   font-size: 12px;
+  padding: 3px 8px;
 }
-.approval-actions {
-  display: flex;
+
+.empty-detail {
+  display: grid;
   gap: 8px;
+  padding: 12px;
 }
 </style>

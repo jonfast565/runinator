@@ -3,9 +3,11 @@ import type {
   JsonRecord,
   ScheduledTask,
   WorkflowDefinition,
+  WorkflowConnectionHandle,
   WorkflowDirectTransitionKey,
   WorkflowEditorEdgeData,
   WorkflowEditorNodeRecord,
+  WorkflowLayoutPosition,
   WorkflowNodeKind,
   WorkflowRunDetail
 } from "../types/models";
@@ -28,6 +30,7 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
 ];
 
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = ["next", "on_success", "on_failure", "on_timeout", "on_reject"];
+export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "right", "bottom", "left"];
 
 export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, tasks: ScheduledTask[] = []): Node[] {
   const definition = workflow.definition ?? {};
@@ -72,18 +75,84 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
     for (const key of directTransitionKeys) {
       const target = nodeRefId(transitions[key]);
       if (target && nodeIds.has(target)) {
-        edges.push(graphEdge(source, target, key, { kind: "direct", transitionKey: key, editable: true }));
+        const handles = edgeHandles(definition, source, key);
+        edges.push(graphEdge(source, target, key, { kind: "direct", transitionKey: key, ...handles, editable: true }));
       }
     }
     for (const [index, branch] of (transitions.branches ?? []).entries()) {
       const target = nodeRefId(branch.target);
       if (target && nodeIds.has(target)) {
-        edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, { kind: "branch", branchIndex: index, editable: true }));
+        const handles = edgeHandles(definition, source, `branches.${index}`);
+        edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, { kind: "branch", branchIndex: index, ...handles, editable: true }));
       }
     }
     edges.push(...controlFlowEdges(node, nodeIds));
   }
   return edges;
+}
+
+export function autoArrangeWorkflowLayout(definition: JsonRecord): Record<string, WorkflowLayoutPosition> {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const ids = nodes.map((node: JsonRecord, index: number) => String(node.id ?? `step_${index + 1}`)).filter(Boolean);
+  if (ids.length === 0) return {};
+
+  const nodeIds = new Set(ids);
+  const indexById = new Map(ids.map((id, index) => [id, index]));
+  const edges = workflowLayoutEdges(nodes, nodeIds);
+  const components = stronglyConnectedComponents(ids, edges);
+  const componentById = new Map<string, number>();
+  components.forEach((component, componentIndex) => {
+    for (const id of component) componentById.set(id, componentIndex);
+  });
+
+  const componentEdges = new Map<number, Set<number>>();
+  const incomingCounts = new Map<number, number>();
+  components.forEach((_, index) => {
+    componentEdges.set(index, new Set());
+    incomingCounts.set(index, 0);
+  });
+
+  for (const edge of edges) {
+    const sourceComponent = componentById.get(edge.source);
+    const targetComponent = componentById.get(edge.target);
+    if (sourceComponent === undefined || targetComponent === undefined || sourceComponent === targetComponent) continue;
+    const targets = componentEdges.get(sourceComponent)!;
+    if (targets.has(targetComponent)) continue;
+    targets.add(targetComponent);
+    incomingCounts.set(targetComponent, (incomingCounts.get(targetComponent) ?? 0) + 1);
+  }
+
+  const levels = componentLevels(components, componentEdges, incomingCounts, definition.start, indexById);
+  const maxLevel = Math.max(0, ...levels);
+  const grouped = Array.from({ length: maxLevel + 1 }, () => [] as number[]);
+  levels.forEach((level, componentIndex) => grouped[level].push(componentIndex));
+
+  for (const group of grouped) {
+    group.sort((left, right) => componentSortKey(components[left], indexById) - componentSortKey(components[right], indexById));
+  }
+
+  const columnGap = 270;
+  const rowGap = 150;
+  const levelSlots = grouped.map((group) => group.reduce((total, componentIndex) => total + components[componentIndex].length, 0));
+  const maxSlots = Math.max(1, ...levelSlots);
+  const positions: Record<string, WorkflowLayoutPosition> = {};
+
+  grouped.forEach((group, level) => {
+    let slot = 0;
+    const yOffset = ((maxSlots - levelSlots[level]) * rowGap) / 2;
+    for (const componentIndex of group) {
+      const component = [...components[componentIndex]].sort((left, right) => (indexById.get(left) ?? 0) - (indexById.get(right) ?? 0));
+      for (const id of component) {
+        positions[id] = {
+          x: level * columnGap,
+          y: yOffset + slot * rowGap
+        };
+        slot += 1;
+      }
+    }
+  });
+
+  return positions;
 }
 
 export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], taskId = 1): WorkflowEditorNodeRecord {
@@ -152,6 +221,86 @@ export function addDirectTransition(node: JsonRecord, target: string, preferredK
   node.transitions = isRecord(node.transitions) ? node.transitions : {};
   node.transitions[key] = nodeRef(target);
   return key;
+}
+
+export function isSameConnectionPointLoop(connection: {
+  source?: string | null;
+  target?: string | null;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+}): boolean {
+  return Boolean(
+    connection.source &&
+      connection.target &&
+      connection.source === connection.target &&
+      connection.sourceHandle &&
+      connection.targetHandle &&
+      connection.sourceHandle === connection.targetHandle
+  );
+}
+
+export function setWorkflowEdgeHandles(
+  definition: JsonRecord,
+  source: string,
+  semanticKey: string,
+  sourceHandle?: string | null,
+  targetHandle?: string | null
+) {
+  definition.ui = isRecord(definition.ui) ? definition.ui : {};
+  definition.ui.edge_handles = isRecord(definition.ui.edge_handles) ? definition.ui.edge_handles : {};
+  definition.ui.edge_handles[edgeHandleKey(source, semanticKey)] = {
+    sourceHandle: normalizeConnectionHandle(sourceHandle),
+    targetHandle: normalizeConnectionHandle(targetHandle)
+  };
+}
+
+export function removeWorkflowEdgeHandles(definition: JsonRecord, source: string, semanticKey: string) {
+  const handles = definition.ui?.edge_handles;
+  if (!isRecord(handles)) return;
+  delete handles[edgeHandleKey(source, semanticKey)];
+}
+
+export function createWorkflowTaskDraft(nodeId: string, taskId: number | null = null): ScheduledTask {
+  return stampWorkflowTaskMetadata({
+    id: taskId,
+    name: `${titleFromNodeId(nodeId)} Task`,
+    cron_schedule: "0 0 1 1 *",
+    action_name: "",
+    action_function: "",
+    timeout: 1,
+    next_execution: null,
+    enabled: false,
+    immediate: false,
+    blackout_start: null,
+    blackout_end: null,
+    default_parameters: {},
+    mcp_enabled: false,
+    metadata: {},
+    tags: []
+  }, nodeId);
+}
+
+export function copyWorkflowTaskDraft(source: ScheduledTask, nodeId: string, taskId: number | null = null): ScheduledTask {
+  return stampWorkflowTaskMetadata(
+    {
+      ...JSON.parse(JSON.stringify(source)),
+      id: taskId,
+      name: source.name ? `${source.name} copy` : `${titleFromNodeId(nodeId)} Task`,
+      enabled: false,
+      immediate: false
+    },
+    nodeId
+  );
+}
+
+export function stampWorkflowTaskMetadata(task: ScheduledTask, nodeId: string, workflowId?: number | null): ScheduledTask {
+  task.metadata = {
+    ...(task.metadata ?? {}),
+    task_type: "workflow",
+    workflow_node_id: nodeId
+  };
+  if (workflowId) task.metadata.workflow_id = workflowId;
+  return task;
 }
 
 export function removeEditableEdge(node: JsonRecord, edge: Edge): boolean {
@@ -312,6 +461,8 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
     id: edgeId(source, target, label, data),
     source,
     target,
+    sourceHandle: data.sourceHandle,
+    targetHandle: data.targetHandle,
     label,
     data,
     updatable: data.editable,
@@ -319,8 +470,146 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
   };
 }
 
+function workflowLayoutEdges(nodes: JsonRecord[], nodeIds: Set<string>): Array<{ source: string; target: string }> {
+  const edges: Array<{ source: string; target: string }> = [];
+  for (const node of nodes) {
+    const source = String(node.id ?? "");
+    if (!source || !nodeIds.has(source)) continue;
+    const transitions = isRecord(node.transitions) ? node.transitions : {};
+    for (const key of directTransitionKeys) pushLayoutEdge(edges, source, nodeRefId(transitions[key]), nodeIds);
+    if (Array.isArray(transitions.branches)) {
+      for (const branch of transitions.branches) pushLayoutEdge(edges, source, nodeRefId(branch?.target), nodeIds);
+    }
+    for (const edge of parameterLayoutEdges(node, source, nodeIds)) edges.push(edge);
+  }
+  return dedupeLayoutEdges(edges);
+}
+
+function parameterLayoutEdges(node: JsonRecord, source: string, nodeIds: Set<string>): Array<{ source: string; target: string }> {
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  const edges: Array<{ source: string; target: string }> = [];
+  switch (node.kind) {
+    case "switch": {
+      const cases = Array.isArray(parameters.cases) ? parameters.cases : [];
+      for (const item of cases.filter(isRecord)) pushLayoutEdge(edges, source, nodeRefId(item.target), nodeIds);
+      pushLayoutEdge(edges, source, nodeRefId(parameters.default), nodeIds);
+      return edges;
+    }
+    case "parallel":
+    case "race":
+      for (const target of nodeRefArray(parameters.branches)) pushLayoutEdge(edges, source, target, nodeIds);
+      return edges;
+    case "join":
+      for (const dependency of nodeRefArray(parameters.wait_for)) pushLayoutEdge(edges, dependency, source, nodeIds);
+      return edges;
+    case "try":
+      for (const key of ["body", "catch", "finally"]) pushLayoutEdge(edges, source, nodeRefId(parameters[key]), nodeIds);
+      return edges;
+    case "loop":
+    case "map":
+      pushLayoutEdge(edges, source, nodeRefId(parameters.target), nodeIds);
+      return edges;
+    default:
+      return edges;
+  }
+}
+
+function pushLayoutEdge(edges: Array<{ source: string; target: string }>, source: string, target: string | null, nodeIds: Set<string>) {
+  if (!target || source === target || !nodeIds.has(source) || !nodeIds.has(target)) return;
+  edges.push({ source, target });
+}
+
+function dedupeLayoutEdges(edges: Array<{ source: string; target: string }>): Array<{ source: string; target: string }> {
+  const seen = new Set<string>();
+  return edges.filter((edge) => {
+    const key = `${edge.source}\u0000${edge.target}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stronglyConnectedComponents(ids: string[], edges: Array<{ source: string; target: string }>): string[][] {
+  const adjacency = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const edge of edges) adjacency.get(edge.source)?.push(edge.target);
+
+  const components: string[][] = [];
+  const indexById = new Map<string, number>();
+  const lowLinkById = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  let nextIndex = 0;
+
+  function visit(id: string) {
+    indexById.set(id, nextIndex);
+    lowLinkById.set(id, nextIndex);
+    nextIndex += 1;
+    stack.push(id);
+    onStack.add(id);
+
+    for (const target of adjacency.get(id) ?? []) {
+      if (!indexById.has(target)) {
+        visit(target);
+        lowLinkById.set(id, Math.min(lowLinkById.get(id)!, lowLinkById.get(target)!));
+      } else if (onStack.has(target)) {
+        lowLinkById.set(id, Math.min(lowLinkById.get(id)!, indexById.get(target)!));
+      }
+    }
+
+    if (lowLinkById.get(id) !== indexById.get(id)) return;
+    const component: string[] = [];
+    for (;;) {
+      const member = stack.pop();
+      if (!member) break;
+      onStack.delete(member);
+      component.push(member);
+      if (member === id) break;
+    }
+    components.push(component);
+  }
+
+  for (const id of ids) {
+    if (!indexById.has(id)) visit(id);
+  }
+
+  return components;
+}
+
+function componentLevels(
+  components: string[][],
+  componentEdges: Map<number, Set<number>>,
+  incomingCounts: Map<number, number>,
+  start: unknown,
+  indexById: Map<string, number>
+): number[] {
+  const levels = components.map(() => 0);
+  const startComponent = typeof start === "string" ? components.findIndex((component) => component.includes(start)) : -1;
+  const queue = [...components.keys()]
+    .filter((componentIndex) => incomingCounts.get(componentIndex) === 0)
+    .sort((left, right) => {
+      if (left === startComponent) return -1;
+      if (right === startComponent) return 1;
+      return componentSortKey(components[left], indexById) - componentSortKey(components[right], indexById);
+    });
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const source = queue[index];
+    for (const target of componentEdges.get(source) ?? []) {
+      levels[target] = Math.max(levels[target], levels[source] + 1);
+      incomingCounts.set(target, (incomingCounts.get(target) ?? 0) - 1);
+      if (incomingCounts.get(target) === 0) queue.push(target);
+    }
+  }
+
+  return levels;
+}
+
+function componentSortKey(component: string[], indexById: Map<string, number>): number {
+  return Math.min(...component.map((id) => indexById.get(id) ?? 0));
+}
+
 function edgeId(source: string, target: string, label: string, data: WorkflowEditorEdgeData): string {
-  return [source, data.kind, data.transitionKey ?? data.parameterKey ?? data.branchIndex ?? label, data.parameterIndex ?? "", target]
+  return [source, data.kind, data.transitionKey ?? data.parameterKey ?? data.branchIndex ?? label, data.parameterIndex ?? "", data.sourceHandle ?? "", data.targetHandle ?? "", target]
     .map((part) => encodeURIComponent(String(part)))
     .join(":");
 }
@@ -479,4 +768,27 @@ function approvalPrompt(node: JsonRecord, state?: JsonRecord): string | undefine
 function firstAvailableTransition(node: JsonRecord): WorkflowDirectTransitionKey {
   const transitions = isRecord(node.transitions) ? node.transitions : {};
   return directTransitionKeys.find((key) => !transitions[key]) ?? "next";
+}
+
+function edgeHandles(definition: JsonRecord, source: string, semanticKey: string): Pick<WorkflowEditorEdgeData, "sourceHandle" | "targetHandle"> {
+  const saved = definition.ui?.edge_handles?.[edgeHandleKey(source, semanticKey)];
+  return {
+    sourceHandle: normalizeConnectionHandle(saved?.sourceHandle) ?? "bottom",
+    targetHandle: normalizeConnectionHandle(saved?.targetHandle) ?? "top"
+  };
+}
+
+function edgeHandleKey(source: string, semanticKey: string): string {
+  return `${source}:${semanticKey}`;
+}
+
+function normalizeConnectionHandle(value: unknown): WorkflowConnectionHandle | undefined {
+  return workflowConnectionHandles.includes(value as WorkflowConnectionHandle) ? (value as WorkflowConnectionHandle) : undefined;
+}
+
+function titleFromNodeId(nodeId: string): string {
+  return nodeId
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim() || "Workflow";
 }

@@ -6,6 +6,7 @@
     </div>
     <div class="workflow-actions">
       <button @click="workflows.openWorkflowSettings">Settings</button>
+      <button title="Auto arrange workflow nodes" @click="workflows.autoArrangeWorkflowNodes">Arrange</button>
       <button @click="workflows.saveSelectedWorkflow">Save</button>
       <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
     </div>

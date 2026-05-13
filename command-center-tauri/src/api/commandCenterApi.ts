@@ -11,6 +11,8 @@ import type {
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
+  WorkflowBundleSaveRequest,
+  WorkflowBundleSaveResponse,
   WorkflowDefinition,
   WorkflowRunCreated,
   WorkflowRunDetail
@@ -39,6 +41,10 @@ export async function saveTask(task: ScheduledTask, creating: boolean) {
   return command<SaveTaskResponse>("save_task", { request: { task, creating } });
 }
 
+export async function deleteTask(taskId: number) {
+  return command<TaskResponse>("delete_task", { taskId });
+}
+
 export async function requestTaskRun(taskId: number) {
   return command<any>("request_task_run", { taskId });
 }
@@ -61,6 +67,10 @@ export async function fetchWorkflows() {
 
 export async function saveWorkflow(workflow: WorkflowDefinition) {
   return command<WorkflowDefinition>("save_workflow", { workflow });
+}
+
+export async function saveWorkflowBundle(request: WorkflowBundleSaveRequest) {
+  return command<WorkflowBundleSaveResponse>("save_workflow_bundle", { request });
 }
 
 export async function createWorkflowRun(workflowId: number) {

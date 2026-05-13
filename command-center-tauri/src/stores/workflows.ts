@@ -2,34 +2,45 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
   createWorkflowRun,
+  deleteTask,
   fetchRunArtifacts,
   fetchRunChunks,
   fetchWorkflowRun,
   fetchWorkflowRuns,
   fetchWorkflows,
-  saveWorkflow
+  saveTask,
+  saveWorkflowBundle
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, WorkflowDefinition, WorkflowNodeKind, WorkflowRunDetail } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowNodeKind, WorkflowRunDetail } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredObject } from "../utils/json";
 import {
   addDirectTransition,
+  autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
+  copyWorkflowTaskDraft,
+  createWorkflowTaskDraft,
   createWorkflowNode,
   directTransitionKeys,
+  isSameConnectionPointLoop,
   nodeRef,
   nodeRefId,
   normalizeWorkflowDefinition,
   removeConditionBranch,
   removeEditableEdge,
+  removeWorkflowEdgeHandles,
   setConditionBranch,
+  setWorkflowEdgeHandles,
+  stampWorkflowTaskMetadata,
+  uniqueWorkflowNodeId,
   validateWorkflowReferenceSyntax,
   valueRef,
   workflowNodeKinds
 } from "../utils/workflows";
 import { useAppStore } from "./app";
+import { useProvidersStore } from "./providers";
 import { useResourcesStore } from "./resources";
 import { useTasksStore } from "./tasks";
 
@@ -42,7 +53,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowSettingsOpen = ref(false);
   const workflowEditorMode = ref<"graph" | "json">("graph");
   const workflowInspectorMode = ref<"step" | "runs" | "detail">("step");
+  const stepEditorOpen = ref(false);
+  const stepEditorCreating = ref(false);
+  const stepEditorCreatedNodeId = ref("");
+  const stepEditorError = ref("");
   const workflowRuns = ref<RunSummary[]>([]);
+  const workflowLayoutVersion = ref(0);
   const workflowRunsByRunId = computed(() => {
     const groups: Record<number, RunSummary[]> = {};
     for (const run of workflowRuns.value) {
@@ -88,6 +104,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     parameters_json: "{}",
     transitions_json: "{}"
   });
+  const workflowTaskDrafts = ref<Record<string, ScheduledTask>>({});
+  const nextTemporaryTaskId = ref(-1);
 
   const isDirty = ref(false);
 
@@ -124,7 +142,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       .map((key) => `${key}:${nodeRefId(transitions[key]) ?? "invalid"}`)
       .join(",");
   });
-  const graphNodes = computed(() => buildGraphNodes(workflowDraft, workflowRunDetail.value, useTasksStore().tasks));
+  const graphNodes = computed(() => buildGraphNodes(workflowDraft, workflowRunDetail.value, [...useTasksStore().tasks, ...Object.values(workflowTaskDrafts.value)]));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
   const selectedNode = computed(() => ensureWorkflowNodes().find((item: JsonRecord) => item.id === selectedStepId.value) ?? null);
   const selectedNodePendingApproval = computed(() => {
@@ -165,6 +183,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (isSwitch) {
       selectedStepId.value = "";
       workflowRunDetail.value = null;
+      workflowTaskDrafts.value = {};
+      stepEditorOpen.value = false;
     }
     isDirty.value = false;
     if (workflow.id) return fetchWorkflowRunsForSelected(workflow.id);
@@ -175,18 +195,6 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const workflow = newWorkflowDraft();
     workflows.value.push(workflow);
     selectWorkflow(workflow);
-  }
-
-  async function saveSelectedWorkflow() {
-    if (!syncWorkflowJson()) return;
-    workflowDraft.definition.concurrency = workflowConcurrency.value;
-    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
-    workflowJson.value = pretty(workflowDraft.definition);
-    const saved = await app.runOperation("Saving workflow", () => saveWorkflow(workflowDraft));
-    app.setStatus(`Workflow saved: ${saved.name}`);
-    isDirty.value = false;
-    selectedWorkflowId.value = saved.id;
-    await refreshWorkflows();
   }
 
   async function runSelectedWorkflow() {
@@ -235,15 +243,28 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
   }
 
-  function addWorkflowStep() {
-    addWorkflowNode("task");
+  async function addWorkflowStep() {
+    await addWorkflowNode("task");
   }
 
-  function addWorkflowNode(kind: WorkflowNodeKind) {
+  async function addWorkflowNode(kind: WorkflowNodeKind) {
     if (!syncWorkflowJson()) return;
     const nodes = ensureWorkflowNodes();
     const tasks = useTasksStore();
-    const newNode = createWorkflowNode(kind, nodes, tasks.tasks[0]?.id ?? 1);
+    const taskId = kind === "task" ? nextWorkflowTaskId() : tasks.tasks[0]?.id ?? 1;
+    const newNode = createWorkflowNode(kind, nodes, taskId);
+    let taskDraft: ScheduledTask | null = null;
+    if (kind === "task") {
+      taskDraft = createWorkflowTaskDraft(newNode.id, taskId);
+      taskDraft = stampWorkflowTaskMetadata(taskDraft, newNode.id, workflowDraft.id);
+      const response = await app.runOperation("Creating workflow task", () => saveTask(taskDraft!, true));
+      if (response.success === false) {
+        app.setError(response.message || "Failed to create workflow task");
+        return;
+      }
+      tasks.tasks.push(cloneJson(taskDraft));
+      workflowTaskDrafts.value[newNode.id] = taskDraft;
+    }
     const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
     if (endNode?.id) normalizeNewNodeTargets(newNode, endNode.id);
     const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
@@ -257,28 +278,66 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     setGraphNodePosition(newNode.id, nextNodePosition(nodes.length));
     syncWorkflowDraftToJson();
     populateStepEditor(newNode.id);
+    openStepEditor(newNode.id, true);
   }
 
-  function removeWorkflowStep() {
+  async function removeWorkflowStep() {
     if (!selectedStepId.value || !canRemoveSelectedStep.value) return;
-    workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== selectedStepId.value);
+    const nodeId = selectedStepId.value;
+    const node = ensureWorkflowNodes().find((item: JsonRecord) => item.id === nodeId);
+    const task = node?.kind === "task"
+      ? workflowTaskDrafts.value[nodeId] ?? useTasksStore().tasks.find((item) => item.id === Number(node.task_id))
+      : null;
+    if (task?.id && isWorkflowOwnedTask(task)) {
+      const response = await app.runOperation("Deleting workflow task", () => deleteTask(task.id!));
+      if (response.success === false) {
+        app.setError(response.message || "Failed to delete workflow task");
+        return;
+      }
+      const taskStore = useTasksStore();
+      taskStore.tasks = taskStore.tasks.filter((item) => item.id !== task.id);
+    }
+    workflowDraft.definition.nodes = ensureWorkflowNodes().filter((item: JsonRecord) => item.id !== nodeId);
+    delete workflowTaskDrafts.value[nodeId];
     selectedStepId.value = "";
     syncWorkflowDraftToJson();
   }
 
-  function applyStepEditor() {
-    if (!selectedStepId.value) return;
+  function applyStepEditor(): boolean {
+    stepEditorError.value = "";
+    if (!selectedStepId.value) return false;
     const nodes = ensureWorkflowNodes();
     const index = nodes.findIndex((node: JsonRecord) => node.id === selectedStepId.value);
-    if (index < 0) return;
+    if (index < 0) return false;
     const parameters = parseRequiredObject(stepEditor.parameters_json);
     const transitions = parseRequiredObject(stepEditor.transitions_json);
-    if (!parameters || !transitions) return app.setError(parameters ? "Node transitions must be a JSON object" : "Step parameters must be a JSON object");
+    if (!parameters || !transitions) {
+      const message = parameters ? "Node transitions must be a JSON object" : "Step parameters must be a JSON object";
+      stepEditorError.value = message;
+      app.setError(message);
+      return false;
+    }
+    const parameterError = validateStepParameters(parameters);
+    if (parameterError) {
+      stepEditorError.value = parameterError;
+      app.setError(parameterError);
+      return false;
+    }
     const next = { ...nodes[index] };
     next.id = stepEditor.id.trim();
+    if (!next.id) {
+      stepEditorError.value = "Step ID is required";
+      return false;
+    }
     next.kind = stepEditor.kind;
-    if (next.kind === "task") next.task_id = stepEditor.task_id;
-    else delete next.task_id;
+    if (next.kind === "task") {
+      next.task_id = stepEditor.task_id;
+      const taskDraft = ensureWorkflowTaskDraft(selectedStepId.value, next);
+      workflowTaskDrafts.value[selectedStepId.value] = stampWorkflowTaskMetadata(taskDraft, selectedStepId.value, workflowDraft.id);
+    } else {
+      delete next.task_id;
+      delete workflowTaskDrafts.value[selectedStepId.value];
+    }
     next.retry = { max_attempts: stepEditor.max_attempts };
     if (stepEditor.timeout_seconds > 0) next.timeout_seconds = stepEditor.timeout_seconds;
     else delete next.timeout_seconds;
@@ -291,8 +350,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       next.transitions = { ...transitions, branches: [] };
       for (const [branchIndex, branch] of stepEditor.condition_branches.entries()) {
         const when = parseRequiredObject(branch.when_json);
-        if (!when) return app.setError(`Condition branch ${branchIndex + 1} must be a JSON object`);
-        if (!branch.target) return app.setError(`Condition branch ${branchIndex + 1} needs a target`);
+        if (!when) {
+          stepEditorError.value = `Condition branch ${branchIndex + 1} must be a JSON object`;
+          app.setError(stepEditorError.value);
+          return false;
+        }
+        if (!branch.target) {
+          stepEditorError.value = `Condition branch ${branchIndex + 1} needs a target`;
+          app.setError(stepEditorError.value);
+          return false;
+        }
         setConditionBranch(next, branchIndex, when, branch.target);
       }
       if (stepEditor.condition_fallback) next.transitions.next = nodeRef(stepEditor.condition_fallback);
@@ -300,13 +367,24 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     if (next.kind === "wait") {
       const wait = parseRequiredObject(stepEditor.wait_json);
-      if (!wait) return app.setError("Wait settings must be a JSON object");
+      if (!wait) {
+        stepEditorError.value = "Wait settings must be a JSON object";
+        app.setError(stepEditorError.value);
+        return false;
+      }
       next.wait = wait;
     }
     nodes[index] = next;
-    if (selectedStepId.value !== next.id) renameLayoutNode(selectedStepId.value, next.id);
+    if (selectedStepId.value !== next.id) {
+      renameLayoutNode(selectedStepId.value, next.id);
+      if (workflowTaskDrafts.value[selectedStepId.value]) {
+        workflowTaskDrafts.value[next.id] = stampWorkflowTaskMetadata(workflowTaskDrafts.value[selectedStepId.value], next.id, workflowDraft.id);
+        delete workflowTaskDrafts.value[selectedStepId.value];
+      }
+    }
     selectedStepId.value = next.id;
     syncWorkflowDraftToJson();
+    return true;
   }
 
   function populateStepEditor(nodeId: string) {
@@ -327,6 +405,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.timeout_seconds = Number(node.timeout_seconds ?? 0);
     stepEditor.parameters_json = pretty(node.parameters ?? {});
     stepEditor.transitions_json = pretty(node.transitions ?? {});
+    if (node.kind === "task") ensureWorkflowTaskDraft(nodeId, node);
     // If we're in detail mode, stay there, otherwise switch to step
     if (workflowInspectorMode.value !== "detail") {
       workflowInspectorMode.value = "step";
@@ -359,6 +438,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (nodeId) populateStepEditor(nodeId);
   }
 
+  function onGraphNodeDoubleClick(event: any) {
+    const nodeId = event?.node?.id;
+    if (nodeId) openStepEditor(nodeId, false);
+  }
+
   function onGraphNodeDragStop(event: any) {
     const node = event?.node;
     if (!node?.id) return;
@@ -379,13 +463,71 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function onGraphConnect(connection: any) {
     const { source, target, sourceHandle } = connection;
     if (!source || !target) return;
+    if (isSameConnectionPointLoop(connection)) {
+      app.setError("Cannot connect a node handle back to itself");
+      return;
+    }
     const nodes = ensureWorkflowNodes();
     const sourceNode = nodes.find((n: JsonRecord) => n.id === source);
     if (!sourceNode) return;
-    addDirectTransition(sourceNode, target, sourceHandle);
+    const transitionKey = addDirectTransition(sourceNode, target, sourceHandle);
+    setWorkflowEdgeHandles(workflowDraft.definition, source, transitionKey, connection.sourceHandle, connection.targetHandle);
     syncWorkflowDraftToJson();
     if (selectedStepId.value === source) {
       populateStepEditor(source);
+    }
+  }
+
+  function onGraphEdgeUpdate(event: any) {
+    const edge = event?.edge;
+    const connection = event?.connection;
+    if (!edge || !connection?.source || !connection?.target) return;
+    if (isSameConnectionPointLoop(connection)) {
+      app.setError("Cannot connect a node handle back to itself");
+      return;
+    }
+    const data = edge.data as any;
+    if (!data?.editable) return;
+    const nodes = ensureWorkflowNodes();
+    const oldSourceNode = nodes.find((node: JsonRecord) => node.id === edge.source);
+    const newSourceNode = nodes.find((node: JsonRecord) => node.id === connection.source);
+    if (!newSourceNode) return;
+
+    if (data.kind === "direct" && data.transitionKey) {
+      if (oldSourceNode && edge.source !== connection.source) {
+        delete oldSourceNode.transitions?.[data.transitionKey];
+        removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, data.transitionKey);
+      }
+      const transitionKey =
+        edge.source === connection.source
+          ? data.transitionKey
+          : addDirectTransition(newSourceNode, connection.target, data.transitionKey);
+      newSourceNode.transitions = newSourceNode.transitions ?? {};
+      newSourceNode.transitions[transitionKey] = nodeRef(connection.target);
+      setWorkflowEdgeHandles(workflowDraft.definition, connection.source, transitionKey, connection.sourceHandle, connection.targetHandle);
+      syncWorkflowDraftToJson();
+      if (selectedStepId.value === edge.source || selectedStepId.value === connection.source) {
+        populateStepEditor(connection.source);
+      }
+      return;
+    }
+
+    if (data.kind === "branch" && typeof data.branchIndex === "number") {
+      const oldBranches = Array.isArray(oldSourceNode?.transitions?.branches) ? oldSourceNode!.transitions.branches : [];
+      const branch = oldBranches[data.branchIndex] ?? { when: {}, target: nodeRef(connection.target) };
+      if (oldSourceNode && edge.source !== connection.source) {
+        oldBranches.splice(data.branchIndex, 1);
+        removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, `branches.${data.branchIndex}`);
+      }
+      newSourceNode.transitions = newSourceNode.transitions ?? {};
+      newSourceNode.transitions.branches = Array.isArray(newSourceNode.transitions.branches) ? newSourceNode.transitions.branches : [];
+      const branchIndex = edge.source === connection.source ? data.branchIndex : newSourceNode.transitions.branches.length;
+      newSourceNode.transitions.branches[branchIndex] = { ...branch, target: nodeRef(connection.target) };
+      setWorkflowEdgeHandles(workflowDraft.definition, connection.source, `branches.${branchIndex}`, connection.sourceHandle, connection.targetHandle);
+      syncWorkflowDraftToJson();
+      if (selectedStepId.value === edge.source || selectedStepId.value === connection.source) {
+        populateStepEditor(connection.source);
+      }
     }
   }
 
@@ -395,8 +537,13 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (change.type === "remove") {
         const edge = graphEdges.value.find((item: Edge) => item.id === change.id);
         if (edge) {
-          const sourceNode = ensureWorkflowNodes().find((n: JsonRecord) => n.id === edge.source);
-          if (sourceNode && removeEditableEdge(sourceNode, edge)) changed = true;
+        const sourceNode = ensureWorkflowNodes().find((n: JsonRecord) => n.id === edge.source);
+          if (sourceNode && removeEditableEdge(sourceNode, edge)) {
+            const data = edge.data as any;
+            if (data?.transitionKey) removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, data.transitionKey);
+            if (typeof data?.branchIndex === "number") removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, `branches.${data.branchIndex}`);
+            changed = true;
+          }
         }
       }
     }
@@ -406,6 +553,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         populateStepEditor(selectedStepId.value);
       }
     }
+  }
+
+  function autoArrangeWorkflowNodes() {
+    if (!syncWorkflowJson()) return;
+    const positions = autoArrangeWorkflowLayout(workflowDraft.definition);
+    for (const [nodeId, position] of Object.entries(positions)) setGraphNodePosition(nodeId, position);
+    workflowLayoutVersion.value += 1;
+    syncWorkflowDraftToJson();
   }
 
   function syncWorkflowJson(): boolean {
@@ -486,6 +641,168 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     isDirty.value = true;
   }
 
+  function openStepEditor(nodeId: string, creating = false) {
+    populateStepEditor(nodeId);
+    stepEditorCreating.value = creating;
+    stepEditorCreatedNodeId.value = creating ? nodeId : "";
+    stepEditorError.value = "";
+    workflowInspectorMode.value = "step";
+    stepEditorOpen.value = true;
+  }
+
+  function submitStepEditor() {
+    if (applyStepEditor()) {
+      stepEditorOpen.value = false;
+      stepEditorCreating.value = false;
+      stepEditorCreatedNodeId.value = "";
+    }
+  }
+
+  function closeStepEditor() {
+    if (stepEditorCreating.value && stepEditorCreatedNodeId.value) {
+      const nodeId = stepEditorCreatedNodeId.value;
+      const task = workflowTaskDrafts.value[nodeId];
+      if (task?.id && isWorkflowOwnedTask(task)) {
+        deleteTask(task.id).then(() => useTasksStore().refreshTasks()).catch(() => {});
+      }
+      workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== nodeId);
+      delete workflowTaskDrafts.value[nodeId];
+      selectedStepId.value = "";
+      syncWorkflowDraftToJson();
+    }
+    stepEditorOpen.value = false;
+    stepEditorCreating.value = false;
+    stepEditorCreatedNodeId.value = "";
+    stepEditorError.value = "";
+  }
+
+  async function duplicateSelectedStep() {
+    if (!selectedStepId.value || !canRemoveSelectedStep.value) return;
+    const nodes = ensureWorkflowNodes();
+    const source = nodes.find((node: JsonRecord) => node.id === selectedStepId.value);
+    if (!source) return;
+    const copy = cloneJson(source);
+    copy.id = uniqueWorkflowNodeId(nodes, `${source.id}_copy`);
+    if (copy.kind === "task") {
+      const taskId = nextWorkflowTaskId();
+      copy.task_id = taskId;
+      const sourceDraft = workflowTaskDrafts.value[selectedStepId.value] ?? useTasksStore().tasks.find((task) => task.id === Number(source.task_id));
+      const taskDraft = sourceDraft
+        ? copyWorkflowTaskDraft(sourceDraft, copy.id, taskId)
+        : createWorkflowTaskDraft(copy.id, taskId);
+      const response = await app.runOperation("Creating workflow task", () => saveTask(taskDraft, true));
+      if (response.success === false) {
+        app.setError(response.message || "Failed to create workflow task");
+        return;
+      }
+      workflowTaskDrafts.value[copy.id] = taskDraft;
+      useTasksStore().tasks.push(cloneJson(taskDraft));
+    }
+    nodes.push(copy);
+    setGraphNodePosition(copy.id, nextNodePosition(nodes.length));
+    syncWorkflowDraftToJson();
+    populateStepEditor(copy.id);
+    openStepEditor(copy.id, true);
+  }
+
+  function ensureWorkflowTaskDraft(nodeId: string, node: JsonRecord): ScheduledTask {
+    const existing = workflowTaskDrafts.value[nodeId];
+    if (existing) return existing;
+    const taskId = Number(node.task_id ?? 0);
+    const existingTask = useTasksStore().tasks.find((task) => task.id === taskId);
+    const draft = existingTask
+      ? stampWorkflowTaskMetadata(cloneJson(existingTask), nodeId, workflowDraft.id)
+      : createWorkflowTaskDraft(nodeId, taskId > 0 ? taskId : nextTemporaryTaskId.value--);
+    workflowTaskDrafts.value[nodeId] = draft;
+    stepEditor.task_id = draft.id ?? 0;
+    return draft;
+  }
+
+  async function importTaskForSelectedStep(task: ScheduledTask) {
+    if (!selectedStepId.value) return;
+    const previous = workflowTaskDrafts.value[selectedStepId.value];
+    const taskId = nextWorkflowTaskId();
+    const draft = copyWorkflowTaskDraft(task, selectedStepId.value, taskId);
+    const importedParameters = cloneJson(task.default_parameters ?? {});
+    draft.default_parameters = {};
+    const response = await app.runOperation("Creating workflow task", () => saveTask(draft, true));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to create workflow task");
+      return;
+    }
+    if (previous?.id && isWorkflowOwnedTask(previous)) {
+      await app.runOperation("Deleting previous workflow task", () => deleteTask(previous.id!)).catch(() => null);
+    }
+    workflowTaskDrafts.value[selectedStepId.value] = draft;
+    stepEditor.task_id = taskId;
+    stepEditor.parameters_json = pretty(importedParameters);
+    const taskStore = useTasksStore();
+    taskStore.tasks = taskStore.tasks.filter((item) => item.id !== previous?.id);
+    taskStore.tasks.push(cloneJson(draft));
+    markWorkflowDirty();
+  }
+
+  function validateStepParameters(parameters: JsonRecord): string {
+    if (stepEditor.kind !== "task") return "";
+    const task = selectedStepId.value ? workflowTaskDrafts.value[selectedStepId.value] : null;
+    if (!task) return "Task details are required";
+    if (!task.name.trim()) return "Task name is required";
+    if (!task.action_name.trim()) return "Task action name is required";
+    if (!task.action_function.trim()) return "Task action function is required";
+    if (task.timeout <= 0) return "Task timeout must be greater than zero";
+    const provider = useProvidersStore().providers.find((item) => item.name === task.action_name);
+    const action = provider?.actions.find((item) => item.function_name === task.action_function);
+    if (!action) return "Select a valid task provider action";
+    for (const parameter of action.parameters ?? []) {
+      if (!parameter.required) continue;
+      const value = parameters[parameter.name];
+      if (value === undefined || value === null || value === "") {
+        return `${parameter.label || parameter.name} is required`;
+      }
+      if (parameter.value_type === "string_array" || parameter.value_type === "number_array") {
+        if (!Array.isArray(value)) return `${parameter.label || parameter.name} must be a list`;
+      } else if (parameter.value_type === "object" || parameter.value_type === "json") {
+        if (typeof value !== "object") return `${parameter.label || parameter.name} must be an object`;
+      } else if (parameter.value_type === "integer" || parameter.value_type === "number") {
+        if (typeof value !== "number") return `${parameter.label || parameter.name} must be a number`;
+      } else if (parameter.value_type === "boolean" && typeof value !== "boolean") {
+        return `${parameter.label || parameter.name} must be true or false`;
+      }
+    }
+    return "";
+  }
+
+  function nextWorkflowTaskId(): number {
+    const ids = [
+      ...useTasksStore().tasks.map((task) => task.id ?? 0),
+      ...Object.values(workflowTaskDrafts.value).map((task) => task.id ?? 0)
+    ];
+    return Math.max(0, ...ids) + 1;
+  }
+
+  function isWorkflowOwnedTask(task: ScheduledTask): boolean {
+    return task.metadata?.task_type === "workflow";
+  }
+
+  async function saveSelectedWorkflowBundle() {
+    if (!syncWorkflowJson()) return;
+    workflowDraft.definition.concurrency = workflowConcurrency.value;
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
+    const taskDrafts = Object.entries(workflowTaskDrafts.value).map(([nodeId, task]) => ({
+      node_id: nodeId,
+      temporary_id: task.id,
+      task: stampWorkflowTaskMetadata(cloneJson(task), nodeId, workflowDraft.id)
+    }));
+    const saved = await app.runOperation("Saving workflow", () => saveWorkflowBundle({ workflow: cloneJson(workflowDraft), tasks: taskDrafts }));
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(saved.workflow)));
+    workflowJson.value = pretty(workflowDraft.definition);
+    workflowTaskDrafts.value = Object.fromEntries(saved.tasks.map((task) => [String(task.metadata?.workflow_node_id ?? ""), task]).filter(([nodeId]) => nodeId));
+    app.setStatus(`Workflow saved: ${saved.workflow.name}`);
+    isDirty.value = false;
+    selectedWorkflowId.value = saved.workflow.id;
+    await refreshWorkflows();
+  }
+
   return {
     recentWorkflowRuns,
     getTransition,
@@ -498,13 +815,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowSettingsOpen,
     workflowEditorMode,
     workflowInspectorMode,
+    stepEditorOpen,
+    stepEditorCreating,
+    stepEditorError,
     workflowRuns,
+    workflowLayoutVersion,
     selectedWorkflowRunId,
     workflowRunDetail,
     workflowNodeDetailExtra,
     selectedStepId,
     selectedWorkflowNodeTaskRunId,
     stepEditor,
+    workflowTaskDrafts,
     selectedWorkflow,
     canRunWorkflow,
     canRemoveSelectedStep,
@@ -520,7 +842,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     refreshWorkflows,
     selectWorkflow,
     addWorkflow,
-    saveSelectedWorkflow,
+    saveSelectedWorkflow: saveSelectedWorkflowBundle,
     runSelectedWorkflow,
     fetchWorkflowRunsForSelected,
     selectWorkflowRun,
@@ -533,16 +855,25 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     populateStepEditor,
     updateSelectedWorkflowNodeDetail,
     onGraphNodeClick,
+    onGraphNodeDoubleClick,
     onGraphNodeDragStop,
     onGraphNodesChange,
     onGraphConnect,
+    onGraphEdgeUpdate,
     onGraphEdgesChange,
+    autoArrangeWorkflowNodes,
     isDirty,
     syncWorkflowJson,
     syncWorkflowDraftToJson,
     ensureWorkflowNodes,
     addConditionBranchEditor,
     removeConditionBranchEditor,
+    openStepEditor,
+    closeStepEditor,
+    submitStepEditor,
+    duplicateSelectedStep,
+    ensureWorkflowTaskDraft,
+    importTaskForSelectedStep,
     moveWorkflowSelection,
     openWorkflowSettings,
     closeWorkflowSettings,

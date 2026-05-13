@@ -1,4 +1,6 @@
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+
 use runinator_models::{
     core::ScheduledTask,
     workflows::{WorkflowNodeRun, WorkflowRun},
@@ -36,6 +38,26 @@ pub struct SaveTaskResponse {
     pub success: bool,
     pub message: String,
     pub creating: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowBundleTaskDraft {
+    pub node_id: String,
+    pub temporary_id: Option<i64>,
+    pub task: ScheduledTask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowBundleSaveRequest {
+    pub workflow: runinator_models::workflows::WorkflowDefinition,
+    pub tasks: Vec<WorkflowBundleTaskDraft>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowBundleSaveResponse {
+    pub workflow: runinator_models::workflows::WorkflowDefinition,
+    pub task_id_map: HashMap<String, i64>,
+    pub tasks: Vec<ScheduledTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

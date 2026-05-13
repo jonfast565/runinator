@@ -20,9 +20,22 @@
       <div class="spinner"></div>
     </div>
 
-
-    <Handle type="target" :position="Position.Top" />
-    <Handle v-for="handle in sourceHandles" :key="handle.id" type="source" :id="handle.id" :position="Position.Bottom" :style="{ left: handle.left }" />
+    <template v-for="handle in compassHandles" :key="handle.id">
+      <Handle
+        class="workflow-handle workflow-handle-target"
+        type="target"
+        :id="handle.id"
+        :position="handle.position"
+        :style="handle.style"
+      />
+      <Handle
+        class="workflow-handle workflow-handle-source"
+        type="source"
+        :id="handle.id"
+        :position="handle.position"
+        :style="handle.style"
+      />
+    </template>
   </div>
 </template>
 
@@ -65,26 +78,12 @@ const isNodeRunning = computed(() => {
 const isWaiting = computed(() => {
   return isApprovalWaitingStatus(props.data.status);
 });
-const sourceHandles = computed(() => {
-  if (props.data.kind === "end") return [];
-  if (props.data.kind === "approval") {
-    return [
-      { id: "on_success", left: "35%" },
-      { id: "on_reject", left: "65%" }
-    ];
-  }
-  if (props.data.kind === "condition") {
-    return [
-      { id: "next", left: "35%" },
-      { id: "branches", left: "65%" }
-    ];
-  }
-  return [
-    { id: "next", left: "25%" },
-    { id: "on_success", left: "50%" },
-    { id: "on_failure", left: "75%" }
-  ];
-});
+const compassHandles = computed(() => [
+  { id: "top", position: Position.Top, style: { left: "50%", top: "0" } },
+  { id: "right", position: Position.Right, style: { right: "0", top: "50%" } },
+  { id: "bottom", position: Position.Bottom, style: { left: "50%", bottom: "0" } },
+  { id: "left", position: Position.Left, style: { left: "0", top: "50%" } }
+]);
 
 async function onApprove() {
   await resolveApproval("approve");
@@ -122,6 +121,28 @@ async function resolveApproval(action: ApprovalAction) {
   border-radius: 4px;
   border: 1px solid transparent;
   transition: all 0.2s ease;
+}
+
+.workflow-handle {
+  width: 11px;
+  height: 11px;
+  opacity: 0;
+  border: 2px solid #ffffff;
+  background: #3498db;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.workflow-node-content:hover .workflow-handle,
+.vue-flow__node.selected .workflow-handle {
+  opacity: 1;
+}
+
+.workflow-handle-target {
+  background: #7f8c8d;
+}
+
+.workflow-handle-source {
+  transform: scale(0.68);
 }
 
 .waiting-node {

@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { WorkflowDefinition } from "../../types/models";
 import {
   addDirectTransition,
+  autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
+  copyWorkflowTaskDraft,
+  createWorkflowTaskDraft,
   createWorkflowNode,
+  isSameConnectionPointLoop,
   normalizeWorkflowDefinition,
   removeConditionBranch,
   removeEditableEdge,
   setConditionBranch,
+  setWorkflowEdgeHandles,
+  stampWorkflowTaskMetadata,
   uniqueWorkflowNodeId
 } from "../workflows";
 
@@ -35,7 +41,22 @@ describe("workflow graph utils", () => {
 
   it("builds transition edges", () => {
     expect(buildGraphEdges(workflow)).toMatchObject([{ source: "a", target: "b", label: "next" }]);
-    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", editable: true });
+    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", sourceHandle: "bottom", targetHandle: "top", editable: true });
+  });
+
+  it("persists connection handle choices in edge data", () => {
+    const draft: WorkflowDefinition = JSON.parse(JSON.stringify(workflow));
+    setWorkflowEdgeHandles(draft.definition, "a", "next", "right", "left");
+    const edge = buildGraphEdges(draft)[0];
+    expect(edge.sourceHandle).toBe("right");
+    expect(edge.targetHandle).toBe("left");
+    expect(edge.data).toMatchObject({ sourceHandle: "right", targetHandle: "left" });
+  });
+
+  it("rejects only exact same connection point loops", () => {
+    expect(isSameConnectionPointLoop({ source: "a", target: "a", sourceHandle: "top", targetHandle: "top" })).toBe(true);
+    expect(isSameConnectionPointLoop({ source: "a", target: "a", sourceHandle: "top", targetHandle: "bottom" })).toBe(false);
+    expect(isSameConnectionPointLoop({ source: "a", target: "b", sourceHandle: "top", targetHandle: "top" })).toBe(false);
   });
 
   it("builds rich control-flow parameter edges", () => {
@@ -97,6 +118,48 @@ describe("workflow graph utils", () => {
     const conditionNode = createWorkflowNode("condition", nodes);
     expect(conditionNode.transitions?.branches).toHaveLength(1);
     expect(createWorkflowNode("task", nodes, 42)).toMatchObject({ kind: "task", task_id: 42, retry: { max_attempts: 1 } });
+    for (const kind of ["task", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "emit", "subflow"] as const) {
+      expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind });
+    }
+  });
+
+  it("creates and copies workflow-owned task drafts", () => {
+    const draft = createWorkflowTaskDraft("build_step", -1);
+    expect(draft).toMatchObject({
+      id: -1,
+      name: "Build Step Task",
+      enabled: false,
+      metadata: { task_type: "workflow", workflow_node_id: "build_step" }
+    });
+
+    const copy = copyWorkflowTaskDraft(
+      {
+        ...draft,
+        id: 42,
+        name: "Shared Task",
+        action_name: "console",
+        action_function: "run",
+        metadata: { task_type: "scheduled" }
+      },
+      "copied",
+      -2
+    );
+    expect(copy).toMatchObject({
+      id: -2,
+      name: "Shared Task copy",
+      action_name: "console",
+      action_function: "run",
+      metadata: { task_type: "workflow", workflow_node_id: "copied" }
+    });
+  });
+
+  it("stamps workflow id on owned task metadata", () => {
+    const task = createWorkflowTaskDraft("node", -1);
+    expect(stampWorkflowTaskMetadata(task, "renamed", 99).metadata).toMatchObject({
+      task_type: "workflow",
+      workflow_node_id: "renamed",
+      workflow_id: 99
+    });
   });
 
   it("generates stable unique node ids", () => {
@@ -152,6 +215,57 @@ describe("workflow graph utils", () => {
       }
     };
     expect(buildGraphNodes(legacy, null)[0].position).toEqual({ x: 30, y: 40 });
+  });
+
+  it("auto arranges direct workflow nodes from start to end", () => {
+    const arranged = autoArrangeWorkflowLayout({
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: { "$node": "task" } } },
+        { id: "task", kind: "task", transitions: { next: { "$node": "end" } } },
+        { id: "end", kind: "end" }
+      ]
+    });
+
+    expect(arranged.start.x).toBeLessThan(arranged.task.x);
+    expect(arranged.task.x).toBeLessThan(arranged.end.x);
+    expect(arranged.start.y).toBe(arranged.task.y);
+    expect(arranged.task.y).toBe(arranged.end.y);
+  });
+
+  it("auto arranges branches on the same rank before their join", () => {
+    const arranged = autoArrangeWorkflowLayout({
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: { "$node": "fanout" } } },
+        { id: "fanout", kind: "parallel", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
+        { id: "a", kind: "task", transitions: { next: { "$node": "join" } } },
+        { id: "b", kind: "task", transitions: { next: { "$node": "join" } } },
+        { id: "join", kind: "join", parameters: { wait_for: [{ "$node": "a" }, { "$node": "b" }] }, transitions: { next: { "$node": "end" } } },
+        { id: "end", kind: "end" }
+      ]
+    });
+
+    expect(arranged.a.x).toBe(arranged.b.x);
+    expect(arranged.a.y).not.toBe(arranged.b.y);
+    expect(arranged.join.x).toBeGreaterThan(arranged.a.x);
+    expect(arranged.end.x).toBeGreaterThan(arranged.join.x);
+  });
+
+  it("auto arranges cyclic nodes without recursive rank growth", () => {
+    const arranged = autoArrangeWorkflowLayout({
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: { "$node": "a" } } },
+        { id: "a", kind: "task", transitions: { next: { "$node": "b" } } },
+        { id: "b", kind: "task", transitions: { next: { "$node": "a" }, on_success: { "$node": "end" } } },
+        { id: "end", kind: "end" }
+      ]
+    });
+
+    expect(arranged.a.x).toBe(arranged.b.x);
+    expect(arranged.a.y).not.toBe(arranged.b.y);
+    expect(arranged.end.x).toBeGreaterThan(arranged.a.x);
   });
 
   it("marks the active completed end node as succeeded", () => {
