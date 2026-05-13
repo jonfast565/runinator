@@ -426,7 +426,7 @@ function inferredNodeStatus(node: JsonRecord, id: string, detail: WorkflowRunDet
 }
 
 function isWorkflowRunDisplayStatus(status: string | undefined): status is string {
-  return ["queued", "running", "waiting", "approval_required", "blocked", "succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
+  return ["queued", "running", "debug_paused", "waiting", "approval_required", "blocked", "succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
 }
 
 function firstNodeId(nodes: JsonRecord[], predicate: (kind?: string) => boolean): string | null {
