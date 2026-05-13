@@ -38,6 +38,17 @@ struct PrNumberParams {
 }
 
 #[derive(Deserialize)]
+struct MergePrParams {
+    #[serde(flatten)]
+    base: GitHubBaseParams,
+    pull_number: String,
+    merge_method: Option<String>,
+    commit_title: Option<String>,
+    commit_message: Option<String>,
+    sha: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct IssueNumberParams {
     #[serde(flatten)]
     base: GitHubBaseParams,
@@ -94,6 +105,19 @@ impl Provider for GitHubProvider {
                         ParameterMetadata::required("pull_number", ParameterValueType::String),
                     ])
                     .with_results(json_results()),
+                ActionMetadata::new("merge_pr", "Merge a pull request")
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::required("pull_number", ParameterValueType::String),
+                        ParameterMetadata::optional("merge_method", ParameterValueType::String)
+                            .with_default(json!("squash")),
+                        ParameterMetadata::optional("commit_title", ParameterValueType::String),
+                        ParameterMetadata::optional("commit_message", ParameterValueType::String),
+                        ParameterMetadata::optional("sha", ParameterValueType::String),
+                    ])
+                    .with_results(json_results()),
                 ActionMetadata::new("comments", "Read issue or PR comments")
                     .with_parameters(vec![
                         auth_param(),
@@ -147,7 +171,10 @@ impl Provider for GitHubProvider {
                 let p: CreatePrParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
                 client
-                    .post(format!("{api}/repos/{}/{}/pulls", p.base.owner, p.base.repo))
+                    .post(format!(
+                        "{api}/repos/{}/{}/pulls",
+                        p.base.owner, p.base.repo
+                    ))
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
                     .json(&json!({
@@ -162,16 +189,49 @@ impl Provider for GitHubProvider {
                 let p: PrNumberParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
                 client
-                    .get(format!("{api}/repos/{}/{}/pulls/{}/reviews", p.base.owner, p.base.repo, p.pull_number))
+                    .get(format!(
+                        "{api}/repos/{}/{}/pulls/{}/reviews",
+                        p.base.owner, p.base.repo, p.pull_number
+                    ))
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
+                    .send()?
+            }
+            "merge_pull_request" | "merge_pr" => {
+                let p: MergePrParams = parse_params(&request)?;
+                let auth = format!("Bearer {}", p.base.token);
+                let mut body = serde_json::Map::new();
+                body.insert(
+                    "merge_method".into(),
+                    json!(p.merge_method.as_deref().unwrap_or("squash")),
+                );
+                if let Some(commit_title) = p.commit_title {
+                    body.insert("commit_title".into(), json!(commit_title));
+                }
+                if let Some(commit_message) = p.commit_message {
+                    body.insert("commit_message".into(), json!(commit_message));
+                }
+                if let Some(sha) = p.sha {
+                    body.insert("sha".into(), json!(sha));
+                }
+                client
+                    .put(format!(
+                        "{api}/repos/{}/{}/pulls/{}/merge",
+                        p.base.owner, p.base.repo, p.pull_number
+                    ))
+                    .header("Authorization", &auth)
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&Value::Object(body))
                     .send()?
             }
             "read_issue_comments" | "comments" => {
                 let p: IssueNumberParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
                 client
-                    .get(format!("{api}/repos/{}/{}/issues/{}/comments", p.base.owner, p.base.repo, p.issue_number))
+                    .get(format!(
+                        "{api}/repos/{}/{}/issues/{}/comments",
+                        p.base.owner, p.base.repo, p.issue_number
+                    ))
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
                     .send()?
@@ -180,7 +240,10 @@ impl Provider for GitHubProvider {
                 let p: RefParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
                 client
-                    .get(format!("{api}/repos/{}/{}/commits/{}/check-runs", p.base.owner, p.base.repo, p.git_ref))
+                    .get(format!(
+                        "{api}/repos/{}/{}/commits/{}/check-runs",
+                        p.base.owner, p.base.repo, p.git_ref
+                    ))
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
                     .send()?
@@ -189,7 +252,10 @@ impl Provider for GitHubProvider {
                 let p: DispatchParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
                 client
-                    .post(format!("{api}/repos/{}/{}/actions/workflows/{}/dispatches", p.base.owner, p.base.repo, p.workflow_id))
+                    .post(format!(
+                        "{api}/repos/{}/{}/actions/workflows/{}/dispatches",
+                        p.base.owner, p.base.repo, p.workflow_id
+                    ))
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
                     .json(&json!({
@@ -218,9 +284,14 @@ impl Provider for GitHubProvider {
     }
 }
 
-fn parse_params<T: serde::de::DeserializeOwned>(request: &ProviderExecutionRequest) -> Result<T, SendableError> {
+fn parse_params<T: serde::de::DeserializeOwned>(
+    request: &ProviderExecutionRequest,
+) -> Result<T, SendableError> {
     serde_json::from_value(request.parameters.clone()).map_err(|e| {
-        Box::new(RuntimeError::new("github.invalid_params".into(), e.to_string())) as SendableError
+        Box::new(RuntimeError::new(
+            "github.invalid_params".into(),
+            e.to_string(),
+        )) as SendableError
     })
 }
 

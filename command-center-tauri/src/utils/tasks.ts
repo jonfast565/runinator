@@ -15,3 +15,7 @@ export function validateTask(task: ScheduledTask, json: { default_parameters: st
   }
   return "";
 }
+
+export function isWorkflowTask(task: ScheduledTask): boolean {
+  return task.metadata?.task_type === "workflow";
+}

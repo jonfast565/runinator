@@ -11,7 +11,7 @@ import {
 import type { RunArtifact, RunChunk, RunSummary, ScheduledTask } from "../types/models";
 import { cloneJson, parseObject } from "../utils/json";
 import { pretty } from "../utils/format";
-import { validateTask } from "../utils/tasks";
+import { isWorkflowTask, validateTask } from "../utils/tasks";
 import { useAppStore } from "./app";
 
 export const useTasksStore = defineStore("tasks", () => {
@@ -31,14 +31,15 @@ export const useTasksStore = defineStore("tasks", () => {
   });
 
   const app = useAppStore();
-  const selectedTask = computed(() => tasks.value.find((task) => task.id === selectedTaskId.value) ?? null);
+  const scheduledTasks = computed(() => tasks.value.filter((task) => !isWorkflowTask(task)));
+  const selectedScheduledTask = computed(() => scheduledTasks.value.find((task) => task.id === selectedTaskId.value) ?? null);
   const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) ?? null);
-  const canRunTask = computed(() => Boolean(selectedTask.value?.enabled && selectedTask.value.id));
+  const canRunTask = computed(() => Boolean(selectedScheduledTask.value?.enabled && selectedScheduledTask.value.id));
   const runOutput = computed(() => chunks.value.map((chunk) => `[${chunk.stream}] ${chunk.content}`).join("\n"));
   const filteredTasks = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return tasks.value;
-    return tasks.value.filter((task) =>
+    if (!query) return scheduledTasks.value;
+    return scheduledTasks.value.filter((task) =>
       [task.name, task.cron_schedule, task.action_name, task.action_function].some((value) => value.toLowerCase().includes(query))
     );
   });
@@ -58,13 +59,13 @@ export const useTasksStore = defineStore("tasks", () => {
   async function refreshTasks() {
     const loaded = await app.runOperation("Refreshing tasks", () => fetchTasks()).catch(() => []);
     tasks.value = loaded;
-    if (!selectedTaskId.value && loaded.length > 0) selectedTaskId.value = loaded[0].id;
-    if (selectedTaskId.value && !taskEditorOpen.value) await refreshRunsForSelectedTask();
+    if (!scheduledTasks.value.some((task) => task.id === selectedTaskId.value)) selectedTaskId.value = scheduledTasks.value[0]?.id ?? null;
+    if (!taskEditorOpen.value) await refreshRunsForSelectedTask();
     app.setStatus("Refreshed.");
   }
 
   async function refreshRunsForSelectedTask() {
-    const task = selectedTask.value;
+    const task = selectedScheduledTask.value;
     if (!task?.id) {
       runs.value = [];
       chunks.value = [];
@@ -100,7 +101,7 @@ export const useTasksStore = defineStore("tasks", () => {
   }
 
   async function runSelectedTask() {
-    const task = selectedTask.value;
+    const task = selectedScheduledTask.value;
     if (!task?.id || !task.enabled) return app.setError(task ? "Task is disabled" : "No task selected");
     const response = await app.runOperation(`Running ${task.name}`, () => requestTaskRun(task.id!));
     app.setStatus(`${response.success === false ? "ERR" : "OK"}: ${response.message || 'Run requested'}`);
@@ -117,7 +118,7 @@ export const useTasksStore = defineStore("tasks", () => {
   }
 
   function openSelectedTask() {
-    if (selectedTask.value) openTask(selectedTask.value);
+    if (selectedScheduledTask.value) openTask(selectedScheduledTask.value);
   }
 
   function openTask(task: ScheduledTask) {
@@ -176,6 +177,7 @@ export const useTasksStore = defineStore("tasks", () => {
   return {
     recentRuns,
     tasks,
+    scheduledTasks,
     selectedTaskId,
     runs,
     selectedRunId,
@@ -186,7 +188,7 @@ export const useTasksStore = defineStore("tasks", () => {
     taskEditorError,
     taskDraft,
     taskJson,
-    selectedTask,
+    selectedTask: selectedScheduledTask,
     selectedRun,
     canRunTask,
     runOutput,

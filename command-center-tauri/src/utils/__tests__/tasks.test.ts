@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newTaskDraft } from "../../stores/tasks";
-import { validateTask } from "../tasks";
+import { isWorkflowTask, validateTask } from "../tasks";
 
 describe("task validation", () => {
   it("requires core task fields", () => {
@@ -30,5 +30,11 @@ describe("task validation", () => {
       timeout: 1000
     };
     expect(validateTask(task, { default_parameters: "[]", metadata: "{}" })).toContain("JSON objects");
+  });
+
+  it("identifies workflow-only task records", () => {
+    expect(isWorkflowTask({ ...newTaskDraft(), metadata: { task_type: "workflow" } })).toBe(true);
+    expect(isWorkflowTask({ ...newTaskDraft(), metadata: { task_type: "scheduled" } })).toBe(false);
+    expect(isWorkflowTask(newTaskDraft())).toBe(false);
   });
 });

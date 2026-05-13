@@ -91,12 +91,16 @@ This publishes binaries and the seed file under `target/artifacts/`, writes `tar
 The importer reads `runinator-importer/tasks/tasks.json`. It seeds both scheduled tasks and workflow definitions, including:
 
 - workflow `1001`: `Mock SDLC: Feature Delivery`
+- workflow `1003`: `SDLC: Implement, Review, QA Until Done`
 - workflow `1002`: `Rich Workflow Syntax Demo`
 - mock console task IDs `101-106`
+- real SDLC provider task IDs `201-208`
 
 In `command-center`, open the Workflows tab, select `Mock SDLC: Feature Delivery`, and run it. The workflow advances through local console-backed SDLC steps, pauses for `review_approval`, continues after approval, then pauses again for `release_gate`. Use the generic Approvals view to approve those requests and let the workflow finish.
 
-The mock task definitions are disabled as scheduled tasks, so they do not run from cron. They are still executable as workflow task nodes.
+The real-provider SDLC workflow uses Jira, git, AI command, GitHub, `map`, wait, and approval nodes to process matching Jira issues into generated PRs, merge approved pull requests, and transition completed items. It requires runtime input for Jira credentials/query, repo/workspace paths, the implementation command, GitHub credentials, and the done transition ID.
+
+The SDLC task definitions are disabled as scheduled tasks, so they do not run from cron. They are still executable as workflow task nodes.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 

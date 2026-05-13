@@ -37,7 +37,10 @@ use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, sync::{broadcast, Notify}};
+use tokio::{
+    net::TcpListener,
+    sync::{Notify, broadcast},
+};
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -96,6 +99,26 @@ fn bad_request(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
     (
         StatusCode::BAD_REQUEST,
         Json(ApiResponse::ApiError(ApiError {
+            message: message.into(),
+        })),
+    )
+}
+
+fn task_response_error(message: impl Into<String>) -> (StatusCode, Json<TaskResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(TaskResponse {
+            success: false,
+            message: message.into(),
+        }),
+    )
+}
+
+fn task_response_success(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::OK,
+        Json(ApiResponse::TaskResponse(TaskResponse {
+            success: true,
             message: message.into(),
         })),
     )
@@ -177,18 +200,12 @@ async fn delete_task<T: DatabaseImpl>(
     Path(task_id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("Deleting task with ID: {}", task_id);
-    let r = repository::delete_task(db.as_ref(), task_id).await;
-    match r {
+    match repository::delete_task(db.as_ref(), task_id).await {
         Ok(r) => {
             emit(&events, AppEvent::TasksChanged);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
         }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -196,15 +213,9 @@ async fn get_tasks<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("Fetching all tasks");
-    let r = repository::fetch_tasks(db.as_ref()).await;
-    match r {
+    match repository::fetch_tasks(db.as_ref()).await {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduledTaskList(r))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -223,15 +234,9 @@ async fn get_task_runs<T: DatabaseImpl>(
         .unwrap_or(i64::MAX);
 
     info!("Fetching task runs between {} and {}", start_time, end_time);
-    let result = repository::fetch_task_runs(db.as_ref(), start_time, end_time).await;
-    match result {
+    match repository::fetch_task_runs(db.as_ref(), start_time, end_time).await {
         Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduleTaskRuns(r))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -242,13 +247,7 @@ async fn request_run<T: DatabaseImpl>(
     info!("Requesting run of task {}", task_id);
     match repository::request_run(db.as_ref(), task_id).await {
         Ok(resp) => (StatusCode::OK, Json(resp)),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(TaskResponse {
-                success: false,
-                message: err.to_string(),
-            }),
-        ),
+        Err(err) => task_response_error(err.to_string()),
     }
 }
 
@@ -277,12 +276,13 @@ async fn get_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Query(query): Query<RunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match query.status {
-        Some(status) => match repository::fetch_runs_by_status(db.as_ref(), status).await {
-            Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
-            Err(err) => api_error(err.to_string()),
-        },
-        None => api_error("runs query requires status"),
+    let Some(status) = query.status else {
+        return api_error("runs query requires status");
+    };
+
+    match repository::fetch_runs_by_status(db.as_ref(), status).await {
+        Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -292,12 +292,7 @@ async fn get_run<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_run(db.as_ref(), run_id).await {
         Ok(Some(run)) => (StatusCode::OK, Json(ApiResponse::RunSummary(run))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ApiResponse::ApiError(ApiError {
-                message: format!("Run {run_id} not found"),
-            })),
-        ),
+        Ok(None) => not_found(format!("Run {run_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -385,12 +380,7 @@ async fn get_artifact<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_artifact(db.as_ref(), artifact_id).await {
         Ok(Some(artifact)) => (StatusCode::OK, Json(ApiResponse::RunArtifact(artifact))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ApiResponse::ApiError(ApiError {
-                message: format!("Artifact {artifact_id} not found"),
-            })),
-        ),
+        Ok(None) => not_found(format!("Artifact {artifact_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -424,12 +414,7 @@ async fn get_workflow<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflow(db.as_ref(), workflow_id).await {
         Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ApiResponse::ApiError(ApiError {
-                message: format!("Workflow {workflow_id} not found"),
-            })),
-        ),
+        Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -465,20 +450,20 @@ async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Query(query): Query<WorkflowRunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match (query.workflow_id, query.status) {
-        (Some(workflow_id), _) => {
-            match repository::fetch_workflow_runs_for_workflow(db.as_ref(), workflow_id).await {
-                Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
-                Err(err) => api_error(err.to_string()),
-            }
-        }
-        (None, Some(status)) => {
-            match repository::fetch_workflow_runs_by_status(db.as_ref(), status).await {
-                Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
-                Err(err) => api_error(err.to_string()),
-            }
-        }
-        (None, None) => api_error("workflow_runs query requires workflow_id or status"),
+    if let Some(workflow_id) = query.workflow_id {
+        return match repository::fetch_workflow_runs_for_workflow(db.as_ref(), workflow_id).await {
+            Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
+
+    let Some(status) = query.status else {
+        return api_error("workflow_runs query requires workflow_id or status");
+    };
+
+    match repository::fetch_workflow_runs_by_status(db.as_ref(), status).await {
+        Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -499,7 +484,12 @@ async fn update_workflow_run<T: DatabaseImpl>(
     .await
     {
         Ok(resp) => {
-            emit(&events, AppEvent::WorkflowRunChanged { run_id: workflow_run_id });
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -518,12 +508,7 @@ async fn get_workflow_run<T: DatabaseImpl>(
                 nodes,
             })),
         ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ApiResponse::ApiError(ApiError {
-                message: format!("Workflow run {workflow_run_id} not found"),
-            })),
-        ),
+        Ok(None) => not_found(format!("Workflow run {workflow_run_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -543,8 +528,16 @@ async fn create_workflow_node_run<T: DatabaseImpl>(
     .await
     {
         Ok(step) => {
-            emit(&events, AppEvent::WorkflowRunChanged { run_id: workflow_run_id });
-            (StatusCode::ACCEPTED, Json(ApiResponse::WorkflowNodeRun(step)))
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRun(step)),
+            )
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -826,28 +819,28 @@ fn credential_store() -> LocalEncryptedCredentialStore {
 
 async fn get_credential(Query(query): Query<CredentialQuery>) -> (StatusCode, Json<ApiResponse>) {
     let store = credential_store();
-    let (scope, name) = match (query.scope, query.name) {
-        (Some(scope), Some(name)) => (scope, name),
-        (None, None) => {
-            return match store.list() {
-                Ok(entries) => (
-                    StatusCode::OK,
-                    Json(ApiResponse::JsonList(
-                        entries
-                            .into_iter()
-                            .map(|entry| {
-                                serde_json::json!({
-                                    "scope": entry.scope,
-                                    "name": entry.name,
-                                })
+    if query.scope.is_none() && query.name.is_none() {
+        return match store.list() {
+            Ok(entries) => (
+                StatusCode::OK,
+                Json(ApiResponse::JsonList(
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            serde_json::json!({
+                                "scope": entry.scope,
+                                "name": entry.name,
                             })
-                            .collect(),
-                    )),
-                ),
-                Err(err) => api_error(err.to_string()),
-            };
-        }
-        _ => return bad_request("credential lookup requires both scope and name"),
+                        })
+                        .collect(),
+                )),
+            ),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
+
+    let (Some(scope), Some(name)) = (query.scope, query.name) else {
+        return bad_request("credential lookup requires both scope and name");
     };
 
     match store.get(&scope, &name) {
@@ -902,11 +895,15 @@ async fn delete_credential(
 async fn get_providers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into())).await {
-        Ok(items) => match provider_metadata_from_items(items) {
-            Ok(providers) => (StatusCode::OK, Json(ApiResponse::ProviderList(providers))),
-            Err(err) => api_error(err.to_string()),
-        },
+    let items = match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into()))
+        .await
+    {
+        Ok(items) => items,
+        Err(err) => return api_error(err.to_string()),
+    };
+
+    match provider_metadata_from_items(items) {
+        Ok(providers) => (StatusCode::OK, Json(ApiResponse::ProviderList(providers))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -916,11 +913,13 @@ async fn upsert_provider<T: DatabaseImpl>(
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let item = provider_catalog_item(&provider);
-    match repository::upsert_catalog_item(db.as_ref(), item).await {
-        Ok(item) => match provider_metadata_from_item(item) {
-            Ok(provider) => (StatusCode::OK, Json(ApiResponse::Provider(provider))),
-            Err(err) => api_error(err.to_string()),
-        },
+    let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
+        Ok(item) => item,
+        Err(err) => return api_error(err.to_string()),
+    };
+
+    match provider_metadata_from_item(item) {
+        Ok(provider) => (StatusCode::OK, Json(ApiResponse::Provider(provider))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -958,67 +957,108 @@ async fn webhook_wake<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Json(request): Json<WebhookWakeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let Ok(Some((run, node_runs))) =
-        repository::fetch_workflow_run(db.as_ref(), request.workflow_run_id).await
-    else {
-        return not_found(format!(
-            "Workflow run {} not found",
-            request.workflow_run_id
-        ));
-    };
+    let workflow_run =
+        match repository::fetch_workflow_run(db.as_ref(), request.workflow_run_id).await {
+            Ok(Some(workflow_run)) => workflow_run,
+            Ok(None) => {
+                return not_found(format!(
+                    "Workflow run {} not found",
+                    request.workflow_run_id
+                ));
+            }
+            Err(err) => return api_error(err.to_string()),
+        };
+    let (run, node_runs) = workflow_run;
     let node_id = request
         .node_id
         .clone()
         .or(run.active_node_id)
         .unwrap_or_default();
-    if let Some(node_run) = node_runs
+    let Some(node_run) = node_runs
         .iter()
         .filter(|node_run| node_run.node_id == node_id)
         .max_by_key(|node_run| node_run.id)
-    {
-        let mut state = node_run.state.clone();
-        merge_json(&mut state, request.state);
-        if let Some(status) = request.status {
-            if let Some(object) = state.as_object_mut() {
-                object.insert("status".into(), status.into());
-            }
-        }
-        if let Err(err) = repository::update_workflow_node_run(
-            db.as_ref(),
-            node_run.id,
-            runinator_models::workflows::WorkflowStatus::Waiting,
-            None,
-            None,
-            None,
-            None,
-            Some(state.clone()),
-            Some("webhook_wake".into()),
-            request.message.clone(),
-        )
-        .await
-        {
-            return api_error(err.to_string());
-        }
-        if let Err(err) = repository::update_workflow_run_status(
-            db.as_ref(),
-            request.workflow_run_id,
-            runinator_models::workflows::WorkflowStatus::Waiting,
-            Some(node_id),
-            Some(state),
-            request.message,
-        )
-        .await
-        {
-            return api_error(err.to_string());
+    else {
+        return task_response_success("Webhook wake recorded");
+    };
+
+    let mut state = node_run.state.clone();
+    merge_json(&mut state, request.state);
+    if let Some(status) = request.status {
+        if let Some(object) = state.as_object_mut() {
+            object.insert("status".into(), status.into());
         }
     }
-    (
-        StatusCode::OK,
-        Json(ApiResponse::TaskResponse(TaskResponse {
-            success: true,
-            message: "Webhook wake recorded".into(),
-        })),
+    if let Err(err) = repository::update_workflow_node_run(
+        db.as_ref(),
+        node_run.id,
+        runinator_models::workflows::WorkflowStatus::Waiting,
+        None,
+        None,
+        None,
+        None,
+        Some(state.clone()),
+        Some("webhook_wake".into()),
+        request.message.clone(),
     )
+    .await
+    {
+        return api_error(err.to_string());
+    }
+    if let Err(err) = repository::update_workflow_run_status(
+        db.as_ref(),
+        request.workflow_run_id,
+        runinator_models::workflows::WorkflowStatus::Waiting,
+        Some(node_id),
+        Some(state),
+        request.message,
+    )
+    .await
+    {
+        return api_error(err.to_string());
+    }
+    task_response_success("Webhook wake recorded")
+}
+
+async fn send_json<T: Serialize>(
+    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    value: &T,
+) -> Result<(), ()> {
+    let payload = serde_json::to_string(value).map_err(|_| ())?;
+    tx.send(Message::Text(payload.into())).await.map_err(|_| ())
+}
+
+async fn send_run_chunks<T: DatabaseImpl>(
+    db: &T,
+    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    run_id: i64,
+    cursor: &mut Option<i64>,
+    limit: i64,
+) -> Result<(), ()> {
+    let chunks = repository::fetch_run_chunks(db, run_id, *cursor, limit)
+        .await
+        .map_err(|_| ())?;
+    for chunk in &chunks {
+        send_json(tx, chunk).await?;
+        *cursor = Some(chunk.sequence);
+    }
+    Ok(())
+}
+
+async fn send_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    run_id: i64,
+) -> Result<bool, ()> {
+    let Some((run, nodes)) = repository::fetch_workflow_run(db, run_id)
+        .await
+        .map_err(|_| ())?
+    else {
+        return Err(());
+    };
+    let terminal = run.status.is_terminal();
+    send_json(tx, &models::WorkflowRunResponse { run, nodes }).await?;
+    Ok(terminal)
 }
 
 fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {
@@ -1053,18 +1093,13 @@ async fn record_task_run<T: DatabaseImpl>(
     }
 }
 
-async fn ws_events(
-    Extension(events): Extension<EventSender>,
-    ws: WebSocketUpgrade,
-) -> Response {
+async fn ws_events(Extension(events): Extension<EventSender>, ws: WebSocketUpgrade) -> Response {
     let mut rx = events.subscribe();
     ws.on_upgrade(move |socket| async move {
         let (mut tx, _rx) = socket.split();
         while let Ok(event) = rx.recv().await {
-            if let Ok(payload) = serde_json::to_string(&event) {
-                if tx.send(Message::Text(payload.into())).await.is_err() {
-                    break;
-                }
+            if send_json(&mut tx, &event).await.is_err() {
+                break;
             }
         }
     })
@@ -1078,12 +1113,7 @@ async fn ws_workflow_run<T: DatabaseImpl>(
 ) -> Response {
     ws.on_upgrade(move |socket| async move {
         let (mut tx, mut rx_ws) = socket.split();
-        // Send initial state
-        if let Ok(Some((run, nodes))) = repository::fetch_workflow_run(db.as_ref(), run_id).await {
-            if let Ok(payload) = serde_json::to_string(&models::WorkflowRunResponse { run, nodes }) {
-                let _ = tx.send(Message::Text(payload.into())).await;
-            }
-        }
+        let _ = send_workflow_run(db.as_ref(), &mut tx, run_id).await;
         let mut event_rx = events.subscribe();
         loop {
             tokio::select! {
@@ -1091,19 +1121,14 @@ async fn ws_workflow_run<T: DatabaseImpl>(
                     let relevant = matches!(&event,
                         AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
                     ) || matches!(&event, AppEvent::WorkflowRunActivity);
-                    if relevant {
-                        match repository::fetch_workflow_run(db.as_ref(), run_id).await {
-                            Ok(Some((run, nodes))) => {
-                                let terminal = run.status.is_terminal();
-                                if let Ok(payload) = serde_json::to_string(&models::WorkflowRunResponse { run, nodes }) {
-                                    if tx.send(Message::Text(payload.into())).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                if terminal { break; }
-                            }
-                            _ => break,
-                        }
+                    if !relevant {
+                        continue;
+                    }
+                    let Ok(terminal) = send_workflow_run(db.as_ref(), &mut tx, run_id).await else {
+                        break;
+                    };
+                    if terminal {
+                        break;
                     }
                 }
                 msg = rx_ws.next() => {
@@ -1126,16 +1151,11 @@ async fn ws_run_stream<T: DatabaseImpl>(
     ws.on_upgrade(move |socket| async move {
         let (mut tx, mut rx_ws) = socket.split();
         let mut cursor: Option<i64> = None;
-        // Send any existing chunks first
-        if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 500).await {
-            for chunk in &chunks {
-                if let Ok(payload) = serde_json::to_string(chunk) {
-                    if tx.send(Message::Text(payload.into())).await.is_err() {
-                        return;
-                    }
-                }
-                cursor = Some(chunk.sequence);
-            }
+        if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500)
+            .await
+            .is_err()
+        {
+            return;
         }
         let mut event_rx = events.subscribe();
         let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
@@ -1145,30 +1165,17 @@ async fn ws_run_stream<T: DatabaseImpl>(
                     let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
                     let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id } if *id == run_id);
                     if is_chunk || is_done {
-                        if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 100).await {
-                            for chunk in &chunks {
-                                if let Ok(payload) = serde_json::to_string(chunk) {
-                                    if tx.send(Message::Text(payload.into())).await.is_err() {
-                                        return;
-                                    }
-                                }
-                                cursor = Some(chunk.sequence);
-                            }
+                        if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
+                            return;
                         }
-                        if is_done { break; }
+                        if is_done {
+                            break;
+                        }
                     }
                 }
                 _ = poll_interval.tick() => {
-                    // Fallback poll in case events are missed
-                    if let Ok(chunks) = repository::fetch_run_chunks(db.as_ref(), run_id, cursor, 100).await {
-                        for chunk in &chunks {
-                            if let Ok(payload) = serde_json::to_string(chunk) {
-                                if tx.send(Message::Text(payload.into())).await.is_err() {
-                                    return;
-                                }
-                            }
-                            cursor = Some(chunk.sequence);
-                        }
+                    if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
+                        return;
                     }
                 }
                 msg = rx_ws.next() => {
@@ -1185,8 +1192,8 @@ async fn ws_run_stream<T: DatabaseImpl>(
 pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Router {
     Router::new()
         .route("/ws/events", get(ws_events))
-        .route("/ws/workflow-runs/:id", get(ws_workflow_run::<T>))
-        .route("/ws/runs/:id/stream", get(ws_run_stream::<T>))
+        .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
+        .route("/ws/runs/{id}/stream", get(ws_run_stream::<T>))
         .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
         .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
         .route(

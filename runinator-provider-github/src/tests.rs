@@ -20,3 +20,22 @@ fn test_github_provider_missing_token() {
     let result = provider.execute_service(request, None);
     assert!(result.is_err());
 }
+
+#[test]
+fn metadata_includes_merge_pr_action() {
+    let provider = GitHubProvider;
+    let metadata = provider.metadata();
+
+    let merge_pr = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "merge_pr")
+        .expect("merge_pr action is advertised");
+
+    assert!(
+        merge_pr
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == "pull_number" && parameter.required)
+    );
+}

@@ -36,7 +36,7 @@ const resourcesStore = useResourcesStore();
 const secrets = useSecretsStore();
 
 const activeSubtitle = computed(() => {
-  if (app.activeTab === "Tasks") return tasks.selectedTask?.name ?? `${tasks.tasks.length} tasks`;
+  if (app.activeTab === "Tasks") return tasks.selectedTask?.name ?? `${tasks.scheduledTasks.length} tasks`;
   if (app.activeTab === "Runs") return tasks.selectedRunId ? `Run ${tasks.selectedRunId}` : "Selected task runs";
   if (app.activeTab === "Workflows") return workflows.selectedWorkflow?.name ?? `${workflows.workflows.length} workflows`;
   if (app.activeTab === "Resources") return resources.find((resource) => resource.endpoint === resourcesStore.selectedResourceEndpoint)?.label ?? "Resources";

@@ -133,62 +133,6 @@ pub async fn create_run<T: DatabaseImpl>(
     .await
 }
 
-#[allow(dead_code)]
-pub(crate) fn validate_json_schema(schema: &Value, value: &Value) -> Result<(), String> {
-    let Some(schema_object) = schema.as_object() else {
-        return Ok(());
-    };
-    if let Some(schema_type) = schema_object.get("type").and_then(Value::as_str) {
-        validate_type(schema_type, value, "")?;
-    }
-    if let Some(required) = schema_object.get("required").and_then(Value::as_array) {
-        let Some(object) = value.as_object() else {
-            return Err("parameters must be an object to validate required fields".into());
-        };
-        for field in required.iter().filter_map(Value::as_str) {
-            if !object.contains_key(field) {
-                return Err(format!("missing required parameter '{field}'"));
-            }
-        }
-    }
-    if let Some(properties) = schema_object.get("properties").and_then(Value::as_object) {
-        let Some(object) = value.as_object() else {
-            return Ok(());
-        };
-        for (field, property_schema) in properties {
-            let Some(field_value) = object.get(field) else {
-                continue;
-            };
-            if let Some(field_type) = property_schema.get("type").and_then(Value::as_str) {
-                validate_type(field_type, field_value, field)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_type(expected: &str, value: &Value, field: &str) -> Result<(), String> {
-    let valid = match expected {
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "string" => value.is_string(),
-        "boolean" => value.is_boolean(),
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
-        "number" => value.is_number(),
-        "null" => value.is_null(),
-        _ => true,
-    };
-    if valid {
-        Ok(())
-    } else if field.is_empty() {
-        Err(format!("parameters must be JSON type '{expected}'"))
-    } else {
-        Err(format!(
-            "parameter '{field}' must be JSON type '{expected}'"
-        ))
-    }
-}
-
 pub async fn fetch_run<T: DatabaseImpl>(
     db: &T,
     run_id: i64,

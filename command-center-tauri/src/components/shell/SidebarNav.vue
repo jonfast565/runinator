@@ -28,7 +28,7 @@ const resources = useResourcesStore();
 const secrets = useSecretsStore();
 
 function navCount(tab: AppTab): number {
-  if (tab === "Tasks") return tasks.tasks.length;
+  if (tab === "Tasks") return tasks.scheduledTasks.length;
   if (tab === "Runs") return tasks.runs.length;
   if (tab === "Workflows") return workflows.workflows.length;
   if (tab === "Resources") return resources.resourceRecords.length;

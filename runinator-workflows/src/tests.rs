@@ -90,6 +90,52 @@ fn resolves_value_refs() {
 }
 
 #[test]
+fn accepts_structurally_valid_refs_without_schema_path_validation() {
+    let wf = WorkflowDefinition {
+        id: Some(1),
+        name: "schema-boundary".into(),
+        version: 1,
+        enabled: true,
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "known": { "type": "string" }
+            }
+        }),
+        definition: serde_json::json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "produce" } } },
+                {
+                    "id": "produce",
+                    "kind": "emit",
+                    "parameters": {
+                        "data": { "ok": true }
+                    },
+                    "transitions": { "next": { "$node": "consume" } }
+                },
+                {
+                    "id": "consume",
+                    "kind": "emit",
+                    "parameters": {
+                        "data": {
+                            "input": { "$ref": { "input": ["not_in_input_schema"] } },
+                            "output": { "$ref": { "node": "produce", "output": ["not_in_result_metadata"] } }
+                        }
+                    },
+                    "transitions": { "next": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
+    };
+
+    validate_workflow(&wf).expect("schema path validation is out of scope");
+}
+
+#[test]
 fn resolves_template_refs() {
     let context = serde_json::json!({
         "prev": { "ticket_id": "RUN-123", "count": 3 }

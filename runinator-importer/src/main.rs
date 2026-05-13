@@ -2,7 +2,7 @@ mod config;
 #[cfg(test)]
 mod tests;
 
-use std::{convert::Infallible, path::Path, time::SystemTime};
+use std::{collections::HashSet, convert::Infallible, path::Path, time::SystemTime};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -248,8 +248,61 @@ struct ImportSeed {
 async fn load_import_file(path: &Path) -> Result<ImportSeed, DynError> {
     let data = tokio::fs::read_to_string(path).await?;
     let parsed: ImportFile = serde_json::from_str(&data)?;
-    Ok(ImportSeed {
-        tasks: parsed.tasks.into_iter().map(Into::into).collect(),
-        workflows: parsed.workflows,
-    })
+    let workflows = parsed.workflows;
+    let workflow_task_ids = workflow_task_ids(&workflows);
+    let mut tasks: Vec<ScheduledTask> = parsed.tasks.into_iter().map(Into::into).collect();
+    mark_workflow_tasks(&mut tasks, &workflow_task_ids);
+    Ok(ImportSeed { tasks, workflows })
+}
+
+fn mark_workflow_tasks(tasks: &mut [ScheduledTask], workflow_task_ids: &HashSet<i64>) {
+    for task in tasks {
+        let Some(task_id) = task.id else {
+            continue;
+        };
+        if !workflow_task_ids.contains(&task_id) {
+            continue;
+        }
+        let metadata = match &mut task.metadata {
+            Value::Object(metadata) => metadata,
+            _ => {
+                task.metadata = Value::Object(Map::new());
+                let Value::Object(metadata) = &mut task.metadata else {
+                    continue;
+                };
+                metadata
+            }
+        };
+        metadata.insert("task_type".into(), Value::String("workflow".into()));
+    }
+}
+
+fn workflow_task_ids(workflows: &[WorkflowDefinition]) -> HashSet<i64> {
+    let mut task_ids = HashSet::new();
+    for workflow in workflows {
+        collect_workflow_task_ids(&workflow.definition, &mut task_ids);
+    }
+    task_ids
+}
+
+fn collect_workflow_task_ids(value: &Value, task_ids: &mut HashSet<i64>) {
+    match value {
+        Value::Object(object) => {
+            let is_task_node = object.get("kind").and_then(Value::as_str) == Some("task");
+            if is_task_node {
+                if let Some(task_id) = object.get("task_id").and_then(Value::as_i64) {
+                    task_ids.insert(task_id);
+                }
+            }
+            for child in object.values() {
+                collect_workflow_task_ids(child, task_ids);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_workflow_task_ids(item, task_ids);
+            }
+        }
+        _ => {}
+    }
 }
