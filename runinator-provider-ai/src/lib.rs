@@ -91,7 +91,10 @@ impl Provider for AiCommandProvider {
 
 fn parse_params(request: &ProviderExecutionRequest) -> Result<AiCommandParams, SendableError> {
     serde_json::from_value(request.parameters.clone()).map_err(|e| {
-        Box::new(RuntimeError::new("ai_command.invalid_params".into(), e.to_string())) as SendableError
+        Box::new(RuntimeError::new(
+            "ai_command.invalid_params".into(),
+            e.to_string(),
+        )) as SendableError
     })
 }
 

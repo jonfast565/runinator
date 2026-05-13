@@ -25,6 +25,7 @@ pub fn run() {
             crate::commands::fetch_workflows,
             crate::commands::save_workflow,
             crate::commands::create_workflow_run,
+            crate::commands::step_workflow_run,
             crate::commands::fetch_workflow_runs,
             crate::commands::fetch_workflow_run,
             crate::commands::fetch_resource_records,

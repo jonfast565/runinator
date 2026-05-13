@@ -193,13 +193,23 @@ where
         workflow_id: i64,
         parameters: Value,
     ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_debug(workflow_id, parameters, false)
+            .await
+    }
+
+    pub async fn create_workflow_run_with_debug(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        debug: bool,
+    ) -> Result<WorkflowRun> {
         let url = self
             .build_url(&format!("/workflows/{workflow_id}/runs"))
             .await?;
         let response = self
             .client
             .post(url.clone())
-            .json(&json!({ "parameters": parameters }))
+            .json(&json!({ "parameters": parameters, "debug": debug }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;

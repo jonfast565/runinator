@@ -253,9 +253,21 @@ impl SchedulerApi {
         workflow_run_id: i64,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Option<Value>,
+        mut state: Option<Value>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
+        if let Some(next_state) = state.as_mut() {
+            if let Ok((run, _)) = self.client.fetch_workflow_run(workflow_run_id).await {
+                if let Some(debug) = run.state.get("debug").cloned() {
+                    if !next_state.is_object() {
+                        *next_state = serde_json::json!({});
+                    }
+                    if let Some(object) = next_state.as_object_mut() {
+                        object.entry("debug").or_insert(debug);
+                    }
+                }
+            }
+        }
         self.client
             .update_workflow_run(workflow_run_id, status, active_node_id, state, message)
             .await

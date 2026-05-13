@@ -9,7 +9,8 @@ import {
   fetchWorkflowRuns,
   fetchWorkflows,
   saveTask,
-  saveWorkflowBundle
+  saveWorkflowBundle,
+  stepWorkflowRun
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
 import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowNodeKind, WorkflowRunDetail } from "../types/models";
@@ -112,6 +113,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const app = useAppStore();
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
+  const canStepWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
   const canRemoveSelectedStep = computed(() => {
     const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
     return Boolean(node && node.kind !== "start" && node.kind !== "end");
@@ -197,14 +199,33 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectWorkflow(workflow);
   }
 
-  async function runSelectedWorkflow() {
+  async function runSelectedWorkflow(debug = false) {
     const workflow = selectedWorkflow.value;
     if (!workflow?.id || !workflow.enabled) return app.setError(workflow ? "Workflow is disabled" : "No workflow selected");
-    const response = await app.runOperation(`Running workflow ${workflow.name}`, () => createWorkflowRun(workflow.id!));
+    const response = await app.runOperation(
+      debug ? `Running workflow ${workflow.name} in debug mode` : `Running workflow ${workflow.name}`,
+      () => createWorkflowRun(workflow.id!, { debug })
+    );
     selectedWorkflowRunId.value = response.id;
-    app.setStatus(`Workflow run queued: ${response.id}`);
+    app.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
     await fetchWorkflowRunDetail(response.id);
     await fetchWorkflowRunsForSelected(workflow.id);
+  }
+
+  async function runSelectedWorkflowDebug() {
+    return runSelectedWorkflow(true);
+  }
+
+  async function stepSelectedWorkflowRun() {
+    if (!workflowRunDetail.value || !canStepWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Stepping workflow run ${runId}`, () => stepWorkflowRun(runId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to step workflow run");
+      return;
+    }
+    app.setStatus(response.message || `Workflow run ${runId} stepped`);
+    await fetchWorkflowRunDetail(runId, true);
   }
 
   async function fetchWorkflowRunsForSelected(workflowId: number) {
@@ -837,6 +858,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     graphEdges,
     selectedNode,
     selectedNodePendingApproval,
+    canStepWorkflowRun,
     workflowNodeKinds,
     directTransitionKeys,
     refreshWorkflows,
@@ -844,6 +866,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     addWorkflow,
     saveSelectedWorkflow: saveSelectedWorkflowBundle,
     runSelectedWorkflow,
+    runSelectedWorkflowDebug,
+    stepSelectedWorkflowRun,
     fetchWorkflowRunsForSelected,
     selectWorkflowRun,
     fetchWorkflowRunDetail,

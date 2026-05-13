@@ -64,6 +64,8 @@ pub struct RunStatusQuery {
 pub struct WorkflowRunRequest {
     #[serde(default)]
     pub parameters: Value,
+    #[serde(default)]
+    pub debug: bool,
 }
 
 #[derive(Debug, Deserialize)]

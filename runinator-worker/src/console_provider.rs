@@ -73,7 +73,10 @@ impl Provider for ConsoleProvider {
 
 fn parse_params(request: &ProviderExecutionRequest) -> Result<ConsoleParams, SendableError> {
     serde_json::from_value(request.parameters.clone()).map_err(|e| {
-        Box::new(RuntimeError::new("console.invalid_params".into(), e.to_string())) as SendableError
+        Box::new(RuntimeError::new(
+            "console.invalid_params".into(),
+            e.to_string(),
+        )) as SendableError
     })
 }
 

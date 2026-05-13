@@ -284,4 +284,50 @@ describe("workflow graph utils", () => {
     });
     expect(nodes.find((node) => node.id === "end")?.class).toBe("node-success");
   });
+
+  it("marks the active workflow node as running before its node run appears", () => {
+    const nodes = buildGraphNodes(workflow, {
+      run: {
+        id: 10,
+        workflow_id: 1,
+        status: "running",
+        active_node_id: "b",
+        created_at: "",
+        started_at: null,
+        finished_at: null
+      },
+      nodes: [
+        {
+          id: 1,
+          workflow_run_id: 10,
+          node_id: "a",
+          task_run_id: 20,
+          status: "succeeded",
+          attempt: 1,
+          parameters: {},
+          message: null
+        }
+      ]
+    });
+    const active = nodes.find((node) => node.id === "b");
+    expect(active?.data.status).toBe("running");
+    expect(active?.data.running).toBe(true);
+    expect(active?.class).toBe("node-running");
+  });
+
+  it("marks the active terminal workflow node from the run status", () => {
+    const nodes = buildGraphNodes(workflow, {
+      run: {
+        id: 10,
+        workflow_id: 1,
+        status: "failed",
+        active_node_id: "b",
+        created_at: "",
+        started_at: null,
+        finished_at: ""
+      },
+      nodes: []
+    });
+    expect(nodes.find((node) => node.id === "b")?.class).toBe("node-danger");
+  });
 });

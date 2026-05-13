@@ -128,6 +128,7 @@ export interface RunSummary {
   workflow_run_id?: number | null;
   workflow_node_id?: string | null;
   active_node_id?: string | null;
+  state?: JsonRecord;
 }
 
 export interface RunChunk {

@@ -12,6 +12,7 @@ fn workflow_status_terminal_and_active() {
     assert!(!WorkflowStatus::Queued.is_terminal());
     assert!(WorkflowStatus::Queued.is_active());
     assert!(WorkflowStatus::Running.is_active());
+    assert!(WorkflowStatus::DebugPaused.is_active());
     assert!(WorkflowStatus::Waiting.is_active());
     assert!(WorkflowStatus::ApprovalRequired.is_active());
 
@@ -27,6 +28,10 @@ fn workflow_status_serialization() {
 
     let deserialized: WorkflowStatus = serde_json::from_str("\"approval_required\"").unwrap();
     assert_eq!(deserialized, WorkflowStatus::ApprovalRequired);
+
+    let debug: WorkflowStatus = serde_json::from_str("\"debug_paused\"").unwrap();
+    assert_eq!(debug, WorkflowStatus::DebugPaused);
+    assert_eq!(debug.as_str(), "debug_paused");
 }
 
 #[test]

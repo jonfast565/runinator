@@ -8,6 +8,8 @@
       <button @click="workflows.openWorkflowSettings">Settings</button>
       <button title="Auto arrange workflow nodes" @click="workflows.autoArrangeWorkflowNodes">Arrange</button>
       <button @click="workflows.saveSelectedWorkflow">Save</button>
+      <button :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">Run</button>
+      <button :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflowDebug">Run Debug</button>
       <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
     </div>
     <div class="workflow-palette" aria-label="Workflow node palette">

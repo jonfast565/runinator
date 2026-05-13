@@ -1,7 +1,8 @@
 use crate::context::*;
-use crate::{api::WorkflowSchedulerApi, nodes::*};
+use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use runinator_broker::in_memory::InMemoryBroker;
 use runinator_models::{
     core::ScheduledTask,
     errors::{RuntimeError, SendableError},
@@ -467,6 +468,79 @@ fn task_idempotency_key_includes_node_run_id() {
     assert_eq!(first, "10:implement:1:1");
 }
 
+#[tokio::test]
+async fn debug_workflow_pauses_before_first_node() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({ "name": "debug" }),
+        json!({ "debug": { "enabled": true, "paused": false, "step_requested": false } }),
+        "start",
+    );
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    let update = api.last_run_update();
+    assert_eq!(update.status, WorkflowStatus::DebugPaused);
+    assert_eq!(update.active_node_id.as_deref(), Some("start"));
+    assert_eq!(update.state["debug"]["paused"], true);
+    assert_eq!(update.state["debug"]["current_node_id"], "start");
+    assert_eq!(api.node_update_count(), 0);
+}
+
+#[tokio::test]
+async fn debug_step_executes_one_node_and_clears_step_request() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({}),
+        json!({ "debug": { "enabled": true, "paused": true, "step_requested": true } }),
+        "start",
+    );
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    let updates = api.run_updates();
+    assert_eq!(updates[0].status, WorkflowStatus::Running);
+    assert_eq!(updates[0].state["debug"]["paused"], false);
+    assert_eq!(updates[0].state["debug"]["step_requested"], false);
+    assert_eq!(api.last_run_update().active_node_id.as_deref(), Some("end"));
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Succeeded);
+}
+
+#[tokio::test]
+async fn debug_workflow_pauses_before_next_node_after_step() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({}),
+        json!({ "debug": { "enabled": true, "paused": false, "step_requested": false } }),
+        "end",
+    );
+    let api = MockWorkflowApi::with_workflow_run_and_nodes(
+        workflow,
+        run,
+        vec![node_run_with_output(
+            "start",
+            WorkflowStatus::Succeeded,
+            json!({ "ok": true }),
+        )],
+    );
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    let update = api.last_run_update();
+    assert_eq!(update.status, WorkflowStatus::DebugPaused);
+    assert_eq!(update.active_node_id.as_deref(), Some("end"));
+    assert_eq!(update.state["debug"]["last_output_json"]["ok"], true);
+    assert_eq!(api.node_update_count(), 0);
+}
+
 #[derive(Debug, Clone)]
 struct WorkflowRunUpdate {
     status: WorkflowStatus,
@@ -488,11 +562,39 @@ struct MockWorkflowApi {
 #[derive(Default)]
 struct MockWorkflowState {
     next_node_run_id: i64,
+    workflow: Option<WorkflowDefinition>,
+    workflow_run: Option<WorkflowRun>,
+    node_runs: Vec<WorkflowNodeRun>,
     workflow_updates: Vec<WorkflowRunUpdate>,
     node_updates: Vec<WorkflowNodeRunUpdate>,
 }
 
 impl MockWorkflowApi {
+    fn with_workflow_run(workflow: WorkflowDefinition, run: WorkflowRun) -> Self {
+        Self {
+            state: Mutex::new(MockWorkflowState {
+                workflow: Some(workflow),
+                workflow_run: Some(run),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn with_workflow_run_and_nodes(
+        workflow: WorkflowDefinition,
+        run: WorkflowRun,
+        node_runs: Vec<WorkflowNodeRun>,
+    ) -> Self {
+        Self {
+            state: Mutex::new(MockWorkflowState {
+                workflow: Some(workflow),
+                workflow_run: Some(run),
+                node_runs,
+                ..Default::default()
+            }),
+        }
+    }
+
     fn last_run_update(&self) -> WorkflowRunUpdate {
         self.state
             .lock()
@@ -511,6 +613,14 @@ impl MockWorkflowApi {
             .last()
             .cloned()
             .expect("workflow node run update")
+    }
+
+    fn run_updates(&self) -> Vec<WorkflowRunUpdate> {
+        self.state.lock().unwrap().workflow_updates.clone()
+    }
+
+    fn node_update_count(&self) -> usize {
+        self.state.lock().unwrap().node_updates.len()
     }
 }
 
@@ -535,7 +645,12 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     }
 
     async fn fetch_workflow(&self, _workflow_id: i64) -> Result<WorkflowDefinition, SendableError> {
-        Err(test_error("unexpected workflow fetch"))
+        self.state
+            .lock()
+            .unwrap()
+            .workflow
+            .clone()
+            .ok_or_else(|| test_error("unexpected workflow fetch"))
     }
 
     async fn create_workflow_run(
@@ -577,7 +692,12 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         &self,
         _workflow_run_id: i64,
     ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>), SendableError> {
-        Err(test_error("unexpected workflow run fetch"))
+        let state = self.state.lock().unwrap();
+        let run = state
+            .workflow_run
+            .clone()
+            .ok_or_else(|| test_error("unexpected workflow run fetch"))?;
+        Ok((run, state.node_runs.clone()))
     }
 
     async fn create_workflow_node_run(
@@ -675,6 +795,25 @@ fn workflow_run(
         started_at: None,
         finished_at: None,
         message: None,
+    }
+}
+
+fn simple_workflow() -> WorkflowDefinition {
+    WorkflowDefinition {
+        id: Some(1),
+        name: "debug".into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
     }
 }
 

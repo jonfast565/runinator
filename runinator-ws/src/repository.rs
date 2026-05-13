@@ -3,7 +3,7 @@ use chrono::Utc;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     core::{ScheduledTask, TaskRun},
-    errors::SendableError,
+    errors::{RuntimeError, SendableError},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunRequest, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
@@ -273,8 +273,20 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_id: i64,
     parameters: Value,
+    debug: bool,
 ) -> Result<WorkflowRun, SendableError> {
-    db.create_workflow_run(workflow_id, parameters).await
+    let state = if debug {
+        serde_json::json!({
+            "debug": {
+                "enabled": true,
+                "paused": false,
+                "step_requested": false
+            }
+        })
+    } else {
+        Value::Object(Default::default())
+    };
+    db.create_workflow_run(workflow_id, parameters, state).await
 }
 
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
@@ -307,6 +319,54 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     })
 }
 
+pub async fn step_debug_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+) -> Result<TaskResponse, SendableError> {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.debug.not_found".into(),
+            format!("Workflow run {workflow_run_id} not found"),
+        )));
+    };
+    if run.status.is_terminal() {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.debug.terminal".into(),
+            format!("Workflow run {workflow_run_id} is terminal"),
+        )));
+    }
+    if !run
+        .state
+        .pointer("/debug/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.debug.disabled".into(),
+            format!("Workflow run {workflow_run_id} is not a debug run"),
+        )));
+    }
+
+    let mut state = run.state;
+    let debug = ensure_debug_object(&mut state);
+    debug.insert("enabled".into(), Value::Bool(true));
+    debug.insert("paused".into(), Value::Bool(false));
+    debug.insert("step_requested".into(), Value::Bool(true));
+
+    db.update_workflow_run_status(
+        workflow_run_id,
+        WorkflowStatus::Running,
+        run.active_node_id,
+        Some(state),
+        Some("Debug step requested".into()),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Debug step requested".into(),
+    })
+}
+
 pub async fn fetch_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
@@ -316,6 +376,20 @@ pub async fn fetch_workflow_run<T: DatabaseImpl>(
     };
     let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
     Ok(Some((run, nodes)))
+}
+
+fn ensure_debug_object(state: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !state.is_object() {
+        *state = serde_json::json!({});
+    }
+    let object = state.as_object_mut().expect("state object");
+    let debug = object
+        .entry("debug")
+        .or_insert_with(|| serde_json::json!({}));
+    if !debug.is_object() {
+        *debug = serde_json::json!({});
+    }
+    debug.as_object_mut().expect("debug object")
 }
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(

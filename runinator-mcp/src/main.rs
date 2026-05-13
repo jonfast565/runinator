@@ -317,7 +317,11 @@ fn tools_from_tasks(tasks: Vec<ScheduledTask>, providers: &[ProviderMetadata]) -
             let input_schema = providers
                 .iter()
                 .find(|p| p.name == task.action_name)
-                .and_then(|p| p.actions.iter().find(|a| a.function_name == task.action_function))
+                .and_then(|p| {
+                    p.actions
+                        .iter()
+                        .find(|a| a.function_name == task.action_function)
+                })
                 .map(|a| a.to_json_schema())
                 .unwrap_or_else(|| json!({ "type": "object" }));
             Some(json!({
@@ -466,11 +470,14 @@ mod tests {
 
     #[test]
     fn tools_include_only_enabled_mcp_tasks() {
-        let tools = tools_from_tasks(vec![
-            task(1, "Allowed", true, true),
-            task(2, "Disabled", false, true),
-            task(3, "Hidden", true, false),
-        ], &[]);
+        let tools = tools_from_tasks(
+            vec![
+                task(1, "Allowed", true, true),
+                task(2, "Disabled", false, true),
+                task(3, "Hidden", true, false),
+            ],
+            &[],
+        );
 
         assert_eq!(tools.len(), 1);
         assert_eq!(

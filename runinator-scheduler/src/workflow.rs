@@ -6,7 +6,11 @@ use runinator_models::{
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::{api::WorkflowSchedulerApi, context::latest_node_run, nodes::*};
+use crate::{
+    api::WorkflowSchedulerApi,
+    context::{build_node_parameters, latest_node_run, runtime_context},
+    nodes::*,
+};
 
 pub async fn run_workflow_iteration(
     broker: &dyn Broker,
@@ -15,6 +19,7 @@ pub async fn run_workflow_iteration(
     for status in [
         WorkflowStatus::Queued,
         WorkflowStatus::Running,
+        WorkflowStatus::DebugPaused,
         WorkflowStatus::Waiting,
         WorkflowStatus::ApprovalRequired,
         WorkflowStatus::Blocked,
@@ -55,6 +60,25 @@ pub async fn process_workflow_run(
         return Ok(());
     };
     let latest = latest_node_run(&node_runs, &active_node_id);
+    let workflow_run =
+        if should_pause_for_debug(api, &workflow_run, node, latest, &node_runs).await? {
+            return Ok(());
+        } else if debug_step_requested(&workflow_run) {
+            let mut next = workflow_run.clone();
+            next.status = WorkflowStatus::Running;
+            next.state = debug_state_with_step_cleared(workflow_run.state.clone());
+            api.update_workflow_run(
+                next.id,
+                WorkflowStatus::Running,
+                Some(active_node_id.clone()),
+                Some(next.state.clone()),
+                None,
+            )
+            .await?;
+            next
+        } else {
+            workflow_run
+        };
     if let Some(decision) = reentry_exhaustion(node, latest, &node_runs) {
         match decision {
             ReentryExhaustion::Route(target) => {
@@ -150,6 +174,135 @@ pub async fn process_workflow_run(
     };
 
     Ok(())
+}
+
+async fn should_pause_for_debug(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<bool, SendableError> {
+    if !debug_enabled(workflow_run) || debug_step_requested(workflow_run) {
+        return Ok(false);
+    }
+    if workflow_run.status.is_terminal() {
+        return Ok(false);
+    }
+    if latest.is_some_and(|run| {
+        matches!(
+            run.status,
+            WorkflowStatus::Running | WorkflowStatus::Waiting | WorkflowStatus::ApprovalRequired
+        )
+    }) {
+        return Ok(false);
+    }
+    if workflow_run.status == WorkflowStatus::DebugPaused && debug_paused(workflow_run) {
+        return Ok(true);
+    }
+
+    let state = debug_pause_state(api, &workflow_run, node, node_runs).await?;
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::DebugPaused,
+        Some(node.id.clone()),
+        Some(state),
+        Some(format!("Debug paused before node {}", node.id)),
+    )
+    .await?;
+    Ok(true)
+}
+
+async fn debug_pause_state(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<Value, SendableError> {
+    let mut state = workflow_run.state.clone();
+    if !state.is_object() {
+        state = serde_json::json!({});
+    }
+    let input = debug_input_json(api, workflow_run, node, node_runs).await?;
+    let context = runtime_context(workflow_run, node_runs);
+    let last_output = node_runs
+        .iter()
+        .filter_map(|run| run.output_json.clone())
+        .last()
+        .unwrap_or(Value::Null);
+
+    let Some(object) = state.as_object_mut() else {
+        return Ok(state);
+    };
+    object.insert(
+        "debug".into(),
+        serde_json::json!({
+            "enabled": true,
+            "paused": true,
+            "step_requested": false,
+            "current_node_id": node.id,
+            "current_node_kind": node.kind,
+            "input_json": input,
+            "context_json": context,
+            "last_output_json": last_output
+        }),
+    );
+    Ok(state)
+}
+
+async fn debug_input_json(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<Value, SendableError> {
+    if node.kind == WorkflowNodeKind::Task {
+        if let Some(task_id) = node.task_id {
+            if let Some(task) = api
+                .fetch_tasks()
+                .await?
+                .into_iter()
+                .find(|task| task.id == Some(task_id))
+            {
+                return build_node_parameters(&task, node, workflow_run, node_runs);
+            }
+        }
+    }
+    let context = runtime_context(workflow_run, node_runs);
+    runinator_workflows::resolve_value_refs(&node.parameters, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })
+}
+
+fn debug_enabled(workflow_run: &WorkflowRun) -> bool {
+    workflow_run
+        .state
+        .pointer("/debug/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn debug_paused(workflow_run: &WorkflowRun) -> bool {
+    workflow_run
+        .state
+        .pointer("/debug/paused")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn debug_step_requested(workflow_run: &WorkflowRun) -> bool {
+    workflow_run
+        .state
+        .pointer("/debug/step_requested")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn debug_state_with_step_cleared(mut state: Value) -> Value {
+    if let Some(debug) = state.get_mut("debug").and_then(Value::as_object_mut) {
+        debug.insert("paused".into(), Value::Bool(false));
+        debug.insert("step_requested".into(), Value::Bool(false));
+    }
+    state
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

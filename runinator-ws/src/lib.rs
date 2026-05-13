@@ -434,7 +434,14 @@ async fn create_workflow_run<T: DatabaseImpl>(
     Path(workflow_id): Path<i64>,
     Json(request): Json<WorkflowRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::create_workflow_run(db.as_ref(), workflow_id, request.parameters).await {
+    match repository::create_workflow_run(
+        db.as_ref(),
+        workflow_id,
+        request.parameters,
+        request.debug,
+    )
+    .await
+    {
         Ok(run) => (
             StatusCode::ACCEPTED,
             Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
@@ -443,6 +450,25 @@ async fn create_workflow_run<T: DatabaseImpl>(
             })),
         ),
         Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn step_debug_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::step_debug_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
     }
 }
 
@@ -1271,6 +1297,10 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
             get(get_workflow_run::<T>)
                 .patch(update_workflow_run::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug/step",
+            post(step_debug_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/nodes",

@@ -12,7 +12,7 @@
       <button v-if="app.activeTab === 'Tasks' || app.activeTab === 'Runs'" :disabled="!tasks.canRunTask" @click="tasks.runSelectedTask">
         Run Now
       </button>
-      <button v-if="app.activeTab === 'Workflows'" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow">
+      <button v-if="app.activeTab === 'Workflows'" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
         Run Workflow
       </button>
     </div>

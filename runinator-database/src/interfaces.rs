@@ -169,6 +169,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_id: i64,
         parameters: Value,
+        state: Value,
     ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
 
     /// Fetch workflow runs filtered by status.

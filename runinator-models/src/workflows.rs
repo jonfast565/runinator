@@ -25,6 +25,7 @@ pub struct WorkflowDefinition {
 pub enum WorkflowStatus {
     Queued,
     Running,
+    DebugPaused,
     Waiting,
     ApprovalRequired,
     Blocked,
@@ -39,6 +40,7 @@ impl WorkflowStatus {
         match self {
             WorkflowStatus::Queued => "queued",
             WorkflowStatus::Running => "running",
+            WorkflowStatus::DebugPaused => "debug_paused",
             WorkflowStatus::Waiting => "waiting",
             WorkflowStatus::ApprovalRequired => "approval_required",
             WorkflowStatus::Blocked => "blocked",
@@ -64,6 +66,7 @@ impl WorkflowStatus {
             self,
             WorkflowStatus::Queued
                 | WorkflowStatus::Running
+                | WorkflowStatus::DebugPaused
                 | WorkflowStatus::Waiting
                 | WorkflowStatus::ApprovalRequired
         )
@@ -77,6 +80,7 @@ impl TryFrom<&str> for WorkflowStatus {
         match value {
             "queued" => Ok(WorkflowStatus::Queued),
             "running" => Ok(WorkflowStatus::Running),
+            "debug_paused" => Ok(WorkflowStatus::DebugPaused),
             "waiting" => Ok(WorkflowStatus::Waiting),
             "approval_required" => Ok(WorkflowStatus::ApprovalRequired),
             "blocked" => Ok(WorkflowStatus::Blocked),

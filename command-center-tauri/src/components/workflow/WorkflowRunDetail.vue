@@ -13,6 +13,30 @@
       </div>
     </div>
 
+    <div v-if="debugState?.enabled" class="debug-panel">
+      <div class="debug-panel-header">
+        <div>
+          <h3>Debug</h3>
+          <span v-if="debugState.current_node_id">{{ debugState.current_node_id }} · {{ debugState.current_node_kind }}</span>
+        </div>
+        <button :disabled="!workflows.canStepWorkflowRun" @click="workflows.stepSelectedWorkflowRun">Step</button>
+      </div>
+      <div class="debug-grid">
+        <section>
+          <h4>Input</h4>
+          <pre class="output debug-json">{{ pretty(debugState.input_json ?? {}) }}</pre>
+        </section>
+        <section>
+          <h4>Last Output</h4>
+          <pre class="output debug-json">{{ pretty(debugState.last_output_json ?? null) }}</pre>
+        </section>
+      </div>
+      <details>
+        <summary>Context</summary>
+        <pre class="output debug-json context">{{ pretty(debugState.context_json ?? {}) }}</pre>
+      </details>
+    </div>
+
     <h3>Steps</h3>
     <div class="table-scroll compact-scroll">
       <table class="compact">
@@ -82,6 +106,12 @@ const selectedNodeOutput = computed<Record<string, any> | null>(() => {
   return null;
 });
 
+const debugState = computed<Record<string, any> | null>(() => {
+  const debug = workflows.workflowRunDetail?.run.state?.debug;
+  if (debug && typeof debug === "object" && !Array.isArray(debug)) return debug;
+  return null;
+});
+
 const selectedNodeResultText = computed(() => {
   const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedStepId);
   return pretty(node?.output_json ?? {});
@@ -134,6 +164,44 @@ function formatResultValue(value: any): string {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+.debug-panel {
+  border: 1px solid #d8e2ec;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 14px;
+  background: #fbfcfe;
+}
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.debug-panel-header h3 {
+  margin: 0;
+}
+.debug-panel-header span {
+  color: #66717e;
+  font-size: 12px;
+}
+.debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.debug-panel h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #66717e;
+}
+.debug-json {
+  max-height: 150px;
+  font-size: 11px;
+}
+.debug-json.context {
+  max-height: 220px;
 }
 .workflow-detail-logs {
   flex: 1;

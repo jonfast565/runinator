@@ -73,8 +73,8 @@ export async function saveWorkflowBundle(request: WorkflowBundleSaveRequest) {
   return command<WorkflowBundleSaveResponse>("save_workflow_bundle", { request });
 }
 
-export async function createWorkflowRun(workflowId: number) {
-  return command<WorkflowRunCreated>("create_workflow_run", { workflowId });
+export async function createWorkflowRun(workflowId: number, options: { debug?: boolean } = {}) {
+  return command<WorkflowRunCreated>("create_workflow_run", { workflowId, debug: Boolean(options.debug) });
 }
 
 export async function fetchWorkflowRuns(workflowId: number) {
@@ -83,6 +83,10 @@ export async function fetchWorkflowRuns(workflowId: number) {
 
 export async function fetchWorkflowRun(workflowRunId: number) {
   return command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
+}
+
+export async function stepWorkflowRun(workflowRunId: number) {
+  return command<TaskResponse>("step_workflow_run", { workflowRunId });
 }
 
 export async function fetchResourceRecords(endpoint: string) {

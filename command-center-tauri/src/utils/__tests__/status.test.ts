@@ -10,5 +10,7 @@ describe("status utils", () => {
   it("maps active statuses", () => {
     expect(statusBadgeClass("running")).toBe("status-running");
     expect(statusBadgeClass("queued")).toBe("status-waiting");
+    expect(statusBadgeClass("debug_paused")).toBe("status-waiting");
+    expect(statusClassForNode("debug_paused")).toBe("node-warning");
   });
 });

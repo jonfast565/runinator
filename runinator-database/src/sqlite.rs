@@ -639,6 +639,7 @@ impl DatabaseImpl for SqliteDb {
         &self,
         workflow_id: i64,
         parameters: Value,
+        state: Value,
     ) -> Result<WorkflowRun, SendableError> {
         let row = sqlx::query(
             "INSERT INTO workflow_runs (workflow_id, status, active_node_id, parameters, state, created_at)
@@ -648,7 +649,7 @@ impl DatabaseImpl for SqliteDb {
         .bind(workflow_id)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
-        .bind(Value::Object(Default::default()).to_string())
+        .bind(state.to_string())
         .bind(Utc::now().timestamp())
         .fetch_one(&self.pool)
         .await?;

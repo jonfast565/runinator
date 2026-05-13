@@ -93,10 +93,9 @@ pub async fn save_workflow_bundle(
         if !response.success {
             return Err(CommandError::Unexpected(response.message));
         }
-        let id = draft
-            .task
-            .id
-            .ok_or_else(|| CommandError::Unexpected("saved workflow task is missing an ID".into()))?;
+        let id = draft.task.id.ok_or_else(|| {
+            CommandError::Unexpected("saved workflow task is missing an ID".into())
+        })?;
         task_id_map.insert(draft.node_id.clone(), id);
         saved_tasks.push(draft.task.clone());
     }
@@ -242,11 +241,7 @@ fn rewrite_workflow_task_ids(definition: &mut Value, task_id_map: &HashMap<Strin
     }
 }
 
-fn stamp_workflow_task_metadata(
-    task: &mut ScheduledTask,
-    workflow_id: Option<i64>,
-    node_id: &str,
-) {
+fn stamp_workflow_task_metadata(task: &mut ScheduledTask, workflow_id: Option<i64>, node_id: &str) {
     if !task.metadata.is_object() {
         task.metadata = json!({});
     }
@@ -317,12 +312,13 @@ mod tests {
 pub async fn create_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_id: i64,
+    debug: Option<bool>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflows/{workflow_id}/runs")).await?;
     let response = state
         .client
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "debug": debug.unwrap_or(false) }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;
@@ -333,6 +329,26 @@ pub async fn create_workflow_run(
         .and_then(Value::as_i64)
         .ok_or_else(|| CommandError::Unexpected("missing workflow run id".into()))?;
     Ok(WorkflowRunCreated { id })
+}
+
+#[tauri::command]
+pub async fn step_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/step"),
+    )
+    .await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
 }
 
 #[tauri::command]

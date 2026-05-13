@@ -419,9 +419,14 @@ function hasSuccessTransition(node: JsonRecord): boolean {
 
 function inferredNodeStatus(node: JsonRecord, id: string, detail: WorkflowRunDetail | null): string | undefined {
   if (!detail) return undefined;
+  if (detail.run.active_node_id === id && isWorkflowRunDisplayStatus(detail.run.status)) return detail.run.status;
   if (node.kind === "end" && detail.run.active_node_id === id && detail.run.status === "succeeded") return "succeeded";
   if (node.kind === "start" && detail.nodes.length > 0) return "succeeded";
   return undefined;
+}
+
+function isWorkflowRunDisplayStatus(status: string | undefined): status is string {
+  return ["queued", "running", "waiting", "approval_required", "blocked", "succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
 }
 
 function firstNodeId(nodes: JsonRecord[], predicate: (kind?: string) => boolean): string | null {

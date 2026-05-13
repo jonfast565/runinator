@@ -1,6 +1,23 @@
 use serde_json::json;
 
 #[test]
+fn workflow_run_request_defaults_to_non_debug() {
+    let request: crate::models::WorkflowRunRequest =
+        serde_json::from_value(json!({ "parameters": { "mode": "test" } })).unwrap();
+
+    assert!(!request.debug);
+    assert_eq!(request.parameters["mode"], "test");
+}
+
+#[test]
+fn workflow_run_request_accepts_debug_flag() {
+    let request: crate::models::WorkflowRunRequest =
+        serde_json::from_value(json!({ "parameters": {}, "debug": true })).unwrap();
+
+    assert!(request.debug);
+}
+
+#[test]
 fn merges_json_objects() {
     let defaults = json!({ "a": 1, "b": 2 });
     let parameters = json!({ "b": 3, "c": 4 });

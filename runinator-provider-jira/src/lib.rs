@@ -127,14 +127,20 @@ impl Provider for JiraProvider {
                 client
                     .get(format!("{}/rest/api/3/search", p.base.base_url))
                     .query(&[("jql", &p.jql)])
-                    .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
+                    .basic_auth(
+                        p.base.email.as_deref().unwrap_or_default(),
+                        Some(&p.base.token),
+                    )
                     .send()?
             }
             "fetch_item" | "fetch" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
                 client
                     .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
-                    .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
+                    .basic_auth(
+                        p.base.email.as_deref().unwrap_or_default(),
+                        Some(&p.base.token),
+                    )
                     .send()?
             }
             "add_comment" | "comment" => {
@@ -148,8 +154,14 @@ impl Provider for JiraProvider {
             "transition_item" | "transition" => {
                 let p: JiraTransitionParams = parse_params(&request)?;
                 client
-                    .post(format!("{}/rest/api/3/issue/{}/transitions", p.base.base_url, p.key))
-                    .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
+                    .post(format!(
+                        "{}/rest/api/3/issue/{}/transitions",
+                        p.base.base_url, p.key
+                    ))
+                    .basic_auth(
+                        p.base.email.as_deref().unwrap_or_default(),
+                        Some(&p.base.token),
+                    )
                     .json(&json!({ "transition": { "id": p.transition_id } }))
                     .send()?
             }
@@ -157,7 +169,10 @@ impl Provider for JiraProvider {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
                 client
                     .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
-                    .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
+                    .basic_auth(
+                        p.base.email.as_deref().unwrap_or_default(),
+                        Some(&p.base.token),
+                    )
                     .send()?
             }
             other => {
@@ -171,9 +186,14 @@ impl Provider for JiraProvider {
     }
 }
 
-fn parse_params<T: serde::de::DeserializeOwned>(request: &ProviderExecutionRequest) -> Result<T, SendableError> {
+fn parse_params<T: serde::de::DeserializeOwned>(
+    request: &ProviderExecutionRequest,
+) -> Result<T, SendableError> {
     serde_json::from_value(request.parameters.clone()).map_err(|e| {
-        Box::new(RuntimeError::new("jira.invalid_params".into(), e.to_string())) as SendableError
+        Box::new(RuntimeError::new(
+            "jira.invalid_params".into(),
+            e.to_string(),
+        )) as SendableError
     })
 }
 
