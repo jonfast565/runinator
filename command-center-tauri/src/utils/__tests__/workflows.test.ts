@@ -315,6 +315,24 @@ describe("workflow graph utils", () => {
     expect(active?.class).toBe("node-running");
   });
 
+  it("marks the active workflow node as debug paused", () => {
+    const nodes = buildGraphNodes(workflow, {
+      run: {
+        id: 10,
+        workflow_id: 1,
+        status: "debug_paused",
+        active_node_id: "b",
+        created_at: "",
+        started_at: null,
+        finished_at: null
+      },
+      nodes: []
+    });
+
+    expect(nodes.find((node) => node.id === "b")?.data.status).toBe("debug_paused");
+    expect(nodes.find((node) => node.id === "b")?.class).toBe("node-warning");
+  });
+
   it("marks the active terminal workflow node from the run status", () => {
     const nodes = buildGraphNodes(workflow, {
       run: {
