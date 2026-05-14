@@ -26,41 +26,27 @@
         </div>
       </section>
 
-      <section v-if="workflows.stepEditor.kind === 'task' && taskDraft" class="form-section">
+      <section v-if="workflows.stepEditor.kind === 'task'" class="form-section">
         <div class="section-title-row">
-          <h3>Workflow Task</h3>
-          <label>
-            Import Copy
-            <select @change="importTaskCopy">
-              <option value="">Select task</option>
-              <option v-for="task in tasksStore.tasks" :key="task.id ?? task.name" :value="task.id ?? ''">
-                {{ task.name }} ({{ task.action_name }}.{{ task.action_function }})
-              </option>
-            </select>
-          </label>
+          <h3>Action Configuration</h3>
         </div>
         <div class="form-grid">
-          <label>Name <input v-model="taskDraft.name" /></label>
-          <label>Cron <input v-model="taskDraft.cron_schedule" /></label>
           <label>
             Action Name
-            <select :value="taskDraft.action_name" @change="onActionNameChange">
+            <select :value="workflows.stepEditor.action_name" @change="onActionNameChange">
               <option value="" disabled>Select action name</option>
-              <option v-if="selectedProviderMissing" :value="taskDraft.action_name">{{ taskDraft.action_name }} (unavailable)</option>
+              <option v-if="selectedProviderMissing" :value="workflows.stepEditor.action_name">{{ workflows.stepEditor.action_name }} (unavailable)</option>
               <option v-for="provider in providersStore.providers" :key="provider.name" :value="provider.name">{{ provider.name }}</option>
             </select>
           </label>
           <label>
             Action Function
-            <select v-model="taskDraft.action_function" :disabled="!currentProvider" @change="applyParameterDefaults">
+            <select v-model="workflows.stepEditor.action_function" :disabled="!currentProvider" @change="applyParameterDefaults">
               <option value="" disabled>{{ currentProvider ? "Select action function" : "Select action name first" }}</option>
-              <option v-if="selectedActionMissing" :value="taskDraft.action_function">{{ taskDraft.action_function }} (unavailable)</option>
+              <option v-if="selectedActionMissing" :value="workflows.stepEditor.action_function">{{ workflows.stepEditor.action_function }} (unavailable)</option>
               <option v-for="action in currentActions" :key="action.function_name" :value="action.function_name">{{ action.function_name }}</option>
             </select>
           </label>
-          <label>Timeout <input v-model.number="taskDraft.timeout" type="number" min="1" /></label>
-          <label class="checkbox"><input v-model="taskDraft.enabled" type="checkbox" /> Enabled</label>
-          <label class="checkbox"><input v-model="taskDraft.mcp_enabled" type="checkbox" /> MCP Enabled</label>
         </div>
         <p v-if="selectedAction?.results?.length" class="result-metadata">
           Results:
@@ -154,7 +140,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import { useProvidersStore } from "../../stores/providers";
-import { useTasksStore } from "../../stores/tasks";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
@@ -162,19 +147,14 @@ import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 
 const workflows = useWorkflowsStore();
-const tasksStore = useTasksStore();
 const providersStore = useProvidersStore();
 
-const taskDraft = computed(() => {
-  if (workflows.stepEditor.kind !== "task" || !workflows.selectedStepId || !workflows.selectedNode) return null;
-  return workflows.ensureWorkflowTaskDraft(workflows.selectedStepId, workflows.selectedNode);
-});
-const currentProvider = computed(() => taskDraft.value ? providersStore.providers.find(provider => provider.name === taskDraft.value?.action_name) : null);
+const currentProvider = computed(() => providersStore.providers.find(provider => provider.name === workflows.stepEditor.action_name) || null);
 const currentActions = computed(() => currentProvider.value?.actions ?? []);
-const selectedAction = computed(() => currentActions.value.find(action => action.function_name === taskDraft.value?.action_function) ?? null);
-const selectedProviderMissing = computed(() => Boolean(taskDraft.value?.action_name && !currentProvider.value));
+const selectedAction = computed(() => currentActions.value.find(action => action.function_name === workflows.stepEditor.action_function) ?? null);
+const selectedProviderMissing = computed(() => Boolean(workflows.stepEditor.action_name && !currentProvider.value));
 const selectedActionMissing = computed(() =>
-  Boolean(taskDraft.value?.action_function && currentProvider.value && !currentActions.value.some(action => action.function_name === taskDraft.value?.action_function))
+  Boolean(workflows.stepEditor.action_function && currentProvider.value && !currentActions.value.some(action => action.function_name === workflows.stepEditor.action_function))
 );
 const stepParameters = computed({
   get: () => parseObject(workflows.stepEditor.parameters_json, {}),
@@ -215,10 +195,8 @@ const stepRefs = computed<StepRef[]>(() => {
   const prev = prevStepId.value;
   for (const node of nodes) {
     if (node.kind !== "task" || node.id === currentId) continue;
-    const task = workflows.workflowTaskDrafts[node.id] ?? tasksStore.tasks.find(t => t.id === node.task_id);
-    if (!task) continue;
-    const provider = providersStore.providers.find(p => p.name === task.action_name);
-    const action = provider?.actions.find(a => a.function_name === task.action_function);
+    const provider = providersStore.providers.find(p => p.name === node.action_name);
+    const action = provider?.actions.find(a => a.function_name === node.action_function);
     if (!action?.results?.length) continue;
     for (const result of action.results) {
       const template = node.id === prev
@@ -235,11 +213,10 @@ onMounted(() => {
 });
 
 function onActionNameChange(event: Event) {
-  if (!taskDraft.value) return;
   const name = (event.target as HTMLSelectElement).value;
-  taskDraft.value.action_name = name;
+  workflows.stepEditor.action_name = name;
   const provider = providersStore.providers.find(item => item.name === name);
-  taskDraft.value.action_function = provider?.actions[0]?.function_name ?? "";
+  workflows.stepEditor.action_function = provider?.actions[0]?.function_name ?? "";
   applyParameterDefaults();
 }
 
@@ -250,13 +227,6 @@ function applyParameterDefaults() {
     if (next[parameter.name] === undefined && parameter.default_value !== undefined) next[parameter.name] = parameter.default_value;
   }
   stepParameters.value = next;
-}
-
-function importTaskCopy(event: Event) {
-  const value = Number((event.target as HTMLSelectElement).value);
-  const task = tasksStore.tasks.find(item => item.id === value);
-  if (task) workflows.importTaskForSelectedStep(task);
-  (event.target as HTMLSelectElement).value = "";
 }
 
 function copyRef(template: string) {

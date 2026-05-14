@@ -1,8 +1,7 @@
 <template>
   <AppShell>
-    <TasksView v-show="app.activeTab === 'Tasks'" />
-    <RunsView v-show="app.activeTab === 'Runs'" />
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
+    <RunsView v-show="app.activeTab === 'Runs'" />
     <ResourcesView v-show="app.activeTab === 'Resources'" />
     <SecretsView v-show="app.activeTab === 'Secrets'" />
   </AppShell>
@@ -17,17 +16,14 @@ import { useEventStream } from "./composables/useEventStream";
 import { useAppStore } from "./stores/app";
 import { useResourcesStore } from "./stores/resources";
 import { useSecretsStore } from "./stores/secrets";
-import { useTasksStore } from "./stores/tasks";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
-import TasksView from "./views/TasksView.vue";
 import RunsView from "./views/RunsView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
 import ResourcesView from "./views/ResourcesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 
 const app = useAppStore();
-const tasks = useTasksStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
@@ -43,7 +39,6 @@ onMounted(async () => {
     app.markBackendReachable();
     app.initialLoading = false;
     Promise.all([
-      tasks.refreshTasks(),
       workflows.refreshWorkflows(),
       resources.refreshResources(),
       secrets.refreshSecrets()
@@ -65,7 +60,6 @@ onMounted(async () => {
       await waitForConcreteServiceUrl();
     }
     await Promise.all([
-      tasks.refreshTasks().catch(() => {}),
       workflows.refreshWorkflows().catch(() => {}),
       resources.refreshResources().catch(() => {}),
       secrets.refreshSecrets().catch(() => {}),
@@ -83,14 +77,13 @@ watch(
   () => app.activeTab,
   (tab) => {
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
-    if (tab === "Runs") tasks.refreshRunsForSelectedTask();
     if (tab === "Resources") resources.refreshResources();
     if (tab === "Secrets") secrets.refreshSecrets();
   }
 );
 
 watch(
-  () => [tasks.tasks.length, workflows.workflows.length, resources.resourceRecords.length, secrets.secrets.length],
+  () => [workflows.workflows.length, resources.resourceRecords.length, secrets.secrets.length],
   () => {
     refreshServiceStatus();
   }

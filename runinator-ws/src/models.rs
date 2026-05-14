@@ -1,11 +1,10 @@
-use chrono::{DateTime, Utc};
-
 use runinator_models::{
-    core::{ScheduledTask, TaskRun},
     providers::ProviderMetadata,
-    runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,18 +19,15 @@ pub struct ApiError {
 pub enum ApiResponse {
     TaskResponse(TaskResponse),
     ApiError(ApiError),
-    ScheduledTaskList(Vec<ScheduledTask>),
-    ScheduleTaskRuns(Vec<TaskRun>),
-    RunSummary(RunSummary),
-    RunList(Vec<RunSummary>),
-    RunChunks(Vec<RunChunk>),
-    RunArtifacts(Vec<RunArtifact>),
-    RunArtifact(RunArtifact),
     Workflow(WorkflowDefinition),
     WorkflowList(Vec<WorkflowDefinition>),
+    WorkflowTrigger(WorkflowTrigger),
+    WorkflowTriggerList(Vec<WorkflowTrigger>),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
+    WorkflowNodeRunChunks(Vec<WorkflowNodeRunChunk>),
+    WorkflowNodeRunArtifacts(Vec<WorkflowNodeRunArtifact>),
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
     JsonValue(Value),
@@ -39,29 +35,15 @@ pub enum ApiResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TaskRunRequest {
-    pub task_id: i64,
-    pub started_at: DateTime<Utc>,
-    pub duration_ms: i64,
-    pub _message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RunStatusRequest {
-    pub status: RunStatus,
-    #[serde(default)]
-    pub output_json: Option<Value>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RunStatusQuery {
-    pub status: Option<RunStatus>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct WorkflowRunRequest {
+    #[serde(default)]
+    pub parameters: Value,
+    #[serde(default)]
+    pub debug: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowTriggerRunRequest {
     #[serde(default)]
     pub parameters: Value,
     #[serde(default)]
@@ -95,8 +77,6 @@ pub struct WorkflowNodeRunRequest {
 #[derive(Debug, Deserialize)]
 pub struct WorkflowNodeRunStatusRequest {
     pub status: WorkflowStatus,
-    #[serde(default)]
-    pub task_run_id: Option<i64>,
     #[serde(default)]
     pub attempt: Option<i64>,
     #[serde(default)]

@@ -14,24 +14,23 @@ use axum::{
     },
     http::StatusCode,
     response::Response,
-    routing::{delete, get, patch, post},
+    routing::{get, patch, post},
 };
 use futures::{SinkExt, StreamExt};
 use log::info;
 use models::{
     ApiError, ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, CatalogQuery,
-    CredentialPutRequest, CredentialQuery, IdempotencyRequest, RunStatusQuery, RunStatusRequest,
-    TaskRunRequest, WebhookWakeRequest, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
-    WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
+    CredentialPutRequest, CredentialQuery, IdempotencyRequest, WebhookWakeRequest,
+    WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest, WorkflowRunRequest,
+    WorkflowRunStatusQuery, WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
-    core::ScheduledTask,
     errors::SendableError,
     providers::ProviderMetadata,
-    runs::{NewRunArtifact, NewRunChunk, RunRequest},
+    runs::{NewRunArtifact, NewRunChunk},
     web::TaskResponse,
-    workflows::WorkflowDefinition,
+    workflows::{WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
@@ -45,7 +44,6 @@ use tokio::{
 #[derive(Clone, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppEvent {
-    TasksChanged,
     RunStatusChanged { run_id: i64 },
     RunChunkAdded { run_id: i64 },
     WorkflowsChanged,
@@ -60,21 +58,9 @@ fn emit(events: &EventSender, event: AppEvent) {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct TaskMutationParams {
-    #[serde(default)]
-    override_next_execution: bool,
-}
-
-#[derive(Debug, Default, Deserialize)]
 struct ChunkQuery {
     cursor: Option<i64>,
     limit: Option<i64>,
-}
-
-impl TaskMutationParams {
-    fn should_override(&self) -> bool {
-        self.override_next_execution
-    }
 }
 
 fn api_error(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
@@ -104,16 +90,6 @@ fn bad_request(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
     )
 }
 
-fn task_response_error(message: impl Into<String>) -> (StatusCode, Json<TaskResponse>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(TaskResponse {
-            success: false,
-            message: message.into(),
-        }),
-    )
-}
-
 fn task_response_success(message: impl Into<String>) -> (StatusCode, Json<ApiResponse>) {
     (
         StatusCode::OK,
@@ -122,267 +98,6 @@ fn task_response_success(message: impl Into<String>) -> (StatusCode, Json<ApiRes
             message: message.into(),
         })),
     )
-}
-
-async fn preserve_next_execution_if_needed<T: DatabaseImpl>(
-    db: &T,
-    task: &mut ScheduledTask,
-    override_next_execution: bool,
-) -> Result<(), SendableError> {
-    if override_next_execution {
-        return Ok(());
-    }
-
-    let Some(task_id) = task.id else {
-        return Ok(());
-    };
-
-    if let Some(existing) = db.fetch_task_by_id(task_id).await? {
-        task.next_execution = existing.next_execution;
-    }
-
-    Ok(())
-}
-
-async fn add_task<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Query(params): Query<TaskMutationParams>,
-    Json(mut task_input): Json<ScheduledTask>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(err) =
-        preserve_next_execution_if_needed(db.as_ref(), &mut task_input, params.should_override())
-            .await
-    {
-        return api_error(err.to_string());
-    }
-
-    match repository::add_task(db.as_ref(), &task_input).await {
-        Ok(r) => {
-            emit(&events, AppEvent::TasksChanged);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn update_task<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Path(task_id): Path<i64>,
-    Query(params): Query<TaskMutationParams>,
-    Json(mut task_input): Json<ScheduledTask>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if task_input.id != Some(task_id) {
-        task_input.id = Some(task_id);
-    }
-    info!("Updating task: {:?}", task_input);
-
-    if let Err(err) =
-        preserve_next_execution_if_needed(db.as_ref(), &mut task_input, params.should_override())
-            .await
-    {
-        return api_error(err.to_string());
-    }
-
-    match repository::update_task(db.as_ref(), &task_input).await {
-        Ok(r) => {
-            emit(&events, AppEvent::TasksChanged);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn delete_task<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Path(task_id): Path<i64>,
-) -> (StatusCode, Json<ApiResponse>) {
-    info!("Deleting task with ID: {}", task_id);
-    match repository::delete_task(db.as_ref(), task_id).await {
-        Ok(r) => {
-            emit(&events, AppEvent::TasksChanged);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(r)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_tasks<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-) -> (StatusCode, Json<ApiResponse>) {
-    info!("Fetching all tasks");
-    match repository::fetch_tasks(db.as_ref()).await {
-        Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduledTaskList(r))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_task_runs<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Query(params): Query<HashMap<String, String>>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
-
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(i64::MAX);
-
-    info!("Fetching task runs between {} and {}", start_time, end_time);
-    match repository::fetch_task_runs(db.as_ref(), start_time, end_time).await {
-        Ok(r) => (StatusCode::OK, Json(ApiResponse::ScheduleTaskRuns(r))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn request_run<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(task_id): Path<i64>,
-) -> (StatusCode, Json<TaskResponse>) {
-    info!("Requesting run of task {}", task_id);
-    match repository::request_run(db.as_ref(), task_id).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)),
-        Err(err) => task_response_error(err.to_string()),
-    }
-}
-
-async fn create_run<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(task_id): Path<i64>,
-    Json(request): Json<RunRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::create_run(db.as_ref(), task_id, &request).await {
-        Ok(run) => (StatusCode::ACCEPTED, Json(ApiResponse::RunSummary(run))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_task_runs_v2<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(task_id): Path<i64>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_runs_for_task(db.as_ref(), task_id).await {
-        Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_runs<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Query(query): Query<RunStatusQuery>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let Some(status) = query.status else {
-        return api_error("runs query requires status");
-    };
-
-    match repository::fetch_runs_by_status(db.as_ref(), status).await {
-        Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_run<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_run(db.as_ref(), run_id).await {
-        Ok(Some(run)) => (StatusCode::OK, Json(ApiResponse::RunSummary(run))),
-        Ok(None) => not_found(format!("Run {run_id} not found")),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn update_run<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Path(run_id): Path<i64>,
-    Json(request): Json<RunStatusRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::update_run_status(
-        db.as_ref(),
-        run_id,
-        request.status,
-        request.output_json,
-        request.message,
-    )
-    .await
-    {
-        Ok(resp) => {
-            emit(&events, AppEvent::RunStatusChanged { run_id });
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_run_chunks<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
-    Query(query): Query<ChunkQuery>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_run_chunks(
-        db.as_ref(),
-        run_id,
-        query.cursor,
-        query.limit.unwrap_or(100),
-    )
-    .await
-    {
-        Ok(chunks) => (StatusCode::OK, Json(ApiResponse::RunChunks(chunks))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn append_run_chunk<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Path(run_id): Path<i64>,
-    Json(chunk): Json<NewRunChunk>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
-        Ok(resp) => {
-            emit(&events, AppEvent::RunChunkAdded { run_id });
-            (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(resp)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_run_artifacts<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
-        Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn add_run_artifact<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
-    Json(artifact): Json<NewRunArtifact>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
-        Ok(resp) => (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(resp))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn get_artifact<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Path(artifact_id): Path<i64>,
-) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_artifact(db.as_ref(), artifact_id).await {
-        Ok(Some(artifact)) => (StatusCode::OK, Json(ApiResponse::RunArtifact(artifact))),
-        Ok(None) => not_found(format!("Artifact {artifact_id} not found")),
-        Err(err) => api_error(err.to_string()),
-    }
 }
 
 async fn upsert_workflow<T: DatabaseImpl>(
@@ -425,6 +140,116 @@ async fn delete_workflow<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::delete_workflow(db.as_ref(), workflow_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn upsert_workflow_trigger<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_id): Path<i64>,
+    Json(mut trigger): Json<WorkflowTrigger>,
+) -> (StatusCode, Json<ApiResponse>) {
+    trigger.workflow_id = workflow_id;
+    match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
+        Ok(trigger) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn update_workflow_trigger<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(trigger_id): Path<i64>,
+    Json(mut trigger): Json<WorkflowTrigger>,
+) -> (StatusCode, Json<ApiResponse>) {
+    trigger.id = Some(trigger_id);
+    match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
+        Ok(trigger) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_workflow_trigger<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(trigger_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_trigger(db.as_ref(), trigger_id).await {
+        Ok(Some(trigger)) => (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger))),
+        Ok(None) => not_found(format!("Workflow trigger {trigger_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_workflow_triggers<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(workflow_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_triggers(db.as_ref(), workflow_id).await {
+        Ok(triggers) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowTriggerList(triggers)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_due_workflow_triggers<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_due_workflow_triggers(db.as_ref()).await {
+        Ok(triggers) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowTriggerList(triggers)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn delete_workflow_trigger<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(trigger_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::delete_workflow_trigger(db.as_ref(), trigger_id).await {
+        Ok(resp) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn create_workflow_trigger_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(trigger_id): Path<i64>,
+    Json(request): Json<WorkflowTriggerRunRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::create_workflow_run_for_trigger(
+        db.as_ref(),
+        trigger_id,
+        request.parameters,
+        request.debug,
+    )
+    .await
+    {
+        Ok(run) => {
+            emit(&events, AppEvent::WorkflowRunActivity);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                    run,
+                    nodes: Vec::new(),
+                })),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -579,7 +404,6 @@ async fn update_workflow_node_run<T: DatabaseImpl>(
         db.as_ref(),
         node_run_id,
         request.status,
-        request.task_run_id,
         request.attempt,
         request.parameters,
         request.output_json,
@@ -592,6 +416,76 @@ async fn update_workflow_node_run<T: DatabaseImpl>(
         Ok(resp) => {
             emit(&events, AppEvent::WorkflowRunActivity);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(node_run_id): Path<i64>,
+    Query(query): Query<ChunkQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_node_run_chunks(
+        db.as_ref(),
+        node_run_id,
+        query.cursor,
+        query.limit.unwrap_or(100),
+    )
+    .await
+    {
+        Ok(chunks) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowNodeRunChunks(chunks)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(chunk): Json<NewRunChunk>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
+        Ok(chunk) => {
+            emit(&events, AppEvent::WorkflowRunActivity);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRunChunks(vec![chunk])),
+            )
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(node_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_node_run_artifacts(db.as_ref(), node_run_id).await {
+        Ok(artifacts) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowNodeRunArtifacts(artifacts)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(artifact): Json<NewRunArtifact>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {
+        Ok(artifact) => {
+            emit(&events, AppEvent::WorkflowRunActivity);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRunArtifacts(vec![artifact])),
+            )
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -1022,10 +916,9 @@ async fn webhook_wake<T: DatabaseImpl>(
         None,
         None,
         None,
-        None,
         Some(state.clone()),
         Some("webhook_wake".into()),
-        request.message.clone(),
+        None,
     )
     .await
     {
@@ -1100,22 +993,6 @@ fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {
             }
         }
         (target, overlay) => *target = overlay,
-    }
-}
-
-async fn record_task_run<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Json(payload): Json<TaskRunRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    let r = repository::log_task_run(db.as_ref(), &payload).await;
-    match r {
-        Ok(r) => (StatusCode::ACCEPTED, Json(ApiResponse::TaskResponse(r))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::ApiError(ApiError {
-                message: err.to_string(),
-            })),
-        ),
     }
 }
 
@@ -1219,58 +1096,7 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
     Router::new()
         .route("/ws/events", get(ws_events))
         .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
-        .route("/ws/runs/{id}/stream", get(ws_run_stream::<T>))
-        .route("/tasks", get(get_tasks::<T>).layer(Extension(pool.clone())))
-        .route("/tasks", post(add_task::<T>).layer(Extension(pool.clone())))
-        .route(
-            "/tasks/{id}",
-            patch(update_task::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/tasks/{id}",
-            delete(delete_task::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/task_runs",
-            get(get_task_runs::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/task_runs",
-            post(record_task_run::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/tasks/{id}/request_run",
-            post(request_run::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/tasks/{id}/runs",
-            post(create_run::<T>)
-                .get(get_task_runs_v2::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route("/runs", get(get_runs::<T>).layer(Extension(pool.clone())))
-        .route(
-            "/runs/{id}",
-            get(get_run::<T>)
-                .patch(update_run::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/runs/{id}/chunks",
-            get(get_run_chunks::<T>)
-                .post(append_run_chunk::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/runs/{id}/artifacts",
-            get(get_run_artifacts::<T>)
-                .post(add_run_artifact::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/artifacts/{id}",
-            get(get_artifact::<T>).layer(Extension(pool.clone())),
-        )
+        .route("/ws/run-stream/{id}", get(ws_run_stream::<T>))
         .route(
             "/workflows",
             get(get_workflows::<T>)
@@ -1283,6 +1109,27 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
                 .patch(upsert_workflow::<T>)
                 .delete(delete_workflow::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/triggers",
+            get(get_workflow_triggers::<T>)
+                .post(upsert_workflow_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_triggers/due",
+            get(get_due_workflow_triggers::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_triggers/{id}",
+            get(get_workflow_trigger::<T>)
+                .patch(update_workflow_trigger::<T>)
+                .delete(delete_workflow_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_triggers/{id}/runs",
+            post(create_workflow_trigger_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs",
@@ -1309,6 +1156,18 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
         .route(
             "/workflow_node_runs/{id}",
             patch(update_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/chunks",
+            get(get_workflow_node_run_chunks::<T>)
+                .post(append_workflow_node_run_chunk::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/artifacts",
+            get(get_workflow_node_run_artifacts::<T>)
+                .post(add_workflow_node_run_artifact::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/catalog/items",

@@ -2,10 +2,12 @@ use std::future::Future;
 
 use chrono::{DateTime, Utc};
 use runinator_models::{
-    core::{ScheduledTask, TaskRun},
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+    },
 };
 use serde_json::Value;
 
@@ -17,82 +19,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         paths: &Vec<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
-    /// Add or update a scheduled task.
-    fn upsert_task(
-        &self,
-        task: &ScheduledTask,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Delete a scheduled task by its identifier.
-    fn delete_task(&self, task_id: i64) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Fetch all enabled and disabled tasks.
-    fn fetch_all_tasks(
-        &self,
-    ) -> impl Future<Output = Result<Vec<ScheduledTask>, SendableError>> + Send;
-
-    /// Fetch a single task by its identifier.
-    fn fetch_task_by_id(
-        &self,
-        task_id: i64,
-    ) -> impl Future<Output = Result<Option<ScheduledTask>, SendableError>> + Send;
-
-    /// Fetch task execution records within a time range.
-    fn fetch_task_runs(
-        &self,
-        start: i64,
-        end: i64,
-    ) -> impl Future<Output = Result<Vec<TaskRun>, SendableError>> + Send;
-
-    /// Update the next scheduled execution time for a task.
-    fn update_task_next_execution(
-        &self,
-        task: &ScheduledTask,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Record a completed task execution.
-    fn log_task_run(
-        &self,
-        task_id: i64,
-        start_time: DateTime<Utc>,
-        duration_ms: i64,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Request a task to be executed as soon as possible.
-    fn request_immediate_run(
-        &self,
-        task_id: i64,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Clear the immediate run flag for a task.
-    fn clear_immediate_run(
-        &self,
-        task_id: i64,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Create a new task run record.
-    fn create_task_run(
-        &self,
-        task_id: i64,
-        parameters: Value,
-        trigger: String,
-        workflow_run_id: Option<i64>,
-        workflow_node_id: Option<String>,
-    ) -> impl Future<Output = Result<RunSummary, SendableError>> + Send;
-
-    /// Fetch a run summary by its identifier.
-    fn fetch_run(
-        &self,
-        run_id: i64,
-    ) -> impl Future<Output = Result<Option<RunSummary>, SendableError>> + Send;
-
-    /// Fetch all runs associated with a specific task.
-    fn fetch_runs_for_task(
-        &self,
-        task_id: i64,
-    ) -> impl Future<Output = Result<Vec<RunSummary>, SendableError>> + Send;
-
-    /// Fetch runs filtered by their current status.
+    /// Fetch all runs filtered by their current status.
     fn fetch_runs_by_status(
         &self,
         status: RunStatus,
@@ -164,6 +91,43 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_id: i64,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
+    /// Create or update a workflow trigger.
+    fn upsert_workflow_trigger(
+        &self,
+        trigger: &WorkflowTrigger,
+    ) -> impl Future<Output = Result<WorkflowTrigger, SendableError>> + Send;
+
+    /// Fetch all triggers for a workflow definition.
+    fn fetch_workflow_triggers(
+        &self,
+        workflow_id: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowTrigger>, SendableError>> + Send;
+
+    /// Fetch a workflow trigger by identifier.
+    fn fetch_workflow_trigger(
+        &self,
+        trigger_id: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowTrigger>, SendableError>> + Send;
+
+    /// Delete a workflow trigger.
+    fn delete_workflow_trigger(
+        &self,
+        trigger_id: i64,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch enabled triggers that should fire at or before the provided instant.
+    fn fetch_due_workflow_triggers(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<WorkflowTrigger>, SendableError>> + Send;
+
+    /// Update the next execution instant for a workflow trigger.
+    fn update_workflow_trigger_next_execution(
+        &self,
+        trigger_id: i64,
+        next_execution: Option<DateTime<Utc>>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Create a new instance of a workflow.
     fn create_workflow_run(
         &self,
@@ -213,7 +177,6 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         node_run_id: i64,
         status: WorkflowStatus,
-        task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
         output_json: Option<Value>,
@@ -227,6 +190,34 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_run_id: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
+
+    /// Append a log chunk to a workflow node run.
+    fn append_workflow_node_run_chunk(
+        &self,
+        workflow_node_run_id: i64,
+        chunk: &NewRunChunk,
+    ) -> impl Future<Output = Result<WorkflowNodeRunChunk, SendableError>> + Send;
+
+    /// Fetch log chunks for a workflow node run with pagination.
+    fn fetch_workflow_node_run_chunks(
+        &self,
+        workflow_node_run_id: i64,
+        cursor: Option<i64>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowNodeRunChunk>, SendableError>> + Send;
+
+    /// Associate an artifact with a workflow node run.
+    fn add_workflow_node_run_artifact(
+        &self,
+        workflow_node_run_id: i64,
+        artifact: &NewRunArtifact,
+    ) -> impl Future<Output = Result<WorkflowNodeRunArtifact, SendableError>> + Send;
+
+    /// Fetch artifacts for a workflow node run.
+    fn fetch_workflow_node_run_artifacts(
+        &self,
+        workflow_node_run_id: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowNodeRunArtifact>, SendableError>> + Send;
 
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(

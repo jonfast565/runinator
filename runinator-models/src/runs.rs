@@ -61,7 +61,6 @@ fn default_trigger() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub id: i64,
-    pub task_id: i64,
     pub status: RunStatus,
     pub parameters: Value,
     pub output_json: Option<Value>,
@@ -125,7 +124,6 @@ pub struct NewRunArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderExecutionRequest {
-    pub task_id: Option<i64>,
     pub run_id: Option<i64>,
     pub action_name: String,
     pub action_function: String,

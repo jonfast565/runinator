@@ -9,7 +9,7 @@ use tokio::runtime::Handle;
 
 #[derive(Clone)]
 pub struct RunOutputSink {
-    run_id: Option<i64>,
+    workflow_node_run_id: i64,
     api_client: AsyncApiClient<StaticLocator>,
     handle: Handle,
     state: Arc<Mutex<RunOutputState>>,
@@ -22,12 +22,12 @@ struct RunOutputState {
 
 impl RunOutputSink {
     pub fn new(
-        run_id: Option<i64>,
+        workflow_node_run_id: i64,
         api_client: AsyncApiClient<StaticLocator>,
         handle: Handle,
     ) -> Self {
         Self {
-            run_id,
+            workflow_node_run_id,
             api_client,
             handle,
             state: Arc::new(Mutex::new(RunOutputState::default())),
@@ -42,17 +42,13 @@ impl RunOutputSink {
     }
 
     pub async fn persist_result(&self, result: &TaskExecutionResult) {
-        let Some(run_id) = self.run_id else {
-            return;
-        };
-
         // We only persist artifacts because chunks are typically streamed via events.jsonl
         // If we also persisted chunks here, they would be duplicated for most providers.
         for artifact in &result.artifacts {
             if let Err(err) = self
                 .api_client
-                .add_run_artifact(
-                    run_id,
+                .add_workflow_node_run_artifact(
+                    self.workflow_node_run_id,
                     &RunArtifactPayload {
                         name: artifact.name.clone(),
                         mime_type: artifact.mime_type.clone(),
@@ -63,7 +59,10 @@ impl RunOutputSink {
                 )
                 .await
             {
-                error!("Failed to add run {} result artifact: {}", run_id, err);
+                error!(
+                    "Failed to add workflow node run {} result artifact: {}",
+                    self.workflow_node_run_id, err
+                );
             }
         }
     }
@@ -73,14 +72,18 @@ impl RunOutputSink {
     }
 
     fn emit_chunk(&self, stream: String, content: String) {
-        let Some(run_id) = self.run_id else {
-            return;
-        };
+        let node_run_id = self.workflow_node_run_id;
         let client = self.api_client.clone();
         self.handle.spawn(async move {
             let payload = RunChunkPayload { stream, content };
-            if let Err(err) = client.append_run_chunk(run_id, &payload).await {
-                error!("Failed to append run {} streamed chunk: {}", run_id, err);
+            if let Err(err) = client
+                .append_workflow_node_run_chunk(node_run_id, &payload)
+                .await
+            {
+                error!(
+                    "Failed to append workflow node run {} streamed chunk: {}",
+                    node_run_id, err
+                );
             }
         });
     }
@@ -93,9 +96,7 @@ impl RunOutputSink {
         uri: String,
         metadata: Value,
     ) {
-        let Some(run_id) = self.run_id else {
-            return;
-        };
+        let node_run_id = self.workflow_node_run_id;
         let client = self.api_client.clone();
         self.handle.spawn(async move {
             let payload = RunArtifactPayload {
@@ -105,8 +106,14 @@ impl RunOutputSink {
                 uri,
                 metadata,
             };
-            if let Err(err) = client.add_run_artifact(run_id, &payload).await {
-                error!("Failed to add run {} streamed artifact: {}", run_id, err);
+            if let Err(err) = client
+                .add_workflow_node_run_artifact(node_run_id, &payload)
+                .await
+            {
+                error!(
+                    "Failed to add workflow node run {} streamed artifact: {}",
+                    node_run_id, err
+                );
             }
         });
     }

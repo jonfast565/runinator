@@ -2,7 +2,6 @@ use chrono::Utc;
 use runinator_broker::Broker;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    runs::RunStatus,
     workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
 use runinator_workflows::BranchPolicy;
@@ -18,11 +17,40 @@ pub async fn process_task_node(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
+    if let Some(node_run) = latest.filter(|run| run.status.is_terminal()) {
+        match node_run.status {
+            WorkflowStatus::Succeeded => {
+                transition_from_node(
+                    api,
+                    workflow_run,
+                    node,
+                    node_run,
+                    WorkflowStatus::Succeeded,
+                    node_run.output_json.clone(),
+                    None,
+                    node_runs,
+                )
+                .await?;
+            }
+            WorkflowStatus::Failed | WorkflowStatus::TimedOut | WorkflowStatus::Canceled => {
+                retry_or_transition(
+                    api,
+                    workflow_run,
+                    node,
+                    node_run,
+                    node_run.status,
+                    node_run.output_json.clone(),
+                    node_run.message.clone(),
+                    node_runs,
+                )
+                .await?;
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Running) {
-        let Some(task_run_id) = node_run.task_run_id else {
-            return Ok(());
-        };
-        let task_run = api.fetch_run(task_run_id).await?;
         if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
             if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
                 retry_or_transition(
@@ -39,40 +67,6 @@ pub async fn process_task_node(
                 return Ok(());
             }
         }
-        match task_run.status {
-            RunStatus::Succeeded => {
-                transition_from_node(
-                    api,
-                    workflow_run,
-                    node,
-                    node_run,
-                    WorkflowStatus::Succeeded,
-                    task_run.output_json,
-                    None,
-                    node_runs,
-                )
-                .await?;
-            }
-            RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled => {
-                let status = match task_run.status {
-                    RunStatus::TimedOut => WorkflowStatus::TimedOut,
-                    RunStatus::Canceled => WorkflowStatus::Canceled,
-                    _ => WorkflowStatus::Failed,
-                };
-                retry_or_transition(
-                    api,
-                    workflow_run,
-                    node,
-                    node_run,
-                    status,
-                    task_run.output_json,
-                    task_run.message,
-                    node_runs,
-                )
-                .await?;
-            }
-            _ => {}
-        }
         return Ok(());
     }
 
@@ -85,81 +79,50 @@ pub async fn process_task_node(
         return Ok(());
     }
 
-    let task_id = node.task_id.ok_or_else(|| {
+    let action = node.action.as_ref().ok_or_else(|| {
         Box::new(RuntimeError::new(
-            "workflow.node.task_missing_id".into(),
-            format!("Task node {} has no task_id", node.id),
+            "workflow.node.action_missing".into(),
+            format!("Action node {} has no action configuration", node.id),
         )) as SendableError
     })?;
-    let task = api
-        .fetch_tasks()
-        .await?
-        .into_iter()
-        .find(|task| task.id == Some(task_id))
-        .ok_or_else(|| {
-            Box::new(RuntimeError::new(
-                "workflow.node.task_not_found".into(),
-                format!("Task {task_id} not found for workflow node {}", node.id),
-            )) as SendableError
-        })?;
     let node_run = api
         .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
         .await?;
-    let parameters = build_node_parameters(&task, node, workflow_run, node_runs)?;
+    let parameters = build_node_parameters(action, node, workflow_run, node_runs)?;
     let attempt = node_run.attempt + 1;
-    let idempotency_scope = "workflow_task_node";
+    let idempotency_scope = "workflow_action_node";
     let idempotency_key =
         workflow_task_idempotency_key(workflow_run.id, &node.id, node_run.id, attempt);
-    let task_run = if let Some(record) = api
+    if api
         .fetch_idempotency_key(idempotency_scope, &idempotency_key)
         .await?
+        .is_none()
     {
-        let task_run_id = record
-            .get("result")
-            .and_then(|result| result.get("task_run_id"))
-            .and_then(Value::as_i64)
-            .ok_or_else(|| {
-                Box::new(RuntimeError::new(
-                    "workflow.node.idempotency_invalid".into(),
-                    format!("Idempotency key {idempotency_key} is missing task_run_id"),
-                )) as SendableError
-            })?;
-        api.fetch_run(task_run_id).await?
-    } else {
-        let task_run = api
-            .create_workflow_task_run(
-                task_id,
-                workflow_run.id,
-                node.id.clone(),
-                parameters.clone(),
-            )
-            .await?;
         api.put_idempotency_key(
             idempotency_scope,
             &idempotency_key,
-            serde_json::json!({ "task_run_id": task_run.id }),
+            serde_json::json!({ "workflow_node_run_id": node_run.id }),
         )
         .await?;
-        crate::iteration::enqueue_task_with_dedupe(
+        crate::iteration::enqueue_action_with_dedupe(
             broker,
-            &task,
-            task_run.id,
+            workflow_run.id,
+            &node_run,
+            action,
             parameters.clone(),
-            format!("run:{}", task_run.id),
+            format!("workflow-node-run:{}", node_run.id),
         )
         .await?;
-        task_run
-    };
+    }
 
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
-        Some(task_run.id),
         Some(attempt),
         Some(parameters),
         None,
         None,
-        Some("task_started".into()),
+        Some("action_started".into()),
         None,
     )
     .await?;
@@ -253,7 +216,6 @@ pub async fn process_wait_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -332,7 +294,6 @@ pub async fn process_switch_node(
         } else {
             WorkflowStatus::Blocked
         },
-        None,
         Some(node_run.attempt + 1),
         None,
         Some(output),
@@ -441,7 +402,6 @@ pub async fn process_approval_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::ApprovalRequired,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -509,7 +469,6 @@ pub async fn process_loop_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
-        None,
         Some(node_run.attempt + 1),
         None,
         Some(output.clone()),
@@ -593,7 +552,6 @@ pub async fn process_parallel_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Succeeded,
-        None,
         Some(node_run.attempt + 1),
         None,
         Some(output),
@@ -662,7 +620,6 @@ pub async fn process_join_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -770,7 +727,6 @@ pub async fn process_map_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -844,7 +800,6 @@ pub async fn process_race_node(
         api.update_workflow_node_run(
             node_run.id,
             WorkflowStatus::Running,
-            None,
             Some(node_run.attempt + 1),
             None,
             None,
@@ -1109,7 +1064,6 @@ pub async fn process_subflow_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -1140,7 +1094,6 @@ pub async fn block_node(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Blocked,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -1287,7 +1240,6 @@ async fn start_try_phase(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,
@@ -1345,7 +1297,6 @@ pub async fn retry_or_transition(
             WorkflowStatus::Queued,
             None,
             None,
-            None,
             output_json,
             None,
             Some("retry_queued".into()),
@@ -1388,7 +1339,6 @@ pub async fn transition_from_node(
     api.update_workflow_node_run(
         node_run.id,
         status,
-        None,
         None,
         None,
         output_json.clone(),

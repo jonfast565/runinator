@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use runinator_broker::in_memory::InMemoryBroker;
 use runinator_models::{
-    core::ScheduledTask,
     errors::{RuntimeError, SendableError},
-    runs::RunSummary,
-    workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
+        WorkflowTrigger,
+    },
 };
 use serde_json::json;
 use std::sync::Mutex;
@@ -38,7 +39,6 @@ fn builds_runtime_context() {
         id: 100,
         workflow_run_id: 10,
         node_id: "prev".into(),
-        task_run_id: None,
         status: WorkflowStatus::Succeeded,
         attempt: 1,
         parameters: json!({}),
@@ -424,8 +424,13 @@ async fn race_records_first_success_and_starts_remaining_branches_sequentially()
 fn reentry_exhaustion_routes_after_max_visits() {
     let node = node(json!({
         "id": "implement",
-        "kind": "task",
-        "task_id": 1,
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
         "reentry": {
             "enabled": true,
             "max_visits": 2,
@@ -447,8 +452,13 @@ fn reentry_exhaustion_routes_after_max_visits() {
 fn reentry_exhaustion_ignores_active_latest_visit() {
     let node = node(json!({
         "id": "implement",
-        "kind": "task",
-        "task_id": 1,
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
         "reentry": { "enabled": true, "max_visits": 1 }
     }));
     let running = node_run_with_id(1, "implement", WorkflowStatus::Running, None, json!({}));
@@ -626,24 +636,6 @@ impl MockWorkflowApi {
 
 #[async_trait]
 impl WorkflowSchedulerApi for MockWorkflowApi {
-    async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
-        Ok(Vec::new())
-    }
-
-    async fn create_workflow_task_run(
-        &self,
-        _task_id: i64,
-        _workflow_run_id: i64,
-        _workflow_node_id: String,
-        _parameters: serde_json::Value,
-    ) -> Result<RunSummary, SendableError> {
-        Err(test_error("unexpected task run creation"))
-    }
-
-    async fn fetch_run(&self, _run_id: i64) -> Result<RunSummary, SendableError> {
-        Err(test_error("unexpected run fetch"))
-    }
-
     async fn fetch_workflow(&self, _workflow_id: i64) -> Result<WorkflowDefinition, SendableError> {
         self.state
             .lock()
@@ -659,6 +651,18 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         _parameters: serde_json::Value,
     ) -> Result<WorkflowRun, SendableError> {
         Err(test_error("unexpected workflow run creation"))
+    }
+
+    async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn update_workflow_trigger_next_execution(
+        &self,
+        _trigger_id: i64,
+        _next_execution: Option<chrono::DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        Ok(())
     }
 
     async fn fetch_workflow_runs_by_status(
@@ -712,7 +716,6 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             id: state.next_node_run_id,
             workflow_run_id,
             node_id: node_id.into(),
-            task_run_id: None,
             status: WorkflowStatus::Queued,
             attempt: 0,
             parameters,
@@ -730,7 +733,6 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         &self,
         _node_run_id: i64,
         status: WorkflowStatus,
-        _task_run_id: Option<i64>,
         _attempt: Option<i64>,
         _parameters: Option<serde_json::Value>,
         output_json: Option<serde_json::Value>,
@@ -840,7 +842,6 @@ fn node_run_with_id(
         id,
         workflow_run_id: 10,
         node_id: node_id.into(),
-        task_run_id: None,
         status,
         attempt: 1,
         parameters: json!({}),

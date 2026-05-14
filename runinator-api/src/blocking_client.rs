@@ -2,12 +2,11 @@ use reqwest::{
     blocking::{Client, Response},
     Url,
 };
-use runinator_models::{core::ScheduledTask, providers::ProviderMetadata, web::TaskResponse};
+use runinator_models::providers::ProviderMetadata;
 
 use crate::{
     error::{ApiError, Result},
     locator::BlockingServiceLocator,
-    types::TaskRunPayload,
 };
 
 /// Blocking API client that wraps `reqwest::blocking::Client`.
@@ -32,14 +31,6 @@ where
         Self { client, locator }
     }
 
-    /// Fetch all scheduled tasks from the web service.
-    pub fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>> {
-        let url = self.build_url("/tasks")?;
-        let response = self.client.get(url.clone()).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<Vec<ScheduledTask>>()?)
-    }
-
     /// Fetch provider/action metadata for task authoring.
     pub fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
         let url = self.build_url("/providers")?;
@@ -54,60 +45,6 @@ where
         let response = self.client.post(url.clone()).json(provider).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<ProviderMetadata>()?)
-    }
-
-    /// Create or replace a scheduled task.
-    pub fn upsert_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
-        let url = self.build_url("/tasks")?;
-        let response = self.client.post(url.clone()).json(task).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<TaskResponse>()?)
-    }
-
-    /// Update an existing scheduled task by identifier.
-    pub fn update_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
-        self.update_task_with_next_execution_override(task, false)
-    }
-
-    pub fn update_task_with_next_execution_override(
-        &self,
-        task: &ScheduledTask,
-        override_next_execution: bool,
-    ) -> Result<TaskResponse> {
-        let id = task.id.ok_or(ApiError::MissingTaskId)?;
-        let path = if override_next_execution {
-            format!("/tasks/{id}?override_next_execution=true")
-        } else {
-            format!("/tasks/{id}")
-        };
-        let url = self.build_url(&path)?;
-        let response = self.client.patch(url.clone()).json(task).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<TaskResponse>()?)
-    }
-
-    /// Delete a scheduled task and return the service acknowledgement.
-    pub fn delete_task(&self, task_id: i64) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/tasks/{task_id}"))?;
-        let response = self.client.delete(url.clone()).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<TaskResponse>()?)
-    }
-
-    /// Request an immediate run for a scheduled task.
-    pub fn request_task_run(&self, task_id: i64) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/tasks/{task_id}/request_run"))?;
-        let response = self.client.post(url.clone()).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<TaskResponse>()?)
-    }
-
-    /// Record execution metadata for a scheduled task run.
-    pub fn log_task_run(&self, payload: &TaskRunPayload) -> Result<TaskResponse> {
-        let url = self.build_url("/task_runs")?;
-        let response = self.client.post(url.clone()).json(payload).send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<TaskResponse>()?)
     }
 
     fn build_url(&self, path: &str) -> Result<Url> {

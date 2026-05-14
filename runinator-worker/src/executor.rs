@@ -3,8 +3,8 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 use chrono::Utc;
 use log::{error, info, warn};
 use runinator_comm::TaskResult;
-use runinator_models::core::ScheduledTask;
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
+use runinator_models::workflows::WorkflowAction;
 use runinator_plugin::plugin::Plugin;
 use runinator_plugin::provider::ProviderEventSink;
 use serde_json::Value;
@@ -22,16 +22,16 @@ pub struct ExecutionOutcome {
 pub async fn execute_task(
     libraries: Arc<HashMap<String, Plugin>>,
     command_id: Uuid,
-    task: ScheduledTask,
-    run_id: Option<i64>,
+    action: WorkflowAction,
+    workflow_node_run_id: i64,
     parameters: Value,
     sink: Option<Arc<dyn ProviderEventSink>>,
 ) -> ExecutionOutcome {
     let started_at = Utc::now();
-    let timeout = task.timeout.max(1) as u64;
-    let request = build_provider_request(&task, run_id, parameters);
+    let timeout = action.timeout_seconds.max(1) as u64;
+    let request = build_provider_request(&action, workflow_node_run_id, parameters);
 
-    match resolve_provider(&libraries, &task) {
+    match resolve_provider(&libraries, &action) {
         Ok(provider) => {
             let handle =
                 tokio::task::spawn_blocking(move || provider.execute_service(request, sink));
@@ -41,8 +41,8 @@ pub async fn execute_task(
                     Ok(Ok(execution_result)) => {
                         let finished_at = Utc::now();
                         info!(
-                            "Task {} completed successfully",
-                            task.id.unwrap_or_default()
+                            "Action {}.{} completed successfully",
+                            action.provider, action.function
                         );
                         let message = execution_result.message.clone();
                         ExecutionOutcome {
@@ -59,9 +59,8 @@ pub async fn execute_task(
                     }
                     Ok(Err(err)) => {
                         error!(
-                            "Provider execution error for task {}: {}",
-                            task.id.unwrap_or_default(),
-                            err
+                            "Provider execution error for action {}.{}: {}",
+                            action.provider, action.function, err
                         );
                         ExecutionOutcome {
                             execution_result: None,
@@ -92,9 +91,8 @@ pub async fn execute_task(
                 },
                 Err(_) => {
                     warn!(
-                        "Task {} exceeded timeout of {} seconds",
-                        task.id.unwrap_or_default(),
-                        timeout
+                        "Action {}.{} exceeded timeout of {} seconds",
+                        action.provider, action.function, timeout
                     );
                     ExecutionOutcome {
                         execution_result: None,
@@ -112,9 +110,8 @@ pub async fn execute_task(
         }
         Err(err) => {
             error!(
-                "Failed to resolve provider for task {}: {}",
-                task.id.unwrap_or_default(),
-                err
+                "Failed to resolve provider for action {}.{}: {}",
+                action.provider, action.function, err
             );
             ExecutionOutcome {
                 execution_result: None,
@@ -132,12 +129,11 @@ pub async fn execute_task(
 }
 
 fn build_provider_request(
-    task: &ScheduledTask,
-    run_id: Option<i64>,
+    action: &WorkflowAction,
+    workflow_node_run_id: i64,
     parameters: Value,
 ) -> ProviderExecutionRequest {
-    let task_id = task.id;
-    let base_dir = run_work_dir(run_id);
+    let base_dir = run_work_dir(Some(workflow_node_run_id));
     let artifact_dir = base_dir.join("artifacts");
     if let Err(err) = fs::create_dir_all(&artifact_dir) {
         warn!(
@@ -147,12 +143,11 @@ fn build_provider_request(
         );
     }
     ProviderExecutionRequest {
-        task_id,
-        run_id,
-        action_name: task.action_name.clone(),
-        action_function: task.action_function.clone(),
+        run_id: Some(workflow_node_run_id),
+        action_name: action.provider.clone(),
+        action_function: action.function.clone(),
         parameters,
-        timeout_secs: task.timeout,
+        timeout_secs: action.timeout_seconds,
         artifact_dir: artifact_dir.to_string_lossy().into_owned(),
         events_jsonl_path: base_dir.join("events.jsonl").to_string_lossy().into_owned(),
     }

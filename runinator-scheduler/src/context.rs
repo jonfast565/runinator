@@ -1,6 +1,5 @@
-use runinator_models::core::ScheduledTask;
 use runinator_models::errors::SendableError;
-use runinator_models::workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun};
+use runinator_models::workflows::{WorkflowAction, WorkflowNode, WorkflowNodeRun, WorkflowRun};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -15,12 +14,12 @@ pub fn latest_node_run<'a>(
 }
 
 pub fn build_node_parameters(
-    task: &ScheduledTask,
+    action: &WorkflowAction,
     node: &WorkflowNode,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
-    let base = merge_parameters(&task.default_parameters, &node.parameters);
+    let base = merge_parameters(&action.default_parameters, &node.parameters);
     let context = runtime_context(workflow_run, node_runs);
     runinator_workflows::resolve_value_refs(&base, &context)
         .map_err(|err| -> SendableError { Box::new(err) })

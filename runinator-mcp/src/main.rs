@@ -6,11 +6,7 @@ use std::{
 
 use clap::Parser;
 use reqwest::blocking::Client;
-use runinator_models::{
-    core::ScheduledTask,
-    providers::ProviderMetadata,
-    runs::{RunRequest, RunStatus},
-};
+use runinator_models::{runs::RunStatus, workflows::WorkflowDefinition};
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -64,9 +60,8 @@ impl McpServer {
     }
 
     fn tools_list(&self) -> Result<Value, String> {
-        let tasks = self.fetch_tasks()?;
-        let providers = self.fetch_providers().unwrap_or_default();
-        Ok(json!({ "tools": tools_from_tasks(tasks, &providers) }))
+        let workflows = self.fetch_workflows()?;
+        Ok(json!({ "tools": tools_from_workflows(workflows) }))
     }
 
     fn tools_call(&self, params: Value) -> Result<Value, String> {
@@ -79,18 +74,15 @@ impl McpServer {
             .cloned()
             .unwrap_or_else(|| Value::Object(Default::default()));
 
-        let task_id = parse_tool_task_id(name)
-            .ok_or_else(|| format!("Tool name '{name}' does not contain a task id"))?;
-        let request = RunRequest {
-            parameters: arguments,
-            trigger: "mcp".into(),
-            workflow_run_id: None,
-            workflow_node_id: None,
-        };
+        let workflow_id = parse_tool_workflow_id(name)
+            .ok_or_else(|| format!("Tool name '{name}' does not contain a workflow id"))?;
+        let request = json!({
+            "parameters": arguments
+        });
 
         let mut run: Value = self
             .client
-            .post(self.url(&format!("tasks/{task_id}/runs")))
+            .post(self.url(&format!("workflows/{workflow_id}/runs")))
             .json(&request)
             .send()
             .map_err(|err| err.to_string())?
@@ -111,14 +103,18 @@ impl McpServer {
             .and_then(Value::as_str)
             .unwrap_or("queued");
         if matches!(status, "succeeded" | "failed" | "timed_out" | "canceled") {
-            let chunks = self.fetch_api_json(&format!("runs/{run_id}/chunks?limit=500"))?;
-            let artifacts = self.fetch_api_json(&format!("runs/{run_id}/artifacts"))?;
+            let chunks = self
+                .fetch_api_json(&format!("runs/{run_id}/chunks?limit=500"))
+                .unwrap_or(json!([]));
+            let artifacts = self
+                .fetch_api_json(&format!("runs/{run_id}/artifacts"))
+                .unwrap_or(json!([]));
             let is_error = status != "succeeded";
             let output = run.get("output_json").cloned().unwrap_or(Value::Null);
             return Ok(json!({
                 "content": [{
                     "type": "text",
-                    "text": format!("Runinator task finished with status {status}. Run resource: runinator://runs/{run_id}")
+                    "text": format!("Runinator workflow finished with status {status}. Run resource: runinator://runs/{run_id}")
                 }],
                 "structuredContent": {
                     "run": run,
@@ -133,7 +129,7 @@ impl McpServer {
         Ok(json!({
             "content": [{
                 "type": "text",
-                "text": format!("Runinator task queued. Run resource: runinator://runs/{run_id}")
+                "text": format!("Runinator workflow queued. Run resource: runinator://runs/{run_id}")
             }],
             "structuredContent": run,
             "isError": false,
@@ -230,20 +226,9 @@ impl McpServer {
         Ok(None)
     }
 
-    fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, String> {
+    fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>, String> {
         self.client
-            .get(self.url("tasks"))
-            .send()
-            .map_err(|err| err.to_string())?
-            .error_for_status()
-            .map_err(|err| err.to_string())?
-            .json()
-            .map_err(|err| err.to_string())
-    }
-
-    fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, String> {
-        self.client
-            .get(self.url("providers"))
+            .get(self.url("workflows"))
             .send()
             .map_err(|err| err.to_string())?
             .error_for_status()
@@ -301,36 +286,47 @@ impl McpServer {
 
     fn url(&self, path: &str) -> String {
         format!(
-            "{}{}",
+            "{}/{}",
             self.api_base_url.trim_end_matches('/'),
-            format!("/{path}")
+            path.trim_start_matches('/')
         )
     }
 }
 
-fn tools_from_tasks(tasks: Vec<ScheduledTask>, providers: &[ProviderMetadata]) -> Vec<Value> {
-    tasks
+fn tools_from_workflows(workflows: Vec<WorkflowDefinition>) -> Vec<Value> {
+    workflows
         .into_iter()
-        .filter(|task| task.enabled && task.mcp_enabled)
-        .filter_map(|task| {
-            let id = task.id?;
-            let input_schema = providers
-                .iter()
-                .find(|p| p.name == task.action_name)
-                .and_then(|p| {
-                    p.actions
-                        .iter()
-                        .find(|a| a.function_name == task.action_function)
-                })
-                .map(|a| a.to_json_schema())
-                .unwrap_or_else(|| json!({ "type": "object" }));
+        .filter(|wf| wf.enabled)
+        .filter_map(|wf| {
+            let id = wf.id?;
             Some(json!({
-                "name": tool_name(&task, id),
-                "description": format!("Run Runinator task '{}'", task.name),
-                "inputSchema": input_schema,
+                "name": tool_name(&wf, id),
+                "description": format!("Execute workflow: {}", wf.name),
+                "inputSchema": wf.input_schema,
             }))
         })
         .collect()
+}
+
+fn parse_tool_workflow_id(name: &str) -> Option<i64> {
+    name.split('_').last()?.parse().ok()
+}
+
+fn tool_name(wf: &WorkflowDefinition, id: i64) -> String {
+    let slug = wf
+        .name
+        .chars()
+        .map(|ch: char| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    format!("{slug}_{id}")
 }
 
 fn resource_templates() -> Vec<Value> {
@@ -351,8 +347,8 @@ fn resource_templates() -> Vec<Value> {
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://artifacts/{id}",
-            "name": "Artifact metadata",
+            "uri": "runinator://workflows",
+            "name": "Workflow list",
             "mimeType": "application/json"
         }),
     ]
@@ -385,29 +381,6 @@ fn resource_entries_from_runs(runs: &[Value]) -> Vec<Value> {
         }));
     }
     resources
-}
-
-fn tool_name(task: &ScheduledTask, id: i64) -> String {
-    let slug = task
-        .name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string();
-    format!("task_{id}_{slug}")
-}
-
-fn parse_tool_task_id(name: &str) -> Option<i64> {
-    let rest = name.strip_prefix("task_")?;
-    let (raw_id, _) = rest.split_once('_')?;
-    raw_id.parse().ok()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -448,41 +421,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
-    fn task(id: i64, name: &str, enabled: bool, mcp_enabled: bool) -> ScheduledTask {
-        ScheduledTask {
+    fn mock_workflow(id: i64, name: &str, enabled: bool) -> WorkflowDefinition {
+        WorkflowDefinition {
             id: Some(id),
             name: name.into(),
-            cron_schedule: "* * * * *".into(),
-            action_name: "Console".into(),
-            action_function: "exec".into(),
-            timeout: 30,
-            next_execution: None,
+            version: 1,
             enabled,
-            immediate: false,
-            blackout_start: None,
-            blackout_end: None,
-            default_parameters: json!({}),
-            mcp_enabled,
-            metadata: json!({}),
-            tags: Vec::new(),
+            input_schema: json!({ "type": "object" }),
+            definition: json!({}),
+            created_at: None,
+            updated_at: None,
         }
     }
 
     #[test]
-    fn tools_include_only_enabled_mcp_tasks() {
-        let tools = tools_from_tasks(
-            vec![
-                task(1, "Allowed", true, true),
-                task(2, "Disabled", false, true),
-                task(3, "Hidden", true, false),
-            ],
-            &[],
-        );
+    fn tools_include_only_enabled_workflows() {
+        let tools = tools_from_workflows(vec![
+            mock_workflow(1, "Allowed", true),
+            mock_workflow(2, "Disabled", false),
+        ]);
 
         assert_eq!(tools.len(), 1);
         assert_eq!(
             tools[0].get("name").and_then(Value::as_str),
-            Some("task_1_allowed")
+            Some("allowed_1")
         );
     }
 

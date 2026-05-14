@@ -2,10 +2,10 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import type { AppTab } from "../types/app";
 
-export const tabs: AppTab[] = ["Tasks", "Runs", "Workflows", "Resources", "Secrets"];
+export const tabs: AppTab[] = ["Workflows", "Runs", "Resources", "Secrets"];
 
 export const useAppStore = defineStore("app", () => {
-  const activeTab = ref<AppTab>("Tasks");
+  const activeTab = ref<AppTab>("Workflows");
   const serviceUrl = ref<string | null>(null);
   const backendReachable = ref(false);
   const initialLoading = ref(true);

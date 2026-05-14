@@ -5,7 +5,6 @@ fn test_github_provider_missing_token() {
     let provider = GitHubProvider;
     let request = ProviderExecutionRequest {
         run_id: Some(1),
-        task_id: Some(1),
         action_name: "github".into(),
         action_function: "create_pr".into(),
         parameters: json!({

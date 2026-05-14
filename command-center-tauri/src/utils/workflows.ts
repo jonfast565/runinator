@@ -1,7 +1,6 @@
 import { MarkerType, type Edge, type Node } from "@vue-flow/core";
 import type {
   JsonRecord,
-  ScheduledTask,
   WorkflowDefinition,
   WorkflowConnectionHandle,
   WorkflowDirectTransitionKey,
@@ -32,19 +31,17 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = ["next", "on_success", "on_failure", "on_timeout", "on_reject"];
 export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "right", "bottom", "left"];
 
-export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, tasks: ScheduledTask[] = []): Node[] {
+export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null): Node[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
   const layout = workflowLayoutNodes(definition);
   const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
-  const taskById = new Map(tasks.filter((task) => task.id !== null).map((task) => [task.id, task]));
   return nodes.map((node: JsonRecord, index: number) => {
     const id = String(node.id ?? `step_${index + 1}`);
     const position = layout[id] ?? { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
     const run = runByNode.get(id);
     const status = run?.status ?? inferredNodeStatus(node, id, detail);
     const kind = workflowNodeKind(node.kind);
-    const task = kind === "task" ? taskById.get(Number(node.task_id ?? 0)) : undefined;
     return {
       id,
       type: "workflow",
@@ -52,7 +49,7 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
       data: {
         title: id,
         kind,
-        summary: nodeSummary(node, task),
+        summary: nodeSummary(node),
         statusLabel: run ? `${run.status} a${run.attempt}` : status,
         approvalPrompt: approvalPrompt(node, run?.state),
         running: status === "running" || status === "queued",
@@ -260,48 +257,6 @@ export function removeWorkflowEdgeHandles(definition: JsonRecord, source: string
   delete handles[edgeHandleKey(source, semanticKey)];
 }
 
-export function createWorkflowTaskDraft(nodeId: string, taskId: number | null = null): ScheduledTask {
-  return stampWorkflowTaskMetadata({
-    id: taskId,
-    name: `${titleFromNodeId(nodeId)} Task`,
-    cron_schedule: "0 0 1 1 *",
-    action_name: "",
-    action_function: "",
-    timeout: 1,
-    next_execution: null,
-    enabled: false,
-    immediate: false,
-    blackout_start: null,
-    blackout_end: null,
-    default_parameters: {},
-    mcp_enabled: false,
-    metadata: {},
-    tags: []
-  }, nodeId);
-}
-
-export function copyWorkflowTaskDraft(source: ScheduledTask, nodeId: string, taskId: number | null = null): ScheduledTask {
-  return stampWorkflowTaskMetadata(
-    {
-      ...JSON.parse(JSON.stringify(source)),
-      id: taskId,
-      name: source.name ? `${source.name} copy` : `${titleFromNodeId(nodeId)} Task`,
-      enabled: false,
-      immediate: false
-    },
-    nodeId
-  );
-}
-
-export function stampWorkflowTaskMetadata(task: ScheduledTask, nodeId: string, workflowId?: number | null): ScheduledTask {
-  task.metadata = {
-    ...(task.metadata ?? {}),
-    task_type: "workflow",
-    workflow_node_id: nodeId
-  };
-  if (workflowId) task.metadata.workflow_id = workflowId;
-  return task;
-}
 
 export function removeEditableEdge(node: JsonRecord, edge: Edge): boolean {
   const data = edge.data as WorkflowEditorEdgeData | undefined;
@@ -746,10 +701,12 @@ function workflowNodeKind(value: unknown): WorkflowNodeKind {
   return typeof value === "string" && ["start", ...workflowNodeKinds, "loop", "end"].includes(value) ? (value as WorkflowNodeKind) : "task";
 }
 
-function nodeSummary(node: JsonRecord, task?: ScheduledTask): string {
+function nodeSummary(node: JsonRecord): string {
   switch (workflowNodeKind(node.kind)) {
-    case "task":
-      return task ? `${task.name} · ${task.action_name}.${task.action_function}` : `Task ${node.task_id ?? "-"}`;
+    case "task": {
+      const action = node.action_name ? `${node.action_name}.${node.action_function}` : "unconfigured action";
+      return `Action: ${action}`;
+    }
     case "approval":
       return String(node.parameters?.prompt ?? "Approval required");
     case "condition": {

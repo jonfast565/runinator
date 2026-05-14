@@ -11,14 +11,14 @@ use chrono::{DateTime, Utc};
 use log::{debug, error, info};
 use runinator_api::ServiceLocator;
 use runinator_comm::{
-    GossipMessage, TaskCommand, TaskResult, WorkerAnnouncement, WorkerPeer,
+    ActionCommand, GossipMessage, TaskResult, WorkerAnnouncement, WorkerPeer,
     discovery::{
         WebServiceDiscovery, apply_service_address, bind_gossip_socket, spawn_gossip_listener,
     },
 };
 use runinator_models::{
-    core::ScheduledTask,
     errors::{RuntimeError, SendableError},
+    workflows::WorkflowAction,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -120,17 +120,25 @@ impl WorkerManager {
         });
     }
 
-    pub async fn dispatch_task(
+    pub async fn dispatch_action(
         &self,
-        task: &ScheduledTask,
+        workflow_run_id: i64,
+        workflow_node_run_id: i64,
+        node_id: String,
+        action: &WorkflowAction,
+        parameters: serde_json::Value,
+        attempt: i64,
         timeout: Duration,
         retries: u8,
     ) -> Result<TaskResult, SendableError> {
-        let command = TaskCommand {
+        let command = ActionCommand {
             command_id: Uuid::new_v4(),
-            task: task.clone(),
-            run_id: None,
-            parameters: serde_json::Value::Null,
+            workflow_run_id,
+            workflow_node_run_id,
+            node_id,
+            action: action.clone(),
+            attempt,
+            parameters,
         };
 
         let mut last_error: Option<SendableError> = None;
@@ -147,10 +155,9 @@ impl WorkerManager {
             };
 
             debug!(
-                "Dispatching task {} to worker {} (attempt {}/{})",
-                task.id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "unknown".into()),
+                "Dispatching action {}.{} to worker {} (attempt {}/{})",
+                action.provider,
+                action.function,
                 worker.id,
                 attempt + 1,
                 retries.max(1)
@@ -173,7 +180,7 @@ impl WorkerManager {
         Err(last_error.unwrap_or_else(|| {
             Box::new(RuntimeError::new(
                 "scheduler.dispatch.failed".into(),
-                "Task dispatch failed without specific error".into(),
+                "Action dispatch failed without specific error".into(),
             ))
         }))
     }
@@ -210,7 +217,7 @@ impl WorkerManager {
     async fn send_command(
         &self,
         worker: &WorkerInfo,
-        command: TaskCommand,
+        command: ActionCommand,
         timeout: Duration,
     ) -> Result<TaskResult, SendableError> {
         let target = worker.socket_addr();

@@ -2,18 +2,16 @@ mod config;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashSet, convert::Infallible, path::Path, time::SystemTime};
+use std::{convert::Infallible, path::Path, time::SystemTime};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use clap::Parser;
 use config::Config;
 use log::{error, info};
 use runinator_api::AsyncApiClient;
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
-use runinator_models::{core::ScheduledTask, workflows::WorkflowDefinition};
+use runinator_models::workflows::{WorkflowDefinition, WorkflowTrigger};
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -58,106 +56,9 @@ impl runinator_api::ServiceLocator for GossipServiceLocator {
 #[derive(Deserialize)]
 struct ImportFile {
     #[serde(default)]
-    tasks: Vec<TaskDefinition>,
-    #[serde(default)]
     workflows: Vec<WorkflowDefinition>,
-}
-
-#[derive(Deserialize)]
-struct TaskDefinition {
-    id: i64,
-    name: String,
-    cron_schedule: String,
-    action_name: String,
-    action_function: String,
     #[serde(default)]
-    action_configuration: Option<Value>,
-    timeout: i64,
-    #[serde(default = "default_enabled")]
-    enabled: bool,
-    #[serde(default)]
-    immediate: bool,
-    #[serde(default)]
-    next_execution: Option<DateTime<Utc>>,
-    #[serde(default)]
-    blackout_start: Option<DateTime<Utc>>,
-    #[serde(default)]
-    blackout_end: Option<DateTime<Utc>>,
-    #[allow(dead_code)]
-    #[serde(default = "default_input_schema")]
-    input_schema: Value,
-    #[serde(default = "default_json_object")]
-    default_parameters: Value,
-    #[allow(dead_code)]
-    #[serde(default)]
-    output_schema: Option<Value>,
-    #[serde(default)]
-    mcp_enabled: bool,
-    #[serde(default = "default_json_object")]
-    metadata: Value,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_input_schema() -> Value {
-    serde_json::json!({ "type": "object", "additionalProperties": true })
-}
-
-fn default_json_object() -> Value {
-    Value::Object(Default::default())
-}
-
-impl From<TaskDefinition> for ScheduledTask {
-    fn from(def: TaskDefinition) -> Self {
-        let default_parameters =
-            merge_legacy_parameters(def.action_configuration, def.default_parameters);
-        ScheduledTask {
-            id: Some(def.id),
-            name: def.name,
-            cron_schedule: def.cron_schedule,
-            action_name: def.action_name,
-            action_function: def.action_function,
-            timeout: def.timeout,
-            next_execution: def.next_execution,
-            enabled: def.enabled,
-            immediate: def.immediate,
-            blackout_start: def.blackout_start,
-            blackout_end: def.blackout_end,
-            default_parameters,
-            mcp_enabled: def.mcp_enabled,
-            metadata: def.metadata,
-            tags: def.tags,
-        }
-    }
-}
-
-fn merge_legacy_parameters(
-    action_configuration: Option<Value>,
-    default_parameters: Value,
-) -> Value {
-    let Some(action_configuration) = action_configuration else {
-        return default_parameters;
-    };
-    let legacy = match action_configuration {
-        Value::String(raw) => serde_json::from_str::<Value>(&raw)
-            .ok()
-            .filter(Value::is_object)
-            .unwrap_or_else(|| serde_json::json!({ "command": raw })),
-        Value::Object(_) => action_configuration,
-        Value::Null => Value::Object(Map::new()),
-        other => serde_json::json!({ "value": other }),
-    };
-    match (legacy, default_parameters) {
-        (Value::Object(mut legacy), Value::Object(defaults)) => {
-            legacy.extend(defaults);
-            Value::Object(legacy)
-        }
-        (_, defaults) => defaults,
-    }
+    triggers: Vec<WorkflowTrigger>,
 }
 
 #[tokio::main]
@@ -174,7 +75,7 @@ async fn main() -> Result<(), DynError> {
 
     if config.once {
         let mut last_modified = None;
-        sync_tasks_if_changed(&config, &api, &mut last_modified).await?;
+        sync_workflows_if_changed(&config, &api, &mut last_modified).await?;
         return Ok(());
     }
 
@@ -184,8 +85,8 @@ async fn main() -> Result<(), DynError> {
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(err) = sync_tasks_if_changed(&config, &api, &mut last_modified).await {
-                    error!("Failed to synchronize tasks: {}", err);
+                if let Err(err) = sync_workflows_if_changed(&config, &api, &mut last_modified).await {
+                    error!("Failed to synchronize workflows: {}", err);
                 }
             }
             _ = tokio::signal::ctrl_c() => {
@@ -198,7 +99,7 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
-async fn sync_tasks_if_changed(
+async fn sync_workflows_if_changed(
     config: &Config,
     api: &ApiClient,
     last_modified: &mut Option<SystemTime>,
@@ -214,17 +115,6 @@ async fn sync_tasks_if_changed(
 
     let seed = load_import_file(path).await?;
     info!(
-        "Seeding {} task(s) from {}",
-        seed.tasks.len(),
-        path.display()
-    );
-    for task in seed.tasks {
-        let _ = api
-            .upsert_task(&task)
-            .await
-            .map_err(|err| -> DynError { Box::new(err) })?;
-    }
-    info!(
         "Seeding {} workflow(s) from {}",
         seed.workflows.len(),
         path.display()
@@ -235,74 +125,32 @@ async fn sync_tasks_if_changed(
             .await
             .map_err(|err| -> DynError { Box::new(err) })?;
     }
+    info!(
+        "Seeding {} workflow trigger(s) from {}",
+        seed.triggers.len(),
+        path.display()
+    );
+    for trigger in seed.triggers {
+        let _ = api
+            .upsert_workflow_trigger(&trigger)
+            .await
+            .map_err(|err| -> DynError { Box::new(err) })?;
+    }
 
     *last_modified = Some(modified);
     Ok(())
 }
 
 struct ImportSeed {
-    tasks: Vec<ScheduledTask>,
     workflows: Vec<WorkflowDefinition>,
+    triggers: Vec<WorkflowTrigger>,
 }
 
 async fn load_import_file(path: &Path) -> Result<ImportSeed, DynError> {
     let data = tokio::fs::read_to_string(path).await?;
     let parsed: ImportFile = serde_json::from_str(&data)?;
-    let workflows = parsed.workflows;
-    let workflow_task_ids = workflow_task_ids(&workflows);
-    let mut tasks: Vec<ScheduledTask> = parsed.tasks.into_iter().map(Into::into).collect();
-    mark_workflow_tasks(&mut tasks, &workflow_task_ids);
-    Ok(ImportSeed { tasks, workflows })
-}
-
-fn mark_workflow_tasks(tasks: &mut [ScheduledTask], workflow_task_ids: &HashSet<i64>) {
-    for task in tasks {
-        let Some(task_id) = task.id else {
-            continue;
-        };
-        if !workflow_task_ids.contains(&task_id) {
-            continue;
-        }
-        let metadata = match &mut task.metadata {
-            Value::Object(metadata) => metadata,
-            _ => {
-                task.metadata = Value::Object(Map::new());
-                let Value::Object(metadata) = &mut task.metadata else {
-                    continue;
-                };
-                metadata
-            }
-        };
-        metadata.insert("task_type".into(), Value::String("workflow".into()));
-    }
-}
-
-fn workflow_task_ids(workflows: &[WorkflowDefinition]) -> HashSet<i64> {
-    let mut task_ids = HashSet::new();
-    for workflow in workflows {
-        collect_workflow_task_ids(&workflow.definition, &mut task_ids);
-    }
-    task_ids
-}
-
-fn collect_workflow_task_ids(value: &Value, task_ids: &mut HashSet<i64>) {
-    match value {
-        Value::Object(object) => {
-            let is_task_node = object.get("kind").and_then(Value::as_str) == Some("task");
-            if is_task_node {
-                if let Some(task_id) = object.get("task_id").and_then(Value::as_i64) {
-                    task_ids.insert(task_id);
-                }
-            }
-            for child in object.values() {
-                collect_workflow_task_ids(child, task_ids);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_workflow_task_ids(item, task_ids);
-            }
-        }
-        _ => {}
-    }
+    Ok(ImportSeed {
+        workflows: parsed.workflows,
+        triggers: parsed.triggers,
+    })
 }

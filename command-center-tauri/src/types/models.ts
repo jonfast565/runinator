@@ -50,23 +50,6 @@ export interface WorkflowLayoutPosition {
   y: number;
 }
 
-export interface ScheduledTask {
-  id: number | null;
-  name: string;
-  cron_schedule: string;
-  action_name: string;
-  action_function: string;
-  timeout: number;
-  next_execution: string | null;
-  enabled: boolean;
-  immediate: boolean;
-  blackout_start: string | null;
-  blackout_end: string | null;
-  default_parameters: JsonRecord;
-  mcp_enabled: boolean;
-  metadata: JsonRecord;
-  tags: string[];
-}
 
 export interface ActionMetadata {
   function_name: string;
@@ -115,7 +98,6 @@ export interface ProviderMetadata {
 
 export interface RunSummary {
   id: number;
-  task_id?: number;
   workflow_id?: number;
   status: string;
   parameters?: JsonRecord;
@@ -159,7 +141,6 @@ export interface WorkflowNodeRun {
   id: number;
   workflow_run_id: number;
   node_id: string;
-  task_run_id: number | null;
   status: string;
   attempt: number;
   parameters: JsonRecord;
@@ -182,25 +163,14 @@ export interface TaskResponse {
   message: string;
 }
 
-export interface SaveTaskResponse extends TaskResponse {
-  creating: boolean;
-}
-
-export interface WorkflowBundleTaskDraft {
-  node_id: string;
-  temporary_id: number | null;
-  task: ScheduledTask;
-}
 
 export interface WorkflowBundleSaveRequest {
   workflow: WorkflowDefinition;
-  tasks: WorkflowBundleTaskDraft[];
 }
 
 export interface WorkflowBundleSaveResponse {
   workflow: WorkflowDefinition;
-  task_id_map: Record<string, number>;
-  tasks: ScheduledTask[];
+  tasks: any[];
 }
 
 export interface CredentialSummary {

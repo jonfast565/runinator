@@ -20,6 +20,53 @@ pub struct WorkflowDefinition {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowTriggerKind {
+    Cron,
+    Manual,
+}
+
+impl WorkflowTriggerKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkflowTriggerKind::Cron => "cron",
+            WorkflowTriggerKind::Manual => "manual",
+        }
+    }
+}
+
+impl TryFrom<&str> for WorkflowTriggerKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "cron" => Ok(WorkflowTriggerKind::Cron),
+            "manual" => Ok(WorkflowTriggerKind::Manual),
+            other => Err(format!("Unknown workflow trigger kind '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTrigger {
+    pub id: Option<i64>,
+    pub workflow_id: i64,
+    pub kind: WorkflowTriggerKind,
+    pub enabled: bool,
+    #[serde(default)]
+    pub configuration: Value,
+    pub next_execution: Option<DateTime<Utc>>,
+    pub blackout_start: Option<DateTime<Utc>>,
+    pub blackout_end: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub metadata: Value,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowStatus {
@@ -97,7 +144,7 @@ impl TryFrom<&str> for WorkflowStatus {
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowNodeKind {
     Start,
-    Task,
+    Action,
     Wait,
     Condition,
     Switch,
@@ -111,6 +158,26 @@ pub enum WorkflowNodeKind {
     Emit,
     Subflow,
     End,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowAction {
+    pub provider: String,
+    pub function: String,
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: i64,
+    #[serde(default)]
+    pub default_parameters: Value,
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    #[serde(default)]
+    pub metadata: Value,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_timeout_seconds() -> i64 {
+    60
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -261,7 +328,7 @@ pub struct WorkflowNode {
     pub id: String,
     pub kind: WorkflowNodeKind,
     #[serde(default)]
-    pub task_id: Option<i64>,
+    pub action: Option<WorkflowAction>,
     #[serde(default)]
     pub parameters: Value,
     #[serde(default)]
@@ -303,7 +370,6 @@ pub struct WorkflowNodeRun {
     pub id: i64,
     pub workflow_run_id: i64,
     pub node_id: String,
-    pub task_run_id: Option<i64>,
     pub status: WorkflowStatus,
     pub attempt: i64,
     pub parameters: Value,
@@ -314,4 +380,26 @@ pub struct WorkflowNodeRun {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowNodeRunChunk {
+    pub id: i64,
+    pub workflow_node_run_id: i64,
+    pub sequence: i64,
+    pub stream: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowNodeRunArtifact {
+    pub id: i64,
+    pub workflow_node_run_id: i64,
+    pub name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub uri: String,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
 }

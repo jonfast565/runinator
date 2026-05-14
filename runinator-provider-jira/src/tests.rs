@@ -7,7 +7,6 @@ fn test_jira_provider_missing_base_url() {
     let provider = JiraProvider;
     let request = ProviderExecutionRequest {
         run_id: Some(1),
-        task_id: Some(1),
         action_name: "jira".into(),
         action_function: "search".into(),
         parameters: json!({

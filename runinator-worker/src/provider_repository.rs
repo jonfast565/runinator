@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use runinator_models::{
-    core::ScheduledTask,
     errors::{RuntimeError, SendableError},
     providers::ProviderMetadata,
+    workflows::WorkflowAction,
 };
 use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_ai::AiCommandProvider;
@@ -33,20 +33,20 @@ fn get_providers() -> Vec<StaticProvider> {
 
 pub fn resolve_provider(
     libraries: &HashMap<String, Plugin>,
-    task: &ScheduledTask,
+    action: &WorkflowAction,
 ) -> Result<StaticProvider, SendableError> {
     let providers = get_providers();
-    if let Some(provider) = providers.into_iter().find(|p| p.name() == task.action_name) {
+    if let Some(provider) = providers.into_iter().find(|p| p.name() == action.provider) {
         return Ok(provider);
     }
 
-    if let Some(plugin) = libraries.get(&task.action_name) {
+    if let Some(plugin) = libraries.get(&action.provider) {
         return Ok(Box::new(plugin.clone()));
     }
 
     Err(Box::new(RuntimeError::new(
         "worker.provider.not_found".into(),
-        format!("Cannot find plugin/provider {}", task.action_name),
+        format!("Cannot find plugin/provider {}", action.provider),
     )))
 }
 

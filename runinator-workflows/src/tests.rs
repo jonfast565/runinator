@@ -23,7 +23,7 @@ fn validates_state_machine_workflow() {
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "done" } } },
+            { "id": "build", "kind": "action", "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "default_parameters": {} }, "transitions": { "on_success": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -38,7 +38,7 @@ fn rejects_missing_transition_target() {
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
             { "id": "done", "kind": "end" },
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "missing" } } }
+            { "id": "build", "kind": "action", "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "default_parameters": {} }, "transitions": { "on_success": { "$node": "missing" } } }
         ]
     }));
 
@@ -54,7 +54,7 @@ fn rejects_old_reference_syntax() {
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": "build" } },
-            { "id": "build", "kind": "task", "task_id": 1 },
+            { "id": "build", "kind": "action", "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "default_parameters": {} } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -319,8 +319,13 @@ fn validates_explicit_bounded_reentry_cycle() {
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
             {
                 "id": "build",
-                "kind": "task",
-                "task_id": 1,
+                "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
                 "reentry": { "enabled": true, "max_visits": 3, "on_exhausted": { "$node": "deferred" } },
                 "transitions": { "on_success": { "$node": "review" } }
             },
@@ -339,7 +344,7 @@ fn rejects_unbounded_reentry_cycle() {
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": { "on_success": { "$node": "review" } } },
+            { "id": "build", "kind": "action", "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "default_parameters": {} }, "transitions": { "on_success": { "$node": "review" } } },
             { "id": "review", "kind": "approval", "transitions": { "on_failure": { "$node": "build" }, "on_success": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
@@ -359,8 +364,13 @@ fn rejects_invalid_reentry_configuration() {
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
             {
                 "id": "build",
-                "kind": "task",
-                "task_id": 1,
+                "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
                 "reentry": { "enabled": true, "max_visits": 0 },
                 "transitions": { "on_success": { "$node": "done" } }
             },
@@ -378,8 +388,13 @@ fn rejects_invalid_reentry_configuration() {
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
             {
                 "id": "build",
-                "kind": "task",
-                "task_id": 1,
+                "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
                 "reentry": { "enabled": true, "max_visits": 2, "on_exhausted": { "$node": "missing" } },
                 "transitions": { "on_success": { "$node": "done" } }
             },
@@ -436,8 +451,13 @@ fn test_workflow_state_machine_logic_integration() {
             },
             {
                 "id": "step1",
-                "kind": "task",
-                "task_id": 1,
+                "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
                 "transitions": { "on_success": { "$node": "step2" }, "on_failure": { "$node": "failed" } }
             },
             {
@@ -508,7 +528,7 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
     let wf = workflow(serde_json::json!({
         "start": "build",
         "nodes": [
-            { "id": "build", "kind": "task", "task_id": 1, "transitions": {} }
+            { "id": "build", "kind": "action", "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "default_parameters": {} }, "transitions": {} }
         ],
         "ui": {
             "layout": {

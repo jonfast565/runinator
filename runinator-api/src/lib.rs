@@ -8,4 +8,6 @@ pub use async_client::AsyncApiClient;
 pub use blocking_client::BlockingApiClient;
 pub use error::{ApiError, Result};
 pub use locator::{BlockingServiceLocator, ServiceLocator, StaticLocator};
-pub use types::{RunArtifactPayload, RunChunkPayload, RunStatusPayload, TaskRunPayload};
+pub use types::{
+    RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload,
+};

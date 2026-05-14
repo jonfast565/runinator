@@ -1,9 +1,6 @@
-use std::collections::HashMap;
-
 use runinator_models::{
-    core::ScheduledTask,
     providers::ProviderMetadata,
-    runs::{RunArtifact, RunChunk, RunSummary},
+    runs::{RunArtifact, RunChunk},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowRun},
 };
@@ -16,9 +13,8 @@ use crate::{
     error::{CommandError, CommandResult},
     state::CommandCenterState,
     types::{
-        CredentialPutRequest, CredentialSummary, SaveTaskRequest, SaveTaskResponse, ServiceStatus,
-        WorkflowBundleSaveRequest, WorkflowBundleSaveResponse, WorkflowRunCreated,
-        WorkflowRunDetail,
+        CredentialPutRequest, CredentialSummary, ServiceStatus, WorkflowBundleSaveRequest,
+        WorkflowBundleSaveResponse, WorkflowRunCreated, WorkflowRunDetail,
     },
 };
 
@@ -37,108 +33,31 @@ pub fn start_service_discovery(app: AppHandle, state: State<'_, CommandCenterSta
 }
 
 #[tauri::command]
-pub async fn fetch_tasks(
+pub async fn fetch_workflows(
     state: State<'_, CommandCenterState>,
-) -> CommandResult<Vec<ScheduledTask>> {
-    get_json(&state, "tasks").await
+) -> CommandResult<Vec<WorkflowDefinition>> {
+    get_json(&state, "workflows").await
 }
 
 #[tauri::command]
-pub async fn save_task(
+pub async fn save_workflow(
     state: State<'_, CommandCenterState>,
-    request: SaveTaskRequest,
-) -> CommandResult<SaveTaskResponse> {
-    let body = save_task_to_service(&state, &request.task, request.creating).await?;
-    Ok(SaveTaskResponse {
-        success: body.success,
-        message: body.message,
-        creating: request.creating,
-    })
-}
-
-#[tauri::command]
-pub async fn delete_task(
-    state: State<'_, CommandCenterState>,
-    task_id: i64,
-) -> CommandResult<TaskResponse> {
-    let url = build_state_url(&state, &format!("tasks/{task_id}")).await?;
-    let response = state.client.delete(url.clone()).send().await?;
-    let response = handle_response(url, response).await?;
-    Ok(response.json::<TaskResponse>().await?)
+    workflow: WorkflowDefinition,
+) -> CommandResult<WorkflowDefinition> {
+    save_workflow_to_service(&state, &workflow).await
 }
 
 #[tauri::command]
 pub async fn save_workflow_bundle(
     state: State<'_, CommandCenterState>,
-    mut request: WorkflowBundleSaveRequest,
+    request: WorkflowBundleSaveRequest,
 ) -> CommandResult<WorkflowBundleSaveResponse> {
-    let existing_tasks: Vec<ScheduledTask> = get_json(&state, "tasks").await?;
-    let mut next_task_id = existing_tasks
-        .iter()
-        .filter_map(|task| task.id)
-        .max()
-        .unwrap_or(0)
-        + 1;
-    let mut task_id_map = HashMap::new();
-    let mut saved_tasks = Vec::new();
-
-    for draft in &mut request.tasks {
-        let is_new = draft.task.id.unwrap_or(0) <= 0;
-        if is_new {
-            draft.task.id = Some(next_task_id);
-            next_task_id += 1;
-        }
-        stamp_workflow_task_metadata(&mut draft.task, None, &draft.node_id);
-        let response = save_task_to_service(&state, &draft.task, is_new).await?;
-        if !response.success {
-            return Err(CommandError::Unexpected(response.message));
-        }
-        let id = draft.task.id.ok_or_else(|| {
-            CommandError::Unexpected("saved workflow task is missing an ID".into())
-        })?;
-        task_id_map.insert(draft.node_id.clone(), id);
-        saved_tasks.push(draft.task.clone());
-    }
-
-    rewrite_workflow_task_ids(&mut request.workflow.definition, &task_id_map);
     let saved_workflow = save_workflow_to_service(&state, &request.workflow).await?;
-    if let Some(workflow_id) = saved_workflow.id {
-        for task in &mut saved_tasks {
-            let node_id = task
-                .metadata
-                .get("workflow_node_id")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_default();
-            stamp_workflow_task_metadata(task, Some(workflow_id), &node_id);
-            let response = save_task_to_service(&state, task, false).await?;
-            if !response.success {
-                return Err(CommandError::Unexpected(response.message));
-            }
-        }
-    }
 
     Ok(WorkflowBundleSaveResponse {
         workflow: saved_workflow,
-        task_id_map,
-        tasks: saved_tasks,
+        tasks: vec![],
     })
-}
-
-#[tauri::command]
-pub async fn request_task_run(
-    state: State<'_, CommandCenterState>,
-    task_id: i64,
-) -> CommandResult<Value> {
-    post_empty(&state, &format!("tasks/{task_id}/request_run")).await
-}
-
-#[tauri::command]
-pub async fn fetch_task_runs(
-    state: State<'_, CommandCenterState>,
-    task_id: i64,
-) -> CommandResult<Vec<RunSummary>> {
-    get_json(&state, &format!("tasks/{task_id}/runs")).await
 }
 
 #[tauri::command]
@@ -155,41 +74,6 @@ pub async fn fetch_run_artifacts(
     run_id: i64,
 ) -> CommandResult<Vec<RunArtifact>> {
     get_json(&state, &format!("runs/{run_id}/artifacts")).await
-}
-
-#[tauri::command]
-pub async fn fetch_workflows(
-    state: State<'_, CommandCenterState>,
-) -> CommandResult<Vec<WorkflowDefinition>> {
-    get_json(&state, "workflows").await
-}
-
-#[tauri::command]
-pub async fn save_workflow(
-    state: State<'_, CommandCenterState>,
-    workflow: WorkflowDefinition,
-) -> CommandResult<WorkflowDefinition> {
-    save_workflow_to_service(&state, &workflow).await
-}
-
-async fn save_task_to_service(
-    state: &CommandCenterState,
-    task: &ScheduledTask,
-    creating: bool,
-) -> CommandResult<TaskResponse> {
-    let path = match (creating, task.id) {
-        (true, _) => "tasks".to_string(),
-        (false, Some(id)) => format!("tasks/{id}"),
-        (false, None) => return Err(CommandError::Unexpected("Task is missing an ID".into())),
-    };
-    let url = build_state_url(state, &path).await?;
-    let response = if creating {
-        state.client.post(url.clone()).json(task).send().await?
-    } else {
-        state.client.patch(url.clone()).json(task).send().await?
-    };
-    let response = handle_response(url, response).await?;
-    Ok(response.json::<TaskResponse>().await?)
 }
 
 async fn save_workflow_to_service(
@@ -218,94 +102,6 @@ async fn save_workflow_to_service(
     };
     let response = handle_response(url, response).await?;
     Ok(response.json::<WorkflowDefinition>().await?)
-}
-
-fn rewrite_workflow_task_ids(definition: &mut Value, task_id_map: &HashMap<String, i64>) {
-    let Some(nodes) = definition.get_mut("nodes").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for node in nodes {
-        let Some(object) = node.as_object_mut() else {
-            continue;
-        };
-        if object.get("kind").and_then(Value::as_str) != Some("task") {
-            continue;
-        }
-        let Some(node_id) = object.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(task_id) = task_id_map.get(node_id) else {
-            continue;
-        };
-        object.insert("task_id".into(), Value::from(*task_id));
-    }
-}
-
-fn stamp_workflow_task_metadata(task: &mut ScheduledTask, workflow_id: Option<i64>, node_id: &str) {
-    if !task.metadata.is_object() {
-        task.metadata = json!({});
-    }
-    let Some(metadata) = task.metadata.as_object_mut() else {
-        return;
-    };
-    metadata.insert("task_type".into(), Value::String("workflow".into()));
-    if !node_id.is_empty() {
-        metadata.insert("workflow_node_id".into(), Value::String(node_id.into()));
-    }
-    if let Some(workflow_id) = workflow_id {
-        metadata.insert("workflow_id".into(), Value::from(workflow_id));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn rewrites_temporary_workflow_task_ids_by_node_id() {
-        let mut definition = json!({
-            "nodes": [
-                { "id": "build", "kind": "task", "task_id": -1 },
-                { "id": "wait", "kind": "wait" }
-            ]
-        });
-        let mut task_ids = HashMap::new();
-        task_ids.insert("build".to_string(), 100);
-
-        rewrite_workflow_task_ids(&mut definition, &task_ids);
-
-        assert_eq!(definition["nodes"][0]["task_id"], 100);
-        assert!(definition["nodes"][1].get("task_id").is_none());
-    }
-
-    #[test]
-    fn stamps_workflow_task_metadata_without_clobbering_existing_values() {
-        let mut task = ScheduledTask {
-            id: Some(1),
-            name: "task".into(),
-            cron_schedule: "* * * * *".into(),
-            action_name: "provider".into(),
-            action_function: "run".into(),
-            timeout: 1,
-            next_execution: None,
-            enabled: false,
-            immediate: false,
-            blackout_start: None,
-            blackout_end: None,
-            default_parameters: json!({}),
-            mcp_enabled: false,
-            metadata: json!({ "summary": "kept" }),
-            tags: vec![],
-        };
-
-        stamp_workflow_task_metadata(&mut task, Some(7), "build");
-
-        assert_eq!(task.metadata["summary"], "kept");
-        assert_eq!(task.metadata["task_type"], "workflow");
-        assert_eq!(task.metadata["workflow_id"], 7);
-        assert_eq!(task.metadata["workflow_node_id"], "build");
-    }
 }
 
 #[tauri::command]

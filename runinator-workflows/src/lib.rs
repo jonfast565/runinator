@@ -25,8 +25,8 @@ pub enum WorkflowValidationError {
     MissingTransition { node: String, target: String },
     #[error("workflow node is invalid: {0}")]
     InvalidNode(String),
-    #[error("workflow node '{0}' of kind task requires task_id")]
-    MissingTaskId(String),
+    #[error("workflow node '{0}' of kind action requires action configuration")]
+    MissingAction(String),
     #[error("workflow node '{0}' retry.max_attempts must be greater than zero")]
     InvalidRetry(String),
     #[error("workflow node '{0}' timeout_seconds must be greater than zero")]
@@ -249,8 +249,8 @@ pub fn validate_workflow(
     }
 
     for node in &nodes {
-        if node.kind == WorkflowNodeKind::Task && node.task_id.is_none() {
-            return Err(WorkflowValidationError::MissingTaskId(
+        if node.kind == WorkflowNodeKind::Action && node.action.is_none() {
+            return Err(WorkflowValidationError::MissingAction(
                 node.id.as_str().to_string(),
             ));
         }

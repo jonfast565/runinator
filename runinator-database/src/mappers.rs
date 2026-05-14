@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
 use runinator_models::{
-    core::ScheduledTask,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+    },
 };
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
@@ -11,53 +13,10 @@ fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
 }
 
-macro_rules! scheduled_task_from_row {
-    ($row:expr) => {{
-        let next_execution = $row
-            .get::<Option<i64>, _>("next_execution")
-            .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
-
-        let blackout_start = $row
-            .get::<Option<i64>, _>("blackout_start")
-            .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
-
-        let blackout_end = $row
-            .get::<Option<i64>, _>("blackout_end")
-            .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
-
-        ScheduledTask {
-            id: $row.get::<Option<i64>, _>("id"),
-            name: $row.get::<String, _>("name"),
-            cron_schedule: $row.get::<String, _>("cron_schedule"),
-            action_name: $row.get::<String, _>("action_name"),
-            action_function: $row.get::<String, _>("action_function"),
-            timeout: $row.get::<i64, _>("timeout"),
-            next_execution,
-            enabled: $row.get::<bool, _>("enabled"),
-            immediate: $row.get::<bool, _>("immediate"),
-            blackout_start,
-            blackout_end,
-            default_parameters: parse_json($row.get::<String, _>("default_parameters")),
-            mcp_enabled: $row.get::<bool, _>("mcp_enabled"),
-            metadata: parse_json($row.get::<String, _>("metadata")),
-            tags: serde_json::from_str(&$row.get::<String, _>("tags")).unwrap_or_default(),
-        }
-    }};
-}
-
-pub fn sqlite_row_to_scheduled_task(row: &SqliteRow) -> ScheduledTask {
-    scheduled_task_from_row!(row)
-}
-
-pub fn postgres_row_to_scheduled_task(row: &PgRow) -> ScheduledTask {
-    scheduled_task_from_row!(row)
-}
-
 macro_rules! run_summary_from_row {
     ($row:expr) => {{
         RunSummary {
             id: $row.get("id"),
-            task_id: $row.get("task_id"),
             status: RunStatus::try_from($row.get::<String, _>("status").as_str())
                 .unwrap_or(RunStatus::Failed),
             parameters: parse_json($row.get::<String, _>("parameters")),
@@ -157,6 +116,39 @@ pub fn postgres_row_to_workflow(row: &PgRow) -> WorkflowDefinition {
     workflow_from_row!(row)
 }
 
+macro_rules! workflow_trigger_from_row {
+    ($row:expr) => {{
+        WorkflowTrigger {
+            id: $row.get("id"),
+            workflow_id: $row.get("workflow_id"),
+            kind: WorkflowTriggerKind::try_from($row.get::<String, _>("kind").as_str())
+                .unwrap_or(WorkflowTriggerKind::Manual),
+            enabled: $row.get("enabled"),
+            configuration: parse_json($row.get::<String, _>("configuration")),
+            next_execution: $row
+                .get::<Option<i64>, _>("next_execution")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            blackout_start: $row
+                .get::<Option<i64>, _>("blackout_start")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            blackout_end: $row
+                .get::<Option<i64>, _>("blackout_end")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_workflow_trigger(row: &SqliteRow) -> WorkflowTrigger {
+    workflow_trigger_from_row!(row)
+}
+
+pub fn postgres_row_to_workflow_trigger(row: &PgRow) -> WorkflowTrigger {
+    workflow_trigger_from_row!(row)
+}
+
 macro_rules! workflow_run_from_row {
     ($row:expr) => {{
         WorkflowRun {
@@ -194,7 +186,6 @@ macro_rules! workflow_node_run_from_row {
             id: $row.get("id"),
             workflow_run_id: $row.get("workflow_run_id"),
             node_id: $row.get("node_id"),
-            task_run_id: $row.get("task_run_id"),
             status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
                 .unwrap_or(WorkflowStatus::Failed),
             attempt: $row.get("attempt"),
@@ -223,6 +214,52 @@ pub fn sqlite_row_to_workflow_node_run(row: &SqliteRow) -> WorkflowNodeRun {
 
 pub fn postgres_row_to_workflow_node_run(row: &PgRow) -> WorkflowNodeRun {
     workflow_node_run_from_row!(row)
+}
+
+macro_rules! workflow_node_run_chunk_from_row {
+    ($row:expr) => {{
+        WorkflowNodeRunChunk {
+            id: $row.get("id"),
+            workflow_node_run_id: $row.get("workflow_node_run_id"),
+            sequence: $row.get("sequence"),
+            stream: $row.get("stream"),
+            content: $row.get("content"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_workflow_node_run_chunk(row: &SqliteRow) -> WorkflowNodeRunChunk {
+    workflow_node_run_chunk_from_row!(row)
+}
+
+pub fn postgres_row_to_workflow_node_run_chunk(row: &PgRow) -> WorkflowNodeRunChunk {
+    workflow_node_run_chunk_from_row!(row)
+}
+
+macro_rules! workflow_node_run_artifact_from_row {
+    ($row:expr) => {{
+        WorkflowNodeRunArtifact {
+            id: $row.get("id"),
+            workflow_node_run_id: $row.get("workflow_node_run_id"),
+            name: $row.get("name"),
+            mime_type: $row.get("mime_type"),
+            size_bytes: $row.get("size_bytes"),
+            uri: $row.get("uri"),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_workflow_node_run_artifact(row: &SqliteRow) -> WorkflowNodeRunArtifact {
+    workflow_node_run_artifact_from_row!(row)
+}
+
+pub fn postgres_row_to_workflow_node_run_artifact(row: &PgRow) -> WorkflowNodeRunArtifact {
+    workflow_node_run_artifact_from_row!(row)
 }
 
 macro_rules! catalog_item_from_row {

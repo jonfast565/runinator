@@ -6,14 +6,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use chrono::{DateTime, Utc};
 use runinator_api::{AsyncApiClient, StaticLocator};
-use runinator_models::{
-    core::ScheduledTask,
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+use runinator_models::workflows::{
+    WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
 };
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::time::sleep;
 
 type E2eResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -81,9 +79,6 @@ async fn poll_workflow(
 
 async fn import_seed(api: &ApiClient, path: &Path) -> E2eResult<()> {
     let seed = load_import_file(path)?;
-    for task in seed.tasks {
-        api.upsert_task(&task).await?;
-    }
     for workflow in seed.workflows {
         api.upsert_workflow(&workflow).await?;
     }
@@ -299,43 +294,10 @@ fn bin_name(name: &str) -> String {
 #[derive(Deserialize)]
 struct ImportFile {
     #[serde(default)]
-    tasks: Vec<TaskDefinition>,
-    #[serde(default)]
     workflows: Vec<WorkflowDefinition>,
 }
 
-#[derive(Deserialize)]
-struct TaskDefinition {
-    id: i64,
-    name: String,
-    cron_schedule: String,
-    action_name: String,
-    action_function: String,
-    #[serde(default)]
-    action_configuration: Option<Value>,
-    timeout: i64,
-    #[serde(default = "default_enabled")]
-    enabled: bool,
-    #[serde(default)]
-    immediate: bool,
-    #[serde(default)]
-    next_execution: Option<DateTime<Utc>>,
-    #[serde(default)]
-    blackout_start: Option<DateTime<Utc>>,
-    #[serde(default)]
-    blackout_end: Option<DateTime<Utc>>,
-    #[serde(default = "default_json_object")]
-    default_parameters: Value,
-    #[serde(default)]
-    mcp_enabled: bool,
-    #[serde(default = "default_json_object")]
-    metadata: Value,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
 struct ImportSeed {
-    tasks: Vec<ScheduledTask>,
     workflows: Vec<WorkflowDefinition>,
 }
 
@@ -343,65 +305,6 @@ fn load_import_file(path: &Path) -> E2eResult<ImportSeed> {
     let data = fs::read_to_string(path)?;
     let parsed: ImportFile = serde_json::from_str(&data)?;
     Ok(ImportSeed {
-        tasks: parsed.tasks.into_iter().map(Into::into).collect(),
         workflows: parsed.workflows,
     })
-}
-
-impl From<TaskDefinition> for ScheduledTask {
-    fn from(def: TaskDefinition) -> Self {
-        ScheduledTask {
-            id: Some(def.id),
-            name: def.name,
-            cron_schedule: def.cron_schedule,
-            action_name: def.action_name,
-            action_function: def.action_function,
-            timeout: def.timeout,
-            next_execution: def.next_execution,
-            enabled: def.enabled,
-            immediate: def.immediate,
-            blackout_start: def.blackout_start,
-            blackout_end: def.blackout_end,
-            default_parameters: merge_legacy_parameters(
-                def.action_configuration,
-                def.default_parameters,
-            ),
-            mcp_enabled: def.mcp_enabled,
-            metadata: def.metadata,
-            tags: def.tags,
-        }
-    }
-}
-
-fn merge_legacy_parameters(
-    action_configuration: Option<Value>,
-    default_parameters: Value,
-) -> Value {
-    let Some(action_configuration) = action_configuration else {
-        return default_parameters;
-    };
-    let legacy = match action_configuration {
-        Value::String(raw) => serde_json::from_str::<Value>(&raw)
-            .ok()
-            .filter(Value::is_object)
-            .unwrap_or_else(|| json!({ "command": raw })),
-        Value::Object(_) => action_configuration,
-        Value::Null => Value::Object(Map::new()),
-        other => json!({ "value": other }),
-    };
-    match (legacy, default_parameters) {
-        (Value::Object(mut legacy), Value::Object(defaults)) => {
-            legacy.extend(defaults);
-            Value::Object(legacy)
-        }
-        (_, defaults) => defaults,
-    }
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_json_object() -> Value {
-    Value::Object(Map::new())
 }

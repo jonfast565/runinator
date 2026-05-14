@@ -108,7 +108,7 @@ pub async fn process_workflow_run(
         WorkflowNodeKind::Start => {
             process_start_node(api, &workflow_run, node, latest, &node_runs).await?
         }
-        WorkflowNodeKind::Task => {
+        WorkflowNodeKind::Action => {
             process_task_node(broker, api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::Wait => {
@@ -251,21 +251,14 @@ async fn debug_pause_state(
 }
 
 async fn debug_input_json(
-    api: &dyn WorkflowSchedulerApi,
+    _api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
-    if node.kind == WorkflowNodeKind::Task {
-        if let Some(task_id) = node.task_id {
-            if let Some(task) = api
-                .fetch_tasks()
-                .await?
-                .into_iter()
-                .find(|task| task.id == Some(task_id))
-            {
-                return build_node_parameters(&task, node, workflow_run, node_runs);
-            }
+    if node.kind == WorkflowNodeKind::Action {
+        if let Some(action) = &node.action {
+            return build_node_parameters(action, node, workflow_run, node_runs);
         }
     }
     let context = runtime_context(workflow_run, node_runs);
@@ -389,7 +382,6 @@ async fn ensure_completed_node_run(
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Succeeded,
-        None,
         Some(node_run.attempt + 1),
         None,
         None,

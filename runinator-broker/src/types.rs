@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::TaskCommand;
+use runinator_comm::ActionCommand;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// Payload delivered through the broker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerMessage {
-    pub command: TaskCommand,
+    pub command: ActionCommand,
     #[serde(default)]
     pub dedupe_key: Option<String>,
     #[serde(default = "utc_now")]
@@ -19,7 +19,7 @@ pub struct BrokerMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerDelivery {
     pub delivery_id: Uuid,
-    pub command: TaskCommand,
+    pub command: ActionCommand,
     pub dedupe_key: String,
     pub enqueued_at: DateTime<Utc>,
 }

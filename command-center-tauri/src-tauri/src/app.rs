@@ -14,12 +14,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::commands::get_service_status,
             crate::commands::start_service_discovery,
-            crate::commands::fetch_tasks,
-            crate::commands::save_task,
-            crate::commands::delete_task,
             crate::commands::save_workflow_bundle,
-            crate::commands::request_task_run,
-            crate::commands::fetch_task_runs,
             crate::commands::fetch_run_chunks,
             crate::commands::fetch_run_artifacts,
             crate::commands::fetch_workflows,

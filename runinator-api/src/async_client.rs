@@ -1,17 +1,19 @@
 use reqwest::{Client, Response, Url};
 use runinator_models::{
-    core::ScheduledTask,
     providers::ProviderMetadata,
-    runs::{RunRequest, RunStatus, RunSummary},
+    runs::{RunStatus, RunSummary},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+    },
 };
 use serde_json::{json, Value};
 
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
-    types::{RunArtifactPayload, RunChunkPayload, RunStatusPayload, TaskRunPayload},
+    types::{RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload},
 };
 
 /// Asynchronous API client that wraps `reqwest::Client` and a service locator.
@@ -36,14 +38,6 @@ where
         Self { client, locator }
     }
 
-    /// Fetch all scheduled tasks from the web service.
-    pub async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>> {
-        let url = self.build_url("/tasks").await?;
-        let response = self.client.get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<ScheduledTask>>().await?)
-    }
-
     /// Fetch provider/action metadata for task authoring.
     pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
         let url = self.build_url("/providers").await?;
@@ -58,62 +52,6 @@ where
         let response = self.client.post(url.clone()).json(provider).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ProviderMetadata>().await?)
-    }
-
-    /// Create or replace a scheduled task.
-    pub async fn upsert_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
-        let url = self.build_url("/tasks").await?;
-        let response = self.client.post(url.clone()).json(task).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    /// Update an existing scheduled task by identifier.
-    pub async fn update_task(&self, task: &ScheduledTask) -> Result<TaskResponse> {
-        self.update_task_with_next_execution_override(task, false)
-            .await
-    }
-
-    pub async fn update_task_with_next_execution_override(
-        &self,
-        task: &ScheduledTask,
-        override_next_execution: bool,
-    ) -> Result<TaskResponse> {
-        let id = task.id.ok_or(ApiError::MissingTaskId)?;
-        let path = if override_next_execution {
-            format!("/tasks/{id}?override_next_execution=true")
-        } else {
-            format!("/tasks/{id}")
-        };
-        let url = self.build_url(&path).await?;
-        let response = self.client.patch(url.clone()).json(task).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    /// Delete a scheduled task and return the service acknowledgement.
-    pub async fn delete_task(&self, task_id: i64) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/tasks/{task_id}")).await?;
-        let response = self.client.delete(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    /// Request an immediate run for a scheduled task.
-    pub async fn request_task_run(&self, task_id: i64) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&format!("/tasks/{task_id}/request_run"))
-            .await?;
-        let response = self.client.post(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn create_run(&self, task_id: i64, request: &RunRequest) -> Result<RunSummary> {
-        let url = self.build_url(&format!("/tasks/{task_id}/runs")).await?;
-        let response = self.client.post(url.clone()).json(request).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<RunSummary>().await?)
     }
 
     pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary> {
@@ -195,6 +133,84 @@ where
     ) -> Result<WorkflowRun> {
         self.create_workflow_run_with_debug(workflow_id, parameters, false)
             .await
+    }
+
+    pub async fn fetch_workflow_triggers(&self, workflow_id: i64) -> Result<Vec<WorkflowTrigger>> {
+        let url = self
+            .build_url(&format!("/workflows/{workflow_id}/triggers"))
+            .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowTrigger>>().await?)
+    }
+
+    pub async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>> {
+        let url = self.build_url("/workflow_triggers/due").await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowTrigger>>().await?)
+    }
+
+    pub async fn fetch_workflow_trigger(&self, trigger_id: i64) -> Result<WorkflowTrigger> {
+        let url = self
+            .build_url(&format!("/workflow_triggers/{trigger_id}"))
+            .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowTrigger>().await?)
+    }
+
+    pub async fn upsert_workflow_trigger(
+        &self,
+        trigger: &WorkflowTrigger,
+    ) -> Result<WorkflowTrigger> {
+        let url = match trigger.id {
+            Some(id) => self.build_url(&format!("/workflow_triggers/{id}")).await?,
+            None => {
+                self.build_url(&format!("/workflows/{}/triggers", trigger.workflow_id))
+                    .await?
+            }
+        };
+        let response = match trigger.id {
+            Some(_) => self.client.patch(url.clone()).json(trigger).send().await?,
+            None => self.client.post(url.clone()).json(trigger).send().await?,
+        };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowTrigger>().await?)
+    }
+
+    pub async fn delete_workflow_trigger(&self, trigger_id: i64) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_triggers/{trigger_id}"))
+            .await?;
+        let response = self.client.delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn create_workflow_trigger_run(
+        &self,
+        trigger_id: i64,
+        parameters: Value,
+        debug: bool,
+    ) -> Result<WorkflowRun> {
+        let url = self
+            .build_url(&format!("/workflow_triggers/{trigger_id}/runs"))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({ "parameters": parameters, "debug": debug }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        serde_json::from_value(
+            body.get("run")
+                .cloned()
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?,
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
     }
 
     pub async fn create_workflow_run_with_debug(
@@ -305,7 +321,6 @@ where
         &self,
         node_run_id: i64,
         status: WorkflowStatus,
-        task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
         output_json: Option<Value>,
@@ -321,7 +336,6 @@ where
             .patch(url.clone())
             .json(&json!({
                 "status": status,
-                "task_run_id": task_run_id,
                 "attempt": attempt,
                 "parameters": parameters,
                 "output_json": output_json,
@@ -333,6 +347,65 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn set_workflow_node_run_status(
+        &self,
+        node_run_id: i64,
+        payload: &WorkflowNodeRunStatusPayload,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_node_runs/{node_run_id}"))
+            .await?;
+        let response = self.client.patch(url.clone()).json(payload).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn append_workflow_node_run_chunk(
+        &self,
+        node_run_id: i64,
+        payload: &RunChunkPayload,
+    ) -> Result<Vec<WorkflowNodeRunChunk>> {
+        let url = self
+            .build_url(&format!("/workflow_node_runs/{node_run_id}/chunks"))
+            .await?;
+        let response = self.client.post(url.clone()).json(payload).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowNodeRunChunk>>().await?)
+    }
+
+    pub async fn fetch_workflow_node_run_chunks(
+        &self,
+        node_run_id: i64,
+        cursor: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowNodeRunChunk>> {
+        let mut url = self
+            .build_url(&format!("/workflow_node_runs/{node_run_id}/chunks"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut()
+                .append_pair("cursor", &cursor.to_string());
+        }
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowNodeRunChunk>>().await?)
+    }
+
+    pub async fn add_workflow_node_run_artifact(
+        &self,
+        node_run_id: i64,
+        payload: &RunArtifactPayload,
+    ) -> Result<Vec<WorkflowNodeRunArtifact>> {
+        let url = self
+            .build_url(&format!("/workflow_node_runs/{node_run_id}/artifacts"))
+            .await?;
+        let response = self.client.post(url.clone()).json(payload).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
     }
 
     pub async fn create_automation_record(&self, path: &str, record: Value) -> Result<Value> {
@@ -386,11 +459,8 @@ where
     }
 
     /// Record execution metadata for a scheduled task run.
-    pub async fn log_task_run(&self, payload: &TaskRunPayload) -> Result<TaskResponse> {
-        let url = self.build_url("/task_runs").await?;
-        let response = self.client.post(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
+    pub async fn log_task_run(&self) -> Result<TaskResponse> {
+        Err(ApiError::UnexpectedResponse("deprecated".into()))
     }
 
     async fn build_url(&self, path: &str) -> Result<Url> {

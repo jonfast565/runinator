@@ -12,10 +12,10 @@ use std::{
 
 use config::parse_config;
 use log::{error, info, warn};
-use runinator_api::{AsyncApiClient, RunStatusPayload, StaticLocator, TaskRunPayload};
+use runinator_api::{AsyncApiClient, StaticLocator, WorkflowNodeRunStatusPayload};
 use runinator_broker::{Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker};
 use runinator_models::errors::{RuntimeError, SendableError};
-use runinator_models::runs::RunStatus;
+use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
 use runinator_utilities::startup;
 use serde_json::json;
@@ -198,34 +198,42 @@ async fn process_delivery(
     delivery: runinator_broker::BrokerDelivery,
 ) -> Result<(), SendableError> {
     let command = delivery.command.clone();
-    let task = command.task.clone();
-    if let Some(run_id) = command.run_id {
-        let payload = RunStatusPayload {
-            status: RunStatus::Running,
-            output_json: None,
-            message: None,
-        };
-        if let Err(err) = api_client.update_run(run_id, &payload).await {
-            error!("Failed to mark run {} running: {}", run_id, err);
-        }
+    let action = command.action.clone();
+    let payload = WorkflowNodeRunStatusPayload {
+        status: WorkflowStatus::Running,
+        output_json: None,
+        message: None,
+    };
+    if let Err(err) = api_client
+        .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+        .await
+    {
+        error!(
+            "Failed to mark workflow node run {} running: {}",
+            command.workflow_node_run_id, err
+        );
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
         Ok(parameters) => parameters,
         Err(err) => {
-            let message = format!("Failed to resolve task secrets: {err}");
+            let message = format!("Failed to resolve action secrets: {err}");
             error!("{}", message);
-            if let Some(run_id) = command.run_id {
-                let payload = RunStatusPayload {
-                    status: RunStatus::Failed,
-                    output_json: Some(json!({
-                        "success": false,
-                        "message": message,
-                    })),
-                    message: Some(message),
-                };
-                if let Err(err) = api_client.update_run(run_id, &payload).await {
-                    error!("Failed to mark run {} failed: {}", run_id, err);
-                }
+            let payload = WorkflowNodeRunStatusPayload {
+                status: WorkflowStatus::Failed,
+                output_json: Some(json!({
+                    "success": false,
+                    "message": message,
+                })),
+                message: Some(message),
+            };
+            if let Err(err) = api_client
+                .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+                .await
+            {
+                error!(
+                    "Failed to mark workflow node run {} failed: {}",
+                    command.workflow_node_run_id, err
+                );
             }
             broker
                 .ack(consumer_id, delivery.delivery_id)
@@ -235,15 +243,15 @@ async fn process_delivery(
         }
     };
     let sink = RunOutputSink::new(
-        command.run_id,
+        command.workflow_node_run_id,
         api_client.clone(),
         tokio::runtime::Handle::current(),
     );
     let result = executor::execute_task(
         libraries,
         command.command_id,
-        task.clone(),
-        command.run_id,
+        action.clone(),
+        command.workflow_node_run_id,
         parameters,
         Some(Arc::new(sink.clone())),
     )
@@ -255,78 +263,73 @@ async fn process_delivery(
     let provider_message = task_result.message.clone().or_else(|| sink.message());
 
     if task_result.success {
-        if let Some(run_id) = command.run_id {
-            sink.emit_log(format!(
-                "Task {} completed successfully in {} ms.",
-                task.id.unwrap_or_default(),
-                task_result.duration_ms()
-            ));
+        sink.emit_log(format!(
+            "Action {}.{} completed successfully in {} ms.",
+            action.provider,
+            action.function,
+            task_result.duration_ms()
+        ));
 
-            let output_json = result
-                .execution_result
-                .as_ref()
-                .and_then(|execution_result| execution_result.output_json.clone())
-                .unwrap_or_else(|| {
-                    json!({
-                        "success": true,
-                        "duration_ms": task_result.duration_ms(),
-                        "message": provider_message,
-                    })
-                });
-            let payload = RunStatusPayload {
-                status: RunStatus::Succeeded,
-                output_json: Some(output_json),
-                message: provider_message.clone(),
-            };
-            if let Err(err) = api_client.update_run(run_id, &payload).await {
-                error!("Failed to mark run {} succeeded: {}", run_id, err);
-            }
-        }
-        if let Some(task_id) = task.id {
-            let payload = TaskRunPayload {
-                task_id,
-                started_at: task_result.started_at,
-                duration_ms: task_result.duration_ms(),
-                message: provider_message.clone(),
-            };
-
-            if let Err(err) = api_client.log_task_run(&payload).await {
-                error!("Failed to record task run for task {}: {}", task_id, err);
-                broker
-                    .nack(consumer_id, delivery.delivery_id)
-                    .await
-                    .map_err(|err| broker_error("nack", err))?;
-                return Ok(());
-            }
-        } else {
-            warn!("Task result missing ID; skipping run logging");
-        }
-    } else {
-        if let Some(run_id) = command.run_id {
-            sink.emit_log(format!(
-                "Task {} failed after {} ms: {}.",
-                task.id.unwrap_or_default(),
-                task_result.duration_ms(),
-                provider_message.as_deref().unwrap_or("No error message")
-            ));
-
-            let payload = RunStatusPayload {
-                status: result.status,
-                output_json: Some(json!({
-                    "success": false,
+        let output_json = result
+            .execution_result
+            .as_ref()
+            .and_then(|execution_result| execution_result.output_json.clone())
+            .unwrap_or_else(|| {
+                json!({
+                    "success": true,
                     "duration_ms": task_result.duration_ms(),
                     "message": provider_message,
-                })),
-                message: provider_message.clone(),
-            };
-            if let Err(err) = api_client.update_run(run_id, &payload).await {
-                error!("Failed to mark run {} terminal: {}", run_id, err);
-            }
+                })
+            });
+        let payload = WorkflowNodeRunStatusPayload {
+            status: WorkflowStatus::Succeeded,
+            output_json: Some(output_json),
+            message: provider_message.clone(),
+        };
+        if let Err(err) = api_client
+            .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+            .await
+        {
+            error!(
+                "Failed to mark workflow node run {} succeeded: {}",
+                command.workflow_node_run_id, err
+            );
+        }
+    } else {
+        sink.emit_log(format!(
+            "Action {}.{} failed after {} ms: {}.",
+            action.provider,
+            action.function,
+            task_result.duration_ms(),
+            provider_message.as_deref().unwrap_or("No error message")
+        ));
+
+        let status = match result.status {
+            runinator_models::runs::RunStatus::TimedOut => WorkflowStatus::TimedOut,
+            runinator_models::runs::RunStatus::Canceled => WorkflowStatus::Canceled,
+            _ => WorkflowStatus::Failed,
+        };
+        let payload = WorkflowNodeRunStatusPayload {
+            status,
+            output_json: Some(json!({
+                "success": false,
+                "duration_ms": task_result.duration_ms(),
+                "message": provider_message,
+            })),
+            message: provider_message.clone(),
+        };
+        if let Err(err) = api_client
+            .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+            .await
+        {
+            error!(
+                "Failed to mark workflow node run {} terminal: {}",
+                command.workflow_node_run_id, err
+            );
         }
         warn!(
-            "Task {} reported failure: {:?}",
-            task.id.unwrap_or_default(),
-            provider_message
+            "Action {}.{} reported failure: {:?}",
+            action.provider, action.function, provider_message
         );
     }
 

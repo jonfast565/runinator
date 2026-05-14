@@ -1,85 +1,17 @@
-use crate::models::TaskRunRequest;
 use chrono::Utc;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    core::{ScheduledTask, TaskRun},
     errors::{RuntimeError, SendableError},
-    runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunRequest, RunStatus, RunSummary},
+    runs::{NewRunArtifact, NewRunChunk, RunChunk},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+    },
 };
 use serde_json::Value;
 
-pub async fn add_task<T: DatabaseImpl>(
-    db: &T,
-    scheduled_task: &ScheduledTask,
-) -> Result<TaskResponse, SendableError> {
-    db.upsert_task(scheduled_task).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Task added successfully".to_string(),
-    })
-}
-
-pub async fn update_task<T: DatabaseImpl>(
-    db: &T,
-    scheduled_task: &ScheduledTask,
-) -> Result<TaskResponse, SendableError> {
-    db.upsert_task(scheduled_task).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Task updated successfully".to_string(),
-    })
-}
-
-pub async fn delete_task<T: DatabaseImpl>(
-    db: &T,
-    task_id: i64,
-) -> Result<TaskResponse, SendableError> {
-    db.delete_task(task_id).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Task with ID {} deleted successfully", task_id),
-    })
-}
-
-pub async fn request_run<T: DatabaseImpl>(
-    db: &T,
-    task_id: i64,
-) -> Result<TaskResponse, SendableError> {
-    db.request_immediate_run(task_id).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Run requested".into(),
-    })
-}
-
-pub async fn fetch_tasks<T: DatabaseImpl>(db: &T) -> Result<Vec<ScheduledTask>, SendableError> {
-    let result = db.fetch_all_tasks().await?;
-    Ok(result)
-}
-
-pub async fn fetch_task_runs<T: DatabaseImpl>(
-    db: &T,
-    start: i64,
-    end: i64,
-) -> Result<Vec<TaskRun>, SendableError> {
-    let result = db.fetch_task_runs(start, end).await?;
-    Ok(result)
-}
-
-pub async fn log_task_run<T: DatabaseImpl>(
-    db: &T,
-    input: &TaskRunRequest,
-) -> Result<TaskResponse, SendableError> {
-    db.log_task_run(input.task_id, input.started_at, input.duration_ms)
-        .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Task run recorded".into(),
-    })
-}
-
+#[cfg(test)]
 pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     match (defaults, parameters) {
         (Value::Object(defaults), Value::Object(parameters)) => {
@@ -94,81 +26,6 @@ pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     }
 }
 
-pub async fn create_run_with_workflow<T: DatabaseImpl>(
-    db: &T,
-    task_id: i64,
-    request: &RunRequest,
-    workflow_run_id: Option<i64>,
-    workflow_node_id: Option<String>,
-) -> Result<RunSummary, SendableError> {
-    let task = db.fetch_task_by_id(task_id).await?.ok_or_else(|| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Task {task_id} not found"),
-        )) as SendableError
-    })?;
-    let parameters = merge_json_object(&task.default_parameters, &request.parameters);
-    db.create_task_run(
-        task_id,
-        parameters,
-        request.trigger.clone(),
-        workflow_run_id,
-        workflow_node_id,
-    )
-    .await
-}
-
-pub async fn create_run<T: DatabaseImpl>(
-    db: &T,
-    task_id: i64,
-    request: &RunRequest,
-) -> Result<RunSummary, SendableError> {
-    create_run_with_workflow(
-        db,
-        task_id,
-        request,
-        request.workflow_run_id,
-        request.workflow_node_id.clone(),
-    )
-    .await
-}
-
-pub async fn fetch_run<T: DatabaseImpl>(
-    db: &T,
-    run_id: i64,
-) -> Result<Option<RunSummary>, SendableError> {
-    db.fetch_run(run_id).await
-}
-
-pub async fn fetch_runs_for_task<T: DatabaseImpl>(
-    db: &T,
-    task_id: i64,
-) -> Result<Vec<RunSummary>, SendableError> {
-    db.fetch_runs_for_task(task_id).await
-}
-
-pub async fn fetch_runs_by_status<T: DatabaseImpl>(
-    db: &T,
-    status: RunStatus,
-) -> Result<Vec<RunSummary>, SendableError> {
-    db.fetch_runs_by_status(status).await
-}
-
-pub async fn update_run_status<T: DatabaseImpl>(
-    db: &T,
-    run_id: i64,
-    status: RunStatus,
-    output_json: Option<Value>,
-    message: Option<String>,
-) -> Result<TaskResponse, SendableError> {
-    db.update_run_status(run_id, status, output_json, message)
-        .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Run updated".into(),
-    })
-}
-
 pub async fn fetch_run_chunks<T: DatabaseImpl>(
     db: &T,
     run_id: i64,
@@ -176,44 +33,6 @@ pub async fn fetch_run_chunks<T: DatabaseImpl>(
     limit: i64,
 ) -> Result<Vec<RunChunk>, SendableError> {
     db.fetch_run_chunks(run_id, cursor, limit).await
-}
-
-pub async fn append_run_chunk<T: DatabaseImpl>(
-    db: &T,
-    run_id: i64,
-    chunk: &NewRunChunk,
-) -> Result<TaskResponse, SendableError> {
-    db.append_run_chunk(run_id, chunk).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Run chunk appended".into(),
-    })
-}
-
-pub async fn fetch_run_artifacts<T: DatabaseImpl>(
-    db: &T,
-    run_id: i64,
-) -> Result<Vec<RunArtifact>, SendableError> {
-    db.fetch_run_artifacts(run_id).await
-}
-
-pub async fn add_run_artifact<T: DatabaseImpl>(
-    db: &T,
-    run_id: i64,
-    artifact: &NewRunArtifact,
-) -> Result<TaskResponse, SendableError> {
-    db.add_run_artifact(run_id, artifact).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Run artifact recorded".into(),
-    })
-}
-
-pub async fn fetch_artifact<T: DatabaseImpl>(
-    db: &T,
-    artifact_id: i64,
-) -> Result<Option<RunArtifact>, SendableError> {
-    db.fetch_artifact(artifact_id).await
 }
 
 pub async fn upsert_workflow<T: DatabaseImpl>(
@@ -266,6 +85,81 @@ pub async fn delete_workflow<T: DatabaseImpl>(
     Ok(TaskResponse {
         success: true,
         message: "Workflow deleted".into(),
+    })
+}
+
+pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger: &WorkflowTrigger,
+) -> Result<WorkflowTrigger, SendableError> {
+    db.upsert_workflow_trigger(trigger).await
+}
+
+pub async fn fetch_workflow_triggers<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: i64,
+) -> Result<Vec<WorkflowTrigger>, SendableError> {
+    db.fetch_workflow_triggers(workflow_id).await
+}
+
+pub async fn fetch_workflow_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: i64,
+) -> Result<Option<WorkflowTrigger>, SendableError> {
+    db.fetch_workflow_trigger(trigger_id).await
+}
+
+pub async fn fetch_due_workflow_triggers<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Vec<WorkflowTrigger>, SendableError> {
+    db.fetch_due_workflow_triggers(Utc::now()).await
+}
+
+pub async fn delete_workflow_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: i64,
+) -> Result<TaskResponse, SendableError> {
+    db.delete_workflow_trigger(trigger_id).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow trigger deleted".into(),
+    })
+}
+
+pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: i64,
+    parameters: Value,
+    debug: bool,
+) -> Result<WorkflowRun, SendableError> {
+    let Some(trigger) = db.fetch_workflow_trigger(trigger_id).await? else {
+        return Err(Box::new(RuntimeError::new(
+            "workflow_trigger.not_found".into(),
+            format!("Workflow trigger {trigger_id} not found"),
+        )));
+    };
+    let mut state = trigger_state(&trigger);
+    if debug {
+        let debug_state = serde_json::json!({
+            "enabled": true,
+            "paused": false,
+            "step_requested": false
+        });
+        if let Some(object) = state.as_object_mut() {
+            object.insert("debug".into(), debug_state);
+        }
+    }
+    db.create_workflow_run(trigger.workflow_id, parameters, state)
+        .await
+}
+
+fn trigger_state(trigger: &WorkflowTrigger) -> Value {
+    serde_json::json!({
+        "trigger": {
+            "id": trigger.id,
+            "kind": trigger.kind,
+            "metadata": trigger.metadata
+        }
     })
 }
 
@@ -378,6 +272,42 @@ pub async fn fetch_workflow_run<T: DatabaseImpl>(
     Ok(Some((run, nodes)))
 }
 
+pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+    chunk: &NewRunChunk,
+) -> Result<WorkflowNodeRunChunk, SendableError> {
+    db.append_workflow_node_run_chunk(workflow_node_run_id, chunk)
+        .await
+}
+
+pub async fn fetch_workflow_node_run_chunks<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+    cursor: Option<i64>,
+    limit: i64,
+) -> Result<Vec<WorkflowNodeRunChunk>, SendableError> {
+    db.fetch_workflow_node_run_chunks(workflow_node_run_id, cursor, limit)
+        .await
+}
+
+pub async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+    artifact: &NewRunArtifact,
+) -> Result<WorkflowNodeRunArtifact, SendableError> {
+    db.add_workflow_node_run_artifact(workflow_node_run_id, artifact)
+        .await
+}
+
+pub async fn fetch_workflow_node_run_artifacts<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+) -> Result<Vec<WorkflowNodeRunArtifact>, SendableError> {
+    db.fetch_workflow_node_run_artifacts(workflow_node_run_id)
+        .await
+}
+
 fn ensure_debug_object(state: &mut Value) -> &mut serde_json::Map<String, Value> {
     if !state.is_object() {
         *state = serde_json::json!({});
@@ -406,7 +336,6 @@ pub async fn update_workflow_node_run<T: DatabaseImpl>(
     db: &T,
     node_run_id: i64,
     status: WorkflowStatus,
-    task_run_id: Option<i64>,
     attempt: Option<i64>,
     parameters: Option<Value>,
     output_json: Option<Value>,
@@ -417,7 +346,6 @@ pub async fn update_workflow_node_run<T: DatabaseImpl>(
     db.update_workflow_node_run(
         node_run_id,
         status,
-        task_run_id,
         attempt,
         parameters,
         output_json,
@@ -541,7 +469,6 @@ pub async fn resolve_approval<T: DatabaseImpl>(
                 } else {
                     WorkflowStatus::Blocked
                 },
-                None,
                 None,
                 None,
                 Some(output_json.unwrap_or_else(|| {

@@ -2,13 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::debug;
-use runinator_api::{AsyncApiClient, TaskRunPayload};
+use runinator_api::AsyncApiClient;
 use runinator_models::{
-    core::ScheduledTask,
-    errors::{RuntimeError, SendableError},
-    runs::{RunRequest, RunStatus, RunSummary},
-    workflows::{WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    errors::SendableError,
+    runs::{RunStatus, RunSummary},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+    },
 };
 use serde_json::Value;
 
@@ -16,18 +16,6 @@ use crate::worker_comm::WorkerManager;
 
 #[async_trait]
 pub trait WorkflowSchedulerApi: Send + Sync {
-    async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError>;
-
-    async fn create_workflow_task_run(
-        &self,
-        task_id: i64,
-        workflow_run_id: i64,
-        workflow_node_id: String,
-        parameters: Value,
-    ) -> Result<RunSummary, SendableError>;
-
-    async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError>;
-
     async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition, SendableError>;
 
     async fn create_workflow_run(
@@ -35,6 +23,14 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         workflow_id: i64,
         parameters: Value,
     ) -> Result<WorkflowRun, SendableError>;
+
+    async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError>;
+
+    async fn update_workflow_trigger_next_execution(
+        &self,
+        trigger_id: i64,
+        next_execution: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError>;
 
     async fn fetch_workflow_runs_by_status(
         &self,
@@ -66,7 +62,6 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         &self,
         node_run_id: i64,
         status: WorkflowStatus,
-        task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
         output_json: Option<Value>,
@@ -115,91 +110,6 @@ impl SchedulerApi {
         })
     }
 
-    pub async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
-        let tasks = self
-            .client
-            .fetch_tasks()
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        debug!("Fetched {} task(s) from API", tasks.len());
-        Ok(tasks)
-    }
-
-    pub async fn update_task(&self, task: &ScheduledTask) -> Result<(), SendableError> {
-        if task.id.is_none() {
-            return Err(Box::new(RuntimeError::new(
-                "scheduler.api.update.missing_id".into(),
-                "Task must contain an ID before update".into(),
-            )));
-        }
-        let _ = self
-            .client
-            .update_task_with_next_execution_override(task, true)
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        Ok(())
-    }
-
-    pub async fn log_task_run(
-        &self,
-        task_id: i64,
-        started_at: DateTime<Utc>,
-        duration_ms: i64,
-        message: Option<String>,
-    ) -> Result<(), SendableError> {
-        let payload = TaskRunPayload {
-            task_id,
-            started_at,
-            duration_ms,
-            message,
-        };
-
-        let _ = self
-            .client
-            .log_task_run(&payload)
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        Ok(())
-    }
-
-    pub async fn create_run(
-        &self,
-        task_id: i64,
-        parameters: Value,
-        trigger: impl Into<String>,
-    ) -> Result<RunSummary, SendableError> {
-        let request = RunRequest {
-            parameters,
-            trigger: trigger.into(),
-            workflow_run_id: None,
-            workflow_node_id: None,
-        };
-        self.client
-            .create_run(task_id, &request)
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })
-    }
-
-    pub async fn create_workflow_task_run(
-        &self,
-        task_id: i64,
-        workflow_run_id: i64,
-        workflow_node_id: impl Into<String>,
-        parameters: Value,
-    ) -> Result<RunSummary, SendableError> {
-        let workflow_node_id = workflow_node_id.into();
-        let request = RunRequest {
-            parameters,
-            trigger: format!("workflow:{workflow_run_id}"),
-            workflow_run_id: Some(workflow_run_id),
-            workflow_node_id: Some(workflow_node_id),
-        };
-        self.client
-            .create_run(task_id, &request)
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })
-    }
-
     pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError> {
         self.client
             .fetch_run(run_id)
@@ -236,6 +146,31 @@ impl SchedulerApi {
             .create_workflow_run(workflow_id, parameters)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
+        self.client
+            .fetch_due_workflow_triggers()
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn update_workflow_trigger_next_execution(
+        &self,
+        trigger_id: i64,
+        next_execution: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        let mut trigger = self
+            .client
+            .fetch_workflow_trigger(trigger_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        trigger.next_execution = next_execution;
+        self.client
+            .upsert_workflow_trigger(&trigger)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
     }
 
     pub async fn fetch_workflow_runs_by_status(
@@ -301,7 +236,6 @@ impl SchedulerApi {
         &self,
         node_run_id: i64,
         status: WorkflowStatus,
-        task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
         output_json: Option<Value>,
@@ -313,7 +247,6 @@ impl SchedulerApi {
             .update_workflow_node_run(
                 node_run_id,
                 status,
-                task_run_id,
                 attempt,
                 parameters,
                 output_json,
@@ -363,31 +296,6 @@ impl SchedulerApi {
 
 #[async_trait]
 impl WorkflowSchedulerApi for SchedulerApi {
-    async fn fetch_tasks(&self) -> Result<Vec<ScheduledTask>, SendableError> {
-        SchedulerApi::fetch_tasks(self).await
-    }
-
-    async fn create_workflow_task_run(
-        &self,
-        task_id: i64,
-        workflow_run_id: i64,
-        workflow_node_id: String,
-        parameters: Value,
-    ) -> Result<RunSummary, SendableError> {
-        SchedulerApi::create_workflow_task_run(
-            self,
-            task_id,
-            workflow_run_id,
-            workflow_node_id,
-            parameters,
-        )
-        .await
-    }
-
-    async fn fetch_run(&self, run_id: i64) -> Result<RunSummary, SendableError> {
-        SchedulerApi::fetch_run(self, run_id).await
-    }
-
     async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition, SendableError> {
         SchedulerApi::fetch_workflow(self, workflow_id).await
     }
@@ -398,6 +306,18 @@ impl WorkflowSchedulerApi for SchedulerApi {
         parameters: Value,
     ) -> Result<WorkflowRun, SendableError> {
         SchedulerApi::create_workflow_run(self, workflow_id, parameters).await
+    }
+
+    async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
+        SchedulerApi::fetch_due_workflow_triggers(self).await
+    }
+
+    async fn update_workflow_trigger_next_execution(
+        &self,
+        trigger_id: i64,
+        next_execution: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::update_workflow_trigger_next_execution(self, trigger_id, next_execution).await
     }
 
     async fn fetch_workflow_runs_by_status(
@@ -446,7 +366,6 @@ impl WorkflowSchedulerApi for SchedulerApi {
         &self,
         node_run_id: i64,
         status: WorkflowStatus,
-        task_run_id: Option<i64>,
         attempt: Option<i64>,
         parameters: Option<Value>,
         output_json: Option<Value>,
@@ -458,7 +377,6 @@ impl WorkflowSchedulerApi for SchedulerApi {
             self,
             node_run_id,
             status,
-            task_run_id,
             attempt,
             parameters,
             output_json,

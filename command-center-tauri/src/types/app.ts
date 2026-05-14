@@ -1,4 +1,4 @@
-export type AppTab = "Tasks" | "Runs" | "Workflows" | "Resources" | "Secrets";
+export type AppTab = "Workflows" | "Runs" | "Resources" | "Secrets";
 
 export interface ResourceEndpoint {
   label: string;

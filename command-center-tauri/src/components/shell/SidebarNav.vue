@@ -14,22 +14,19 @@
 </template>
 
 <script setup lang="ts">
-import { tabs, useAppStore } from "../../stores/app";
+import { useAppStore } from "../../stores/app";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
-import { useTasksStore } from "../../stores/tasks";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { AppTab } from "../../types/app";
 
 const app = useAppStore();
-const tasks = useTasksStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
 
 function navCount(tab: AppTab): number {
-  if (tab === "Tasks") return tasks.scheduledTasks.length;
-  if (tab === "Runs") return tasks.runs.length;
+  if (tab === "Runs") return workflows.recentWorkflowRuns.length;
   if (tab === "Workflows") return workflows.workflows.length;
   if (tab === "Resources") return resources.resourceRecords.length;
   return secrets.secrets.length;

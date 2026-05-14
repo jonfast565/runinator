@@ -1,7 +1,7 @@
 pub mod discovery;
 
 use chrono::{DateTime, Utc};
-use runinator_models::core::ScheduledTask;
+use runinator_models::workflows::WorkflowAction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -41,11 +41,13 @@ pub enum GossipMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskCommand {
+pub struct ActionCommand {
     pub command_id: Uuid,
-    pub task: ScheduledTask,
-    #[serde(default)]
-    pub run_id: Option<i64>,
+    pub workflow_run_id: i64,
+    pub workflow_node_run_id: i64,
+    pub node_id: String,
+    pub action: WorkflowAction,
+    pub attempt: i64,
     #[serde(default)]
     pub parameters: Value,
 }
@@ -89,7 +91,7 @@ impl GossipMessage {
     }
 }
 
-impl TaskCommand {
+impl ActionCommand {
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }

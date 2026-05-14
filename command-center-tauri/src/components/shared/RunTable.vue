@@ -3,7 +3,6 @@
     <thead>
       <tr>
         <th>Run</th>
-        <th v-if="!compact">Task</th>
         <th>Status</th>
         <th v-if="!compact">Trigger</th>
         <th>Created</th>
@@ -19,7 +18,6 @@
         @click="$emit('select', run)"
       >
         <td>{{ run.id }}</td>
-        <td v-if="!compact">{{ run.task_id ?? run.workflow_id ?? "" }}</td>
         <td><StatusBadge :status="run.status" /></td>
         <td v-if="!compact">{{ run.trigger ?? "" }}</td>
         <td>{{ formatDate(run.created_at) }}</td>

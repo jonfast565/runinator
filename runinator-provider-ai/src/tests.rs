@@ -5,7 +5,6 @@ fn test_ai_command_provider_execution() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
         run_id: Some(1),
-        task_id: Some(1),
         action_name: "ai".into(),
         action_function: "cmd".into(),
         parameters: json!({
@@ -28,7 +27,6 @@ fn test_ai_command_fails_on_nonzero_exit() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
         run_id: Some(1),
-        task_id: Some(1),
         action_name: "ai".into(),
         action_function: "cmd".into(),
         parameters: json!({

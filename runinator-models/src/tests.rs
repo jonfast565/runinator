@@ -38,16 +38,24 @@ fn workflow_status_serialization() {
 fn workflow_node_serialization() {
     let node_json = json!({
         "id": "test-node",
-        "kind": "task",
-        "task_id": 123,
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
         "transitions": {
             "on_success": { "$node": "next-node" }
         }
     });
     let node: WorkflowNode = serde_json::from_value(node_json).unwrap();
     assert_eq!(node.id, "test-node");
-    assert_eq!(node.kind, WorkflowNodeKind::Task);
-    assert_eq!(node.task_id, Some(123));
+    assert_eq!(node.kind, WorkflowNodeKind::Action);
+    assert_eq!(
+        node.action.as_ref().map(|action| action.provider.as_str()),
+        Some("console")
+    );
     assert_eq!(
         node.transitions
             .on_success
@@ -61,8 +69,13 @@ fn workflow_node_serialization() {
 fn workflow_node_accepts_reentry_configuration() {
     let node: WorkflowNode = serde_json::from_value(json!({
         "id": "build",
-        "kind": "task",
-        "task_id": 123,
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "default_parameters": {}
+        },
         "reentry": {
             "enabled": true,
             "max_visits": 3,
