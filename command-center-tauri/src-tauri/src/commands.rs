@@ -2,7 +2,10 @@ use runinator_models::{
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
+    workflows::{
+        WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun,
+        WorkflowTrigger,
+    },
 };
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
@@ -133,6 +136,30 @@ pub async fn fetch_run_artifacts(
     run_id: i64,
 ) -> CommandResult<Vec<RunArtifact>> {
     get_json(&state, &format!("runs/{run_id}/artifacts")).await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_node_run_chunks(
+    state: State<'_, CommandCenterState>,
+    node_run_id: i64,
+) -> CommandResult<Vec<WorkflowNodeRunChunk>> {
+    get_json(
+        &state,
+        &format!("workflow_node_runs/{node_run_id}/chunks?limit=500"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_node_run_artifacts(
+    state: State<'_, CommandCenterState>,
+    node_run_id: i64,
+) -> CommandResult<Vec<WorkflowNodeRunArtifact>> {
+    get_json(
+        &state,
+        &format!("workflow_node_runs/{node_run_id}/artifacts"),
+    )
+    .await
 }
 
 async fn save_workflow_to_service(

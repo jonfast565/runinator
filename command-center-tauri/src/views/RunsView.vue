@@ -58,13 +58,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { fetchRunArtifacts } from "../api/commandCenterApi";
+import { fetchWorkflowNodeRunArtifacts } from "../api/commandCenterApi";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
-import { useRunLogStream } from "../composables/useRunLogStream";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
+import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
 import { useAppStore } from "../stores/app";
 import { useWorkflowsStore } from "../stores/workflows";
 import type { RunArtifact } from "../types/models";
@@ -74,17 +74,17 @@ const app = useAppStore();
 const workflows = useWorkflowsStore();
 const artifacts = ref<RunArtifact[]>([]);
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
-const selectedRunIdRef = ref(workflows.selectedWorkflowRunId);
+const selectedNodeRunIdRef = ref(workflows.selectedWorkflowNodeRunId);
 const workflowNames = computed(() => Object.fromEntries(workflows.workflows.filter((workflow) => workflow.id).map((workflow) => [workflow.id!, workflow.name])));
 
 useWorkflowRunStream();
 
-watch(() => workflows.selectedWorkflowRunId, (id) => { selectedRunIdRef.value = id; }, { immediate: true });
-watch(() => workflows.selectedWorkflowNodeTaskRunId, async (id) => {
-  artifacts.value = id > 0 ? await app.runOperation("Loading run artifacts", () => fetchRunArtifacts(id)).catch(() => []) : [];
+watch(() => workflows.selectedWorkflowNodeRunId, (id) => { selectedNodeRunIdRef.value = id; }, { immediate: true });
+watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
+  artifacts.value = id > 0 ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
 }, { immediate: true });
 
-const { chunks: logChunks } = useRunLogStream(selectedRunIdRef);
+const { chunks: logChunks } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 const logOutput = computed(() => {
   if (logChunks.value.length > 0) return logChunks.value.map(c => `[${c.stream}] ${c.content}`).join("\n");
   return workflows.workflowRunDetailText;

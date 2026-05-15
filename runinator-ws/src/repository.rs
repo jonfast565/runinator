@@ -278,6 +278,13 @@ pub async fn fetch_workflow_run<T: DatabaseImpl>(
     Ok(Some((run, nodes)))
 }
 
+pub async fn fetch_workflow_node_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+) -> Result<Option<WorkflowNodeRun>, SendableError> {
+    db.fetch_workflow_node_run(workflow_node_run_id).await
+}
+
 pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     db: &T,
     workflow_node_run_id: i64,

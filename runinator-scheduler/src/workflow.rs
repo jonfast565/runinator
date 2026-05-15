@@ -12,6 +12,8 @@ use crate::{
     nodes::*,
 };
 
+const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
+
 pub async fn run_workflow_iteration(
     broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
@@ -32,6 +34,33 @@ pub async fn run_workflow_iteration(
 }
 
 pub async fn process_workflow_run(
+    broker: &dyn Broker,
+    api: &dyn WorkflowSchedulerApi,
+    mut workflow_run: WorkflowRun,
+) -> Result<(), SendableError> {
+    for _ in 0..MAX_INLINE_WORKFLOW_STEPS {
+        let before = WorkflowProgressKey::from_run(api, &workflow_run).await?;
+        process_workflow_run_step(broker, api, workflow_run.clone()).await?;
+        let (next_run, next_nodes) = api.fetch_workflow_run(workflow_run.id).await?;
+        let after = WorkflowProgressKey::from_parts(&next_run, &next_nodes);
+        if should_stop_inline_progress(&next_run, &next_nodes) || before == after {
+            return Ok(());
+        }
+        workflow_run = next_run;
+    }
+
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Blocked,
+        workflow_run.active_node_id.clone(),
+        None,
+        Some("Inline workflow progress limit exhausted".into()),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn process_workflow_run_step(
     broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
     workflow_run: WorkflowRun,
@@ -185,6 +214,63 @@ pub async fn process_workflow_run(
     };
 
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WorkflowProgressKey {
+    status: WorkflowStatus,
+    active_node_id: Option<String>,
+    node_count: usize,
+    latest_active_node_run_id: Option<i64>,
+    latest_active_node_status: Option<WorkflowStatus>,
+}
+
+impl WorkflowProgressKey {
+    async fn from_run(
+        api: &dyn WorkflowSchedulerApi,
+        workflow_run: &WorkflowRun,
+    ) -> Result<Self, SendableError> {
+        let (run, nodes) = api.fetch_workflow_run(workflow_run.id).await?;
+        Ok(Self::from_parts(&run, &nodes))
+    }
+
+    fn from_parts(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) -> Self {
+        let latest_active = workflow_run
+            .active_node_id
+            .as_deref()
+            .and_then(|active| latest_node_run(node_runs, active));
+        Self {
+            status: workflow_run.status,
+            active_node_id: workflow_run.active_node_id.clone(),
+            node_count: node_runs.len(),
+            latest_active_node_run_id: latest_active.map(|run| run.id),
+            latest_active_node_status: latest_active.map(|run| run.status),
+        }
+    }
+}
+
+fn should_stop_inline_progress(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) -> bool {
+    if workflow_run.status.is_terminal()
+        || matches!(
+            workflow_run.status,
+            WorkflowStatus::DebugPaused
+                | WorkflowStatus::Waiting
+                | WorkflowStatus::ApprovalRequired
+                | WorkflowStatus::Blocked
+        )
+    {
+        return true;
+    }
+
+    let Some(active_node_id) = workflow_run.active_node_id.as_deref() else {
+        return false;
+    };
+    latest_node_run(node_runs, active_node_id).is_some_and(|run| {
+        matches!(
+            run.status,
+            WorkflowStatus::Running | WorkflowStatus::Waiting | WorkflowStatus::ApprovalRequired
+        )
+    })
 }
 
 async fn should_pause_for_debug(

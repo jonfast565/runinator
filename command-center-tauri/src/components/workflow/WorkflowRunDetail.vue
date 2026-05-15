@@ -45,7 +45,7 @@
             <th>Node</th>
             <th>Status</th>
             <th>Try</th>
-            <th>Task Run</th>
+            <th>Node Run</th>
           </tr>
         </thead>
         <tbody>
@@ -56,7 +56,7 @@
             <td>{{ node.node_id }}</td>
             <td><StatusBadge :status="node.status" /></td>
             <td>{{ node.attempt }}</td>
-            <td>{{ node.task_run_id ?? '-' }}</td>
+            <td>{{ node.id }}</td>
           </tr>
         </tbody>
       </table>

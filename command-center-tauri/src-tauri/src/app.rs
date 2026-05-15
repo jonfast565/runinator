@@ -18,6 +18,8 @@ pub fn run() {
             crate::commands::delete_workflow,
             crate::commands::fetch_run_chunks,
             crate::commands::fetch_run_artifacts,
+            crate::commands::fetch_workflow_node_run_chunks,
+            crate::commands::fetch_workflow_node_run_artifacts,
             crate::commands::fetch_workflows,
             crate::commands::save_workflow,
             crate::commands::fetch_workflow_triggers,

@@ -62,6 +62,14 @@ export async function fetchRunArtifacts(runId: number) {
   return command<RunArtifact[]>("fetch_run_artifacts", { runId });
 }
 
+export async function fetchWorkflowNodeRunChunks(nodeRunId: number) {
+  return command<RunChunk[]>("fetch_workflow_node_run_chunks", { nodeRunId });
+}
+
+export async function fetchWorkflowNodeRunArtifacts(nodeRunId: number) {
+  return command<RunArtifact[]>("fetch_workflow_node_run_artifacts", { nodeRunId });
+}
+
 export async function fetchWorkflows() {
   return command<WorkflowDefinition[]>("fetch_workflows");
 }

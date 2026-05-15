@@ -269,6 +269,7 @@ async fn process_delivery(
             action.function,
             task_result.duration_ms()
         ));
+        sink.flush().await;
 
         let output_json = result
             .execution_result
@@ -303,6 +304,7 @@ async fn process_delivery(
             task_result.duration_ms(),
             provider_message.as_deref().unwrap_or("No error message")
         ));
+        sink.flush().await;
 
         let status = match result.status {
             runinator_models::runs::RunStatus::TimedOut => WorkflowStatus::TimedOut,

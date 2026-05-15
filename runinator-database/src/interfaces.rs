@@ -196,6 +196,12 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_run_id: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
 
+    /// Fetch a node execution record by its identifier.
+    fn fetch_workflow_node_run(
+        &self,
+        workflow_node_run_id: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowNodeRun>, SendableError>> + Send;
+
     /// Append a log chunk to a workflow node run.
     fn append_workflow_node_run_chunk(
         &self,

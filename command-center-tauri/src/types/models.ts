@@ -181,7 +181,6 @@ export interface WorkflowNodeRun {
   node_id: string;
   status: string;
   attempt: number;
-  task_run_id?: number | null;
   parameters: JsonRecord;
   output_json?: any;
   state?: JsonRecord;

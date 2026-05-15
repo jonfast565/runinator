@@ -15,7 +15,6 @@ describe("approval utils", () => {
       id: 1,
       workflow_run_id: 10,
       node_id: "approval",
-      task_run_id: null,
       status: "approval_required",
       attempt: 1,
       parameters: {},

@@ -57,6 +57,24 @@ fn emit(events: &EventSender, event: AppEvent) {
     let _ = events.send(event);
 }
 
+fn emit_workflow_run(events: &EventSender, run_id: i64) {
+    emit(events, AppEvent::WorkflowRunChanged { run_id });
+    emit(events, AppEvent::WorkflowRunActivity);
+}
+
+async fn emit_workflow_node_run<T: DatabaseImpl>(
+    db: &T,
+    events: &EventSender,
+    workflow_node_run_id: i64,
+) {
+    if let Ok(Some(node_run)) = repository::fetch_workflow_node_run(db, workflow_node_run_id).await
+    {
+        emit_workflow_run(events, node_run.workflow_run_id);
+    } else {
+        emit(events, AppEvent::WorkflowRunActivity);
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ChunkQuery {
     cursor: Option<i64>,
@@ -241,7 +259,7 @@ async fn create_workflow_trigger_run<T: DatabaseImpl>(
     .await
     {
         Ok(run) => {
-            emit(&events, AppEvent::WorkflowRunActivity);
+            emit_workflow_run(&events, run.id);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
@@ -256,6 +274,7 @@ async fn create_workflow_trigger_run<T: DatabaseImpl>(
 
 async fn create_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Path(workflow_id): Path<i64>,
     Json(request): Json<WorkflowRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -267,13 +286,16 @@ async fn create_workflow_run<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(run) => (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
-                run,
-                nodes: Vec::new(),
-            })),
-        ),
+        Ok(run) => {
+            emit_workflow_run(&events, run.id);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                    run,
+                    nodes: Vec::new(),
+                })),
+            )
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -382,12 +404,7 @@ async fn create_workflow_node_run<T: DatabaseImpl>(
     .await
     {
         Ok(step) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            emit_workflow_run(&events, workflow_run_id);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowNodeRun(step)),
@@ -417,7 +434,7 @@ async fn update_workflow_node_run<T: DatabaseImpl>(
     .await
     {
         Ok(resp) => {
-            emit(&events, AppEvent::WorkflowRunActivity);
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -453,7 +470,7 @@ async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
         Ok(chunk) => {
-            emit(&events, AppEvent::WorkflowRunActivity);
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowNodeRunChunks(vec![chunk])),
@@ -484,7 +501,7 @@ async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {
         Ok(artifact) => {
-            emit(&events, AppEvent::WorkflowRunActivity);
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowNodeRunArtifacts(vec![artifact])),
@@ -878,6 +895,7 @@ fn provider_catalog_item(provider: &ProviderMetadata) -> serde_json::Value {
 
 async fn webhook_wake<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
     Json(request): Json<WebhookWakeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let workflow_run =
@@ -939,6 +957,7 @@ async fn webhook_wake<T: DatabaseImpl>(
     {
         return api_error(err.to_string());
     }
+    emit_workflow_run(&events, request.workflow_run_id);
     task_response_success("Webhook wake recorded")
 }
 
@@ -958,6 +977,23 @@ async fn send_run_chunks<T: DatabaseImpl>(
     limit: i64,
 ) -> Result<(), ()> {
     let chunks = repository::fetch_run_chunks(db, run_id, *cursor, limit)
+        .await
+        .map_err(|_| ())?;
+    for chunk in &chunks {
+        send_json(tx, chunk).await?;
+        *cursor = Some(chunk.sequence);
+    }
+    Ok(())
+}
+
+async fn send_workflow_node_run_chunks<T: DatabaseImpl>(
+    db: &T,
+    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    node_run_id: i64,
+    cursor: &mut Option<i64>,
+    limit: i64,
+) -> Result<(), ()> {
+    let chunks = repository::fetch_workflow_node_run_chunks(db, node_run_id, *cursor, limit)
         .await
         .map_err(|_| ())?;
     for chunk in &chunks {
@@ -1048,6 +1084,48 @@ async fn ws_workflow_run<T: DatabaseImpl>(
     })
 }
 
+async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        let (mut tx, mut rx_ws) = socket.split();
+        let mut cursor: Option<i64> = None;
+        if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let mut event_rx = events.subscribe();
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
+        loop {
+            tokio::select! {
+                Ok(event) = event_rx.recv() => {
+                    if matches!(&event, AppEvent::WorkflowRunActivity | AppEvent::WorkflowRunChanged { .. }) {
+                        if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                _ = poll_interval.tick() => {
+                    if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
+                        return;
+                    }
+                }
+                msg = rx_ws.next() => {
+                    match msg {
+                        Some(Ok(Message::Close(_))) | None => return,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })
+}
+
 async fn ws_run_stream<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -1100,6 +1178,10 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
         .route("/ws/events", get(ws_events))
         .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
         .route("/ws/run-stream/{id}", get(ws_run_stream::<T>))
+        .route(
+            "/ws/workflow-node-runs/{id}/stream",
+            get(ws_workflow_node_run_stream::<T>),
+        )
         .route(
             "/workflows",
             get(get_workflows::<T>)

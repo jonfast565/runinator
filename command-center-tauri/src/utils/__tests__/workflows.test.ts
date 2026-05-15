@@ -346,7 +346,6 @@ describe("workflow graph utils", () => {
           id: 1,
           workflow_run_id: 10,
           node_id: "a",
-          task_run_id: 20,
           status: "succeeded",
           attempt: 1,
           parameters: {},

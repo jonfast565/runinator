@@ -772,6 +772,17 @@ impl DatabaseImpl for SqliteDb {
             .collect())
     }
 
+    async fn fetch_workflow_node_run(
+        &self,
+        workflow_node_run_id: i64,
+    ) -> Result<Option<WorkflowNodeRun>, SendableError> {
+        let row = sqlx::query("SELECT id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message FROM workflow_node_runs WHERE id = ?")
+            .bind(workflow_node_run_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::sqlite_row_to_workflow_node_run(&row)))
+    }
+
     async fn append_workflow_node_run_chunk(
         &self,
         workflow_node_run_id: i64,

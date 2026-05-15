@@ -5,7 +5,7 @@ use runinator_api::{AsyncApiClient, RunArtifactPayload, RunChunkPayload, StaticL
 use runinator_models::runs::{ProviderExecutionEvent, TaskExecutionResult};
 use runinator_plugin::provider::ProviderEventSink;
 use serde_json::Value;
-use tokio::runtime::Handle;
+use tokio::{runtime::Handle, task::JoinHandle};
 
 #[derive(Clone)]
 pub struct RunOutputSink {
@@ -18,6 +18,7 @@ pub struct RunOutputSink {
 #[derive(Default)]
 struct RunOutputState {
     message: Option<String>,
+    pending: Vec<JoinHandle<()>>,
 }
 
 impl RunOutputSink {
@@ -71,10 +72,26 @@ impl RunOutputSink {
         self.emit_chunk("log".into(), content);
     }
 
+    pub async fn flush(&self) {
+        let pending = self
+            .state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.pending))
+            .unwrap_or_default();
+        for handle in pending {
+            if let Err(err) = handle.await {
+                error!(
+                    "Failed to join workflow node run {} output task: {}",
+                    self.workflow_node_run_id, err
+                );
+            }
+        }
+    }
+
     fn emit_chunk(&self, stream: String, content: String) {
         let node_run_id = self.workflow_node_run_id;
         let client = self.api_client.clone();
-        self.handle.spawn(async move {
+        let handle = self.handle.spawn(async move {
             let payload = RunChunkPayload { stream, content };
             if let Err(err) = client
                 .append_workflow_node_run_chunk(node_run_id, &payload)
@@ -86,6 +103,7 @@ impl RunOutputSink {
                 );
             }
         });
+        self.track_pending(handle);
     }
 
     fn emit_artifact(
@@ -98,7 +116,7 @@ impl RunOutputSink {
     ) {
         let node_run_id = self.workflow_node_run_id;
         let client = self.api_client.clone();
-        self.handle.spawn(async move {
+        let handle = self.handle.spawn(async move {
             let payload = RunArtifactPayload {
                 name,
                 mime_type,
@@ -116,6 +134,13 @@ impl RunOutputSink {
                 );
             }
         });
+        self.track_pending(handle);
+    }
+
+    fn track_pending(&self, handle: JoinHandle<()>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending.push(handle);
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use crate::context::*;
 use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use runinator_broker::in_memory::InMemoryBroker;
+use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     workflows::{
@@ -501,6 +501,60 @@ async fn debug_workflow_pauses_before_first_node() {
 }
 
 #[tokio::test]
+async fn queued_start_to_action_is_dispatched_in_one_pass() {
+    let workflow = workflow_with_nodes(json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+        action_node("run"),
+        { "id": "end", "kind": "end" }
+    ]));
+    let mut run = workflow_run(json!({}), json!({}), "start");
+    run.status = WorkflowStatus::Queued;
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    let update = api.last_run_update();
+    assert_eq!(update.status, WorkflowStatus::Running);
+    assert_eq!(update.active_node_id.as_deref(), Some("run"));
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Running);
+    assert!(broker.poll("test").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn synchronous_nodes_advance_to_action_in_one_pass() {
+    let workflow = workflow_with_nodes(json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "condition" } } },
+        {
+            "id": "condition",
+            "kind": "condition",
+            "condition": { "value": true, "equals": true },
+            "transitions": { "on_success": { "$node": "emit" } }
+        },
+        {
+            "id": "emit",
+            "kind": "emit",
+            "parameters": { "event_type": "test.ready", "data": { "ok": true } },
+            "transitions": { "next": { "$node": "run" } }
+        },
+        action_node("run"),
+        { "id": "end", "kind": "end" }
+    ]));
+    let mut run = workflow_run(json!({}), json!({}), "start");
+    run.status = WorkflowStatus::Queued;
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().active_node_id.as_deref(), Some("run"));
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Running);
+    assert_eq!(api.state.lock().unwrap().node_runs.len(), 4);
+}
+
+#[tokio::test]
 async fn fail_node_marks_workflow_failed() {
     let workflow = simple_workflow();
     let run = workflow_run(json!({}), json!({}), "fail");
@@ -698,15 +752,19 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         state: Option<serde_json::Value>,
         _message: Option<String>,
     ) -> Result<(), SendableError> {
-        self.state
-            .lock()
-            .unwrap()
-            .workflow_updates
-            .push(WorkflowRunUpdate {
-                status,
-                active_node_id,
-                state: state.unwrap_or_else(|| json!({})),
-            });
+        let mut state_guard = self.state.lock().unwrap();
+        if let Some(run) = state_guard.workflow_run.as_mut() {
+            run.status = status;
+            run.active_node_id = active_node_id.clone();
+            if let Some(next_state) = state.clone() {
+                run.state = next_state;
+            }
+        }
+        state_guard.workflow_updates.push(WorkflowRunUpdate {
+            status,
+            active_node_id,
+            state: state.unwrap_or_else(|| json!({})),
+        });
         Ok(())
     }
 
@@ -730,7 +788,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     ) -> Result<WorkflowNodeRun, SendableError> {
         let mut state = self.state.lock().unwrap();
         state.next_node_run_id += 1;
-        Ok(WorkflowNodeRun {
+        let node_run = WorkflowNodeRun {
             id: state.next_node_run_id,
             workflow_run_id,
             node_id: node_id.into(),
@@ -744,28 +802,52 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             started_at: None,
             finished_at: None,
             message: None,
-        })
+        };
+        state.node_runs.push(node_run.clone());
+        Ok(node_run)
     }
 
     async fn update_workflow_node_run(
         &self,
-        _node_run_id: i64,
+        node_run_id: i64,
         status: WorkflowStatus,
-        _attempt: Option<i64>,
-        _parameters: Option<serde_json::Value>,
+        attempt: Option<i64>,
+        parameters: Option<serde_json::Value>,
         output_json: Option<serde_json::Value>,
-        _state: Option<serde_json::Value>,
-        _transition_reason: Option<String>,
-        _message: Option<String>,
+        state: Option<serde_json::Value>,
+        transition_reason: Option<String>,
+        message: Option<String>,
     ) -> Result<(), SendableError> {
-        self.state
-            .lock()
-            .unwrap()
-            .node_updates
-            .push(WorkflowNodeRunUpdate {
-                status,
-                output_json: output_json.unwrap_or(serde_json::Value::Null),
-            });
+        let mut state_guard = self.state.lock().unwrap();
+        if let Some(node_run) = state_guard
+            .node_runs
+            .iter_mut()
+            .find(|node_run| node_run.id == node_run_id)
+        {
+            node_run.status = status;
+            if let Some(attempt) = attempt {
+                node_run.attempt = attempt;
+            }
+            if let Some(parameters) = parameters {
+                node_run.parameters = parameters;
+            }
+            if let Some(output_json) = output_json.clone() {
+                node_run.output_json = Some(output_json);
+            }
+            if let Some(state) = state {
+                node_run.state = state;
+            }
+            if transition_reason.is_some() {
+                node_run.transition_reason = transition_reason;
+            }
+            if message.is_some() {
+                node_run.message = message;
+            }
+        }
+        state_guard.node_updates.push(WorkflowNodeRunUpdate {
+            status,
+            output_json: output_json.unwrap_or(serde_json::Value::Null),
+        });
         Ok(())
     }
 
@@ -819,23 +901,38 @@ fn workflow_run(
 }
 
 fn simple_workflow() -> WorkflowDefinition {
+    workflow_with_nodes(json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+        { "id": "end", "kind": "end" },
+        { "id": "fail", "kind": "fail" }
+    ]))
+}
+
+fn workflow_with_nodes(nodes: serde_json::Value) -> WorkflowDefinition {
     WorkflowDefinition {
         id: Some(1),
         name: "debug".into(),
         version: 1,
         enabled: true,
         input_schema: json!({}),
-        definition: json!({
-            "start": "start",
-            "nodes": [
-                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
-                { "id": "end", "kind": "end" },
-                { "id": "fail", "kind": "fail" }
-            ]
-        }),
+        definition: json!({ "start": "start", "nodes": nodes }),
         created_at: None,
         updated_at: None,
     }
+}
+
+fn action_node(id: &str) -> serde_json::Value {
+    json!({
+        "id": id,
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "configuration": {}
+        },
+        "transitions": { "next": { "$node": "end" } }
+    })
 }
 
 fn node_run(node_id: &str, status: WorkflowStatus) -> WorkflowNodeRun {

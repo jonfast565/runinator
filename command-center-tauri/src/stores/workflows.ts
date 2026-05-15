@@ -4,8 +4,8 @@ import {
   createWorkflowRun,
   deleteWorkflow,
   deleteWorkflowTrigger,
-  fetchRunArtifacts,
-  fetchRunChunks,
+  fetchWorkflowNodeRunArtifacts,
+  fetchWorkflowNodeRunChunks,
   fetchWorkflowRun,
   fetchWorkflowRuns,
   fetchWorkflowTriggers,
@@ -96,7 +96,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
   const selectedWorkflowRunNodeId = ref("");
-  const selectedWorkflowNodeTaskRunId = ref(0);
+  const selectedWorkflowNodeRunId = ref(0);
   const stepEditor = reactive({
     id: "",
     kind: "task" as WorkflowNodeKind,
@@ -164,7 +164,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     ];
     if (detail.run.message) lines.push(`Message: ${detail.run.message}`);
     for (const step of detail.nodes) {
-      lines.push(`${step.node_id}: ${step.status}, attempt ${step.attempt}, task run ${step.task_run_id ?? "-"}${step.message ? `, ${step.message}` : ""}`);
+      lines.push(`${step.node_id}: ${step.status}, attempt ${step.attempt}, node run ${step.id}${step.message ? `, ${step.message}` : ""}`);
     }
     return `${lines.join("\n")}${workflowNodeDetailExtra.value}`;
   });
@@ -613,22 +613,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function updateSelectedWorkflowNodeDetail() {
-    selectedWorkflowNodeTaskRunId.value = 0;
+    selectedWorkflowNodeRunId.value = 0;
     workflowNodeDetailExtra.value = "";
     const nodeId = selectedWorkflowRunNodeId.value || selectedStepId.value;
-    const step = workflowRunDetail.value?.nodes.find((node) => node.node_id === nodeId && node.task_run_id);
-    if (!step?.task_run_id) return;
-    selectedWorkflowNodeTaskRunId.value = step.task_run_id;
+    const step = workflowRunDetail.value?.nodes.find((node) => node.node_id === nodeId);
+    if (!step?.id) return;
+    selectedWorkflowNodeRunId.value = step.id;
     const [nodeChunks, nodeArtifacts] = await Promise.all([
-      app.runOperation("Loading node chunks", () => fetchRunChunks(step.task_run_id!)).catch(() => [] as RunChunk[]),
-      app.runOperation("Loading node artifacts", () => fetchRunArtifacts(step.task_run_id!)).catch(() => [] as RunArtifact[])
+      app.runOperation("Loading node chunks", () => fetchWorkflowNodeRunChunks(step.id)).catch(() => [] as RunChunk[]),
+      app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(step.id)).catch(() => [] as RunArtifact[])
     ]);
     workflowNodeDetailExtra.value = [
       "",
-      `Task run ${step.task_run_id} chunks`,
+      `Workflow node run ${step.id} chunks`,
       ...nodeChunks.map((chunk) => `[${chunk.stream}] ${chunk.content}`),
       "",
-      `Task run ${step.task_run_id} artifacts`,
+      `Workflow node run ${step.id} artifacts`,
       ...nodeArtifacts.map((artifact) => `${artifact.name} (${artifact.size_bytes} bytes) ${artifact.uri}`)
     ].join("\n");
   }
@@ -1135,7 +1135,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowNodeDetailExtra,
     selectedStepId,
     selectedWorkflowRunNodeId,
-    selectedWorkflowNodeTaskRunId,
+    selectedWorkflowNodeRunId,
     stepEditor,
     workflowTaskDrafts,
     selectedWorkflow,

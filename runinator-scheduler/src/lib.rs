@@ -25,19 +25,19 @@ pub async fn scheduler_loop(
     config: &Config,
 ) {
     loop {
+        if let Err(err) = iteration::run_scheduler_iteration(broker.as_ref(), &api, config).await {
+            error!("Error during scheduler iteration: {}", err);
+        }
+        if let Err(err) = workflow::run_workflow_iteration(broker.as_ref(), &api).await {
+            error!("Error during workflow iteration: {}", err);
+        }
+
         tokio::select! {
             _ = notify.notified() => {
                 info!("Shutdown signal received. Exiting scheduler loop.");
                 break;
             }
-            _ = tokio::time::sleep(Duration::from_secs(config.scheduler_frequency_seconds)) => {
-                if let Err(err) = iteration::run_scheduler_iteration(broker.as_ref(), &api, config).await {
-                    error!("Error during scheduler iteration: {}", err);
-                }
-                if let Err(err) = workflow::run_workflow_iteration(broker.as_ref(), &api).await {
-                    error!("Error during workflow iteration: {}", err);
-                }
-            }
+            _ = tokio::time::sleep(Duration::from_secs(config.scheduler_frequency_seconds)) => {}
         }
     }
 }
