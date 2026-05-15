@@ -104,7 +104,7 @@ async fn sync_workflows_if_changed(
     api: &ApiClient,
     last_modified: &mut Option<SystemTime>,
 ) -> Result<(), DynError> {
-    let path = Path::new(&config.tasks_file);
+    let path = Path::new(&config.workflows_file);
     let metadata = tokio::fs::metadata(path).await?;
     let modified = metadata.modified()?;
 

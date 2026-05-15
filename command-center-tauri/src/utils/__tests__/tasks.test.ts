@@ -5,7 +5,7 @@ import { isWorkflowTask, validateTask } from "../tasks";
 describe("task validation", () => {
   it("requires core task fields", () => {
     const task = newTaskDraft();
-    expect(validateTask(task, { default_parameters: "{}", metadata: "{}" })).toBe("Name is required");
+    expect(validateTask(task, { configuration: "{}" })).toBe("Name is required");
   });
 
   it("accepts a complete task with object JSON fields", () => {
@@ -17,7 +17,7 @@ describe("task validation", () => {
       action_function: "run",
       timeout: 1000
     };
-    expect(validateTask(task, { default_parameters: "{}", metadata: "{}" })).toBe("");
+    expect(validateTask(task, { configuration: "{}" })).toBe("");
   });
 
   it("rejects non-object JSON fields", () => {
@@ -29,12 +29,12 @@ describe("task validation", () => {
       action_function: "run",
       timeout: 1000
     };
-    expect(validateTask(task, { default_parameters: "[]", metadata: "{}" })).toContain("JSON objects");
+    expect(validateTask(task, { configuration: "[]" })).toContain("JSON object");
   });
 
   it("identifies workflow-only task records", () => {
-    expect(isWorkflowTask({ ...newTaskDraft(), metadata: { task_type: "workflow" } })).toBe(true);
-    expect(isWorkflowTask({ ...newTaskDraft(), metadata: { task_type: "scheduled" } })).toBe(false);
+    expect(isWorkflowTask({ ...newTaskDraft(), configuration: { task_type: "workflow" } })).toBe(true);
+    expect(isWorkflowTask({ ...newTaskDraft(), configuration: { task_type: "scheduled" } })).toBe(false);
     expect(isWorkflowTask(newTaskDraft())).toBe(false);
   });
 });

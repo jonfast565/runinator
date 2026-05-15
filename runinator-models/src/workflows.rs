@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,26 +158,83 @@ pub enum WorkflowNodeKind {
     Emit,
     Subflow,
     End,
+    Fail,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkflowAction {
     pub provider: String,
     pub function: String,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: i64,
     #[serde(default)]
-    pub default_parameters: Value,
+    pub configuration: Value,
     #[serde(default)]
     pub mcp_enabled: bool,
-    #[serde(default)]
-    pub metadata: Value,
     #[serde(default)]
     pub tags: Vec<String>,
 }
 
 fn default_timeout_seconds() -> i64 {
     60
+}
+
+impl<'de> Deserialize<'de> for WorkflowAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawWorkflowAction {
+            pub provider: String,
+            pub function: String,
+            #[serde(default = "default_timeout_seconds")]
+            pub timeout_seconds: i64,
+            #[serde(default)]
+            pub configuration: Value,
+            #[serde(default)]
+            pub mcp_enabled: bool,
+            #[serde(default)]
+            pub tags: Vec<String>,
+            #[serde(flatten)]
+            pub extra: Map<String, Value>,
+        }
+
+        let raw = RawWorkflowAction::deserialize(deserializer)?;
+        if raw.extra.contains_key("metadata") {
+            return Err(serde::de::Error::custom(
+                "action metadata is no longer supported; use action configuration",
+            ));
+        }
+        let configuration = merge_action_configuration(raw.configuration, raw.extra);
+        Ok(Self {
+            provider: raw.provider,
+            function: raw.function,
+            timeout_seconds: raw.timeout_seconds,
+            configuration,
+            mcp_enabled: raw.mcp_enabled,
+            tags: raw.tags,
+        })
+    }
+}
+
+fn merge_action_configuration(configuration: Value, extra: Map<String, Value>) -> Value {
+    if extra.is_empty() {
+        return configuration;
+    }
+    let mut merged = match configuration {
+        Value::Object(object) => object,
+        Value::Null => Map::new(),
+        other => {
+            let mut object = Map::new();
+            object.insert("value".into(), other);
+            object
+        }
+    };
+    for (key, value) in extra {
+        merged.entry(key).or_insert(value);
+    }
+    Value::Object(merged)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -347,8 +404,6 @@ pub struct WorkflowNode {
     pub subflow_id: Option<i64>,
     #[serde(default)]
     pub reentry: WorkflowReentry,
-    #[serde(default)]
-    pub metadata: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

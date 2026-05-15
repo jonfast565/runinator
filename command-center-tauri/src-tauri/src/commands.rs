@@ -2,7 +2,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowRun},
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
 };
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
@@ -58,6 +58,65 @@ pub async fn save_workflow_bundle(
         workflow: saved_workflow,
         tasks: vec![],
     })
+}
+
+#[tauri::command]
+pub async fn delete_workflow(
+    state: State<'_, CommandCenterState>,
+    workflow_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflows/{workflow_id}")).await?;
+    let response = state.client.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_triggers(
+    state: State<'_, CommandCenterState>,
+    workflow_id: i64,
+) -> CommandResult<Vec<WorkflowTrigger>> {
+    get_json(&state, &format!("workflows/{workflow_id}/triggers")).await
+}
+
+#[tauri::command]
+pub async fn save_workflow_trigger(
+    state: State<'_, CommandCenterState>,
+    trigger: WorkflowTrigger,
+    creating: bool,
+) -> CommandResult<WorkflowTrigger> {
+    let path = if creating {
+        format!("workflows/{}/triggers", trigger.workflow_id)
+    } else {
+        let id = trigger
+            .id
+            .ok_or_else(|| CommandError::Unexpected("missing workflow trigger id".into()))?;
+        format!("workflow_triggers/{id}")
+    };
+    let url = build_state_url(&state, &path).await?;
+    let response = if creating {
+        state.client.post(url.clone()).json(&trigger).send().await?
+    } else {
+        state
+            .client
+            .patch(url.clone())
+            .json(&trigger)
+            .send()
+            .await?
+    };
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<WorkflowTrigger>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_workflow_trigger(
+    state: State<'_, CommandCenterState>,
+    trigger_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_triggers/{trigger_id}")).await?;
+    let response = state.client.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
 }
 
 #[tauri::command]
@@ -150,9 +209,14 @@ pub async fn step_workflow_run(
 #[tauri::command]
 pub async fn fetch_workflow_runs(
     state: State<'_, CommandCenterState>,
-    workflow_id: i64,
+    workflow_id: Option<i64>,
 ) -> CommandResult<Vec<WorkflowRun>> {
-    get_json(&state, &format!("workflow_runs?workflow_id={workflow_id}")).await
+    match workflow_id {
+        Some(workflow_id) => {
+            get_json(&state, &format!("workflow_runs?workflow_id={workflow_id}")).await
+        }
+        None => get_json(&state, "workflow_runs").await,
+    }
 }
 
 #[tauri::command]

@@ -10,17 +10,8 @@
         <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
       </header>
 
-      <section v-if="nodeRun || taskDraft" class="detail-band">
-        <div v-if="nodeRun" class="metric">
-          <span>Run</span>
-          <strong>{{ nodeRun.status }}</strong>
-          <small>attempt {{ nodeRun.attempt }}</small>
-        </div>
-        <div v-if="nodeRun?.task_run_id" class="metric">
-          <span>Task Run</span>
-          <strong>#{{ nodeRun.task_run_id }}</strong>
-        </div>
-        <div v-if="taskDraft" class="metric">
+      <section v-if="taskDraft" class="detail-band">
+        <div class="metric">
           <span>Task</span>
           <strong>{{ taskDraft.name || `Task ${taskDraft.id ?? "-"}` }}</strong>
           <small>{{ taskDraft.enabled ? "enabled" : "disabled" }}</small>
@@ -76,7 +67,7 @@ import { useProvidersStore } from "../../stores/providers";
 import { useTasksStore } from "../../stores/tasks";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { JsonRecord } from "../../types/models";
-import { directTransitionKeys, nodeRefId } from "../../utils/workflows";
+import { directTransitionKeys, nodeRefId, workflowNodeActionConfig } from "../../utils/workflows";
 
 interface DetailItem {
   label: string;
@@ -99,23 +90,22 @@ const tasksStore = useTasksStore();
 const providersStore = useProvidersStore();
 
 const node = computed<JsonRecord | null>(() => workflows.selectedNode);
-const nodeRun = computed(() =>
-  workflows.workflowRunDetail?.nodes.find((item) => item.node_id === workflows.selectedStepId) ?? null
-);
 const taskDraft = computed(() => {
   const current = node.value;
-  if (!current || current.kind !== "task") return null;
+  if (!current || (current.kind !== "task" && current.kind !== "action")) return null;
   return workflows.workflowTaskDrafts[current.id] ?? tasksStore.tasks.find((task) => task.id === Number(current.task_id)) ?? null;
 });
-const provider = computed(() => taskDraft.value ? providersStore.providers.find((item) => item.name === taskDraft.value?.action_name) : null);
-const action = computed(() => provider.value?.actions.find((item) => item.function_name === taskDraft.value?.action_function) ?? null);
+const actionConfig = computed(() => (node.value ? workflowNodeActionConfig(node.value, taskDraft.value) : { provider: "", action: "" }));
+const provider = computed(() => providersStore.providers.find((item) => item.name === actionConfig.value.provider) ?? null);
+const action = computed(() => provider.value?.actions.find((item) => item.function_name === actionConfig.value.action) ?? null);
 
 const headline = computed(() => {
   const current = node.value;
   if (!current) return "";
   switch (current.kind) {
+    case "action":
     case "task":
-      return taskDraft.value ? `${taskDraft.value.action_name || "provider"} · ${taskDraft.value.action_function || "action"}` : `Task ${current.task_id ?? "-"}`;
+      return actionConfig.value.provider ? `${actionConfig.value.provider} · ${actionConfig.value.action || "action"}` : "Unconfigured action";
     case "approval":
       return String(current.parameters?.prompt ?? "Approval required");
     case "condition":
@@ -126,6 +116,8 @@ const headline = computed(() => {
       return "Workflow entry point";
     case "end":
       return "Terminal workflow step";
+    case "fail":
+      return "Terminal failure step";
     default:
       return `${current.kind} control node`;
   }
@@ -138,12 +130,13 @@ const resultFields = computed(() =>
 const detailSections = computed<DetailSection[]>(() => {
   const current = node.value;
   if (!current) return [];
-  const sections = [kindSection(current), transitionsSection(current), runtimeSection(current)].filter(Boolean) as DetailSection[];
+  const sections = [kindSection(current), transitionsSection(current)].filter(Boolean) as DetailSection[];
   return sections.filter((section) => section.items.length || section.chips.length || section.rows.length);
 });
 
 function kindSection(current: JsonRecord): DetailSection {
   switch (current.kind) {
+    case "action":
     case "task":
       return taskSection(current);
     case "approval":
@@ -195,6 +188,8 @@ function kindSection(current: JsonRecord): DetailSection {
       return section("Start", [item("Starts At", refLabel(current.transitions?.next))]);
     case "end":
       return section("End", [item("Terminal", "yes")]);
+    case "fail":
+      return section("Fail", [item("Terminal", "yes")]);
     default:
       return section(String(current.kind ?? "Node"), [item("Parameters", valueLabel(current.parameters))]);
   }
@@ -202,13 +197,21 @@ function kindSection(current: JsonRecord): DetailSection {
 
 function taskSection(current: JsonRecord): DetailSection {
   const task = taskDraft.value;
-  if (!task) return section("Task", [item("Task ID", current.task_id ?? "-")]);
+  if (!task) {
+    return section("Action", [
+      item("Provider", actionConfig.value.provider || "-"),
+      item("Action", actionConfig.value.action || "-"),
+      item("Timeout", `${current.timeout_seconds ?? current.action?.timeout_seconds ?? "-"}s`),
+      item("Retries", current.retry?.max_attempts ?? 1),
+      item("Step Parameters", valueLabel(current.parameters))
+    ]);
+  }
   return section(
-    "Task",
+    current.kind === "action" ? "Action" : "Task",
     [
       item("Name", task.name || "-"),
-      item("Provider", task.action_name || "-"),
-      item("Action", task.action_function || "-"),
+      item("Provider", actionConfig.value.provider || "-"),
+      item("Action", actionConfig.value.action || "-"),
       item("Schedule", task.cron_schedule || "-"),
       item("Timeout", `${task.timeout}s`),
       item("Retries", current.retry?.max_attempts ?? 1),
@@ -236,19 +239,6 @@ function transitionsSection(current: JsonRecord): DetailSection {
     });
   }
   return section("Transitions", [], [], rows);
-}
-
-function runtimeSection(current: JsonRecord): DetailSection {
-  const run = nodeRun.value;
-  if (!run) return section("Runtime", []);
-  return section("Runtime", [
-    item("Status", run.status),
-    item("Attempt", run.attempt),
-    item("Message", run.message || "-"),
-    item("Parameters", valueLabel(run.parameters)),
-    item("Output", valueLabel(run.output_json)),
-    item("Reason", run.transition_reason || "-")
-  ]);
 }
 
 function branchRows(current: JsonRecord): DetailRow[] {

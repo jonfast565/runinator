@@ -190,6 +190,12 @@ pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
     db.fetch_workflow_runs_by_status(status).await
 }
 
+pub async fn fetch_recent_workflow_runs<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Vec<WorkflowRun>, SendableError> {
+    db.fetch_recent_workflow_runs().await
+}
+
 pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
     db: &T,
     workflow_id: i64,

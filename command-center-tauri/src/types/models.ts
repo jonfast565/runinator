@@ -2,6 +2,7 @@ export type JsonRecord = Record<string, any>;
 
 export type WorkflowNodeKind =
   | "start"
+  | "action"
   | "task"
   | "wait"
   | "condition"
@@ -15,7 +16,8 @@ export type WorkflowNodeKind =
   | "race"
   | "emit"
   | "subflow"
-  | "end";
+  | "end"
+  | "fail";
 
 export type WorkflowDirectTransitionKey = "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
 export type WorkflowConnectionHandle = "top" | "right" | "bottom" | "left";
@@ -49,6 +51,8 @@ export interface WorkflowLayoutPosition {
   x: number;
   y: number;
 }
+
+export type WorkflowLayoutDirection = "horizontal" | "vertical";
 
 
 export interface ActionMetadata {
@@ -128,6 +132,24 @@ export interface RunArtifact {
   created_at: string;
 }
 
+export interface ScheduledTask {
+  id: number | null;
+  name: string;
+  cron_schedule: string;
+  action_name: string;
+  action_function: string;
+  enabled: boolean;
+  mcp_enabled?: boolean;
+  timeout: number;
+  configuration: JsonRecord;
+}
+
+export interface SaveTaskResponse {
+  success: boolean;
+  message: string;
+  task?: ScheduledTask | null;
+}
+
 export interface WorkflowDefinition {
   id: number | null;
   name: string;
@@ -137,12 +159,29 @@ export interface WorkflowDefinition {
   definition: JsonRecord;
 }
 
+export type WorkflowTriggerKind = "cron" | "manual";
+
+export interface WorkflowTrigger {
+  id: number | null;
+  workflow_id: number;
+  kind: WorkflowTriggerKind;
+  enabled: boolean;
+  configuration: JsonRecord;
+  next_execution: string | null;
+  blackout_start: string | null;
+  blackout_end: string | null;
+  metadata: JsonRecord;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface WorkflowNodeRun {
   id: number;
   workflow_run_id: number;
   node_id: string;
   status: string;
   attempt: number;
+  task_run_id?: number | null;
   parameters: JsonRecord;
   output_json?: any;
   state?: JsonRecord;
@@ -166,6 +205,7 @@ export interface TaskResponse {
 
 export interface WorkflowBundleSaveRequest {
   workflow: WorkflowDefinition;
+  tasks?: ScheduledTask[];
 }
 
 export interface WorkflowBundleSaveResponse {

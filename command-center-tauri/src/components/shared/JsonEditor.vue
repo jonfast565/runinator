@@ -1,5 +1,8 @@
 <template>
-  <div ref="editorContainer" class="json-editor-container"></div>
+  <details class="json-editor-shell" open>
+    <summary>{{ title }}</summary>
+    <div ref="editorContainer" class="json-editor-container"></div>
+  </details>
 </template>
 
 <script setup lang="ts">
@@ -11,6 +14,7 @@ import { EditorState } from '@codemirror/state';
 const props = defineProps<{ 
   modelValue: string;
   readonly?: boolean;
+  title?: string;
 }>();
 
 const emit = defineEmits<{ 
@@ -19,6 +23,7 @@ const emit = defineEmits<{
 
 const editorContainer = ref<HTMLElement | null>(null);
 let view: EditorView | null = null;
+const title = props.title ?? "JSON";
 
 onMounted(() => {
   if (!editorContainer.value) return;
@@ -64,13 +69,25 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.json-editor-container {
-  height: 100%;
-  width: 100%;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  overflow: hidden;
+.json-editor-shell {
+  border: 1px solid #ccd4dd;
+  border-radius: 6px;
   background-color: #fff;
+  overflow: hidden;
+}
+
+.json-editor-shell summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.json-editor-container {
+  height: 220px;
+  width: 100%;
+  border-top: 1px solid #e3e8ee;
+  overflow: hidden;
 }
 
 :deep(.cm-editor) {

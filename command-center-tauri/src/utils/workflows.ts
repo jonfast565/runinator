@@ -6,14 +6,17 @@ import type {
   WorkflowDirectTransitionKey,
   WorkflowEditorEdgeData,
   WorkflowEditorNodeRecord,
+  WorkflowLayoutDirection,
   WorkflowLayoutPosition,
   WorkflowNodeKind,
-  WorkflowRunDetail
+  WorkflowRunDetail,
+  ScheduledTask,
+  RunSummary
 } from "../types/models";
 import { statusClassForNode } from "./status";
 
 export const workflowNodeKinds: WorkflowNodeKind[] = [
-  "task",
+  "action",
   "approval",
   "loop",
   "condition",
@@ -31,14 +34,16 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = ["next", "on_success", "on_failure", "on_timeout", "on_reject"];
 export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "right", "bottom", "left"];
 
-export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null): Node[] {
+export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, tasks: ScheduledTask[] = []): Node[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
   const layout = workflowLayoutNodes(definition);
+  const fallbackLayout = autoArrangeWorkflowLayout(definition);
   const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
+  const taskById = new Map(tasks.filter((task) => task.id !== null).map((task) => [task.id, task]));
   return nodes.map((node: JsonRecord, index: number) => {
     const id = String(node.id ?? `step_${index + 1}`);
-    const position = layout[id] ?? { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
+    const position = layout[id] ?? fallbackLayout[id] ?? { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
     const run = runByNode.get(id);
     const status = run?.status ?? inferredNodeStatus(node, id, detail);
     const kind = workflowNodeKind(node.kind);
@@ -49,16 +54,26 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
       data: {
         title: id,
         kind,
-        summary: nodeSummary(node),
+        summary: nodeSummary(node, taskById.get(Number(node.task_id)) ?? null),
         statusLabel: run ? `${run.status} a${run.attempt}` : status,
         approvalPrompt: approvalPrompt(node, run?.state),
         running: status === "running" || status === "queued",
         status,
-        protected: kind === "start" || kind === "end"
+        protected: kind === "start" || kind === "end" || kind === "fail"
       },
       class: statusClassForNode(status)
     };
   });
+}
+
+export function workflowRunSearchText(run: RunSummary, workflowName = ""): string {
+  return [
+    run.id,
+    run.workflow_id ?? "",
+    workflowName,
+    run.status,
+    run.trigger ?? ""
+  ].join(" ").toLowerCase();
 }
 
 export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
@@ -83,12 +98,12 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
         edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, { kind: "branch", branchIndex: index, ...handles, editable: true }));
       }
     }
-    edges.push(...controlFlowEdges(node, nodeIds));
+    edges.push(...controlFlowEdges(definition, node, nodeIds));
   }
-  return edges;
+  return separateParallelEdges(edges);
 }
 
-export function autoArrangeWorkflowLayout(definition: JsonRecord): Record<string, WorkflowLayoutPosition> {
+export function autoArrangeWorkflowLayout(definition: JsonRecord, direction: WorkflowLayoutDirection = "horizontal"): Record<string, WorkflowLayoutPosition> {
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
   const ids = nodes.map((node: JsonRecord, index: number) => String(node.id ?? `step_${index + 1}`)).filter(Boolean);
   if (ids.length === 0) return {};
@@ -140,16 +155,37 @@ export function autoArrangeWorkflowLayout(definition: JsonRecord): Record<string
     for (const componentIndex of group) {
       const component = [...components[componentIndex]].sort((left, right) => (indexById.get(left) ?? 0) - (indexById.get(right) ?? 0));
       for (const id of component) {
-        positions[id] = {
-          x: level * columnGap,
-          y: yOffset + slot * rowGap
-        };
+        const primary = level * columnGap;
+        const secondary = yOffset + slot * rowGap;
+        positions[id] = direction === "vertical" ? { x: secondary, y: primary } : { x: primary, y: secondary };
         slot += 1;
       }
     }
   });
 
   return positions;
+}
+
+export function autoArrangeWorkflowEdgeHandles(definition: JsonRecord, positions: Record<string, WorkflowLayoutPosition>) {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const nodeIds = new Set(nodes.map((node: JsonRecord) => String(node.id)).filter(Boolean));
+  const setHandles = (source: string, semanticKey: string, target: string | null) => {
+    if (!target || !nodeIds.has(source) || !nodeIds.has(target)) return;
+    const handles = connectionHandlesForPositions(positions[source], positions[target]);
+    setWorkflowEdgeHandles(definition, source, semanticKey, handles.sourceHandle, handles.targetHandle);
+  };
+
+  for (const node of nodes) {
+    const source = String(node.id ?? "");
+    const transitions = isRecord(node.transitions) ? node.transitions : {};
+    for (const key of directTransitionKeys) setHandles(source, key, nodeRefId(transitions[key]));
+    if (Array.isArray(transitions.branches)) {
+      transitions.branches.forEach((branch: JsonRecord, index: number) => setHandles(source, `branches.${index}`, nodeRefId(branch?.target)));
+    }
+    for (const { target, parameterKey, parameterIndex } of controlFlowTargetValues(node)) {
+      setHandles(source, parameterSemanticKey(parameterKey, parameterIndex), target);
+    }
+  }
 }
 
 export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], taskId = 1): WorkflowEditorNodeRecord {
@@ -161,6 +197,10 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], 
     transitions: {}
   };
   switch (kind) {
+    case "action":
+      node.action = { provider: "", function: "", timeout_seconds: 300, configuration: {} };
+      node.retry = { max_attempts: 1 };
+      break;
     case "task":
       node.task_id = taskId;
       node.retry = { max_attempts: 1 };
@@ -207,6 +247,48 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], 
       break;
   }
   return node;
+}
+
+export function createWorkflowTaskDraft(nodeId: string, taskId: number | null): ScheduledTask {
+  return {
+    id: taskId,
+    name: `${titleCase(nodeId)} Task`,
+    cron_schedule: "",
+    action_name: "",
+    action_function: "",
+    enabled: false,
+    timeout: 300,
+    configuration: {
+      task_type: "workflow",
+      workflow_node_id: nodeId
+    }
+  };
+}
+
+export function copyWorkflowTaskDraft(task: ScheduledTask, nodeId: string, taskId: number | null): ScheduledTask {
+  return stampWorkflowTaskConfiguration(
+    {
+      ...task,
+      id: taskId,
+      name: `${task.name || titleCase(nodeId)} copy`,
+      configuration: { ...(task.configuration ?? {}) }
+    },
+    nodeId,
+    null
+  );
+}
+
+export function stampWorkflowTaskConfiguration(task: ScheduledTask, nodeId: string, workflowId: number | null): ScheduledTask {
+  const configuration: JsonRecord = {
+    ...(task.configuration ?? {}),
+    task_type: "workflow",
+    workflow_node_id: nodeId
+  };
+  if (workflowId !== null) configuration.workflow_id = workflowId;
+  return {
+    ...task,
+    configuration
+  };
 }
 
 export function uniqueWorkflowNodeId(nodes: JsonRecord[], base: string): string {
@@ -274,6 +356,46 @@ export function removeEditableEdge(node: JsonRecord, edge: Edge): boolean {
   return false;
 }
 
+export function removeWorkflowEdge(node: JsonRecord, edge: Edge): boolean {
+  if (removeEditableEdge(node, edge)) return true;
+  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  if (data?.kind !== "control" || !data.parameterKey) return false;
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  if (typeof data.parameterIndex === "number" && Array.isArray(parameters[data.parameterKey])) {
+    const current = parameters[data.parameterKey][data.parameterIndex];
+    if (nodeRefId(current) !== edge.target && nodeRefId(current?.target) !== edge.target) return false;
+    parameters[data.parameterKey].splice(data.parameterIndex, 1);
+    return true;
+  }
+  if (nodeRefId(parameters[data.parameterKey]) === edge.target) {
+    delete parameters[data.parameterKey];
+    return true;
+  }
+  return false;
+}
+
+export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: string) {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  for (const node of nodes) {
+    const transitions = isRecord(node.transitions) ? node.transitions : {};
+    for (const key of directTransitionKeys) {
+      if (nodeRefId(transitions[key]) === nodeId) delete transitions[key];
+    }
+    if (Array.isArray(transitions.branches)) {
+      transitions.branches = transitions.branches.filter((branch: JsonRecord) => nodeRefId(branch?.target) !== nodeId);
+    }
+
+    const parameters = isRecord(node.parameters) ? node.parameters : {};
+    for (const key of ["default", "body", "catch", "finally", "target"]) {
+      if (nodeRefId(parameters[key]) === nodeId) delete parameters[key];
+    }
+    for (const key of ["branches", "wait_for", "cases"]) {
+      if (!Array.isArray(parameters[key])) continue;
+      parameters[key] = parameters[key].filter((item: unknown) => nodeRefId(item) !== nodeId && nodeRefId((item as JsonRecord)?.target) !== nodeId);
+    }
+  }
+}
+
 export function setConditionBranch(node: JsonRecord, index: number, when: JsonRecord, target: string) {
   node.transitions = isRecord(node.transitions) ? node.transitions : {};
   node.transitions.branches = Array.isArray(node.transitions.branches) ? node.transitions.branches : [];
@@ -305,10 +427,11 @@ function normalizeDefinition(definition: JsonRecord): JsonRecord {
 
   const ids = new Set(nodes.map((node: JsonRecord) => String(node.id)).filter(Boolean));
   const endId = ensureEndNode(nodes, ids);
+  ensureFailNode(nodes, ids);
   const previousStart =
     typeof nextDefinition.start === "string" && ids.has(nextDefinition.start) && nodeKindById(nodes, nextDefinition.start) !== "start"
       ? nextDefinition.start
-      : firstNodeId(nodes, (kind) => kind !== "start" && kind !== "end") ?? endId;
+      : firstNodeId(nodes, (kind) => kind !== "start" && kind !== "end" && kind !== "fail") ?? endId;
   const startId = ensureStartNode(nodes, ids, previousStart, endId);
   routeSuccessTerminalsToEnd(nodes, endId);
   nextDefinition.start = startId;
@@ -335,6 +458,14 @@ function ensureEndNode(nodes: JsonRecord[], ids: Set<string>): string {
   return id;
 }
 
+function ensureFailNode(nodes: JsonRecord[], ids: Set<string>): string {
+  const existing = firstNodeId(nodes, (kind) => kind === "fail");
+  if (existing) return existing;
+  const id = uniqueNodeId("fail", ids);
+  nodes.push({ id, kind: "fail" });
+  return id;
+}
+
 function ensureStartNode(nodes: JsonRecord[], ids: Set<string>, previousStart: string, endId: string): string {
   const existing = firstNodeId(nodes, (kind) => kind === "start");
   if (existing) {
@@ -353,7 +484,7 @@ function ensureStartNode(nodes: JsonRecord[], ids: Set<string>, previousStart: s
 
 function routeSuccessTerminalsToEnd(nodes: JsonRecord[], endId: string) {
   for (const node of nodes) {
-    if (node.kind === "end" || hasSuccessTransition(node)) continue;
+    if (node.kind === "end" || node.kind === "fail" || hasSuccessTransition(node)) continue;
     ensureNextTransition(node, endId);
   }
 }
@@ -376,6 +507,7 @@ function inferredNodeStatus(node: JsonRecord, id: string, detail: WorkflowRunDet
   if (!detail) return undefined;
   if (detail.run.active_node_id === id && isWorkflowRunDisplayStatus(detail.run.status)) return detail.run.status;
   if (node.kind === "end" && detail.run.active_node_id === id && detail.run.status === "succeeded") return "succeeded";
+  if (node.kind === "fail" && detail.run.active_node_id === id && detail.run.status === "failed") return "failed";
   if (node.kind === "start" && detail.nodes.length > 0) return "succeeded";
   return undefined;
 }
@@ -419,6 +551,7 @@ function isRecord(value: unknown): value is JsonRecord {
 function graphEdge(source: string, target: string, label: string, data: WorkflowEditorEdgeData): Edge {
   return {
     id: edgeId(source, target, label, data),
+    type: "smoothstep",
     source,
     target,
     sourceHandle: data.sourceHandle,
@@ -426,6 +559,7 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
     label,
     data,
     updatable: data.editable,
+    interactionWidth: 24,
     markerEnd: MarkerType.ArrowClosed
   };
 }
@@ -574,12 +708,39 @@ function edgeId(source: string, target: string, label: string, data: WorkflowEdi
     .join(":");
 }
 
-function controlFlowEdges(node: JsonRecord, nodeIds: Set<string>): Edge[] {
+function separateParallelEdges(edges: Edge[]): Edge[] {
+  const groups = new Map<string, Edge[]>();
+  for (const edge of edges) {
+    const key = [edge.source, edge.target, edge.sourceHandle ?? "", edge.targetHandle ?? ""].join("\u0000");
+    const group = groups.get(key) ?? [];
+    group.push(edge);
+    groups.set(key, group);
+  }
+
+  return edges.map((edge) => {
+    const group = groups.get([edge.source, edge.target, edge.sourceHandle ?? "", edge.targetHandle ?? ""].join("\u0000")) ?? [edge];
+    if (group.length === 1) return edge;
+    const index = group.findIndex((item) => item.id === edge.id);
+    return {
+      ...edge,
+      pathOptions: { offset: 18 + index * 18, borderRadius: 8 },
+      zIndex: index + 1
+    };
+  });
+}
+
+function controlFlowEdges(definition: JsonRecord, node: JsonRecord, nodeIds: Set<string>): Edge[] {
   const source = String(node.id ?? "");
   return controlFlowTargetValues(node)
     .filter(({ target }) => nodeIds.has(target))
     .map(({ target, label, parameterKey, parameterIndex }) =>
-      graphEdge(source, target, label, { kind: "control", parameterKey, parameterIndex, editable: false })
+      graphEdge(source, target, label, {
+        kind: "control",
+        parameterKey,
+        parameterIndex,
+        ...edgeHandles(definition, source, parameterSemanticKey(parameterKey, parameterIndex)),
+        editable: false
+      })
     );
 }
 
@@ -698,13 +859,23 @@ function validRefPath(value: unknown): boolean {
 }
 
 function workflowNodeKind(value: unknown): WorkflowNodeKind {
-  return typeof value === "string" && ["start", ...workflowNodeKinds, "loop", "end"].includes(value) ? (value as WorkflowNodeKind) : "task";
+  return typeof value === "string" && ["start", ...workflowNodeKinds, "loop", "end", "fail"].includes(value) ? (value as WorkflowNodeKind) : "task";
 }
 
-function nodeSummary(node: JsonRecord): string {
+export function workflowNodeActionConfig(node: JsonRecord, task: ScheduledTask | null = null): { provider: string; action: string } {
+  const action = isRecord(node.action) ? node.action : {};
+  return {
+    provider: String(action.provider ?? node.action_name ?? task?.action_name ?? ""),
+    action: String(action.function ?? node.action_function ?? task?.action_function ?? "")
+  };
+}
+
+function nodeSummary(node: JsonRecord, task: ScheduledTask | null = null): string {
   switch (workflowNodeKind(node.kind)) {
+    case "action":
     case "task": {
-      const action = node.action_name ? `${node.action_name}.${node.action_function}` : "unconfigured action";
+      const config = workflowNodeActionConfig(node, task);
+      const action = config.provider ? `${config.provider}.${config.action || ""}` : "unconfigured action";
       return `Action: ${action}`;
     }
     case "approval":
@@ -717,6 +888,8 @@ function nodeSummary(node: JsonRecord): string {
       return node.wait?.seconds ? `${node.wait.seconds}s` : "wait";
     case "subflow":
       return `workflow ${node.subflow_id ?? "-"}`;
+    case "fail":
+      return "Workflow failure";
     default:
       return workflowNodeKind(node.kind);
   }
@@ -740,8 +913,30 @@ function edgeHandles(definition: JsonRecord, source: string, semanticKey: string
   };
 }
 
+function connectionHandlesForPositions(source?: WorkflowLayoutPosition, target?: WorkflowLayoutPosition): Pick<WorkflowEditorEdgeData, "sourceHandle" | "targetHandle"> {
+  if (!source || !target) return { sourceHandle: "bottom", targetHandle: "top" };
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { sourceHandle: "right", targetHandle: "left" } : { sourceHandle: "left", targetHandle: "right" };
+  }
+  return dy >= 0 ? { sourceHandle: "bottom", targetHandle: "top" } : { sourceHandle: "top", targetHandle: "bottom" };
+}
+
+export function parameterSemanticKey(parameterKey?: string, parameterIndex?: number): string {
+  return typeof parameterIndex === "number" ? `${parameterKey}.${parameterIndex}` : String(parameterKey ?? "control");
+}
+
 function edgeHandleKey(source: string, semanticKey: string): string {
   return `${source}:${semanticKey}`;
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function normalizeConnectionHandle(value: unknown): WorkflowConnectionHandle | undefined {

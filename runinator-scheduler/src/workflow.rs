@@ -171,6 +171,17 @@ pub async fn process_workflow_run(
             )
             .await?;
         }
+        WorkflowNodeKind::Fail => {
+            ensure_completed_node_run(api, &workflow_run, node, latest, "fail_reached").await?;
+            api.update_workflow_run(
+                workflow_run.id,
+                WorkflowStatus::Failed,
+                Some(node.id.clone()),
+                None,
+                Some("Workflow reached fail node".into()),
+            )
+            .await?;
+        }
     };
 
     Ok(())

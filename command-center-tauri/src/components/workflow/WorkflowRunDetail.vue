@@ -51,8 +51,8 @@
         <tbody>
           <tr v-for="node in workflows.workflowRunDetail?.nodes" 
               :key="node.id" 
-              :class="{ selected: workflows.selectedStepId === node.node_id }"
-              @click="workflows.populateStepEditor(node.node_id)">
+              :class="{ selected: workflows.selectedWorkflowRunNodeId === node.node_id }"
+              @click="workflows.selectWorkflowRunNode(node.node_id)">
             <td>{{ node.node_id }}</td>
             <td><StatusBadge :status="node.status" /></td>
             <td>{{ node.attempt }}</td>
@@ -62,8 +62,8 @@
       </table>
     </div>
 
-    <div v-if="workflows.selectedStepId" class="node-logs-section">
-      <h3>Result: {{ workflows.selectedStepId }}</h3>
+    <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
+      <h3>Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
         <div v-for="field in resultFields" :key="field.name" class="result-field-row">
           <div class="result-field-key">
@@ -80,7 +80,7 @@
         </details>
       </div>
       <pre v-else class="output workflow-detail-result">{{ selectedNodeResultText }}</pre>
-      <h3>Logs: {{ workflows.selectedStepId }}</h3>
+      <h3>Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <pre class="output workflow-detail-logs">{{ workflows.workflowNodeDetailExtra || 'No logs for this step' }}</pre>
     </div>
   </div>
@@ -100,7 +100,7 @@ const tasksStore = useTasksStore();
 const providersStore = useProvidersStore();
 
 const selectedNodeOutput = computed<Record<string, any> | null>(() => {
-  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedStepId);
+  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
   const output = node?.output_json;
   if (output && typeof output === "object" && !Array.isArray(output)) return output;
   return null;
@@ -113,14 +113,15 @@ const debugState = computed<Record<string, any> | null>(() => {
 });
 
 const selectedNodeResultText = computed(() => {
-  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedStepId);
+  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
   return pretty(node?.output_json ?? {});
 });
 
 const resultFields = computed<ActionResultMetadata[]>(() => {
-  const nodeId = workflows.selectedStepId;
+  const nodeId = workflows.selectedWorkflowRunNodeId;
   if (!nodeId) return [];
-  const defNode = (workflows.workflowDraft.definition?.nodes ?? []).find((n: any) => n.id === nodeId);
+  const definition = workflows.workflowRunWorkflow?.definition ?? workflows.workflowDraft.definition;
+  const defNode = (definition?.nodes ?? []).find((n: any) => n.id === nodeId);
   if (!defNode?.task_id) return [];
   const task = tasksStore.tasks.find(t => t.id === defNode.task_id);
   if (!task) return [];

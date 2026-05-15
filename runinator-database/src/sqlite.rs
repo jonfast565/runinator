@@ -188,6 +188,68 @@ pub struct SqliteDb {
     pub pool: SqlitePool,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interfaces::DatabaseImpl;
+
+    #[tokio::test]
+    async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
+        let path = std::env::temp_dir().join(format!(
+            "runinator-workflow-runs-{}.db",
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+
+        let first = db
+            .upsert_workflow(&workflow("first"))
+            .await
+            .unwrap()
+            .id
+            .unwrap();
+        let second = db
+            .upsert_workflow(&workflow("second"))
+            .await
+            .unwrap()
+            .id
+            .unwrap();
+        let older = db
+            .create_workflow_run(first, serde_json::json!({}), serde_json::json!({}))
+            .await
+            .unwrap();
+        let newer = db
+            .create_workflow_run(second, serde_json::json!({}), serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let runs = db.fetch_recent_workflow_runs().await.unwrap();
+        assert_eq!(
+            runs.iter().map(|run| run.id).collect::<Vec<_>>(),
+            vec![newer.id, older.id]
+        );
+        assert_eq!(
+            runs.iter().map(|run| run.workflow_id).collect::<Vec<_>>(),
+            vec![second, first]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    fn workflow(name: &str) -> WorkflowDefinition {
+        WorkflowDefinition {
+            id: None,
+            name: name.to_string(),
+            version: 1,
+            enabled: true,
+            input_schema: serde_json::json!({}),
+            definition: serde_json::json!({ "nodes": [] }),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+}
+
 impl SqliteDb {
     pub async fn new(filename: &str) -> Result<Self, SendableError> {
         let options = SqliteConnectOptions::new()
@@ -581,6 +643,16 @@ impl DatabaseImpl for SqliteDb {
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = ? ORDER BY id")
             .bind(status.as_str())
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::sqlite_row_to_workflow_run)
+            .collect())
+    }
+
+    async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
+        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows

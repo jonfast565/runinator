@@ -35,7 +35,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor starts the importer with a short local polling interval, so edits to `runinator-importer/tasks/tasks.json` are pushed into the API shortly after the web service is discovered. If the stack is already running and you want an immediate sync, run:
+The supervisor starts the importer with a short local polling interval, so edits to `runinator-importer/workflows/workflows.json` are pushed into the API shortly after the web service is discovered. If the stack is already running and you want an immediate sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -84,24 +84,16 @@ PowerShell can build and run a local artifact layout:
 ./build.ps1 -Mode Local -Run
 ```
 
-This publishes binaries and the seed file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
+This publishes binaries and the workflow seed file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
 
-## Seeded Mock SDLC Workflow
+## Seeded Workflows
 
-The importer reads `runinator-importer/tasks/tasks.json`. It seeds both scheduled tasks and workflow definitions, including:
+The importer reads `runinator-importer/workflows/workflows.json`. It seeds workflow definitions and triggers, including:
 
-- workflow `1001`: `Mock SDLC: Feature Delivery`
 - workflow `1003`: `SDLC: Implement, Review, QA Until Done`
 - workflow `1004`: `SDLC: Process Issue`
-- workflow `1002`: `Rich Workflow Syntax Demo`
-- mock console task IDs `101-106`
-- real SDLC provider task IDs `201-212`
-
-In `command-center`, open the Workflows tab, select `Mock SDLC: Feature Delivery`, and run it. The workflow advances through local console-backed SDLC steps, pauses for `review_approval`, continues after approval, then pauses again for `release_gate`. Use the generic Approvals view to approve those requests and let the workflow finish.
 
 The real-provider SDLC workflow uses Jira, git, AI command, GitHub, `map`, `subflow`, wait, and approval nodes to process matching Jira issues into generated PRs, merge approved pull requests, and transition completed items. It requires runtime input for Jira credentials/query, done and rework transition IDs, repo/workspace paths, the implementation command, and GitHub credentials.
-
-The SDLC task definitions are disabled as scheduled tasks, so they do not run from cron. They are still executable as workflow task nodes.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 
@@ -135,7 +127,7 @@ Then launch the generated app from `command-center/build` and connect to the loc
 For importer/workflow seed changes, run:
 
 ```bash
-jq empty runinator-importer/tasks/tasks.json
+jq empty runinator-importer/workflows/workflows.json
 cargo test -p runinator-importer
 ```
 
@@ -145,7 +137,7 @@ To sync the seed file manually against a running local API:
 bash scripts/run-local.sh sync
 ```
 
-To verify the rich workflow demo end-to-end against an isolated local stack:
+To verify rich workflow execution end-to-end against an isolated local stack:
 
 ```bash
 RUNINATOR_E2E=1 cargo test -p runinator-e2e -- --ignored

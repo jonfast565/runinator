@@ -1,0 +1,1725 @@
+{
+  "workflows": [
+    {
+      "id": 1,
+      "name": "Test: Hello World",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "start",
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "start",
+            "transitions": {
+              "next": {
+                "$node": "action"
+              }
+            }
+          },
+          {
+            "id": "action",
+            "kind": "action",
+            "action": {
+              "provider": "Console",
+              "function": "run",
+              "timeout_seconds": 1000,
+              "configuration": {
+                "command": "echo 'Hello World!'"
+              },
+              "mcp_enabled": false,
+              "tags": []
+            },
+            "parameters": {},
+            "transitions": {
+              "on_success": {
+                "$node": "end"
+              },
+              "on_failure": {
+                "$node": "fail"
+              },
+              "on_timeout": {
+                "$node": "fail"
+              }
+            },
+            "retry": {
+              "max_attempts": 1
+            },
+            "timeout_seconds": 1000
+          },
+          {
+            "id": "end",
+            "kind": "end",
+            "transitions": {}
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "name": "AWS Login",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "start",
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "start",
+            "transitions": {
+              "next": {
+                "$node": "action"
+              }
+            }
+          },
+          {
+            "id": "action",
+            "kind": "action",
+            "action": {
+              "provider": "Console",
+              "function": "run",
+              "timeout_seconds": 100000,
+              "configuration": {
+                "command": "aws sso login"
+              },
+              "mcp_enabled": false,
+              "tags": []
+            },
+            "parameters": {},
+            "transitions": {
+              "on_success": {
+                "$node": "end"
+              },
+              "on_failure": {
+                "$node": "fail"
+              },
+              "on_timeout": {
+                "$node": "fail"
+              }
+            },
+            "retry": {
+              "max_attempts": 1
+            },
+            "timeout_seconds": 100000
+          },
+          {
+            "id": "end",
+            "kind": "end",
+            "transitions": {}
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Powershell: Sync Repositories",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "start",
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "start",
+            "transitions": {
+              "next": {
+                "$node": "action"
+              }
+            }
+          },
+          {
+            "id": "action",
+            "kind": "action",
+            "action": {
+              "provider": "Console",
+              "function": "run",
+              "timeout_seconds": 100000,
+              "configuration": {
+                "command": "pwsh ./task-scripts/sync-repos.ps1 \"C:\\Repos\""
+              },
+              "mcp_enabled": false,
+              "tags": []
+            },
+            "parameters": {},
+            "transitions": {
+              "on_success": {
+                "$node": "end"
+              },
+              "on_failure": {
+                "$node": "fail"
+              },
+              "on_timeout": {
+                "$node": "fail"
+              }
+            },
+            "retry": {
+              "max_attempts": 1
+            },
+            "timeout_seconds": 100000
+          },
+          {
+            "id": "end",
+            "kind": "end",
+            "transitions": {}
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "SDM Login",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "start",
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "start",
+            "transitions": {
+              "next": {
+                "$node": "action"
+              }
+            }
+          },
+          {
+            "id": "action",
+            "kind": "action",
+            "action": {
+              "provider": "Console",
+              "function": "run",
+              "timeout_seconds": 100000,
+              "configuration": {
+                "command": "pwsh ./task-scripts/sdm-login.ps1"
+              },
+              "mcp_enabled": false,
+              "tags": []
+            },
+            "parameters": {},
+            "transitions": {
+              "on_success": {
+                "$node": "end"
+              },
+              "on_failure": {
+                "$node": "fail"
+              },
+              "on_timeout": {
+                "$node": "fail"
+              }
+            },
+            "retry": {
+              "max_attempts": 1
+            },
+            "timeout_seconds": 100000
+          },
+          {
+            "id": "end",
+            "kind": "end",
+            "transitions": {}
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "id": 1003,
+      "name": "SDLC: Implement, Review, QA Until Done",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "jira_base_url",
+          "jira_token",
+          "jira_jql",
+          "jira_done_transition_id",
+          "jira_rework_transition_id",
+          "git_repo",
+          "workspace_root",
+          "implementation_command",
+          "github_token",
+          "github_owner",
+          "github_repo"
+        ],
+        "properties": {
+          "jira_base_url": {
+            "type": "string"
+          },
+          "jira_token": {
+            "type": "string"
+          },
+          "jira_email": {
+            "type": "string"
+          },
+          "jira_jql": {
+            "type": "string"
+          },
+          "jira_done_transition_id": {
+            "type": "string"
+          },
+          "jira_rework_transition_id": {
+            "type": "string"
+          },
+          "git_repo": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "implementation_command": {
+            "type": "string"
+          },
+          "github_token": {
+            "type": "string"
+          },
+          "github_owner": {
+            "type": "string"
+          },
+          "github_repo": {
+            "type": "string"
+          },
+          "github_base_branch": {
+            "type": "string",
+            "default": "main"
+          }
+        }
+      },
+      "definition": {
+        "start": "discover_ready_issues",
+        "concurrency": 1,
+        "metadata": {
+          "domain": "sdlc",
+          "description": "Find Jira automation items and process each issue through an isolated SDLC subflow."
+        },
+        "nodes": [
+          {
+            "id": "discover_ready_issues",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "jql": {
+                "$ref": {
+                  "input": [
+                    "jira_jql"
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "process_each_issue"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "search",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "process_each_issue",
+            "kind": "map",
+            "parameters": {
+              "items": {
+                "$ref": {
+                  "node": "discover_ready_issues",
+                  "output": [
+                    "issues"
+                  ]
+                }
+              },
+              "target": {
+                "$node": "process_issue"
+              },
+              "concurrency": 1
+            },
+            "transitions": {
+              "next": {
+                "$node": "complete"
+              }
+            }
+          },
+          {
+            "id": "process_issue",
+            "kind": "subflow",
+            "subflow_id": 1004,
+            "parameters": {
+              "issue": {
+                "$ref": {
+                  "workflow": [
+                    "state",
+                    "map",
+                    "item"
+                  ]
+                }
+              },
+              "jira_base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "jira_token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "jira_email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "jira_done_transition_id": {
+                "$ref": {
+                  "input": [
+                    "jira_done_transition_id"
+                  ]
+                }
+              },
+              "jira_rework_transition_id": {
+                "$ref": {
+                  "input": [
+                    "jira_rework_transition_id"
+                  ]
+                }
+              },
+              "git_repo": {
+                "$ref": {
+                  "input": [
+                    "git_repo"
+                  ]
+                }
+              },
+              "workspace_root": {
+                "$ref": {
+                  "input": [
+                    "workspace_root"
+                  ]
+                }
+              },
+              "implementation_command": {
+                "$ref": {
+                  "input": [
+                    "implementation_command"
+                  ]
+                }
+              },
+              "github_token": {
+                "$ref": {
+                  "input": [
+                    "github_token"
+                  ]
+                }
+              },
+              "github_owner": {
+                "$ref": {
+                  "input": [
+                    "github_owner"
+                  ]
+                }
+              },
+              "github_repo": {
+                "$ref": {
+                  "input": [
+                    "github_repo"
+                  ]
+                }
+              },
+              "github_base_branch": {
+                "$ref": {
+                  "input": [
+                    "github_base_branch"
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "process_each_issue"
+              }
+            }
+          },
+          {
+            "id": "complete",
+            "kind": "end"
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ],
+        "ui": {
+          "layout": {
+            "discover_ready_issues": {
+              "x": 0,
+              "y": 0
+            },
+            "process_each_issue": {
+              "x": 240,
+              "y": 0
+            },
+            "process_issue": {
+              "x": 480,
+              "y": 0
+            },
+            "complete": {
+              "x": 720,
+              "y": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": 1004,
+      "name": "SDLC: Process Issue",
+      "version": 1,
+      "enabled": true,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "definition": {
+        "start": "create_worktree",
+        "concurrency": 1,
+        "metadata": {
+          "domain": "sdlc",
+          "description": "Process one Jira issue through implementation, PR checks, QA, merge, cleanup, and bounded rework."
+        },
+        "nodes": [
+          {
+            "id": "create_worktree",
+            "kind": "action",
+            "parameters": {
+              "repo": {
+                "$ref": {
+                  "input": [
+                    "git_repo"
+                  ]
+                }
+              },
+              "branch": {
+                "$concat": [
+                  "codex/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "path": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "workspace_root"
+                      ]
+                    }
+                  },
+                  "/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "implement_change"
+              }
+            },
+            "action": {
+              "provider": "git",
+              "function": "worktree",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "git"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "implement_change",
+            "kind": "action",
+            "reentry": {
+              "enabled": true,
+              "max_visits": 3,
+              "on_exhausted": {
+                "$node": "comment_rework_exhausted"
+              }
+            },
+            "parameters": {
+              "command": {
+                "$ref": {
+                  "input": [
+                    "implementation_command"
+                  ]
+                }
+              },
+              "input": {
+                "issue": {
+                  "$ref": {
+                    "input": [
+                      "issue"
+                    ]
+                  }
+                },
+                "workspace": {
+                  "$concat": [
+                    {
+                      "$ref": {
+                        "input": [
+                          "workspace_root"
+                        ]
+                      }
+                    },
+                    "/",
+                    {
+                      "$ref": {
+                        "input": [
+                          "issue",
+                          "key"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "commit_work"
+              }
+            },
+            "action": {
+              "provider": "ai-command",
+              "function": "execute",
+              "timeout_seconds": 1800,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "ai"
+              ]
+            },
+            "timeout_seconds": 1800
+          },
+          {
+            "id": "commit_work",
+            "kind": "action",
+            "parameters": {
+              "workspace": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "workspace_root"
+                      ]
+                    }
+                  },
+                  "/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "message": {
+                "$concat": [
+                  "Implement ",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "push_branch"
+              }
+            },
+            "action": {
+              "provider": "git",
+              "function": "commit",
+              "timeout_seconds": 120,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "git"
+              ]
+            },
+            "timeout_seconds": 120
+          },
+          {
+            "id": "push_branch",
+            "kind": "action",
+            "parameters": {
+              "workspace": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "workspace_root"
+                      ]
+                    }
+                  },
+                  "/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "branch": {
+                "$concat": [
+                  "codex/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "remote": "origin",
+              "set_upstream": true
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "open_pull_request"
+              }
+            },
+            "action": {
+              "provider": "git",
+              "function": "push",
+              "timeout_seconds": 120,
+              "configuration": {
+                "remote": "origin",
+                "set_upstream": true
+              },
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "git"
+              ]
+            },
+            "timeout_seconds": 120
+          },
+          {
+            "id": "open_pull_request",
+            "kind": "action",
+            "parameters": {
+              "token": {
+                "$ref": {
+                  "input": [
+                    "github_token"
+                  ]
+                }
+              },
+              "owner": {
+                "$ref": {
+                  "input": [
+                    "github_owner"
+                  ]
+                }
+              },
+              "repo": {
+                "$ref": {
+                  "input": [
+                    "github_repo"
+                  ]
+                }
+              },
+              "title": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  },
+                  ": automated implementation"
+                ]
+              },
+              "head": {
+                "$concat": [
+                  "codex/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "base_branch": {
+                "$ref": {
+                  "input": [
+                    "github_base_branch"
+                  ]
+                }
+              },
+              "body": "Created by Runinator SDLC automation."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "wait_for_checks"
+              }
+            },
+            "action": {
+              "provider": "github",
+              "function": "create_pr",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "github"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "wait_for_checks",
+            "kind": "wait",
+            "wait": {
+              "seconds": 60
+            },
+            "reentry": {
+              "enabled": true,
+              "max_visits": 20,
+              "on_exhausted": {
+                "$node": "comment_checks_failed"
+              }
+            },
+            "transitions": {
+              "next": {
+                "$node": "summarize_checks"
+              }
+            }
+          },
+          {
+            "id": "summarize_checks",
+            "kind": "action",
+            "parameters": {
+              "token": {
+                "$ref": {
+                  "input": [
+                    "github_token"
+                  ]
+                }
+              },
+              "owner": {
+                "$ref": {
+                  "input": [
+                    "github_owner"
+                  ]
+                }
+              },
+              "repo": {
+                "$ref": {
+                  "input": [
+                    "github_repo"
+                  ]
+                }
+              },
+              "ref": {
+                "$concat": [
+                  "codex/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "route_check_status"
+              },
+              "on_failure": {
+                "$node": "comment_checks_failed"
+              }
+            },
+            "action": {
+              "provider": "github",
+              "function": "checks_summary",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "github"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "route_check_status",
+            "kind": "switch",
+            "parameters": {
+              "value": {
+                "$ref": {
+                  "node": "summarize_checks",
+                  "output": [
+                    "status"
+                  ]
+                }
+              },
+              "cases": [
+                {
+                  "equals": "failed",
+                  "target": {
+                    "$node": "comment_checks_failed"
+                  }
+                },
+                {
+                  "equals": "pending",
+                  "target": {
+                    "$node": "wait_for_checks"
+                  }
+                }
+              ],
+              "default": {
+                "$node": "qa_approval"
+              }
+            }
+          },
+          {
+            "id": "qa_approval",
+            "kind": "approval",
+            "parameters": {
+              "approval_type": "qa",
+              "prompt": "Approve QA for the generated SDLC pull request."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "merge_approval"
+              },
+              "on_failure": {
+                "$node": "comment_qa_rejected"
+              }
+            }
+          },
+          {
+            "id": "merge_approval",
+            "kind": "approval",
+            "parameters": {
+              "approval_type": "merge",
+              "prompt": "Approve merge of the generated pull request."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "merge_pull_request"
+              },
+              "on_failure": {
+                "$node": "comment_merge_rejected"
+              }
+            }
+          },
+          {
+            "id": "merge_pull_request",
+            "kind": "action",
+            "parameters": {
+              "token": {
+                "$ref": {
+                  "input": [
+                    "github_token"
+                  ]
+                }
+              },
+              "owner": {
+                "$ref": {
+                  "input": [
+                    "github_owner"
+                  ]
+                }
+              },
+              "repo": {
+                "$ref": {
+                  "input": [
+                    "github_repo"
+                  ]
+                }
+              },
+              "pull_number": {
+                "$concat": [
+                  "",
+                  {
+                    "$ref": {
+                      "node": "open_pull_request",
+                      "output": [
+                        "number"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "merge_method": "squash",
+              "commit_title": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  },
+                  ": automated implementation"
+                ]
+              },
+              "commit_message": "Merged by Runinator SDLC automation."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "move_issue_to_done"
+              }
+            },
+            "action": {
+              "provider": "github",
+              "function": "merge_pr",
+              "timeout_seconds": 60,
+              "configuration": {
+                "merge_method": "squash"
+              },
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "github"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "move_issue_to_done",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "transition_id": {
+                "$ref": {
+                  "input": [
+                    "jira_done_transition_id"
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "cleanup_worktree"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "cleanup_worktree",
+            "kind": "action",
+            "parameters": {
+              "repo": {
+                "$ref": {
+                  "input": [
+                    "git_repo"
+                  ]
+                }
+              },
+              "path": {
+                "$concat": [
+                  {
+                    "$ref": {
+                      "input": [
+                        "workspace_root"
+                      ]
+                    }
+                  },
+                  "/",
+                  {
+                    "$ref": {
+                      "input": [
+                        "issue",
+                        "key"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "complete"
+              }
+            },
+            "action": {
+              "provider": "git",
+              "function": "cleanup",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "git"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "comment_checks_failed",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "body": "Runinator checks failed or timed out; returning this issue for rework."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "transition_to_rework"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "comment_qa_rejected",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "body": "QA rejected the generated pull request; returning this issue for rework."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "transition_to_rework"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "comment_merge_rejected",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "body": "Merge approval was rejected; returning this issue for rework."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "transition_to_rework"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "comment_rework_exhausted",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "body": "Runinator exhausted automated rework attempts; leaving this issue for manual follow-up."
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "transition_rework_deferred"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "transition_to_rework",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "transition_id": {
+                "$ref": {
+                  "input": [
+                    "jira_rework_transition_id"
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "implement_change"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "transition_rework_deferred",
+            "kind": "action",
+            "parameters": {
+              "base_url": {
+                "$ref": {
+                  "input": [
+                    "jira_base_url"
+                  ]
+                }
+              },
+              "token": {
+                "$ref": {
+                  "input": [
+                    "jira_token"
+                  ]
+                }
+              },
+              "email": {
+                "$ref": {
+                  "input": [
+                    "jira_email"
+                  ]
+                }
+              },
+              "key": {
+                "$ref": {
+                  "input": [
+                    "issue",
+                    "key"
+                  ]
+                }
+              },
+              "transition_id": {
+                "$ref": {
+                  "input": [
+                    "jira_rework_transition_id"
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": {
+                "$node": "deferred"
+              }
+            },
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 60,
+              "configuration": {},
+              "mcp_enabled": false,
+              "tags": [
+                "sdlc",
+                "jira"
+              ]
+            },
+            "timeout_seconds": 60
+          },
+          {
+            "id": "deferred",
+            "kind": "end"
+          },
+          {
+            "id": "complete",
+            "kind": "end"
+          },
+          {
+            "id": "fail",
+            "kind": "fail"
+          }
+        ],
+        "ui": {
+          "layout": {
+            "create_worktree": {
+              "x": 0,
+              "y": 0
+            },
+            "implement_change": {
+              "x": 240,
+              "y": 0
+            },
+            "commit_work": {
+              "x": 480,
+              "y": 0
+            },
+            "push_branch": {
+              "x": 720,
+              "y": 0
+            },
+            "open_pull_request": {
+              "x": 960,
+              "y": 0
+            },
+            "wait_for_checks": {
+              "x": 1200,
+              "y": 0
+            },
+            "summarize_checks": {
+              "x": 1440,
+              "y": 0
+            },
+            "route_check_status": {
+              "x": 1680,
+              "y": 0
+            },
+            "qa_approval": {
+              "x": 1920,
+              "y": 0
+            },
+            "merge_approval": {
+              "x": 2160,
+              "y": 0
+            },
+            "merge_pull_request": {
+              "x": 2400,
+              "y": 0
+            },
+            "move_issue_to_done": {
+              "x": 2640,
+              "y": 0
+            },
+            "cleanup_worktree": {
+              "x": 2880,
+              "y": 0
+            },
+            "comment_checks_failed": {
+              "x": 1440,
+              "y": 220
+            },
+            "comment_qa_rejected": {
+              "x": 1920,
+              "y": 220
+            },
+            "comment_merge_rejected": {
+              "x": 2160,
+              "y": 220
+            },
+            "transition_to_rework": {
+              "x": 2160,
+              "y": 420
+            },
+            "comment_rework_exhausted": {
+              "x": 240,
+              "y": 220
+            },
+            "transition_rework_deferred": {
+              "x": 480,
+              "y": 220
+            },
+            "deferred": {
+              "x": 720,
+              "y": 220
+            },
+            "complete": {
+              "x": 3120,
+              "y": 0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "workflow_id": 1,
+      "kind": "cron",
+      "enabled": true,
+      "configuration": {
+        "cron": "*/1 * * * *",
+        "parameters": {
+          "command": "echo 'Hello World!'"
+        }
+      },
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "id": 1
+    },
+    {
+      "workflow_id": 2,
+      "kind": "cron",
+      "enabled": true,
+      "configuration": {
+        "cron": "0 0,9,12,15,18,21 * * *",
+        "parameters": {
+          "command": "aws sso login"
+        }
+      },
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "id": 2
+    },
+    {
+      "workflow_id": 3,
+      "kind": "cron",
+      "enabled": true,
+      "configuration": {
+        "cron": "0 0,9,12,15,18,21 * * *",
+        "parameters": {
+          "command": "pwsh ./task-scripts/sync-repos.ps1 \"C:\\Repos\""
+        }
+      },
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "id": 3
+    },
+    {
+      "workflow_id": 4,
+      "kind": "cron",
+      "enabled": true,
+      "configuration": {
+        "cron": "0 0,9,12,15,18,21 * * *",
+        "parameters": {
+          "command": "pwsh ./task-scripts/sdm-login.ps1"
+        }
+      },
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "id": 4
+    },
+    {
+      "workflow_id": 1003,
+      "kind": "manual",
+      "enabled": true,
+      "configuration": {},
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "metadata": {
+        "source": "seed_workflow"
+      },
+      "id": 101003
+    },
+    {
+      "workflow_id": 1004,
+      "kind": "manual",
+      "enabled": true,
+      "configuration": {},
+      "next_execution": null,
+      "blackout_start": null,
+      "blackout_end": null,
+      "metadata": {
+        "source": "seed_workflow"
+      },
+      "id": 101004
+    }
+  ]
+}

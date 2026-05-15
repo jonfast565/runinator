@@ -40,6 +40,7 @@ onMounted(async () => {
     app.initialLoading = false;
     Promise.all([
       workflows.refreshWorkflows(),
+      workflows.fetchRecentWorkflowRuns(),
       resources.refreshResources(),
       secrets.refreshSecrets()
     ]);
@@ -61,6 +62,7 @@ onMounted(async () => {
     }
     await Promise.all([
       workflows.refreshWorkflows().catch(() => {}),
+      workflows.fetchRecentWorkflowRuns().catch(() => {}),
       resources.refreshResources().catch(() => {}),
       secrets.refreshSecrets().catch(() => {}),
       providers.fetchProviders().catch(() => {})
@@ -77,6 +79,7 @@ watch(
   () => app.activeTab,
   (tab) => {
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
+    if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
     if (tab === "Resources") resources.refreshResources();
     if (tab === "Secrets") secrets.refreshSecrets();
   }

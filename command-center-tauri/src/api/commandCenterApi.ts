@@ -15,7 +15,8 @@ import type {
   WorkflowBundleSaveResponse,
   WorkflowDefinition,
   WorkflowRunCreated,
-  WorkflowRunDetail
+  WorkflowRunDetail,
+  WorkflowTrigger
 } from "../types/models";
 
 function command<T>(name: string, args?: Record<string, unknown>) {
@@ -73,11 +74,27 @@ export async function saveWorkflowBundle(request: WorkflowBundleSaveRequest) {
   return command<WorkflowBundleSaveResponse>("save_workflow_bundle", { request });
 }
 
+export async function deleteWorkflow(workflowId: number) {
+  return command<TaskResponse>("delete_workflow", { workflowId });
+}
+
+export async function fetchWorkflowTriggers(workflowId: number) {
+  return command<WorkflowTrigger[]>("fetch_workflow_triggers", { workflowId });
+}
+
+export async function saveWorkflowTrigger(trigger: WorkflowTrigger, creating: boolean) {
+  return command<WorkflowTrigger>("save_workflow_trigger", { trigger, creating });
+}
+
+export async function deleteWorkflowTrigger(triggerId: number) {
+  return command<TaskResponse>("delete_workflow_trigger", { triggerId });
+}
+
 export async function createWorkflowRun(workflowId: number, options: { debug?: boolean } = {}) {
   return command<WorkflowRunCreated>("create_workflow_run", { workflowId, debug: Boolean(options.debug) });
 }
 
-export async function fetchWorkflowRuns(workflowId: number) {
+export async function fetchWorkflowRuns(workflowId?: number) {
   return command<RunSummary[]>("fetch_workflow_runs", { workflowId });
 }
 

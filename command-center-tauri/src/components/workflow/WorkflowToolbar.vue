@@ -6,7 +6,8 @@
     </div>
     <div class="workflow-actions">
       <button @click="workflows.openWorkflowSettings">Settings</button>
-      <button title="Auto arrange workflow nodes" @click="workflows.autoArrangeWorkflowNodes">Arrange</button>
+      <button title="Arrange workflow nodes left to right" @click="workflows.autoArrangeWorkflowNodes('horizontal')">Arrange H</button>
+      <button title="Arrange workflow nodes top to bottom" @click="workflows.autoArrangeWorkflowNodes('vertical')">Arrange V</button>
       <button @click="workflows.saveSelectedWorkflow">Save</button>
       <button :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">Run</button>
       <button :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflowDebug">Run Debug</button>

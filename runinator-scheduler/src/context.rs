@@ -19,7 +19,7 @@ pub fn build_node_parameters(
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
-    let base = merge_parameters(&action.default_parameters, &node.parameters);
+    let base = merge_parameters(&action.configuration, &node.parameters);
     let context = runtime_context(workflow_run, node_runs);
     runinator_workflows::resolve_value_refs(&base, &context)
         .map_err(|err| -> SendableError { Box::new(err) })

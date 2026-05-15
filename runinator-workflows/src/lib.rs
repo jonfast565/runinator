@@ -168,9 +168,14 @@ pub fn normalize_definition(definition: Value) -> Value {
         .and_then(Value::as_str)
         .map(str::to_string);
     let end_id = ensure_end_node(&mut nodes, &mut ids);
+    ensure_fail_node(&mut nodes, &mut ids);
     let previous_start = existing_start
         .filter(|id| ids.contains(id) && node_kind_by_id(&nodes, id).as_deref() != Some("start"))
-        .or_else(|| first_node_id(&nodes, |kind| kind != Some("start") && kind != Some("end")))
+        .or_else(|| {
+            first_node_id(&nodes, |kind| {
+                kind != Some("start") && kind != Some("end") && kind != Some("fail")
+            })
+        })
         .unwrap_or_else(|| end_id.clone());
     let start_id = ensure_start_node(&mut nodes, &mut ids, &previous_start, &end_id);
 
@@ -887,6 +892,15 @@ fn ensure_end_node(nodes: &mut Vec<Value>, ids: &mut HashSet<String>) -> String 
     id
 }
 
+fn ensure_fail_node(nodes: &mut Vec<Value>, ids: &mut HashSet<String>) -> String {
+    if let Some(id) = first_node_id(nodes, |kind| kind == Some("fail")) {
+        return id;
+    }
+    let id = unique_node_id("fail", ids);
+    nodes.push(serde_json::json!({ "id": id, "kind": "fail" }));
+    id
+}
+
 fn ensure_start_node(
     nodes: &mut Vec<Value>,
     ids: &mut HashSet<String>,
@@ -927,7 +941,7 @@ fn ensure_start_node(
 
 fn route_success_terminals_to_end(nodes: &mut [Value], end_id: &str) {
     for node in nodes {
-        if node_kind(node).as_deref() == Some("end") {
+        if matches!(node_kind(node).as_deref(), Some("end") | Some("fail")) {
             continue;
         }
         if has_success_transition(node) {

@@ -1,7 +1,6 @@
 import { onBeforeUnmount, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { useResourcesStore } from "../stores/resources";
-import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
 
 const RECONNECT_DELAY = 3000;
@@ -9,7 +8,6 @@ const FALLBACK_INTERVAL = 30000;
 
 export function useEventStream() {
   const app = useAppStore();
-  const tasks = useTasksStore();
   const workflows = useWorkflowsStore();
   const resources = useResourcesStore();
   let ws: WebSocket | null = null;
@@ -17,12 +15,10 @@ export function useEventStream() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function handleEvent(event: { type: string; [k: string]: unknown }) {
+    console.info("[command-center] server event", event);
     switch (event.type) {
-      case "tasks_changed":
-        if (!tasks.taskEditorOpen) tasks.refreshTasks();
-        break;
       case "run_status_changed":
-        tasks.refreshRunsForSelectedTask();
+        if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
         break;
       case "workflows_changed":
         if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
@@ -32,9 +28,11 @@ export function useEventStream() {
         if (workflows.selectedWorkflowRunId === runId) {
           workflows.fetchWorkflowRunDetail(runId, true);
         }
+        if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
         break;
       }
       case "workflow_run_activity":
+        if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
         if (workflows.selectedWorkflowRunId > 0) {
           workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
         }
@@ -48,14 +46,12 @@ export function useEventStream() {
   function startFallback() {
     if (fallbackTimer !== null) return;
     fallbackTimer = window.setInterval(() => {
-      if (!tasks.taskEditorOpen) {
-        tasks.refreshTasks();
-        if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
-        if (workflows.selectedWorkflowRunId > 0) {
-          workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
-        }
-        if (app.activeTab === "Resources") resources.refreshResources();
+      if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
+      if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
+      if (workflows.selectedWorkflowRunId > 0) {
+        workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
       }
+      if (app.activeTab === "Resources") resources.refreshResources();
     }, FALLBACK_INTERVAL);
   }
 
@@ -77,20 +73,30 @@ export function useEventStream() {
       return;
     }
     ws = new WebSocket(`${base}/ws/events`);
-    ws.onopen = () => stopFallback();
+    ws.onopen = () => {
+      console.info("[command-center] event stream connected", { url: `${base}/ws/events` });
+      stopFallback();
+    };
     ws.onmessage = ({ data }) => {
       try {
+        console.info("[command-center] event stream message", data);
         handleEvent(JSON.parse(data));
-      } catch {}
+      } catch (err) {
+        console.info("[command-center] failed to parse event stream message", { data, err });
+      }
     };
     ws.onclose = () => {
+      console.info("[command-center] event stream closed");
       ws = null;
       startFallback();
       if (app.serviceConnected) {
         reconnectTimer = setTimeout(connect, RECONNECT_DELAY);
       }
     };
-    ws.onerror = () => ws?.close();
+    ws.onerror = (event) => {
+      console.info("[command-center] event stream error", event);
+      ws?.close();
+    };
   }
 
   function disconnect() {

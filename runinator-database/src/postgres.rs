@@ -591,6 +591,16 @@ impl DatabaseImpl for PostgresDb {
             .collect())
     }
 
+    async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
+        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_workflow_run)
+            .collect())
+    }
+
     async fn fetch_workflow_runs_for_workflow(
         &self,
         workflow_id: i64,

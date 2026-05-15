@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUPERVISOR_ARGS=(-p runinator-supervisor --)
 COMMAND="${1:-start}"
-TASKS_FILE="${RUNINATOR_TASKS_FILE:-runinator-importer/tasks/tasks.json}"
+WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-runinator-importer/workflows/workflows.json}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 IMPORTER_GOSSIP_PORT="${RUNINATOR_IMPORTER_ONCE_GOSSIP_PORT:-5513}"
@@ -16,8 +16,8 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tasks-file)
-      TASKS_FILE="${2:?--tasks-file requires a value}"
+    --workflows-file)
+      WORKFLOWS_FILE="${2:?--workflows-file requires a value}"
       shift 2
       ;;
     --process)
@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "unknown option: $1" >&2
-      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--tasks-file PATH] [--process NAME] [--lines N]" >&2
+      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
       exit 2
       ;;
   esac
@@ -41,7 +41,7 @@ cd "$ROOT_DIR"
 sync_import() {
   cargo run -p runinator-importer -- \
     --once \
-    --tasks-file "$TASKS_FILE" \
+    --workflows-file "$WORKFLOWS_FILE" \
     --gossip-bind 127.0.0.1 \
     --gossip-port "$IMPORTER_GOSSIP_PORT" \
     --gossip-targets "$IMPORTER_GOSSIP_TARGETS"
@@ -81,7 +81,7 @@ Useful commands:
 
 Command-center:
   Build it with CMake/Qt from command-center/, then connect to the discovered local service.
-  The importer seeds workflow "Mock SDLC: Feature Delivery" and mock Console tasks 101-106.
+  The importer seeds workflow "Mock SDLC: Feature Delivery".
 MSG
     ;;
   foreground)
@@ -113,7 +113,7 @@ MSG
     cargo run "${SUPERVISOR_ARGS[@]}" status
     ;;
   *)
-    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--tasks-file PATH] [--process NAME] [--lines N]" >&2
+    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
     exit 2
     ;;
 esac

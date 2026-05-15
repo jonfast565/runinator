@@ -74,8 +74,8 @@
       "name": "importer",
       "command": "./target/debug/runinator-importer",
       "args": [
-        "--tasks-file",
-        "./runinator-importer/tasks/tasks.json",
+        "--workflows-file",
+        "./runinator-importer/workflows/workflows.json",
         "--poll-interval-seconds",
         "2",
         "--gossip-bind",

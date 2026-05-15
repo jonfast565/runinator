@@ -11,7 +11,7 @@
       <div class="spinner"></div>
     </div>
 
-    <div v-if="isWaiting && !submitting" class="node-actions">
+    <div v-if="isWaiting && !data.readOnly && !submitting" class="node-actions">
       <button class="node-btn approve" @click.stop="onApprove">Approve</button>
       <button class="node-btn reject" @click.stop="onReject">Reject</button>
     </div>
@@ -59,6 +59,7 @@ const props = defineProps<{
     running?: boolean;
     status?: string;
     protected?: boolean;
+    readOnly?: boolean;
   };
 }>();
 

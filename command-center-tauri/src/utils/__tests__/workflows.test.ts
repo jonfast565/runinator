@@ -14,9 +14,11 @@ import {
   removeEditableEdge,
   setConditionBranch,
   setWorkflowEdgeHandles,
-  stampWorkflowTaskMetadata,
-  uniqueWorkflowNodeId
+  stampWorkflowTaskConfiguration,
+  uniqueWorkflowNodeId,
+  workflowRunSearchText
 } from "../workflows";
+import { newWorkflowTriggerDraft } from "../../stores/workflows";
 
 describe("workflow graph utils", () => {
   const workflow: WorkflowDefinition = {
@@ -37,6 +39,32 @@ describe("workflow graph utils", () => {
   it("builds positioned graph nodes", () => {
     const nodes = buildGraphNodes(workflow, null);
     expect(nodes[0].position).toEqual({ x: 10, y: 20 });
+  });
+
+  it("does not add status classes without run detail", () => {
+    const nodes = buildGraphNodes(workflow, null);
+    expect(nodes.every((node) => node.class === "")).toBe(true);
+    expect(nodes.every((node) => !node.data.status)).toBe(true);
+  });
+
+  it("summarizes imported action nodes from embedded action configuration", () => {
+    const nodes = buildGraphNodes(
+      {
+        ...workflow,
+        definition: {
+          nodes: [
+            {
+              id: "run",
+              kind: "action",
+              action: { provider: "Console", function: "run", timeout_seconds: 60, configuration: {} }
+            }
+          ]
+        }
+      },
+      null
+    );
+
+    expect(nodes[0].data.summary).toBe("Action: Console.run");
   });
 
   it("builds transition edges", () => {
@@ -129,7 +157,7 @@ describe("workflow graph utils", () => {
       id: -1,
       name: "Build Step Task",
       enabled: false,
-      metadata: { task_type: "workflow", workflow_node_id: "build_step" }
+      configuration: { task_type: "workflow", workflow_node_id: "build_step" }
     });
 
     const copy = copyWorkflowTaskDraft(
@@ -139,7 +167,7 @@ describe("workflow graph utils", () => {
         name: "Shared Task",
         action_name: "console",
         action_function: "run",
-        metadata: { task_type: "scheduled" }
+        configuration: { task_type: "scheduled" }
       },
       "copied",
       -2
@@ -149,16 +177,33 @@ describe("workflow graph utils", () => {
       name: "Shared Task copy",
       action_name: "console",
       action_function: "run",
-      metadata: { task_type: "workflow", workflow_node_id: "copied" }
+      configuration: { task_type: "workflow", workflow_node_id: "copied" }
     });
   });
 
-  it("stamps workflow id on owned task metadata", () => {
+  it("stamps workflow id on owned task configuration", () => {
     const task = createWorkflowTaskDraft("node", -1);
-    expect(stampWorkflowTaskMetadata(task, "renamed", 99).metadata).toMatchObject({
+    expect(stampWorkflowTaskConfiguration(task, "renamed", 99).configuration).toMatchObject({
       task_type: "workflow",
       workflow_node_id: "renamed",
       workflow_id: 99
+    });
+  });
+
+  it("creates workflow trigger drafts with kind-specific defaults", () => {
+    expect(newWorkflowTriggerDraft(42, "cron")).toMatchObject({
+      workflow_id: 42,
+      kind: "cron",
+      enabled: true,
+      configuration: { cron: "0 * * * *", parameters: {} },
+      metadata: {}
+    });
+    expect(newWorkflowTriggerDraft(42, "manual")).toMatchObject({
+      workflow_id: 42,
+      kind: "manual",
+      enabled: true,
+      configuration: {},
+      metadata: {}
     });
   });
 
@@ -201,7 +246,7 @@ describe("workflow graph utils", () => {
   it("normalizes legacy definitions with required start and end nodes", () => {
     const normalized = normalizeWorkflowDefinition(workflow);
     expect(normalized.definition.start).toBe("start");
-    expect(normalized.definition.nodes.map((node: any) => node.kind)).toEqual(["start", "task", "task", "end"]);
+    expect(normalized.definition.nodes.map((node: any) => node.kind)).toEqual(["start", "task", "task", "end", "fail"]);
     expect(normalized.definition.nodes.find((node: any) => node.id === "b").transitions.next).toEqual({ "$node": "end" });
     expect(normalized.definition.ui.layout.nodes.a).toEqual({ x: 10, y: 20 });
   });
@@ -331,6 +376,25 @@ describe("workflow graph utils", () => {
 
     expect(nodes.find((node) => node.id === "b")?.data.status).toBe("debug_paused");
     expect(nodes.find((node) => node.id === "b")?.class).toBe("node-warning");
+  });
+
+  it("builds workflow run search text with workflow identity", () => {
+    expect(workflowRunSearchText({
+      id: 12,
+      workflow_id: 34,
+      status: "failed",
+      created_at: "",
+      started_at: null,
+      finished_at: null
+    }, "Nightly Import")).toContain("nightly import");
+    expect(workflowRunSearchText({
+      id: 12,
+      workflow_id: 34,
+      status: "failed",
+      created_at: "",
+      started_at: null,
+      finished_at: null
+    }, "Nightly Import")).toContain("34");
   });
 
   it("marks the active terminal workflow node from the run status", () => {

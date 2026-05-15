@@ -19,6 +19,15 @@ export function parseRequiredObject(text: string): JsonRecord | null {
   return null;
 }
 
+export function parseRequiredJson(text: string): any | null {
+  try {
+    return JSON.parse(text || "null");
+  } catch {
+    // surfaced by caller.
+  }
+  return null;
+}
+
 export function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }

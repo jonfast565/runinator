@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { useAppStore } from "../../stores/app";
+import { tabs, useAppStore } from "../../stores/app";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";

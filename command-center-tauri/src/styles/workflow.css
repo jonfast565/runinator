@@ -13,6 +13,17 @@
   height: 100%;
 }
 
+.runs-layout,
+.runs-detail-split {
+  height: 100%;
+  min-height: 0;
+}
+
+.runs-list-panel,
+.runs-detail-panel {
+  overflow: auto;
+}
+
 .workflow-canvas-panel {
   min-width: 360px;
 }
@@ -110,9 +121,56 @@
   background: #f8fafc;
 }
 
+.workflow-context-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  min-width: 130px;
+  padding: 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.workflow-context-menu button {
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  color: #17202a;
+  text-align: left;
+}
+
+.workflow-context-menu button:hover:not(:disabled) {
+  background: #eef4ff;
+}
+
 .workflow-json-editor {
   height: 100%;
   padding: 12px;
+}
+
+.workflow-run-graph-panel {
+  padding: 0;
+}
+
+.workflow-run-graph-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid #e2e8ef;
+}
+
+.workflow-run-graph-header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.workflow-run-graph-header span {
+  color: #66717e;
+  font-size: 12px;
 }
 
 .vue-flow__node {

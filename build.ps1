@@ -12,7 +12,7 @@ param(
     [string]$LocalDatabasePath = "target/artifacts/data/runinator.db",
 
     [ValidateNotNullOrEmpty()]
-    [string]$LocalTasksFile = "runinator-importer/tasks/tasks.json",
+    [string]$LocalWorkflowsFile = "runinator-importer/workflows/workflows.json",
 
     [ValidateRange(1024, 65535)]
     [int]$GossipBasePort = 5500,
@@ -237,7 +237,7 @@ function Prepare-LocalArtifacts {
         [Parameter(Mandatory)]
         [string]$PluginFileName,
 
-        [string]$TasksFileSource
+        [string]$WorkflowsFileSource
     )
 
     Publish-Binaries -TargetDir $TargetDir -ArtifactsDir $ArtifactsDir
@@ -261,13 +261,13 @@ function Prepare-LocalArtifacts {
         Write-Warning "Task scripts directory missing: $taskScriptsSource"
     }
 
-    if ($TasksFileSource) {
-        if (Test-Path -LiteralPath $TasksFileSource) {
-            $tasksTargetDir = Join-Path -Path $ArtifactsDir -ChildPath 'tasks'
-            Ensure-Directory -Path $tasksTargetDir
-            Copy-Item -Path $TasksFileSource -Destination (Join-Path -Path $tasksTargetDir -ChildPath (Split-Path -Leaf $TasksFileSource)) -Force
+    if ($WorkflowsFileSource) {
+        if (Test-Path -LiteralPath $WorkflowsFileSource) {
+            $workflowsTargetDir = Join-Path -Path $ArtifactsDir -ChildPath 'workflows'
+            Ensure-Directory -Path $workflowsTargetDir
+            Copy-Item -Path $WorkflowsFileSource -Destination (Join-Path -Path $workflowsTargetDir -ChildPath (Split-Path -Leaf $WorkflowsFileSource)) -Force
         } else {
-            Write-Warning "Tasks file not found: $TasksFileSource"
+            Write-Warning "Workflows file not found: $WorkflowsFileSource"
         }
     }
 }
@@ -487,9 +487,9 @@ function Write-LocalSupervisorConfig {
         Write-Warning "Plugin library not found at $pluginPath. The worker will likely fail to start."
     }
 
-    $tasksFile = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'tasks') -ChildPath 'tasks.json'
-    if (-not (Test-Path -LiteralPath $tasksFile)) {
-        Write-Warning "Tasks seed file missing at $tasksFile. The importer will idle without it."
+    $workflowsFile = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'workflows') -ChildPath 'workflows.json'
+    if (-not (Test-Path -LiteralPath $workflowsFile)) {
+        Write-Warning "Workflows seed file missing at $workflowsFile. The importer will idle without it."
     }
 
     $commands = @(
@@ -550,7 +550,7 @@ function Write-LocalSupervisorConfig {
             command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-importer'))
             cwd = $WorkspacePath
             args = @(
-                '--tasks-file', $tasksFile,
+                '--workflows-file', $workflowsFile,
                 '--poll-interval-seconds', '2'
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
             env = @{
@@ -833,18 +833,18 @@ try {
 
     if ($Mode -eq 'Local') {
         $pluginFileName = Get-PluginLibraryName
-        $tasksFilePath = if ([System.IO.Path]::IsPathRooted($LocalTasksFile)) {
-            $LocalTasksFile
+        $workflowsFilePath = if ([System.IO.Path]::IsPathRooted($LocalWorkflowsFile)) {
+            $LocalWorkflowsFile
         } else {
-            Join-Path -Path $workspacePath -ChildPath $LocalTasksFile
+            Join-Path -Path $workspacePath -ChildPath $LocalWorkflowsFile
         }
 
-        if (-not (Test-Path -LiteralPath $tasksFilePath)) {
-            Write-Warning "Specified tasks file not found at $tasksFilePath"
+        if (-not (Test-Path -LiteralPath $workflowsFilePath)) {
+            Write-Warning "Specified workflows file not found at $workflowsFilePath"
         }
 
         Write-Step 'Publishing build artifacts'
-        Prepare-LocalArtifacts -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -PluginFileName $pluginFileName -TasksFileSource $tasksFilePath
+        Prepare-LocalArtifacts -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -PluginFileName $pluginFileName -WorkflowsFileSource $workflowsFilePath
     } else {
         Write-Step 'Skipping local artifact publication for Kubernetes mode.'
     }

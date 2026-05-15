@@ -3,6 +3,7 @@
     <thead>
       <tr>
         <th>Run</th>
+        <th v-if="showWorkflow">Workflow</th>
         <th>Status</th>
         <th v-if="!compact">Trigger</th>
         <th>Created</th>
@@ -18,6 +19,7 @@
         @click="$emit('select', run)"
       >
         <td>{{ run.id }}</td>
+        <td v-if="showWorkflow">{{ workflowLabel(run) }}</td>
         <td><StatusBadge :status="run.status" /></td>
         <td v-if="!compact">{{ run.trigger ?? "" }}</td>
         <td>{{ formatDate(run.created_at) }}</td>
@@ -34,13 +36,21 @@ import { formatDate } from "../../utils/format";
 import { isBadStatus, isGoodStatus } from "../../utils/status";
 import StatusBadge from "./StatusBadge.vue";
 
-defineProps<{
+const props = defineProps<{
   runs: RunSummary[];
   selectedRunId: number;
   compact?: boolean;
+  showWorkflow?: boolean;
+  workflowNames?: Record<number, string>;
 }>();
 
 defineEmits<{
   select: [run: RunSummary];
 }>();
+
+function workflowLabel(run: RunSummary): string {
+  if (!run.workflow_id) return "-";
+  const name = props.workflowNames?.[run.workflow_id];
+  return name ? `${name} #${run.workflow_id}` : String(run.workflow_id);
+}
 </script>

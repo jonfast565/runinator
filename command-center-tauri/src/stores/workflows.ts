@@ -2,45 +2,54 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
   createWorkflowRun,
+  deleteWorkflow,
+  deleteWorkflowTrigger,
   fetchRunArtifacts,
   fetchRunChunks,
   fetchWorkflowRun,
   fetchWorkflowRuns,
+  fetchWorkflowTriggers,
   fetchWorkflows,
   saveWorkflowBundle,
+  saveWorkflowTrigger,
   stepWorkflowRun
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowNodeKind, WorkflowRunDetail } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind } from "../types/models";
 import { pretty } from "../utils/format";
-import { cloneJson, parseObject, parseRequiredObject } from "../utils/json";
+import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
 import {
   addDirectTransition,
+  autoArrangeWorkflowEdgeHandles,
   autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
-  copyWorkflowTaskDraft,
-  createWorkflowTaskDraft,
   createWorkflowNode,
   directTransitionKeys,
   isSameConnectionPointLoop,
   nodeRef,
   nodeRefId,
   normalizeWorkflowDefinition,
+  parameterSemanticKey,
   removeConditionBranch,
-  removeEditableEdge,
+  removeWorkflowEdge,
   removeWorkflowEdgeHandles,
+  removeWorkflowNodeReferences,
   setConditionBranch,
   setWorkflowEdgeHandles,
-  stampWorkflowTaskMetadata,
   uniqueWorkflowNodeId,
   validateWorkflowReferenceSyntax,
   valueRef,
-  workflowNodeKinds
+  workflowNodeActionConfig,
+  workflowNodeKinds,
+  workflowRunSearchText
 } from "../utils/workflows";
 import { useAppStore } from "./app";
 import { useProvidersStore } from "./providers";
 import { useResourcesStore } from "./resources";
+
+type BranchPolicyName = "all" | "any" | "first_success";
+type SwitchCaseEditor = { match_kind: "equals" | "not_equals" | "exists" | "when"; match_json: string; target: string };
 
 export const useWorkflowsStore = defineStore("workflows", () => {
   const workflows = ref<WorkflowDefinition[]>([]);
@@ -49,14 +58,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowJson = ref("{}");
   const workflowConcurrency = ref(1);
   const workflowSettingsOpen = ref(false);
+  const workflowTriggers = ref<WorkflowTrigger[]>([]);
+  const triggerEditorOpen = ref(false);
+  const triggerEditorCreating = ref(false);
+  const triggerEditorError = ref("");
+  const triggerDraft = reactive<WorkflowTrigger>(newWorkflowTriggerDraft(0, "cron"));
+  const triggerJson = reactive({ configuration: "{}", metadata: "{}" });
   const workflowEditorMode = ref<"graph" | "json">("graph");
-  const workflowInspectorMode = ref<"step" | "runs" | "detail">("step");
+  const workflowLayoutDirection = ref<WorkflowLayoutDirection>("horizontal");
+  const workflowInspectorMode = ref<"step">("step");
   const stepEditorOpen = ref(false);
   const stepEditorCreating = ref(false);
   const stepEditorCreatedNodeId = ref("");
   const stepEditorError = ref("");
   const workflowRuns = ref<RunSummary[]>([]);
   const workflowLayoutVersion = ref(0);
+  const workflowTaskDrafts = ref<Record<string, ScheduledTask>>({});
   const workflowRunsByRunId = computed(() => {
     const groups: Record<number, RunSummary[]> = {};
     for (const run of workflowRuns.value) {
@@ -67,26 +84,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return groups;
   });
   const recentWorkflowRuns = computed(() => {
-    // Only return the first instance of each run ID to avoid duplicates if backend returns them separately (though unlikely for workflow runs)
-    // Actually, task runs have multiple for same task, but workflow runs should be unique.
-    // If user meant "concurrent runs", they might share some ID? No, each run has unique ID.
-    // The issue says "completed workflows are not divided up by runs (say I ran the workflow two times concurrently)".
-    // This implies the list might be confusing if multiple runs exist.
-    
     const query = app.normalizedSearch;
     let list = workflowRuns.value;
     if (query) {
-      list = list.filter(r => 
-        String(r.id).includes(query) || 
-        (r.status && r.status.toLowerCase().includes(query))
-      );
+      list = list.filter(r => workflowRunSearchText(r, workflowNameForRun(r)).includes(query));
     }
-    return list.slice(0, 50); // Limit to 50 recent runs
+    return list.slice(0, 50);
   });
   const selectedWorkflowRunId = ref(0);
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
+  const selectedWorkflowRunNodeId = ref("");
   const selectedWorkflowNodeTaskRunId = ref(0);
   const stepEditor = reactive({
     id: "",
@@ -95,8 +104,33 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     approval_prompt: "Approval required",
     condition_fallback: "",
     condition_branches: [] as Array<{ when_json: string; target: string }>,
+    wait_seconds: 60,
+    wait_initial_status: "waiting",
+    wait_until_status: "",
     wait_json: "{}",
+    loop_items_json: "[]",
+    loop_target: "",
+    loop_max_iterations: 10,
+    switch_value_json: pretty(valueRef("input", ["mode"])),
+    switch_cases: [] as SwitchCaseEditor[],
+    switch_default: "",
+    parallel_branches: [] as string[],
+    join_wait_for: [] as string[],
+    join_mode: "all" as BranchPolicyName,
+    try_body: "",
+    try_catch: "",
+    try_finally: "",
+    map_items_json: "[]",
+    map_target: "",
+    map_concurrency: 1,
+    race_branches: [] as string[],
+    race_winner: "first_success" as BranchPolicyName,
+    emit_event_type: "workflow.event",
+    emit_data_json: "{}",
+    subflow_id: 0,
+    subflow_parameters_json: "{}",
     max_attempts: 1,
+    task_id: 1,
     timeout_seconds: 0,
     action_name: "",
     action_function: "",
@@ -109,10 +143,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const app = useAppStore();
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
+  const canManageWorkflowTriggers = computed(() => Boolean(workflowDraft.id));
   const canStepWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
   const canRemoveSelectedStep = computed(() => {
     const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
-    return Boolean(node && node.kind !== "start" && node.kind !== "end");
+    return Boolean(node && node.kind !== "start" && node.kind !== "end" && node.kind !== "fail");
   });
   const filteredWorkflows = computed(() => {
     const query = app.normalizedSearch;
@@ -140,8 +175,19 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       .map((key) => `${key}:${nodeRefId(transitions[key]) ?? "invalid"}`)
       .join(",");
   });
-  const graphNodes = computed(() => buildGraphNodes(workflowDraft, workflowRunDetail.value, [...useTasksStore().tasks, ...Object.values(workflowTaskDrafts.value)]));
+  const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, Object.values(workflowTaskDrafts.value)));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
+  const workflowRunWorkflow = computed(() => {
+    const workflowId = workflowRunDetail.value?.run.workflow_id ?? workflowRuns.value.find((run) => run.id === selectedWorkflowRunId.value)?.workflow_id;
+    return workflows.value.find((workflow) => workflow.id === workflowId) ?? null;
+  });
+  const runGraphNodes = computed(() => workflowRunWorkflow.value
+    ? buildGraphNodes(workflowRunWorkflow.value, workflowRunDetail.value, Object.values(workflowTaskDrafts.value)).map((node) => ({
+        ...node,
+        data: { ...(node.data as JsonRecord), readOnly: true }
+      }))
+    : []);
+  const runGraphEdges = computed(() => workflowRunWorkflow.value ? buildGraphEdges(workflowRunWorkflow.value) : []);
   const selectedNode = computed(() => ensureWorkflowNodes().find((item: JsonRecord) => item.id === selectedStepId.value) ?? null);
   const selectedNodePendingApproval = computed(() => {
     const detail = workflowRunDetail.value;
@@ -150,6 +196,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
 
   async function refreshWorkflows() {
+    console.info("[command-center] refreshing workflows");
     workflows.value = await app.runOperation("Refreshing workflows", () => fetchWorkflows()).catch(() => []);
     if (!selectedWorkflowId.value && workflows.value.length > 0) selectedWorkflowId.value = workflows.value[0].id;
     const workflow = workflows.value.find((item) => item.id === selectedWorkflowId.value) ?? workflows.value[0];
@@ -180,12 +227,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
     if (isSwitch) {
       selectedStepId.value = "";
-      workflowRunDetail.value = null;
       workflowTaskDrafts.value = {};
+      clearWorkflowTriggerState();
       stepEditorOpen.value = false;
     }
     isDirty.value = false;
-    if (workflow.id) return fetchWorkflowRunsForSelected(workflow.id);
     return Promise.resolve();
   }
 
@@ -205,7 +251,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedWorkflowRunId.value = response.id;
     app.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
     await fetchWorkflowRunDetail(response.id);
-    await fetchWorkflowRunsForSelected(workflow.id);
+    await fetchRecentWorkflowRuns();
+    app.activeTab = "Runs";
   }
 
   async function runSelectedWorkflowDebug() {
@@ -225,9 +272,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function fetchWorkflowRunsForSelected(workflowId: number) {
+    console.info("[command-center] refreshing workflow runs", { workflowId });
     workflowRuns.value = await app.runOperation("Loading workflow runs", () => fetchWorkflowRuns(workflowId)).catch(() => []);
     if (!workflowRuns.value.some((run) => run.id === selectedWorkflowRunId.value)) {
       selectedWorkflowRunId.value = workflowRuns.value[0]?.id ?? 0;
+    }
+  }
+
+  async function fetchRecentWorkflowRuns() {
+    console.info("[command-center] refreshing recent workflow runs");
+    workflowRuns.value = await app.runOperation("Loading workflow runs", () => fetchWorkflowRuns()).catch(() => []);
+    const previousRunId = selectedWorkflowRunId.value;
+    if (!workflowRuns.value.some((run) => run.id === selectedWorkflowRunId.value)) {
+      selectedWorkflowRunId.value = workflowRuns.value[0]?.id ?? 0;
+    }
+    if (selectedWorkflowRunId.value > 0 && (!workflowRunDetail.value || previousRunId !== selectedWorkflowRunId.value)) {
+      await fetchWorkflowRunDetail(selectedWorkflowRunId.value, true);
     }
   }
 
@@ -237,6 +297,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function fetchWorkflowRunDetail(workflowRunId: number, silent = false) {
+    console.info("[command-center] refreshing workflow run detail", { workflowRunId, silent });
     const detail = silent
       ? await fetchWorkflowRun(workflowRunId).catch(() => null)
       : await app.runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId)).catch(() => null);
@@ -247,11 +308,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     applyWorkflowRunDetail(detail);
   }
 
+  function selectWorkflowRunNode(nodeId: string) {
+    selectedWorkflowRunNodeId.value = nodeId;
+    updateSelectedWorkflowNodeDetail();
+  }
+
   function applyWorkflowRunDetail(detail: WorkflowRunDetail | null) {
     workflowRunDetail.value = detail;
     workflowNodeDetailExtra.value = "";
+    if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
+      selectedWorkflowRunNodeId.value = detail?.nodes[0]?.node_id ?? "";
+    }
     if (detail) {
-      workflowInspectorMode.value = "detail";
       const resources = useResourcesStore();
       const hasWaiting = detail.nodes.some(n =>
         n.status === "waiting" || n.status === "approval_required" || n.status === "pending"
@@ -267,21 +335,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   async function addWorkflowNode(kind: WorkflowNodeKind) {
     if (!syncWorkflowJson()) return;
     const nodes = ensureWorkflowNodes();
-    const tasks = useTasksStore();
-    const taskId = kind === "task" ? nextWorkflowTaskId() : tasks.tasks[0]?.id ?? 1;
+    const taskId = 1;
     const newNode = createWorkflowNode(kind, nodes, taskId);
-    let taskDraft: ScheduledTask | null = null;
-    if (kind === "task") {
-      taskDraft = createWorkflowTaskDraft(newNode.id, taskId);
-      taskDraft = stampWorkflowTaskMetadata(taskDraft, newNode.id, workflowDraft.id);
-      const response = await app.runOperation("Creating workflow task", () => saveTask(taskDraft!, true));
-      if (response.success === false) {
-        app.setError(response.message || "Failed to create workflow task");
-        return;
-      }
-      tasks.tasks.push(cloneJson(taskDraft));
-      workflowTaskDrafts.value[newNode.id] = taskDraft;
-    }
     const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
     if (endNode?.id) normalizeNewNodeTargets(newNode, endNode.id);
     const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
@@ -300,9 +355,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function removeWorkflowStep() {
     if (!selectedStepId.value || !canRemoveSelectedStep.value) return;
-    const nodeId = selectedStepId.value;
+    removeWorkflowNode(selectedStepId.value);
+  }
+
+  function removeWorkflowNode(nodeId: string) {
+    const node = ensureWorkflowNodes().find((item: JsonRecord) => item.id === nodeId);
+    if (!node || node.kind === "start" || node.kind === "end" || node.kind === "fail") return;
     workflowDraft.definition.nodes = ensureWorkflowNodes().filter((item: JsonRecord) => item.id !== nodeId);
-    selectedStepId.value = "";
+    removeWorkflowNodeReferences(workflowDraft.definition, nodeId);
+    delete workflowDraft.definition.ui?.layout?.nodes?.[nodeId];
+    delete workflowTaskDrafts.value[nodeId];
+    if (selectedStepId.value === nodeId) selectedStepId.value = "";
     syncWorkflowDraftToJson();
   }
 
@@ -333,10 +396,23 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       return false;
     }
     next.kind = stepEditor.kind;
-    if (next.kind === "task") {
-      next.action_name = stepEditor.action_name;
-      next.action_function = stepEditor.action_function;
+    if (next.kind === "task" || next.kind === "action") {
+      if (next.kind === "action") {
+        next.action = {
+          ...(typeof next.action === "object" && next.action ? next.action : {}),
+          provider: stepEditor.action_name,
+          function: stepEditor.action_function,
+          timeout_seconds: stepEditor.timeout_seconds > 0 ? stepEditor.timeout_seconds : next.action?.timeout_seconds ?? 300,
+          configuration: next.action?.configuration ?? {}
+        };
+        delete next.action_name;
+        delete next.action_function;
+      } else {
+        next.action_name = stepEditor.action_name;
+        next.action_function = stepEditor.action_function;
+      }
     } else {
+      delete next.action;
       delete next.action_name;
       delete next.action_function;
     }
@@ -374,7 +450,107 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         app.setError(stepEditorError.value);
         return false;
       }
-      next.wait = wait;
+      next.wait = {
+        ...wait,
+        seconds: Math.max(0, Number(stepEditor.wait_seconds ?? 0))
+      };
+      if (stepEditor.wait_initial_status.trim()) next.wait.initial_status = stepEditor.wait_initial_status.trim();
+      else delete next.wait.initial_status;
+      if (stepEditor.wait_until_status.trim()) next.wait.until_status = stepEditor.wait_until_status.trim();
+      else delete next.wait.until_status;
+    } else {
+      delete next.wait;
+    }
+    if (next.kind === "loop") {
+      const items = parseStepJson("Loop items", stepEditor.loop_items_json);
+      if (!items.ok) return false;
+      next.parameters = { ...parameters, items: items.value };
+      if (stepEditor.loop_target) next.parameters.target = nodeRef(stepEditor.loop_target);
+      else delete next.parameters.target;
+      next.max_iterations = Math.max(1, Number(stepEditor.loop_max_iterations ?? 1));
+    } else {
+      delete next.max_iterations;
+    }
+    if (next.kind === "switch") {
+      const value = parseStepJson("Switch value", stepEditor.switch_value_json);
+      if (!value.ok) return false;
+      const cases: JsonRecord[] = [];
+      for (const [caseIndex, switchCase] of stepEditor.switch_cases.entries()) {
+        if (!switchCase.target) {
+          setStepEditorError(`Switch case ${caseIndex + 1} needs a target`);
+          return false;
+        }
+        const match = parseStepJson(`Switch case ${caseIndex + 1}`, switchCase.match_json);
+        if (!match.ok) return false;
+        const serialized: JsonRecord = { target: nodeRef(switchCase.target) };
+        if (switchCase.match_kind === "when") serialized.when = match.value;
+        else if (switchCase.match_kind === "exists") serialized.exists = Boolean(match.value);
+        else serialized[switchCase.match_kind] = match.value;
+        cases.push(serialized);
+      }
+      next.parameters = { ...parameters, value: value.value, cases };
+      if (stepEditor.switch_default) next.parameters.default = nodeRef(stepEditor.switch_default);
+      else delete next.parameters.default;
+    }
+    if (next.kind === "parallel") {
+      next.parameters = {
+        ...parameters,
+        branches: stepEditor.parallel_branches.filter(Boolean).map(nodeRef)
+      };
+    }
+    if (next.kind === "join") {
+      next.parameters = {
+        ...parameters,
+        wait_for: stepEditor.join_wait_for.filter(Boolean).map(nodeRef),
+        mode: stepEditor.join_mode
+      };
+    }
+    if (next.kind === "try") {
+      next.parameters = { ...parameters };
+      if (stepEditor.try_body) next.parameters.body = nodeRef(stepEditor.try_body);
+      else delete next.parameters.body;
+      if (stepEditor.try_catch) next.parameters.catch = nodeRef(stepEditor.try_catch);
+      else delete next.parameters.catch;
+      if (stepEditor.try_finally) next.parameters.finally = nodeRef(stepEditor.try_finally);
+      else delete next.parameters.finally;
+    }
+    if (next.kind === "map") {
+      const items = parseStepJson("Map items", stepEditor.map_items_json);
+      if (!items.ok) return false;
+      next.parameters = {
+        ...parameters,
+        items: items.value,
+        concurrency: Math.max(1, Number(stepEditor.map_concurrency ?? 1))
+      };
+      if (stepEditor.map_target) next.parameters.target = nodeRef(stepEditor.map_target);
+      else delete next.parameters.target;
+    }
+    if (next.kind === "race") {
+      next.parameters = {
+        ...parameters,
+        branches: stepEditor.race_branches.filter(Boolean).map(nodeRef),
+        winner: stepEditor.race_winner
+      };
+    }
+    if (next.kind === "emit") {
+      const data = parseStepJson("Emit data", stepEditor.emit_data_json);
+      if (!data.ok) return false;
+      next.parameters = {
+        ...parameters,
+        event_type: stepEditor.emit_event_type.trim() || "workflow.event",
+        data: data.value
+      };
+    }
+    if (next.kind === "subflow") {
+      const subflowParameters = parseRequiredObject(stepEditor.subflow_parameters_json);
+      if (!subflowParameters) {
+        setStepEditorError("Subflow parameters must be a JSON object");
+        return false;
+      }
+      next.subflow_id = Math.max(0, Number(stepEditor.subflow_id ?? 0));
+      next.parameters = subflowParameters;
+    } else {
+      delete next.subflow_id;
     }
     nodes[index] = next;
     if (selectedStepId.value !== next.id) {
@@ -398,24 +574,49 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.condition_branches = Array.isArray(node.transitions?.branches)
       ? node.transitions.branches.map((branch: JsonRecord) => ({ when_json: pretty(branch.when ?? {}), target: nodeRefId(branch.target) ?? "" }))
       : [];
+    stepEditor.wait_seconds = Number(node.wait?.seconds ?? 60);
+    stepEditor.wait_initial_status = String(node.wait?.initial_status ?? "waiting");
+    stepEditor.wait_until_status = String(node.wait?.until_status ?? "");
     stepEditor.wait_json = pretty(node.wait ?? {});
+    stepEditor.loop_items_json = pretty(node.parameters?.items ?? []);
+    stepEditor.loop_target = nodeRefId(node.parameters?.target) ?? "";
+    stepEditor.loop_max_iterations = Number(node.max_iterations ?? 10);
+    stepEditor.switch_value_json = pretty(node.parameters?.value ?? valueRef("input", ["mode"]));
+    stepEditor.switch_cases = Array.isArray(node.parameters?.cases)
+      ? node.parameters.cases.map(switchCaseEditor)
+      : [];
+    stepEditor.switch_default = nodeRefId(node.parameters?.default) ?? "";
+    stepEditor.parallel_branches = nodeRefArray(node.parameters?.branches);
+    stepEditor.join_wait_for = nodeRefArray(node.parameters?.wait_for);
+    stepEditor.join_mode = branchPolicyName(node.parameters?.mode, "all");
+    stepEditor.try_body = nodeRefId(node.parameters?.body) ?? "";
+    stepEditor.try_catch = nodeRefId(node.parameters?.catch) ?? "";
+    stepEditor.try_finally = nodeRefId(node.parameters?.finally) ?? "";
+    stepEditor.map_items_json = pretty(node.parameters?.items ?? []);
+    stepEditor.map_target = nodeRefId(node.parameters?.target) ?? "";
+    stepEditor.map_concurrency = Number(node.parameters?.concurrency ?? 1);
+    stepEditor.race_branches = nodeRefArray(node.parameters?.branches);
+    stepEditor.race_winner = branchPolicyName(node.parameters?.winner, "first_success");
+    stepEditor.emit_event_type = String(node.parameters?.event_type ?? "workflow.event");
+    stepEditor.emit_data_json = pretty(node.parameters?.data ?? {});
+    stepEditor.subflow_id = Number(node.subflow_id ?? 0);
+    stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
     stepEditor.max_attempts = Number(node.retry?.max_attempts ?? 1);
     stepEditor.timeout_seconds = Number(node.timeout_seconds ?? 0);
-    stepEditor.action_name = node.action_name || "";
-    stepEditor.action_function = node.action_function || "";
+    const actionConfig = workflowNodeActionConfig(node);
+    stepEditor.action_name = actionConfig.provider;
+    stepEditor.action_function = actionConfig.action;
     stepEditor.parameters_json = pretty(node.parameters ?? {});
     stepEditor.transitions_json = pretty(node.transitions ?? {});
-    // If we're in detail mode, stay there, otherwise switch to step
-    if (workflowInspectorMode.value !== "detail") {
-      workflowInspectorMode.value = "step";
-    }
+    workflowInspectorMode.value = "step";
     updateSelectedWorkflowNodeDetail();
   }
 
   async function updateSelectedWorkflowNodeDetail() {
     selectedWorkflowNodeTaskRunId.value = 0;
     workflowNodeDetailExtra.value = "";
-    const step = workflowRunDetail.value?.nodes.find((node) => node.node_id === selectedStepId.value && node.task_run_id);
+    const nodeId = selectedWorkflowRunNodeId.value || selectedStepId.value;
+    const step = workflowRunDetail.value?.nodes.find((node) => node.node_id === nodeId && node.task_run_id);
     if (!step?.task_run_id) return;
     selectedWorkflowNodeTaskRunId.value = step.task_run_id;
     const [nodeChunks, nodeArtifacts] = await Promise.all([
@@ -430,6 +631,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       `Task run ${step.task_run_id} artifacts`,
       ...nodeArtifacts.map((artifact) => `${artifact.name} (${artifact.size_bytes} bytes) ${artifact.uri}`)
     ].join("\n");
+  }
+
+  function workflowNameForRun(run: RunSummary): string {
+    return workflows.value.find((workflow) => workflow.id === run.workflow_id)?.name ?? "";
   }
 
   function onGraphNodeClick(event: any) {
@@ -536,11 +741,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (change.type === "remove") {
         const edge = graphEdges.value.find((item: Edge) => item.id === change.id);
         if (edge) {
-        const sourceNode = ensureWorkflowNodes().find((n: JsonRecord) => n.id === edge.source);
-          if (sourceNode && removeEditableEdge(sourceNode, edge)) {
+          const sourceNode = ensureWorkflowNodes().find((n: JsonRecord) => n.id === edge.source);
+          if (sourceNode && removeWorkflowEdge(sourceNode, edge)) {
             const data = edge.data as any;
             if (data?.transitionKey) removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, data.transitionKey);
             if (typeof data?.branchIndex === "number") removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, `branches.${data.branchIndex}`);
+            if (data?.parameterKey) removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, parameterSemanticKey(data.parameterKey, data.parameterIndex));
             changed = true;
           }
         }
@@ -554,10 +760,25 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
   }
 
-  function autoArrangeWorkflowNodes() {
+  function removeWorkflowEdgeById(edgeId: string) {
+    const edge = graphEdges.value.find((item: Edge) => item.id === edgeId);
+    if (!edge) return;
+    const sourceNode = ensureWorkflowNodes().find((node: JsonRecord) => node.id === edge.source);
+    if (!sourceNode || !removeWorkflowEdge(sourceNode, edge)) return;
+    const data = edge.data as any;
+    if (data?.transitionKey) removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, data.transitionKey);
+    if (typeof data?.branchIndex === "number") removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, `branches.${data.branchIndex}`);
+    if (data?.parameterKey) removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, parameterSemanticKey(data.parameterKey, data.parameterIndex));
+    syncWorkflowDraftToJson();
+    if (selectedStepId.value) populateStepEditor(selectedStepId.value);
+  }
+
+  function autoArrangeWorkflowNodes(direction: WorkflowLayoutDirection = workflowLayoutDirection.value) {
     if (!syncWorkflowJson()) return;
-    const positions = autoArrangeWorkflowLayout(workflowDraft.definition);
+    workflowLayoutDirection.value = direction;
+    const positions = autoArrangeWorkflowLayout(workflowDraft.definition, direction);
     for (const [nodeId, position] of Object.entries(positions)) setGraphNodePosition(nodeId, position);
+    autoArrangeWorkflowEdgeHandles(workflowDraft.definition, positions);
     workflowLayoutVersion.value += 1;
     syncWorkflowDraftToJson();
   }
@@ -628,12 +849,137 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     markWorkflowDirty();
   }
 
+  function addSwitchCaseEditor() {
+    stepEditor.switch_cases.push({ match_kind: "equals", match_json: pretty(true), target: "" });
+    markWorkflowDirty();
+  }
+
+  function removeSwitchCaseEditor(index: number) {
+    stepEditor.switch_cases.splice(index, 1);
+    markWorkflowDirty();
+  }
+
+  function addNodeRefEditor(list: string[]) {
+    list.push("");
+    markWorkflowDirty();
+  }
+
+  function removeNodeRefEditor(list: string[], index: number) {
+    list.splice(index, 1);
+    markWorkflowDirty();
+  }
+
   function openWorkflowSettings() {
     workflowSettingsOpen.value = true;
+    void refreshWorkflowTriggers();
   }
 
   function closeWorkflowSettings() {
     workflowSettingsOpen.value = false;
+    closeTriggerEditor();
+  }
+
+  async function refreshWorkflowTriggers() {
+    if (!workflowDraft.id) {
+      workflowTriggers.value = [];
+      closeTriggerEditor();
+      return;
+    }
+    workflowTriggers.value = await app
+      .runOperation("Loading workflow triggers", () => fetchWorkflowTriggers(workflowDraft.id!))
+      .catch(() => []);
+  }
+
+  function clearWorkflowTriggerState() {
+    workflowTriggers.value = [];
+    closeTriggerEditor();
+  }
+
+  function addWorkflowTrigger(kind: WorkflowTriggerKind = "cron") {
+    if (!workflowDraft.id) return;
+    Object.assign(triggerDraft, newWorkflowTriggerDraft(workflowDraft.id, kind));
+    triggerJson.configuration = pretty(triggerDraft.configuration);
+    triggerJson.metadata = pretty(triggerDraft.metadata);
+    triggerEditorCreating.value = true;
+    triggerEditorError.value = "";
+    triggerEditorOpen.value = true;
+  }
+
+  function editWorkflowTrigger(trigger: WorkflowTrigger) {
+    Object.assign(triggerDraft, cloneJson(trigger));
+    triggerDraft.next_execution = triggerDateForInput(trigger.next_execution);
+    triggerDraft.blackout_start = triggerDateForInput(trigger.blackout_start);
+    triggerDraft.blackout_end = triggerDateForInput(trigger.blackout_end);
+    triggerJson.configuration = pretty(trigger.configuration ?? {});
+    triggerJson.metadata = pretty(trigger.metadata ?? {});
+    triggerEditorCreating.value = false;
+    triggerEditorError.value = "";
+    triggerEditorOpen.value = true;
+  }
+
+  function closeTriggerEditor() {
+    triggerEditorOpen.value = false;
+    triggerEditorCreating.value = false;
+    triggerEditorError.value = "";
+  }
+
+  function setTriggerKind(kind: WorkflowTriggerKind) {
+    triggerDraft.kind = kind;
+    if (triggerEditorCreating.value) {
+      triggerDraft.configuration = defaultTriggerConfiguration(kind);
+      triggerJson.configuration = pretty(triggerDraft.configuration);
+    }
+  }
+
+  async function submitWorkflowTrigger() {
+    triggerEditorError.value = "";
+    if (!workflowDraft.id) return;
+    const configuration = parseRequiredObject(triggerJson.configuration);
+    const metadata = parseRequiredObject(triggerJson.metadata);
+    if (!configuration || !metadata) {
+      triggerEditorError.value = configuration ? "Trigger metadata must be a JSON object" : "Trigger configuration must be a JSON object";
+      app.setError(triggerEditorError.value);
+      return;
+    }
+    const trigger: WorkflowTrigger = {
+      ...cloneJson(triggerDraft),
+      workflow_id: workflowDraft.id,
+      configuration,
+      metadata,
+      next_execution: dateTimeLocalToIso(triggerDraft.next_execution),
+      blackout_start: dateTimeLocalToIso(triggerDraft.blackout_start),
+      blackout_end: dateTimeLocalToIso(triggerDraft.blackout_end)
+    };
+    const saved = await app.runOperation("Saving workflow trigger", () => saveWorkflowTrigger(trigger, triggerEditorCreating.value));
+    app.setStatus(`Workflow trigger saved: ${saved.kind}`);
+    closeTriggerEditor();
+    await refreshWorkflowTriggers();
+  }
+
+  async function deleteSelectedWorkflowTrigger(trigger: WorkflowTrigger) {
+    if (!trigger.id) return;
+    if (!window.confirm(`Delete ${trigger.kind} trigger ${trigger.id}?`)) return;
+    const response = await app.runOperation("Deleting workflow trigger", () => deleteWorkflowTrigger(trigger.id!));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to delete workflow trigger");
+      return;
+    }
+    app.setStatus(response.message || "Workflow trigger deleted");
+    if (triggerDraft.id === trigger.id) closeTriggerEditor();
+    await refreshWorkflowTriggers();
+  }
+
+  function triggerCronSummary(trigger: WorkflowTrigger): string {
+    const cron = trigger.configuration?.cron;
+    return typeof cron === "string" && cron.trim() ? cron : "";
+  }
+
+  function triggerDateForInput(value: string | null | undefined): string {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
   }
 
   function markWorkflowDirty() {
@@ -660,10 +1006,6 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function closeStepEditor() {
     if (stepEditorCreating.value && stepEditorCreatedNodeId.value) {
       const nodeId = stepEditorCreatedNodeId.value;
-      const task = workflowTaskDrafts.value[nodeId];
-      if (task?.id && isWorkflowOwnedTask(task)) {
-        deleteTask(task.id).then(() => useTasksStore().refreshTasks()).catch(() => {});
-      }
       workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== nodeId);
       delete workflowTaskDrafts.value[nodeId];
       selectedStepId.value = "";
@@ -689,8 +1031,20 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     openStepEditor(copy.id, true);
   }
 
+  function setStepEditorError(message: string) {
+    stepEditorError.value = message;
+    app.setError(message);
+  }
+
+  function parseStepJson(label: string, text: string): { ok: true; value: any } | { ok: false } {
+    const value = parseRequiredJson(text);
+    if (value !== null || text.trim() === "null") return { ok: true, value };
+    setStepEditorError(`${label} must be valid JSON`);
+    return { ok: false };
+  }
+
   function validateStepParameters(parameters: JsonRecord): string {
-    if (stepEditor.kind !== "task") return "";
+    if (stepEditor.kind !== "task" && stepEditor.kind !== "action") return "";
     const provider = useProvidersStore().providers.find((item) => item.name === stepEditor.action_name);
     const action = provider?.actions.find((item) => item.function_name === stepEditor.action_function);
     if (!action) return "Select a valid task provider action";
@@ -726,6 +1080,32 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     await refreshWorkflows();
   }
 
+  async function deleteSelectedWorkflow() {
+    const workflow = selectedWorkflow.value;
+    if (!workflow?.id) return;
+    if (!window.confirm(`Delete workflow "${workflow.name}"? This cannot be undone.`)) return;
+    const response = await app.runOperation(`Deleting workflow ${workflow.name}`, () => deleteWorkflow(workflow.id!));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to delete workflow");
+      return;
+    }
+    app.setStatus(response.message || `Workflow deleted: ${workflow.name}`);
+    closeWorkflowSettings();
+    const deletedId = workflow.id;
+    workflows.value = workflows.value.filter((item) => item.id !== deletedId);
+    selectedWorkflowId.value = workflows.value[0]?.id ?? null;
+    if (workflows.value[0]) {
+      await selectWorkflow(workflows.value[0]);
+    } else {
+      Object.assign(workflowDraft, newWorkflowDraft());
+      workflowJson.value = pretty(workflowDraft.definition);
+      workflowRuns.value = [];
+      workflowRunDetail.value = null;
+      selectedWorkflowRunId.value = 0;
+      isDirty.value = false;
+    }
+  }
+
   return {
     recentWorkflowRuns,
     getTransition,
@@ -736,7 +1116,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowJson,
     workflowConcurrency,
     workflowSettingsOpen,
+    workflowTriggers,
+    triggerEditorOpen,
+    triggerEditorCreating,
+    triggerEditorError,
+    triggerDraft,
+    triggerJson,
     workflowEditorMode,
+    workflowLayoutDirection,
     workflowInspectorMode,
     stepEditorOpen,
     stepEditorCreating,
@@ -747,17 +1134,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowRunDetail,
     workflowNodeDetailExtra,
     selectedStepId,
+    selectedWorkflowRunNodeId,
     selectedWorkflowNodeTaskRunId,
     stepEditor,
     workflowTaskDrafts,
     selectedWorkflow,
     canRunWorkflow,
+    canManageWorkflowTriggers,
     canRemoveSelectedStep,
     filteredWorkflows,
     workflowRunDetailText,
     stepNeeds,
     graphNodes,
     graphEdges,
+    workflowRunWorkflow,
+    runGraphNodes,
+    runGraphEdges,
     selectedNode,
     selectedNodePendingApproval,
     canStepWorkflowRun,
@@ -767,16 +1159,21 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectWorkflow,
     addWorkflow,
     saveSelectedWorkflow: saveSelectedWorkflowBundle,
+    deleteSelectedWorkflow,
     runSelectedWorkflow,
     runSelectedWorkflowDebug,
     stepSelectedWorkflowRun,
     fetchWorkflowRunsForSelected,
+    fetchRecentWorkflowRuns,
     selectWorkflowRun,
     fetchWorkflowRunDetail,
     setWorkflowRunDetail,
+    selectWorkflowRunNode,
     addWorkflowStep,
     addWorkflowNode,
     removeWorkflowStep,
+    removeWorkflowNode,
+    removeWorkflowEdgeById,
     applyStepEditor,
     populateStepEditor,
     updateSelectedWorkflowNodeDetail,
@@ -794,6 +1191,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     ensureWorkflowNodes,
     addConditionBranchEditor,
     removeConditionBranchEditor,
+    addSwitchCaseEditor,
+    removeSwitchCaseEditor,
+    addNodeRefEditor,
+    removeNodeRefEditor,
     openStepEditor,
     closeStepEditor,
     submitStepEditor,
@@ -801,9 +1202,60 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     moveWorkflowSelection,
     openWorkflowSettings,
     closeWorkflowSettings,
+    refreshWorkflowTriggers,
+    addWorkflowTrigger,
+    editWorkflowTrigger,
+    closeTriggerEditor,
+    setTriggerKind,
+    submitWorkflowTrigger,
+    deleteSelectedWorkflowTrigger,
+    triggerCronSummary,
+    triggerDateForInput,
     markWorkflowDirty
   };
 });
+
+function nodeRefArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(nodeRefId).filter((item): item is string => Boolean(item)) : [];
+}
+
+function branchPolicyName(value: unknown, fallback: BranchPolicyName): BranchPolicyName {
+  return value === "all" || value === "any" || value === "first_success" ? value : fallback;
+}
+
+function switchCaseEditor(value: JsonRecord): SwitchCaseEditor {
+  const target = nodeRefId(value.target) ?? "";
+  if (value.when !== undefined) return { match_kind: "when", match_json: pretty(value.when), target };
+  if (value.not_equals !== undefined) return { match_kind: "not_equals", match_json: pretty(value.not_equals), target };
+  if (value.exists !== undefined) return { match_kind: "exists", match_json: pretty(Boolean(value.exists)), target };
+  return { match_kind: "equals", match_json: pretty(value.equals ?? ""), target };
+}
+
+export function newWorkflowTriggerDraft(workflowId: number, kind: WorkflowTriggerKind = "cron"): WorkflowTrigger {
+  return {
+    id: null,
+    workflow_id: workflowId,
+    kind,
+    enabled: true,
+    configuration: defaultTriggerConfiguration(kind),
+    next_execution: null,
+    blackout_start: null,
+    blackout_end: null,
+    metadata: {}
+  };
+}
+
+function defaultTriggerConfiguration(kind: WorkflowTriggerKind): JsonRecord {
+  if (kind === "cron") return { cron: "0 * * * *", parameters: {} };
+  return {};
+}
+
+function dateTimeLocalToIso(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
 
 export function newWorkflowDraft(): WorkflowDefinition {
   return {
@@ -816,13 +1268,15 @@ export function newWorkflowDraft(): WorkflowDefinition {
       start: "start",
       nodes: [
         { id: "start", kind: "start", transitions: { next: nodeRef("end") } },
-        { id: "end", kind: "end" }
+        { id: "end", kind: "end" },
+        { id: "fail", kind: "fail" }
       ],
       ui: {
         layout: {
           nodes: {
             start: { x: 0, y: 0 },
-            end: { x: 0, y: 120 }
+            end: { x: 270, y: 0 },
+            fail: { x: 270, y: 150 }
           }
         }
       }

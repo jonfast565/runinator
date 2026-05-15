@@ -32,7 +32,11 @@ async fn rich_workflow_demo_paths_finish() -> E2eResult<()> {
     let harness = StackHarness::start(&workspace, ports).await?;
     let api = harness.api_client()?;
 
-    import_seed(&api, &workspace.join("runinator-importer/tasks/tasks.json")).await?;
+    import_seed(
+        &api,
+        &workspace.join("runinator-importer/workflows/workflows.json"),
+    )
+    .await?;
 
     let default = run_workflow_case(&api, json!({})).await?;
     assert_node_status(&default.1, "guarded_release", WorkflowStatus::Succeeded);

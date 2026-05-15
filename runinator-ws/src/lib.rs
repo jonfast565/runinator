@@ -308,11 +308,14 @@ async fn get_workflow_runs<T: DatabaseImpl>(
         };
     }
 
-    let Some(status) = query.status else {
-        return api_error("workflow_runs query requires workflow_id or status");
-    };
+    if let Some(status) = query.status {
+        return match repository::fetch_workflow_runs_by_status(db.as_ref(), status).await {
+            Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
 
-    match repository::fetch_workflow_runs_by_status(db.as_ref(), status).await {
+    match repository::fetch_recent_workflow_runs(db.as_ref()).await {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
         Err(err) => api_error(err.to_string()),
     }

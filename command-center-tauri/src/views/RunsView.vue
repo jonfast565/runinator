@@ -1,63 +1,92 @@
 <template>
   <section class="pane runs-pane">
-    <SplitPane class="split" storage-key="command-center.runs.split" :initial-first-pct="42" :min-first="340" :min-second="380">
+    <SplitPane class="runs-layout" storage-key="command-center.runs.split" :initial-first-pct="28" :min-first="340" :min-second="720">
       <template #first>
-      <div class="panel">
-        <h2>Runs</h2>
-        <RunTable :runs="tasks.recentRuns" :selected-run-id="tasks.selectedRunId" @select="tasks.selectRun" />
-      </div>
+        <div class="panel runs-list-panel">
+          <h2>Runs</h2>
+          <RunTable
+            :runs="workflows.recentWorkflowRuns"
+            :selected-run-id="workflows.selectedWorkflowRunId"
+            :workflow-names="workflowNames"
+            show-workflow
+            @select="workflows.selectWorkflowRun"
+          />
+        </div>
       </template>
       <template #second>
-      <div class="panel details">
-        <h2>Structured Result</h2>
-        <pre class="output">{{ selectedOutput }}</pre>
-        <h2>Run Output Chunks</h2>
-        <pre class="output">{{ logOutput }}</pre>
-        <h2>Artifacts</h2>
-        <div class="table-scroll compact-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>MIME</th>
-                <th>Size</th>
-                <th>URI</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="artifact in tasks.artifacts" :key="artifact.id">
-                <td>{{ artifact.name }}</td>
-                <td>{{ artifact.mime_type }}</td>
-                <td>{{ artifact.size_bytes }}</td>
-                <td>{{ artifact.uri }}</td>
-                <td>{{ formatDate(artifact.created_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+        <SplitPane class="runs-detail-split" storage-key="command-center.runs.detail-split" :initial-first-pct="58" :min-first="420" :min-second="360">
+          <template #first>
+            <WorkflowRunGraph />
+          </template>
+          <template #second>
+            <div class="panel details runs-detail-panel">
+              <WorkflowRunDetail />
+              <h2>Structured Result</h2>
+              <pre class="output">{{ selectedOutput }}</pre>
+              <h2>Run Output Chunks</h2>
+              <pre class="output">{{ logOutput }}</pre>
+              <h2>Selected Node Artifacts</h2>
+              <div class="table-scroll compact-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>MIME</th>
+                      <th>Size</th>
+                      <th>URI</th>
+                      <th>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="artifact in artifacts" :key="artifact.id">
+                      <td>{{ artifact.name }}</td>
+                      <td>{{ artifact.mime_type }}</td>
+                      <td>{{ artifact.size_bytes }}</td>
+                      <td>{{ artifact.uri }}</td>
+                      <td>{{ formatDate(artifact.created_at) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </SplitPane>
       </template>
     </SplitPane>
   </section>
 </template>
 
 <script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import { fetchRunArtifacts } from "../api/commandCenterApi";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
-import { useTasksStore } from "../stores/tasks";
+import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
+import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useRunLogStream } from "../composables/useRunLogStream";
+import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
+import { useAppStore } from "../stores/app";
+import { useWorkflowsStore } from "../stores/workflows";
+import type { RunArtifact } from "../types/models";
 import { formatDate, pretty } from "../utils/format";
-import { computed, ref, watch } from "vue";
 
-const tasks = useTasksStore();
-const selectedOutput = computed(() => pretty(tasks.selectedRun?.output_json ?? {}));
+const app = useAppStore();
+const workflows = useWorkflowsStore();
+const artifacts = ref<RunArtifact[]>([]);
+const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
+const selectedRunIdRef = ref(workflows.selectedWorkflowRunId);
+const workflowNames = computed(() => Object.fromEntries(workflows.workflows.filter((workflow) => workflow.id).map((workflow) => [workflow.id!, workflow.name])));
 
-const selectedRunIdRef = ref(tasks.selectedRunId);
-watch(() => tasks.selectedRunId, (id) => { selectedRunIdRef.value = id; });
+useWorkflowRunStream();
+
+watch(() => workflows.selectedWorkflowRunId, (id) => { selectedRunIdRef.value = id; }, { immediate: true });
+watch(() => workflows.selectedWorkflowNodeTaskRunId, async (id) => {
+  artifacts.value = id > 0 ? await app.runOperation("Loading run artifacts", () => fetchRunArtifacts(id)).catch(() => []) : [];
+}, { immediate: true });
+
 const { chunks: logChunks } = useRunLogStream(selectedRunIdRef);
 const logOutput = computed(() => {
   if (logChunks.value.length > 0) return logChunks.value.map(c => `[${c.stream}] ${c.content}`).join("\n");
-  return tasks.runOutput;
+  return workflows.workflowRunDetailText;
 });
 </script>

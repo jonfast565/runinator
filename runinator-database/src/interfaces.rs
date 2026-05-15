@@ -142,6 +142,11 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         status: WorkflowStatus,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
+    /// Fetch recent workflow runs across all workflow definitions.
+    fn fetch_recent_workflow_runs(
+        &self,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
     /// Fetch all runs for a specific workflow definition.
     fn fetch_workflow_runs_for_workflow(
         &self,

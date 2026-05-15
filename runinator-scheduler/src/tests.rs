@@ -429,7 +429,7 @@ fn reentry_exhaustion_routes_after_max_visits() {
             "provider": "console",
             "function": "run",
             "timeout_seconds": 60,
-            "default_parameters": {}
+            "configuration": {}
         },
         "reentry": {
             "enabled": true,
@@ -457,7 +457,7 @@ fn reentry_exhaustion_ignores_active_latest_visit() {
             "provider": "console",
             "function": "run",
             "timeout_seconds": 60,
-            "default_parameters": {}
+            "configuration": {}
         },
         "reentry": { "enabled": true, "max_visits": 1 }
     }));
@@ -498,6 +498,24 @@ async fn debug_workflow_pauses_before_first_node() {
     assert_eq!(update.state["debug"]["paused"], true);
     assert_eq!(update.state["debug"]["current_node_id"], "start");
     assert_eq!(api.node_update_count(), 0);
+}
+
+#[tokio::test]
+async fn fail_node_marks_workflow_failed() {
+    let workflow = simple_workflow();
+    let run = workflow_run(json!({}), json!({}), "fail");
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().status, WorkflowStatus::Failed);
+    assert_eq!(
+        api.last_run_update().active_node_id.as_deref(),
+        Some("fail")
+    );
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Succeeded);
 }
 
 #[tokio::test]
@@ -811,7 +829,8 @@ fn simple_workflow() -> WorkflowDefinition {
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
-                { "id": "end", "kind": "end" }
+                { "id": "end", "kind": "end" },
+                { "id": "fail", "kind": "fail" }
             ]
         }),
         created_at: None,

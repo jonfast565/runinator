@@ -12,13 +12,21 @@ export function useWorkflowRunStream() {
     const base = app.serviceUrl?.replace(/^http/, "ws");
     if (!base) return;
     ws = new WebSocket(`${base}/ws/workflow-runs/${runId}`);
+    ws.onopen = () => console.info("[command-center] workflow run stream connected", { runId });
     ws.onmessage = ({ data }) => {
       try {
+        console.info("[command-center] workflow run stream message", { runId, data });
         workflows.setWorkflowRunDetail(JSON.parse(data) as WorkflowRunDetail);
-      } catch {}
+      } catch (err) {
+        console.info("[command-center] failed to parse workflow run stream message", { runId, data, err });
+      }
     };
-    ws.onerror = () => ws?.close();
+    ws.onerror = (event) => {
+      console.info("[command-center] workflow run stream error", { runId, event });
+      ws?.close();
+    };
     ws.onclose = () => {
+      console.info("[command-center] workflow run stream closed", { runId });
       ws = null;
     };
   }

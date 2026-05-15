@@ -43,7 +43,7 @@ fn workflow_node_serialization() {
             "provider": "console",
             "function": "run",
             "timeout_seconds": 60,
-            "default_parameters": {}
+            "configuration": {}
         },
         "transitions": {
             "on_success": { "$node": "next-node" }
@@ -74,7 +74,7 @@ fn workflow_node_accepts_reentry_configuration() {
             "provider": "console",
             "function": "run",
             "timeout_seconds": 60,
-            "default_parameters": {}
+            "configuration": {}
         },
         "reentry": {
             "enabled": true,
@@ -92,6 +92,47 @@ fn workflow_node_accepts_reentry_configuration() {
             .as_ref()
             .map(WorkflowNodeRef::as_str),
         Some("deferred")
+    );
+}
+
+#[test]
+fn workflow_action_accepts_inline_configuration_items() {
+    let node: WorkflowNode = serde_json::from_value(json!({
+        "id": "build",
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "timeout_seconds": 60,
+            "configuration": {
+                "shell": "bash"
+            },
+            "command": "echo hello"
+        }
+    }))
+    .unwrap();
+
+    let action = node.action.unwrap();
+    assert_eq!(action.configuration["shell"], "bash");
+    assert_eq!(action.configuration["command"], "echo hello");
+}
+
+#[test]
+fn workflow_action_rejects_task_metadata_shape() {
+    let err = serde_json::from_value::<WorkflowNode>(json!({
+        "id": "build",
+        "kind": "action",
+        "action": {
+            "provider": "console",
+            "function": "run",
+            "metadata": {}
+        }
+    }))
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("action metadata is no longer supported")
     );
 }
 

@@ -12,13 +12,21 @@ export function useRunLogStream(runId: Ref<number>) {
     const base = app.serviceUrl?.replace(/^http/, "ws");
     if (!base) return;
     ws = new WebSocket(`${base}/ws/runs/${id}/stream`);
+    ws.onopen = () => console.info("[command-center] run log stream connected", { runId: id });
     ws.onmessage = ({ data }) => {
       try {
+        console.info("[command-center] run log stream message", { runId: id, data });
         chunks.value.push(JSON.parse(data) as RunChunk);
-      } catch {}
+      } catch (err) {
+        console.info("[command-center] failed to parse run log stream message", { runId: id, data, err });
+      }
     };
-    ws.onerror = () => ws?.close();
+    ws.onerror = (event) => {
+      console.info("[command-center] run log stream error", { runId: id, event });
+      ws?.close();
+    };
     ws.onclose = () => {
+      console.info("[command-center] run log stream closed", { runId: id });
       ws = null;
     };
   }
