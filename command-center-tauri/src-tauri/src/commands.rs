@@ -234,6 +234,154 @@ pub async fn step_workflow_run(
 }
 
 #[tauri::command]
+pub async fn continue_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/continue"),
+    )
+    .await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn cancel_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/cancel")).await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn patch_workflow_run_debug(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+    patch: Value,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/debug")).await?;
+    let response = state.client.patch(url.clone()).json(&patch).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn run_to_cursor_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+    node_id: String,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/run_to_cursor"),
+    )
+    .await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({ "node_id": node_id }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn skip_workflow_node(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+    output_json: Value,
+    message: Option<String>,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/skip"),
+    )
+    .await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({ "output_json": output_json, "message": message }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn rerun_workflow_node(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+    parameters: Value,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/rerun_node"),
+    )
+    .await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({ "parameters": parameters }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn fetch_supervisor_status(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, "supervisor/status").await?;
+    let response = state.client.get(url.clone()).send().await?;
+    // accept both 200 (with snapshot) and 404 (configured: false) — both return JSON.
+    if response.status().as_u16() == 404 {
+        return Ok(response.json::<Value>().await?);
+    }
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn replay_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<WorkflowRunCreated> {
+    let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/replay")).await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    let body = response.json::<Value>().await?;
+    let id = body
+        .get("run")
+        .and_then(|run| run.get("id"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| CommandError::Unexpected("missing workflow run id".into()))?;
+    Ok(WorkflowRunCreated { id })
+}
+
+#[tauri::command]
 pub async fn fetch_workflow_runs(
     state: State<'_, CommandCenterState>,
     workflow_id: Option<i64>,

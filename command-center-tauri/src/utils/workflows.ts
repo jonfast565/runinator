@@ -4,6 +4,9 @@ import type {
   WorkflowDefinition,
   WorkflowConnectionHandle,
   WorkflowDirectTransitionKey,
+  WorkflowEdgeEditorDraft,
+  WorkflowEdgeEditorMatchKind,
+  WorkflowEdgeSemanticOption,
   WorkflowEditorEdgeData,
   WorkflowEditorNodeRecord,
   WorkflowLayoutDirection,
@@ -11,7 +14,9 @@ import type {
   WorkflowNodeKind,
   WorkflowRunDetail,
   ScheduledTask,
-  RunSummary
+  RunSummary,
+  ProviderMetadata,
+  ActionResultMetadata
 } from "../types/models";
 import { statusClassForNode } from "./status";
 
@@ -41,6 +46,12 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
   const fallbackLayout = autoArrangeWorkflowLayout(definition);
   const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
   const taskById = new Map(tasks.filter((task) => task.id !== null).map((task) => [task.id, task]));
+  const debug = detail?.run.state?.debug;
+  const breakpointSet = new Set<string>(
+    Array.isArray(debug?.breakpoints)
+      ? (debug?.breakpoints as unknown[]).filter((v): v is string => typeof v === "string")
+      : []
+  );
   return nodes.map((node: JsonRecord, index: number) => {
     const id = String(node.id ?? `step_${index + 1}`);
     const position = layout[id] ?? fallbackLayout[id] ?? { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
@@ -59,7 +70,8 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         approvalPrompt: approvalPrompt(node, run?.state),
         running: status === "running" || status === "queued",
         status,
-        protected: kind === "start" || kind === "end" || kind === "fail"
+        protected: kind === "start" || kind === "end" || kind === "fail",
+        debugBreakpoint: breakpointSet.has(id)
       },
       class: statusClassForNode(status)
     };
@@ -101,6 +113,395 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
     edges.push(...controlFlowEdges(definition, node, nodeIds));
   }
   return separateParallelEdges(edges);
+}
+
+export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSemanticOption[] {
+  const options: WorkflowEdgeSemanticOption[] = directTransitionKeys.map((key) => ({
+    id: `direct:${key}`,
+    label: transitionLabel(key),
+    description: `Set ${key} transition`
+  }));
+  const kind = workflowNodeKind(node.kind);
+  const transitions = isRecord(node.transitions) ? node.transitions : {};
+  if (kind === "condition") {
+    const branches = Array.isArray(transitions.branches) ? transitions.branches : [];
+    branches.forEach((_, index) => {
+      options.push({ id: `branch:${index}`, label: `Condition branch ${index + 1}`, description: "Update an existing condition branch" });
+    });
+    options.push({ id: "branch:new", label: "New condition branch", description: "Add a conditional route" });
+  }
+
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  if (kind === "switch") {
+    const cases = Array.isArray(parameters.cases) ? parameters.cases : [];
+    cases.forEach((_, index) => {
+      options.push({ id: `control:cases:${index}`, label: `Switch case ${index + 1}`, description: "Update an existing switch case" });
+    });
+    options.push({ id: "control:cases:new", label: "New switch case", description: "Add a switch case route" });
+    options.push({ id: "control:default", label: "Switch default", description: "Set the default switch route" });
+  }
+  if (kind === "parallel" || kind === "race") {
+    const branches = Array.isArray(parameters.branches) ? parameters.branches : [];
+    branches.forEach((_, index) => {
+      options.push({ id: `control:branches:${index}`, label: `${titleCase(kind)} branch ${index + 1}`, description: "Update an existing branch target" });
+    });
+    options.push({ id: "control:branches:new", label: `New ${kind} branch`, description: "Add a branch target" });
+  }
+  if (kind === "join") {
+    const dependencies = Array.isArray(parameters.wait_for) ? parameters.wait_for : [];
+    dependencies.forEach((_, index) => {
+      options.push({ id: `control:wait_for:${index}`, label: `Join dependency ${index + 1}`, description: "Update an existing join dependency" });
+    });
+    options.push({ id: "control:wait_for:new", label: "New join dependency", description: "Add a node this join waits for" });
+  }
+  if (kind === "try") {
+    options.push(
+      { id: "control:body", label: "Try body", description: "Set the guarded body node" },
+      { id: "control:catch", label: "Try catch", description: "Set the error handler node" },
+      { id: "control:finally", label: "Try finally", description: "Set the cleanup node" }
+    );
+  }
+  if (kind === "loop" || kind === "map") {
+    options.push({ id: "control:target", label: `${titleCase(kind)} target`, description: "Set the repeated target node" });
+  }
+  return options;
+}
+
+export function workflowEdgeOptionId(edge: Edge): string {
+  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  if (data?.kind === "direct" && data.transitionKey) return `direct:${data.transitionKey}`;
+  if (data?.kind === "branch" && typeof data.branchIndex === "number") return `branch:${data.branchIndex}`;
+  if (data?.kind === "control" && data.parameterKey) {
+    return typeof data.parameterIndex === "number"
+      ? `control:${data.parameterKey}:${data.parameterIndex}`
+      : `control:${data.parameterKey}`;
+  }
+  return "";
+}
+
+export function workflowEdgeEditorDraft(workflow: WorkflowDefinition, edge: Edge): WorkflowEdgeEditorDraft | null {
+  const definition = workflow.definition ?? {};
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const node = nodes.find((item: JsonRecord) => String(item.id) === edge.source);
+  if (!node) return null;
+  const optionId = workflowEdgeOptionId(edge);
+  if (!optionId) return null;
+  const base = defaultWorkflowEdgeEditorDraft(edge, optionId);
+  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  if (data?.kind === "branch" && typeof data.branchIndex === "number") {
+    const branches = Array.isArray(node.transitions?.branches) ? node.transitions.branches : [];
+    const branch = isRecord(branches[data.branchIndex]) ? branches[data.branchIndex] : {};
+    return {
+      ...base,
+      label: String(branch.label ?? ""),
+      whenJson: stringifyJson(branch.when ?? defaultConditionBranchWhen()),
+      canEditLabel: true,
+      canEditCondition: true,
+      canMove: true,
+      orderIndex: data.branchIndex,
+      orderCount: branches.length
+    };
+  }
+
+  if (data?.kind === "control" && data.parameterKey === "cases" && typeof data.parameterIndex === "number") {
+    const cases = Array.isArray(node.parameters?.cases) ? node.parameters.cases : [];
+    const switchCase = isRecord(cases[data.parameterIndex]) ? cases[data.parameterIndex] : {};
+    const match = switchCaseMatchDraft(switchCase);
+    return {
+      ...base,
+      label: String(switchCase.label ?? ""),
+      matchKind: match.kind,
+      matchJson: stringifyJson(match.value),
+      canEditLabel: true,
+      canEditSwitchCase: true,
+      canMove: true,
+      orderIndex: data.parameterIndex,
+      orderCount: cases.length
+    };
+  }
+
+  if (data?.kind === "control" && data.parameterKey && typeof data.parameterIndex === "number") {
+    const values = Array.isArray(node.parameters?.[data.parameterKey]) ? node.parameters[data.parameterKey] : [];
+    return {
+      ...base,
+      canMove: ["branches", "wait_for"].includes(data.parameterKey),
+      orderIndex: data.parameterIndex,
+      orderCount: values.length
+    };
+  }
+
+  return base;
+}
+
+export function applyWorkflowEdgeEditorDraft(
+  definition: JsonRecord,
+  previousEdge: Edge | null,
+  draft: WorkflowEdgeEditorDraft
+): { ok: true; semanticKey: string } | { ok: false; message: string } {
+  const parsed = parseWorkflowEdgeDraftValues(draft);
+  if (!parsed.ok) return parsed;
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const sourceNode = nodes.find((node: JsonRecord) => String(node.id) === draft.source);
+  if (!sourceNode) return { ok: false, message: "Edge source node no longer exists" };
+  if (!draft.target) return { ok: false, message: "Edge target is required" };
+
+  const previousOptionId = previousEdge ? workflowEdgeOptionId(previousEdge) : "";
+  if (previousEdge && (previousEdge.source !== draft.source || previousOptionId !== draft.optionId)) {
+    const previousSourceNode = nodes.find((node: JsonRecord) => String(node.id) === previousEdge.source);
+    if (previousSourceNode) removeWorkflowEdge(previousSourceNode, previousEdge);
+    removeEdgeHandlesForEdge(definition, previousEdge);
+  }
+
+  const semanticKey = writeWorkflowEdgeDraft(sourceNode, draft, parsed);
+  if (!semanticKey) return { ok: false, message: "Choose a valid edge type" };
+  setWorkflowEdgeHandles(definition, draft.source, semanticKey, draft.sourceHandle, draft.targetHandle);
+  return { ok: true, semanticKey };
+}
+
+export function moveWorkflowEdgeEditorDraft(
+  definition: JsonRecord,
+  draft: WorkflowEdgeEditorDraft,
+  direction: -1 | 1
+): { ok: true; draft: WorkflowEdgeEditorDraft } | { ok: false; message: string } {
+  const location = orderedEdgeLocation(definition, draft);
+  if (!location) return { ok: false, message: "This edge cannot be reordered" };
+  const nextIndex = location.index + direction;
+  if (nextIndex < 0 || nextIndex >= location.items.length) {
+    return { ok: false, message: "Edge is already at that boundary" };
+  }
+  [location.items[location.index], location.items[nextIndex]] = [location.items[nextIndex], location.items[location.index]];
+  swapWorkflowEdgeHandles(definition, draft.source, location.semanticKey(location.index), location.semanticKey(nextIndex));
+  return {
+    ok: true,
+    draft: {
+      ...draft,
+      optionId: location.optionId(nextIndex),
+      edgeId: "",
+      orderIndex: nextIndex,
+      orderCount: location.items.length
+    }
+  };
+}
+
+function defaultWorkflowEdgeEditorDraft(edge: Edge, optionId: string): WorkflowEdgeEditorDraft {
+  return {
+    edgeId: edge.id,
+    source: edge.source,
+    target: edge.target,
+    optionId,
+    sourceHandle: edge.sourceHandle as WorkflowConnectionHandle | null | undefined,
+    targetHandle: edge.targetHandle as WorkflowConnectionHandle | null | undefined,
+    label: "",
+    whenJson: stringifyJson(defaultConditionBranchWhen()),
+    matchKind: "equals",
+    matchJson: stringifyJson(true),
+    canEditLabel: false,
+    canEditCondition: false,
+    canEditSwitchCase: false,
+    canMove: false,
+    orderIndex: -1,
+    orderCount: 0
+  };
+}
+
+function defaultConditionBranchWhen(): JsonRecord {
+  return { value: valueRef("input", ["value"]), equals: true };
+}
+
+function switchCaseMatchDraft(switchCase: JsonRecord): { kind: WorkflowEdgeEditorMatchKind; value: unknown } {
+  if ("when" in switchCase) return { kind: "when", value: switchCase.when ?? {} };
+  if ("condition" in switchCase) return { kind: "when", value: switchCase.condition ?? {} };
+  if ("not_equals" in switchCase) return { kind: "not_equals", value: switchCase.not_equals };
+  if ("exists" in switchCase) return { kind: "exists", value: switchCase.exists };
+  return { kind: "equals", value: "equals" in switchCase ? switchCase.equals : true };
+}
+
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value ?? null, null, 2);
+}
+
+function parseWorkflowEdgeDraftValues(
+  draft: WorkflowEdgeEditorDraft
+): { ok: true; when?: JsonRecord; matchValue?: unknown } | { ok: false; message: string } {
+  if (isConditionBranchOption(draft.optionId)) {
+    const when = parseDraftJson(draft.whenJson);
+    if (!when.ok) return { ok: false, message: "Condition branch predicate must be valid JSON" };
+    if (!isRecord(when.value)) return { ok: false, message: "Condition branch predicate must be a JSON object" };
+    return { ok: true, when: when.value };
+  }
+  if (isSwitchCaseOption(draft.optionId)) {
+    const match = parseDraftJson(draft.matchJson);
+    if (!match.ok) return { ok: false, message: "Switch case match must be valid JSON" };
+    return { ok: true, matchValue: match.value };
+  }
+  return { ok: true };
+}
+
+function isConditionBranchOption(optionId: string): boolean {
+  return optionId.startsWith("branch:");
+}
+
+function isSwitchCaseOption(optionId: string): boolean {
+  return optionId.startsWith("control:cases:");
+}
+
+function parseDraftJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function writeWorkflowEdgeDraft(
+  node: JsonRecord,
+  draft: WorkflowEdgeEditorDraft,
+  parsed: { ok: true; when?: JsonRecord; matchValue?: unknown }
+): string | null {
+  if (draft.optionId.startsWith("direct:")) {
+    const key = draft.optionId.slice("direct:".length) as WorkflowDirectTransitionKey;
+    if (!directTransitionKeys.includes(key)) return null;
+    node.transitions = isRecord(node.transitions) ? node.transitions : {};
+    node.transitions[key] = nodeRef(draft.target);
+    return key;
+  }
+
+  if (draft.optionId.startsWith("branch:")) {
+    node.transitions = isRecord(node.transitions) ? node.transitions : {};
+    node.transitions.branches = Array.isArray(node.transitions.branches) ? node.transitions.branches : [];
+    const index = edgeOptionIndex(draft.optionId, "branch", node.transitions.branches.length);
+    if (index === null) return null;
+    const previous = isRecord(node.transitions.branches[index]) ? node.transitions.branches[index] : {};
+    const branch: JsonRecord = {
+      ...previous,
+      when: parsed.when ?? (isRecord(previous.when) ? previous.when : defaultConditionBranchWhen()),
+      target: nodeRef(draft.target)
+    };
+    applyOptionalLabel(branch, draft.label);
+    node.transitions.branches[index] = branch;
+    return `branches.${index}`;
+  }
+
+  if (!draft.optionId.startsWith("control:")) return null;
+  node.parameters = isRecord(node.parameters) ? node.parameters : {};
+  const [, parameterKey, rawIndex] = draft.optionId.split(":");
+  if (!parameterKey) return null;
+
+  if (rawIndex !== undefined) {
+    node.parameters[parameterKey] = Array.isArray(node.parameters[parameterKey]) ? node.parameters[parameterKey] : [];
+    const index = rawIndex === "new" ? node.parameters[parameterKey].length : Number(rawIndex);
+    if (!Number.isInteger(index) || index < 0) return null;
+    if (parameterKey === "cases") {
+      const previous = isRecord(node.parameters.cases[index]) ? node.parameters.cases[index] : {};
+      const switchCase: JsonRecord = { ...previous, target: nodeRef(draft.target) };
+      for (const key of ["equals", "not_equals", "exists", "when", "condition"]) delete switchCase[key];
+      switchCase[draft.matchKind] = parsed.matchValue ?? true;
+      applyOptionalLabel(switchCase, draft.label);
+      node.parameters.cases[index] = switchCase;
+    } else {
+      node.parameters[parameterKey][index] = nodeRef(draft.target);
+    }
+    return parameterSemanticKey(parameterKey, index);
+  }
+
+  node.parameters[parameterKey] = nodeRef(draft.target);
+  return parameterSemanticKey(parameterKey);
+}
+
+function applyOptionalLabel(record: JsonRecord, label: string) {
+  const trimmed = label.trim();
+  if (trimmed) record.label = trimmed;
+  else delete record.label;
+}
+
+function edgeOptionIndex(optionId: string, prefix: string, newIndex: number): number | null {
+  const raw = optionId.slice(prefix.length + 1);
+  if (raw === "new") return newIndex;
+  const index = Number(raw);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function orderedEdgeLocation(definition: JsonRecord, draft: WorkflowEdgeEditorDraft): null | {
+  items: unknown[];
+  index: number;
+  semanticKey: (index: number) => string;
+  optionId: (index: number) => string;
+} {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const node = nodes.find((item: JsonRecord) => String(item.id) === draft.source);
+  if (!node) return null;
+  if (draft.optionId.startsWith("branch:")) {
+    const branches = Array.isArray(node.transitions?.branches) ? node.transitions.branches : null;
+    const index = edgeOptionIndex(draft.optionId, "branch", -1);
+    if (!branches || index === null) return null;
+    return {
+      items: branches,
+      index,
+      semanticKey: (nextIndex) => `branches.${nextIndex}`,
+      optionId: (nextIndex) => `branch:${nextIndex}`
+    };
+  }
+
+  if (!draft.optionId.startsWith("control:")) return null;
+  const [, parameterKey, rawIndex] = draft.optionId.split(":");
+  if (!["cases", "branches", "wait_for"].includes(parameterKey) || rawIndex === undefined || rawIndex === "new") return null;
+  const items = Array.isArray(node.parameters?.[parameterKey]) ? node.parameters[parameterKey] : null;
+  const index = Number(rawIndex);
+  if (!items || !Number.isInteger(index) || index < 0) return null;
+  return {
+    items,
+    index,
+    semanticKey: (nextIndex) => parameterSemanticKey(parameterKey, nextIndex),
+    optionId: (nextIndex) => `control:${parameterKey}:${nextIndex}`
+  };
+}
+
+export function applyWorkflowEdgeSemantic(node: JsonRecord, target: string, optionId: string): string | null {
+  if (!target) return null;
+  if (optionId.startsWith("direct:")) {
+    const key = optionId.slice("direct:".length) as WorkflowDirectTransitionKey;
+    if (!directTransitionKeys.includes(key)) return null;
+    node.transitions = isRecord(node.transitions) ? node.transitions : {};
+    node.transitions[key] = nodeRef(target);
+    return key;
+  }
+
+  if (optionId.startsWith("branch:")) {
+    node.transitions = isRecord(node.transitions) ? node.transitions : {};
+    node.transitions.branches = Array.isArray(node.transitions.branches) ? node.transitions.branches : [];
+    const rawIndex = optionId.slice("branch:".length);
+    const index = rawIndex === "new" ? node.transitions.branches.length : Number(rawIndex);
+    if (!Number.isInteger(index) || index < 0) return null;
+    const previous = isRecord(node.transitions.branches[index]) ? node.transitions.branches[index] : {};
+    node.transitions.branches[index] = {
+      when: isRecord(previous.when) ? previous.when : { value: valueRef("input", ["value"]), equals: true },
+      target: nodeRef(target)
+    };
+    return `branches.${index}`;
+  }
+
+  if (!optionId.startsWith("control:")) return null;
+  node.parameters = isRecord(node.parameters) ? node.parameters : {};
+  const [, parameterKey, rawIndex] = optionId.split(":");
+  if (!parameterKey) return null;
+  if (rawIndex !== undefined) {
+    node.parameters[parameterKey] = Array.isArray(node.parameters[parameterKey]) ? node.parameters[parameterKey] : [];
+    const index = rawIndex === "new" ? node.parameters[parameterKey].length : Number(rawIndex);
+    if (!Number.isInteger(index) || index < 0) return null;
+    if (parameterKey === "cases") {
+      const previous = isRecord(node.parameters.cases[index]) ? node.parameters.cases[index] : {};
+      node.parameters.cases[index] = { ...previous, target: nodeRef(target) };
+      if (!("equals" in node.parameters.cases[index]) && !("not_equals" in node.parameters.cases[index]) && !("exists" in node.parameters.cases[index]) && !("when" in node.parameters.cases[index])) {
+        node.parameters.cases[index].equals = true;
+      }
+    } else {
+      node.parameters[parameterKey][index] = nodeRef(target);
+    }
+    return parameterSemanticKey(parameterKey, index);
+  }
+
+  node.parameters[parameterKey] = nodeRef(target);
+  return parameterSemanticKey(parameterKey);
 }
 
 export function autoArrangeWorkflowLayout(definition: JsonRecord, direction: WorkflowLayoutDirection = "horizontal"): Record<string, WorkflowLayoutPosition> {
@@ -337,6 +738,26 @@ export function removeWorkflowEdgeHandles(definition: JsonRecord, source: string
   const handles = definition.ui?.edge_handles;
   if (!isRecord(handles)) return;
   delete handles[edgeHandleKey(source, semanticKey)];
+}
+
+function removeEdgeHandlesForEdge(definition: JsonRecord, edge: Edge) {
+  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  if (data?.transitionKey) removeWorkflowEdgeHandles(definition, edge.source, data.transitionKey);
+  if (typeof data?.branchIndex === "number") removeWorkflowEdgeHandles(definition, edge.source, `branches.${data.branchIndex}`);
+  if (data?.parameterKey) removeWorkflowEdgeHandles(definition, edge.source, parameterSemanticKey(data.parameterKey, data.parameterIndex));
+}
+
+function swapWorkflowEdgeHandles(definition: JsonRecord, source: string, leftSemanticKey: string, rightSemanticKey: string) {
+  const handles = definition.ui?.edge_handles;
+  if (!isRecord(handles)) return;
+  const leftKey = edgeHandleKey(source, leftSemanticKey);
+  const rightKey = edgeHandleKey(source, rightSemanticKey);
+  const left = handles[leftKey];
+  const right = handles[rightKey];
+  if (right === undefined) delete handles[leftKey];
+  else handles[leftKey] = right;
+  if (left === undefined) delete handles[rightKey];
+  else handles[rightKey] = left;
 }
 
 
@@ -739,7 +1160,7 @@ function controlFlowEdges(definition: JsonRecord, node: JsonRecord, nodeIds: Set
         parameterKey,
         parameterIndex,
         ...edgeHandles(definition, source, parameterSemanticKey(parameterKey, parameterIndex)),
-        editable: false
+        editable: true
       })
     );
 }
@@ -870,6 +1291,14 @@ export function workflowNodeActionConfig(node: JsonRecord, task: ScheduledTask |
   };
 }
 
+export function workflowNodeResultMetadata(node: JsonRecord, providers: ProviderMetadata[]): ActionResultMetadata[] {
+  const config = workflowNodeActionConfig(node);
+  if (!config.provider || !config.action) return [];
+  const provider = providers.find((item) => item.name === config.provider);
+  const action = provider?.actions.find((item) => item.function_name === config.action);
+  return action?.results ?? [];
+}
+
 function nodeSummary(node: JsonRecord, task: ScheduledTask | null = null): string {
   switch (workflowNodeKind(node.kind)) {
     case "action":
@@ -937,6 +1366,10 @@ function titleCase(value: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function transitionLabel(value: string): string {
+  return titleCase(value.replace(/^on_/, ""));
 }
 
 function normalizeConnectionHandle(value: unknown): WorkflowConnectionHandle | undefined {

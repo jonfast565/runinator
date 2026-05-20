@@ -5,10 +5,12 @@ import type { RunChunk } from "../types/models";
 export function useRunLogStream(runId: Ref<number>) {
   const app = useAppStore();
   const chunks = ref<RunChunk[]>([]);
+  const lastChunkAt = ref<number>(0);
   let ws: WebSocket | null = null;
 
   function connect(id: number) {
     chunks.value = [];
+    lastChunkAt.value = 0;
     const base = app.serviceUrl?.replace(/^http/, "ws");
     if (!base) return;
     ws = new WebSocket(`${base}/ws/run-stream/${id}`);
@@ -17,6 +19,7 @@ export function useRunLogStream(runId: Ref<number>) {
       try {
         console.info("[command-center] run log stream message", { runId: id, data });
         chunks.value.push(JSON.parse(data) as RunChunk);
+        lastChunkAt.value = Date.now();
       } catch (err) {
         console.info("[command-center] failed to parse run log stream message", { runId: id, data, err });
       }
@@ -45,5 +48,5 @@ export function useRunLogStream(runId: Ref<number>) {
     ws?.close();
   });
 
-  return { chunks };
+  return { chunks, lastChunkAt };
 }

@@ -1,5 +1,6 @@
 <template>
-  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting }]">
+  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint }]">
+    <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
     <div class="node-topline">
       <span class="node-kind">{{ data.kind }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
@@ -60,6 +61,7 @@ const props = defineProps<{
     status?: string;
     protected?: boolean;
     readOnly?: boolean;
+    debugBreakpoint?: boolean;
   };
 }>();
 
@@ -78,6 +80,12 @@ const isNodeRunning = computed(() => {
 
 const isWaiting = computed(() => {
   return isApprovalWaitingStatus(props.data.status);
+});
+
+const isDebugActive = computed(() => {
+  const debug = workflows.debugState;
+  if (!debug?.paused) return false;
+  return debug.current_node_id === props.id;
 });
 const compassHandles = computed(() => [
   { id: "top", position: Position.Top, style: { left: "50%", top: "0" } },
@@ -217,6 +225,33 @@ async function resolveApproval(action: ApprovalAction) {
 
 .approve { background: #2ecc71; color: white; }
 .reject { background: #e74c3c; color: white; }
+
+.breakpoint-dot {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #dc2626;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 1px #dc2626;
+  z-index: 2;
+}
+
+.node-breakpointed {
+  border-color: #dc2626 !important;
+}
+
+.node-debug-active {
+  border-color: #f59e0b !important;
+  animation: debug-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes debug-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+  50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+}
 
 @keyframes spin {
   to {

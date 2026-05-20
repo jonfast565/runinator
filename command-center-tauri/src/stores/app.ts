@@ -26,6 +26,8 @@ export const useAppStore = defineStore("app", () => {
   });
   const serviceLabel = computed(() => serviceUrl.value ?? (backendReachable.value ? "Service reachable" : "No service discovered"));
   const serviceConnected = computed(() => Boolean(serviceUrl.value || backendReachable.value));
+  const serviceBlocked = computed(() => initialLoading.value || (!errorText.value && !serviceConnected.value));
+  const loadingMessage = computed(() => (serviceConnected.value ? "Loading Runinator..." : "Waiting for Runinator service..."));
 
   function setStatus(text: string) {
     statusText.value = text;
@@ -46,9 +48,10 @@ export const useAppStore = defineStore("app", () => {
   }
 
   function setServiceUrl(url: string | null | undefined) {
-    if (!url) return;
+    if (url === undefined) return;
     serviceUrl.value = url;
-    markBackendReachable();
+    backendReachable.value = Boolean(url);
+    if (url) errorText.value = "";
   }
 
   async function runOperation<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -88,6 +91,8 @@ export const useAppStore = defineStore("app", () => {
     statusLine,
     serviceLabel,
     serviceConnected,
+    serviceBlocked,
+    loadingMessage,
     setStatus,
     setError,
     markBackendReachable,

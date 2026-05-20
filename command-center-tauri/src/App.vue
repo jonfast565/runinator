@@ -34,16 +34,8 @@ let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
 
 onMounted(async () => {
-  unlistenUrl = await listenTauri<{ service_url: string | null }>("service-url-changed", (event) => {
-    app.setServiceUrl(event.payload.service_url);
-    app.markBackendReachable();
-    app.initialLoading = false;
-    Promise.all([
-      workflows.refreshWorkflows(),
-      workflows.fetchRecentWorkflowRuns(),
-      resources.refreshResources(),
-      secrets.refreshSecrets()
-    ]);
+  unlistenUrl = await listenTauri<{ service_url?: string | null } | null>("service-url-changed", (event) => {
+    void handleServiceUrlChanged(event.payload?.service_url ?? null);
   });
   unlistenError = await listenTauri<string>("service-discovery-error", (event) => {
     app.setError(event.payload);
@@ -60,13 +52,11 @@ onMounted(async () => {
     if (!status.service_url) {
       await waitForConcreteServiceUrl();
     }
-    await Promise.all([
-      workflows.refreshWorkflows().catch(() => {}),
-      workflows.fetchRecentWorkflowRuns().catch(() => {}),
-      resources.refreshResources().catch(() => {}),
-      secrets.refreshSecrets().catch(() => {}),
-      providers.fetchProviders().catch(() => {})
-    ]);
+    if (app.serviceUrl) {
+      await refreshBackendState(true);
+    } else {
+      clearBackendState();
+    }
   } catch (err) {
     app.setError(String(err));
   } finally {
@@ -95,7 +85,37 @@ watch(
 async function refreshServiceStatus() {
   if (!isTauriRuntime()) return;
   const status = await getServiceStatus().catch(() => null);
-  app.setServiceUrl(status?.service_url);
+  if (!status) return;
+  app.setServiceUrl(status.service_url);
+  if (!status.service_url) clearBackendState();
+}
+
+async function handleServiceUrlChanged(serviceUrl: string | null) {
+  const previousServiceUrl = app.serviceUrl;
+  app.setServiceUrl(serviceUrl);
+  app.initialLoading = false;
+  if (!serviceUrl) {
+    clearBackendState();
+    return;
+  }
+  await refreshBackendState(previousServiceUrl !== serviceUrl || providers.providers.length === 0);
+}
+
+function clearBackendState() {
+  workflows.clearServiceState();
+  resources.clearResources();
+  secrets.clearSecrets();
+  providers.clearProviders();
+}
+
+async function refreshBackendState(refreshProviders: boolean) {
+  await Promise.all([
+    workflows.refreshWorkflows().catch(() => {}),
+    workflows.fetchRecentWorkflowRuns().catch(() => {}),
+    resources.refreshResources().catch(() => {}),
+    secrets.refreshSecrets().catch(() => {}),
+    refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()
+  ]);
 }
 
 async function waitForConcreteServiceUrl(timeoutMs = 5000) {

@@ -132,6 +132,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn create_workflow_run(
         &self,
         workflow_id: i64,
+        workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
     ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;

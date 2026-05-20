@@ -26,6 +26,7 @@ fn builds_runtime_context() {
     let workflow_run = WorkflowRun {
         id: 10,
         workflow_id: 1,
+        workflow_snapshot: None,
         status: WorkflowStatus::Running,
         active_node_id: Some("curr".into()),
         parameters: json!({ "name": "foo" }),
@@ -66,6 +67,24 @@ fn initializes_next_execution_from_cron_schedule() {
         .expect("cron schedule is valid");
 
     assert_eq!(next, Utc.with_ymd_and_hms(2026, 5, 9, 9, 0, 0).unwrap());
+}
+
+#[tokio::test]
+async fn scheduler_uses_workflow_run_snapshot() {
+    let mut run = workflow_run(json!({}), json!({}), "start");
+    run.workflow_snapshot = Some(simple_workflow());
+    let api = MockWorkflowApi {
+        state: Mutex::new(MockWorkflowState {
+            workflow: None,
+            workflow_run: Some(run.clone()),
+            ..Default::default()
+        }),
+    };
+    let broker = InMemoryBroker::new();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().active_node_id.as_deref(), Some("end"));
 }
 
 #[tokio::test]
@@ -623,6 +642,113 @@ async fn debug_workflow_pauses_before_next_node_after_step() {
     assert_eq!(api.node_update_count(), 0);
 }
 
+#[tokio::test]
+async fn breakpoints_mode_does_not_pause_on_non_breakpoint_nodes() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({}),
+        json!({
+            "debug": {
+                "enabled": true,
+                "paused": false,
+                "step_requested": false,
+                "mode": "breakpoints",
+                "breakpoints": ["end"]
+            }
+        }),
+        "start",
+    );
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    // should advance past start and pause at end (which is in breakpoints).
+    let update = api.last_run_update();
+    assert_eq!(update.status, WorkflowStatus::DebugPaused);
+    assert_eq!(update.active_node_id.as_deref(), Some("end"));
+}
+
+#[tokio::test]
+async fn breakpoints_mode_runs_through_when_no_breakpoints_match() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({}),
+        json!({
+            "debug": {
+                "enabled": true,
+                "paused": false,
+                "step_requested": false,
+                "mode": "breakpoints",
+                "breakpoints": []
+            }
+        }),
+        "start",
+    );
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    // with no matching breakpoints the run should advance until it stops naturally.
+    let updates = api.run_updates();
+    assert!(
+        !updates
+            .iter()
+            .any(|u| u.status == WorkflowStatus::DebugPaused),
+        "expected no DebugPaused transitions, got {:?}",
+        updates.iter().map(|u| u.status).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn one_shot_breakpoint_pauses_then_clears() {
+    let workflow = simple_workflow();
+    let run = workflow_run(
+        json!({}),
+        json!({
+            "debug": {
+                "enabled": true,
+                "paused": false,
+                "step_requested": false,
+                "mode": "breakpoints",
+                "breakpoints": [],
+                "one_shot_breakpoint": "end"
+            }
+        }),
+        "start",
+    );
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    let update = api.last_run_update();
+    assert_eq!(update.status, WorkflowStatus::DebugPaused);
+    assert_eq!(update.active_node_id.as_deref(), Some("end"));
+    // the one_shot_breakpoint should be cleared after consumption.
+    assert!(update.state["debug"]["one_shot_breakpoint"].is_null());
+}
+
+#[tokio::test]
+async fn canceled_run_does_not_advance() {
+    let workflow = simple_workflow();
+    let mut run = workflow_run(json!({}), json!({}), "start");
+    run.status = WorkflowStatus::Canceled;
+    let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    let broker = InMemoryBroker::new();
+    let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    // no updates should be produced for a terminal canceled run.
+    assert!(api.run_updates().is_empty());
+    assert_eq!(api.node_update_count(), 0);
+}
+
 #[derive(Debug, Clone)]
 struct WorkflowRunUpdate {
     status: WorkflowStatus,
@@ -889,6 +1015,7 @@ fn workflow_run(
     WorkflowRun {
         id: 10,
         workflow_id: 1,
+        workflow_snapshot: None,
         status: WorkflowStatus::Running,
         active_node_id: Some(active.into()),
         parameters,

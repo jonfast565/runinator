@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
+  cancelWorkflowRun,
+  continueWorkflowRun,
   createWorkflowRun,
   deleteWorkflow,
   deleteWorkflowTrigger,
@@ -10,16 +12,22 @@ import {
   fetchWorkflowRuns,
   fetchWorkflowTriggers,
   fetchWorkflows,
+  patchWorkflowRunDebug,
+  replayWorkflowRun as replayWorkflowRunApi,
+  rerunWorkflowNode,
+  runToCursorWorkflowRun,
   saveWorkflowBundle,
   saveWorkflowTrigger,
-  stepWorkflowRun
+  skipWorkflowNode,
+  stepWorkflowRun,
+  type WorkflowDebugPatch
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
 import {
-  addDirectTransition,
+  applyWorkflowEdgeEditorDraft,
   autoArrangeWorkflowEdgeHandles,
   autoArrangeWorkflowLayout,
   buildGraphEdges,
@@ -36,7 +44,10 @@ import {
   removeWorkflowEdgeHandles,
   removeWorkflowNodeReferences,
   setConditionBranch,
-  setWorkflowEdgeHandles,
+  moveWorkflowEdgeEditorDraft,
+  workflowEdgeOptionId,
+  workflowEdgeEditorDraft,
+  workflowEdgeSemanticOptions,
   uniqueWorkflowNodeId,
   validateWorkflowReferenceSyntax,
   valueRef,
@@ -145,6 +156,25 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
   const canManageWorkflowTriggers = computed(() => Boolean(workflowDraft.id));
   const canStepWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
+  const debugState = computed<Record<string, any> | null>(() => {
+    const debug = workflowRunDetail.value?.run.state?.debug;
+    if (debug && typeof debug === "object" && !Array.isArray(debug)) return debug as Record<string, any>;
+    return null;
+  });
+  const isDebugRun = computed(() => Boolean(debugState.value?.enabled));
+  const canContinueWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
+  const canCancelWorkflowRun = computed(() => {
+    const status = workflowRunDetail.value?.run.status;
+    if (!status) return false;
+    return !["succeeded", "failed", "canceled", "timed_out"].includes(status);
+  });
+  const currentBreakpoints = computed<string[]>(() => {
+    const list = debugState.value?.breakpoints;
+    return Array.isArray(list) ? list.filter((id): id is string => typeof id === "string") : [];
+  });
+  function isBreakpointed(nodeId: string): boolean {
+    return currentBreakpoints.value.includes(nodeId);
+  }
   const canRemoveSelectedStep = computed(() => {
     const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
     return Boolean(node && node.kind !== "start" && node.kind !== "end" && node.kind !== "fail");
@@ -178,6 +208,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, Object.values(workflowTaskDrafts.value)));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
   const workflowRunWorkflow = computed(() => {
+    const snapshot = workflowRunDetail.value?.run.workflow_snapshot;
+    if (snapshot) return snapshot;
     const workflowId = workflowRunDetail.value?.run.workflow_id ?? workflowRuns.value.find((run) => run.id === selectedWorkflowRunId.value)?.workflow_id;
     return workflows.value.find((workflow) => workflow.id === workflowId) ?? null;
   });
@@ -201,6 +233,24 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (!selectedWorkflowId.value && workflows.value.length > 0) selectedWorkflowId.value = workflows.value[0].id;
     const workflow = workflows.value.find((item) => item.id === selectedWorkflowId.value) ?? workflows.value[0];
     if (workflow && !isDirty.value) await selectWorkflow(workflow);
+  }
+
+  function clearServiceState() {
+    workflows.value = [];
+    workflowRuns.value = [];
+    workflowRunDetail.value = null;
+    workflowNodeDetailExtra.value = "";
+    selectedWorkflowRunId.value = 0;
+    selectedWorkflowRunNodeId.value = "";
+    selectedWorkflowNodeRunId.value = 0;
+    workflowTaskDrafts.value = {};
+    clearWorkflowTriggerState();
+    if (isDirty.value) return;
+    selectedWorkflowId.value = null;
+    Object.assign(workflowDraft, newWorkflowDraft());
+    workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
+    selectedStepId.value = "";
+    stepEditorOpen.value = false;
   }
 
   function getTransition(key: string): string {
@@ -269,6 +319,163 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     app.setStatus(response.message || `Workflow run ${runId} stepped`);
     await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function continueSelectedWorkflowRun() {
+    if (!workflowRunDetail.value || !canContinueWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Continuing workflow run ${runId}`, () => continueWorkflowRun(runId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to continue workflow run");
+      return;
+    }
+    app.setStatus(response.message || `Workflow run ${runId} continued`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function cancelSelectedWorkflowRun() {
+    if (!workflowRunDetail.value || !canCancelWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Canceling workflow run ${runId}`, () => cancelWorkflowRun(runId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to cancel workflow run");
+      return;
+    }
+    app.setStatus(response.message || `Workflow run ${runId} canceled`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function patchSelectedWorkflowRunDebug(patch: WorkflowDebugPatch) {
+    if (!workflowRunDetail.value || !isDebugRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Updating debug settings for run ${runId}`, () => patchWorkflowRunDebug(runId, patch));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to update debug settings");
+      return;
+    }
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function toggleBreakpoint(nodeId: string) {
+    if (!workflowRunDetail.value || !isDebugRun.value) return;
+    const current = currentBreakpoints.value;
+    const next = current.includes(nodeId)
+      ? current.filter((id) => id !== nodeId)
+      : [...current, nodeId];
+    // optimistic local update so users get instant visual feedback.
+    const debug = (workflowRunDetail.value.run.state as any)?.debug;
+    if (debug && typeof debug === "object") {
+      debug.breakpoints = next;
+    }
+    await patchSelectedWorkflowRunDebug({ breakpoints: next });
+  }
+
+  async function runToCursor(nodeId: string) {
+    if (!workflowRunDetail.value || !isDebugRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Running to cursor ${nodeId}`, () => runToCursorWorkflowRun(runId, nodeId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to run to cursor");
+      return;
+    }
+    app.setStatus(response.message || `Running to ${nodeId}`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function skipCurrentNode(outputJson: any, message?: string) {
+    if (!workflowRunDetail.value || !canStepWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Skipping current node`, () => skipWorkflowNode(runId, outputJson, message));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to skip node");
+      return;
+    }
+    app.setStatus(response.message || `Node skipped`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function rerunCurrentNode(parameters: any) {
+    if (!workflowRunDetail.value || !canStepWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Re-running current node`, () => rerunWorkflowNode(runId, parameters));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to re-run node");
+      return;
+    }
+    app.setStatus(response.message || `Node re-running`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function replaySelectedWorkflowRun(runId?: number) {
+    const targetId = runId ?? workflowRunDetail.value?.run.id;
+    if (!targetId) return;
+    const created = await app.runOperation(`Replaying workflow run ${targetId}`, () => replayWorkflowRunApi(targetId));
+    if (!created?.id) {
+      app.setError("Failed to start replay");
+      return;
+    }
+    app.setStatus(`Replay started as run ${created.id}`);
+    selectedWorkflowRunId.value = created.id;
+    await fetchWorkflowRunDetail(created.id);
+    await fetchRecentWorkflowRuns();
+    app.activeTab = "Runs";
+  }
+
+  // watch expressions persisted per workflow id in localStorage.
+  const WATCH_STORAGE_PREFIX = "runinator.watch.";
+  const watchExpressionsByWorkflowId = ref<Record<number, string[]>>(loadAllWatchExpressions());
+
+  function loadAllWatchExpressions(): Record<number, string[]> {
+    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+    if (!storage) return {};
+    const result: Record<number, string[]> = {};
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key || !key.startsWith(WATCH_STORAGE_PREFIX)) continue;
+      const idStr = key.slice(WATCH_STORAGE_PREFIX.length);
+      const id = Number(idStr);
+      if (!Number.isFinite(id)) continue;
+      try {
+        const parsed = JSON.parse(storage.getItem(key) ?? "[]");
+        if (Array.isArray(parsed)) {
+          result[id] = parsed.filter((v): v is string => typeof v === "string");
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return result;
+  }
+
+  const watchExpressionsForActiveWorkflow = computed<string[]>(() => {
+    const workflowId = workflowRunWorkflow.value?.id;
+    if (!workflowId) return [];
+    return watchExpressionsByWorkflowId.value[workflowId] ?? [];
+  });
+
+  function persistWatchExpressions(workflowId: number, list: string[]) {
+    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+    if (!storage) return;
+    storage.setItem(`${WATCH_STORAGE_PREFIX}${workflowId}`, JSON.stringify(list));
+  }
+
+  function addWatchExpression(expression: string) {
+    const workflowId = workflowRunWorkflow.value?.id;
+    if (!workflowId || !expression.trim()) return;
+    const existing = watchExpressionsByWorkflowId.value[workflowId] ?? [];
+    if (existing.includes(expression)) return;
+    const next = [...existing, expression];
+    watchExpressionsByWorkflowId.value = { ...watchExpressionsByWorkflowId.value, [workflowId]: next };
+    persistWatchExpressions(workflowId, next);
+  }
+
+  function removeWatchExpression(expression: string) {
+    const workflowId = workflowRunWorkflow.value?.id;
+    if (!workflowId) return;
+    const existing = watchExpressionsByWorkflowId.value[workflowId] ?? [];
+    const next = existing.filter((e) => e !== expression);
+    watchExpressionsByWorkflowId.value = { ...watchExpressionsByWorkflowId.value, [workflowId]: next };
+    persistWatchExpressions(workflowId, next);
   }
 
   async function fetchWorkflowRunsForSelected(workflowId: number) {
@@ -664,22 +871,70 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (changed) syncWorkflowDraftToJson();
   }
 
-  function onGraphConnect(connection: any) {
+  function workflowEdgeOptions(sourceId: string) {
+    const sourceNode = ensureWorkflowNodes().find((node: JsonRecord) => node.id === sourceId);
+    return sourceNode ? workflowEdgeSemanticOptions(sourceNode) : [];
+  }
+
+  function openEdgeEditorDraft(edgeId: string): WorkflowEdgeEditorDraft | null {
+    const edge = graphEdges.value.find((item: Edge) => item.id === edgeId);
+    return edge ? workflowEdgeEditorDraft(workflowDraft, edge) : null;
+  }
+
+  function applyEdgeEditorDraft(draft: WorkflowEdgeEditorDraft): boolean {
+    const previousEdge = draft.edgeId ? graphEdges.value.find((edge: Edge) => edge.id === draft.edgeId) ?? null : null;
+    const result = applyWorkflowEdgeEditorDraft(workflowDraft.definition, previousEdge, draft);
+    if (!result.ok) {
+      app.setError(result.message);
+      return false;
+    }
+    syncWorkflowDraftToJson();
+    populateStepEditor(draft.source);
+    return true;
+  }
+
+  function moveEdgeEditorItem(draft: WorkflowEdgeEditorDraft, direction: -1 | 1): WorkflowEdgeEditorDraft | null {
+    const result = moveWorkflowEdgeEditorDraft(workflowDraft.definition, draft, direction);
+    if (!result.ok) {
+      app.setError(result.message);
+      return null;
+    }
+    syncWorkflowDraftToJson();
+    populateStepEditor(draft.source);
+    const movedEdge = graphEdges.value.find((edge: Edge) =>
+      edge.source === result.draft.source &&
+      edge.target === result.draft.target &&
+      workflowEdgeOptionId(edge) === result.draft.optionId
+    );
+    return movedEdge ? { ...result.draft, edgeId: movedEdge.id } : result.draft;
+  }
+
+  function applyGraphEdgeSemantic(connection: any, optionId: string, previousEdgeId = ""): boolean {
     const { source, target, sourceHandle } = connection;
-    if (!source || !target) return;
+    if (!source || !target) return false;
     if (isSameConnectionPointLoop(connection)) {
       app.setError("Cannot connect a node handle back to itself");
-      return;
+      return false;
     }
-    const nodes = ensureWorkflowNodes();
-    const sourceNode = nodes.find((n: JsonRecord) => n.id === source);
-    if (!sourceNode) return;
-    const transitionKey = addDirectTransition(sourceNode, target, sourceHandle);
-    setWorkflowEdgeHandles(workflowDraft.definition, source, transitionKey, connection.sourceHandle, connection.targetHandle);
-    syncWorkflowDraftToJson();
-    if (selectedStepId.value === source) {
-      populateStepEditor(source);
-    }
+    const previousEdge = previousEdgeId ? graphEdges.value.find((edge: Edge) => edge.id === previousEdgeId) ?? null : null;
+    const previousDraft = previousEdge ? workflowEdgeEditorDraft(workflowDraft, previousEdge) : null;
+    const draft: WorkflowEdgeEditorDraft = {
+      ...(previousDraft ?? defaultEdgeEditorDraft()),
+      edgeId: previousEdgeId,
+      source,
+      target,
+      optionId,
+      sourceHandle,
+      targetHandle: connection.targetHandle
+    };
+    return applyEdgeEditorDraft(draft);
+  }
+
+  function onGraphConnect(connection: any) {
+    const source = connection?.source;
+    const options = source ? workflowEdgeOptions(source) : [];
+    if (!source || options.length !== 1) return;
+    applyGraphEdgeSemantic(connection, options[0].id);
   }
 
   function onGraphEdgeUpdate(event: any) {
@@ -690,48 +945,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       app.setError("Cannot connect a node handle back to itself");
       return;
     }
-    const data = edge.data as any;
-    if (!data?.editable) return;
-    const nodes = ensureWorkflowNodes();
-    const oldSourceNode = nodes.find((node: JsonRecord) => node.id === edge.source);
-    const newSourceNode = nodes.find((node: JsonRecord) => node.id === connection.source);
-    if (!newSourceNode) return;
-
-    if (data.kind === "direct" && data.transitionKey) {
-      if (oldSourceNode && edge.source !== connection.source) {
-        delete oldSourceNode.transitions?.[data.transitionKey];
-        removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, data.transitionKey);
-      }
-      const transitionKey =
-        edge.source === connection.source
-          ? data.transitionKey
-          : addDirectTransition(newSourceNode, connection.target, data.transitionKey);
-      newSourceNode.transitions = newSourceNode.transitions ?? {};
-      newSourceNode.transitions[transitionKey] = nodeRef(connection.target);
-      setWorkflowEdgeHandles(workflowDraft.definition, connection.source, transitionKey, connection.sourceHandle, connection.targetHandle);
-      syncWorkflowDraftToJson();
-      if (selectedStepId.value === edge.source || selectedStepId.value === connection.source) {
-        populateStepEditor(connection.source);
-      }
-      return;
-    }
-
-    if (data.kind === "branch" && typeof data.branchIndex === "number") {
-      const oldBranches = Array.isArray(oldSourceNode?.transitions?.branches) ? oldSourceNode!.transitions.branches : [];
-      const branch = oldBranches[data.branchIndex] ?? { when: {}, target: nodeRef(connection.target) };
-      if (oldSourceNode && edge.source !== connection.source) {
-        oldBranches.splice(data.branchIndex, 1);
-        removeWorkflowEdgeHandles(workflowDraft.definition, edge.source, `branches.${data.branchIndex}`);
-      }
-      newSourceNode.transitions = newSourceNode.transitions ?? {};
-      newSourceNode.transitions.branches = Array.isArray(newSourceNode.transitions.branches) ? newSourceNode.transitions.branches : [];
-      const branchIndex = edge.source === connection.source ? data.branchIndex : newSourceNode.transitions.branches.length;
-      newSourceNode.transitions.branches[branchIndex] = { ...branch, target: nodeRef(connection.target) };
-      setWorkflowEdgeHandles(workflowDraft.definition, connection.source, `branches.${branchIndex}`, connection.sourceHandle, connection.targetHandle);
-      syncWorkflowDraftToJson();
-      if (selectedStepId.value === edge.source || selectedStepId.value === connection.source) {
-        populateStepEditor(connection.source);
-      }
+    const optionId = workflowEdgeOptionId(edge);
+    if (!optionId) return;
+    if (applyGraphEdgeSemantic(connection, optionId, edge.id) && selectedStepId.value === edge.source) {
+      populateStepEditor(edge.source);
     }
   }
 
@@ -1153,9 +1370,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedNode,
     selectedNodePendingApproval,
     canStepWorkflowRun,
+    canContinueWorkflowRun,
+    canCancelWorkflowRun,
+    debugState,
+    isDebugRun,
+    currentBreakpoints,
+    isBreakpointed,
     workflowNodeKinds,
     directTransitionKeys,
     refreshWorkflows,
+    clearServiceState,
     selectWorkflow,
     addWorkflow,
     saveSelectedWorkflow: saveSelectedWorkflowBundle,
@@ -1163,6 +1387,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runSelectedWorkflow,
     runSelectedWorkflowDebug,
     stepSelectedWorkflowRun,
+    continueSelectedWorkflowRun,
+    cancelSelectedWorkflowRun,
+    patchSelectedWorkflowRunDebug,
+    toggleBreakpoint,
+    runToCursor,
+    skipCurrentNode,
+    rerunCurrentNode,
+    replaySelectedWorkflowRun,
+    watchExpressionsForActiveWorkflow,
+    addWatchExpression,
+    removeWatchExpression,
     fetchWorkflowRunsForSelected,
     fetchRecentWorkflowRuns,
     selectWorkflowRun,
@@ -1174,6 +1409,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     removeWorkflowStep,
     removeWorkflowNode,
     removeWorkflowEdgeById,
+    openEdgeEditorDraft,
+    applyEdgeEditorDraft,
+    moveEdgeEditorItem,
+    workflowEdgeOptions,
+    applyGraphEdgeSemantic,
     applyStepEditor,
     populateStepEditor,
     updateSelectedWorkflowNodeDetail,
@@ -1217,6 +1457,25 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
 function nodeRefArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(nodeRefId).filter((item): item is string => Boolean(item)) : [];
+}
+
+function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
+  return {
+    edgeId: "",
+    source: "",
+    target: "",
+    optionId: "",
+    label: "",
+    whenJson: pretty({ value: valueRef("input", ["value"]), equals: true }),
+    matchKind: "equals",
+    matchJson: pretty(true),
+    canEditLabel: false,
+    canEditCondition: false,
+    canEditSwitchCase: false,
+    canMove: false,
+    orderIndex: -1,
+    orderCount: 0
+  };
 }
 
 function branchPolicyName(value: unknown, fallback: BranchPolicyName): BranchPolicyName {

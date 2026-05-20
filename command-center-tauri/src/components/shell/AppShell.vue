@@ -7,10 +7,10 @@
       <main>
         <slot />
       </main>
-      <div v-if="app.initialLoading" class="app-loader-overlay">
+      <div v-if="app.serviceBlocked" class="app-loader-overlay">
         <div class="app-loader">
           <div class="app-loader-spinner"></div>
-          <p>Loading Runinator...</p>
+          <p>{{ app.loadingMessage }}</p>
         </div>
       </div>
     </section>

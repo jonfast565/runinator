@@ -43,10 +43,24 @@ async function recenter() {
 
 function onNodeClick(event: any) {
   const nodeId = event?.node?.id;
-  if (nodeId) workflows.selectWorkflowRunNode(nodeId);
+  if (!nodeId) return;
+  const native = event?.event as MouseEvent | undefined;
+  if (native?.shiftKey && workflows.isDebugRun) {
+    workflows.toggleBreakpoint(nodeId);
+    return;
+  }
+  workflows.selectWorkflowRunNode(nodeId);
 }
 
 onPaneReady(recenter);
 watch(() => workflows.selectedWorkflowRunId, recenter);
 watch(() => workflows.runGraphNodes.length, recenter);
+watch(
+  () => workflows.debugState?.current_node_id,
+  async (nodeId) => {
+    if (!nodeId) return;
+    await nextTick();
+    fitView({ nodes: [nodeId as string], duration: 350 });
+  }
+);
 </script>

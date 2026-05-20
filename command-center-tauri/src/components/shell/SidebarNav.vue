@@ -5,7 +5,7 @@
       <span>Command Center</span>
     </div>
     <nav class="nav-list">
-      <button v-for="tab in tabs" :key="tab" :class="{ active: app.activeTab === tab }" @click="app.activeTab = tab">
+      <button v-for="tab in tabs" :key="tab" :class="{ active: app.activeTab === tab }" :disabled="app.serviceBlocked" @click="app.activeTab = tab">
         <span>{{ tab }}</span>
         <span class="nav-count">{{ navCount(tab) }}</span>
       </button>

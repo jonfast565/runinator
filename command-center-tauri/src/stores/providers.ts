@@ -24,11 +24,18 @@ export const useProvidersStore = defineStore('providers', () => {
     }
   }
 
+  function clearProviders() {
+    providers.value = []
+    error.value = null
+    loading.value = false
+  }
+
   return {
     providers,
     loading,
     error,
-    fetchProviders
+    fetchProviders,
+    clearProviders
   }
 })
 

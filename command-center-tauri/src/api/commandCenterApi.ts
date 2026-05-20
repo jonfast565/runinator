@@ -114,6 +114,70 @@ export async function stepWorkflowRun(workflowRunId: number) {
   return command<TaskResponse>("step_workflow_run", { workflowRunId });
 }
 
+export async function continueWorkflowRun(workflowRunId: number) {
+  return command<TaskResponse>("continue_workflow_run", { workflowRunId });
+}
+
+export async function cancelWorkflowRun(workflowRunId: number) {
+  return command<TaskResponse>("cancel_workflow_run", { workflowRunId });
+}
+
+export type WorkflowDebugPatch = {
+  breakpoints?: string[];
+  mode?: "step_all" | "breakpoints";
+  one_shot_breakpoint?: string | null;
+};
+
+export async function patchWorkflowRunDebug(workflowRunId: number, patch: WorkflowDebugPatch) {
+  return command<TaskResponse>("patch_workflow_run_debug", { workflowRunId, patch });
+}
+
+export async function runToCursorWorkflowRun(workflowRunId: number, nodeId: string) {
+  return command<TaskResponse>("run_to_cursor_workflow_run", { workflowRunId, nodeId });
+}
+
+export async function skipWorkflowNode(workflowRunId: number, outputJson: any, message?: string) {
+  return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
+}
+
+export async function rerunWorkflowNode(workflowRunId: number, parameters: any) {
+  return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
+}
+
+export async function replayWorkflowRun(workflowRunId: number) {
+  return command<WorkflowRunCreated>("replay_workflow_run", { workflowRunId });
+}
+
+export type SupervisorProcessSnapshot = {
+  name: string;
+  status: string;
+  pid?: number | null;
+  restarts: number;
+  uptime_seconds?: number | null;
+  last_exit_code?: number | null;
+  last_error?: string | null;
+  started_at?: string | null;
+  command: string;
+  cwd: string;
+  log_file: string;
+};
+
+export type SupervisorStatus = {
+  configured: boolean;
+  path?: string;
+  supervisor_pid?: number;
+  config_path?: string;
+  started_at?: string;
+  updated_at?: string;
+  processes?: SupervisorProcessSnapshot[];
+  stale_seconds?: number | null;
+  error?: string;
+};
+
+export async function fetchSupervisorStatus() {
+  return command<SupervisorStatus>("fetch_supervisor_status");
+}
+
 export async function fetchResourceRecords(endpoint: string) {
   return command<JsonRecord[]>("fetch_resource_records", { endpoint });
 }

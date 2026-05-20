@@ -54,6 +54,13 @@
   color: #ffffff;
 }
 
+.nav-list button:disabled,
+.nav-list button:disabled:hover {
+  background: transparent;
+  color: #778392;
+  cursor: default;
+}
+
 .nav-count {
   min-width: 24px;
   border-radius: 999px;

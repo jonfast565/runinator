@@ -4568,6 +4568,7 @@ dependencies = [
  "runinator-comm",
  "runinator-database",
  "runinator-models",
+ "runinator-supervisor",
  "runinator-utilities",
  "runinator-workflows",
  "serde",

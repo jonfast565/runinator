@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS workflow_triggers (
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workflow_id INTEGER NOT NULL REFERENCES workflows(id),
+    workflow_snapshot TEXT NULL,
     status TEXT NOT NULL,
     active_node_id TEXT NULL,
     parameters TEXT NOT NULL,
@@ -214,12 +215,24 @@ mod tests {
             .unwrap()
             .id
             .unwrap();
+        let first_snapshot = db.fetch_workflow(first).await.unwrap().unwrap();
+        let second_snapshot = db.fetch_workflow(second).await.unwrap().unwrap();
         let older = db
-            .create_workflow_run(first, serde_json::json!({}), serde_json::json!({}))
+            .create_workflow_run(
+                first,
+                first_snapshot,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            )
             .await
             .unwrap();
         let newer = db
-            .create_workflow_run(second, serde_json::json!({}), serde_json::json!({}))
+            .create_workflow_run(
+                second,
+                second_snapshot,
+                serde_json::json!({}),
+                serde_json::json!({}),
+            )
             .await
             .unwrap();
 
@@ -231,6 +244,13 @@ mod tests {
         assert_eq!(
             runs.iter().map(|run| run.workflow_id).collect::<Vec<_>>(),
             vec![second, first]
+        );
+        assert_eq!(
+            runs[0]
+                .workflow_snapshot
+                .as_ref()
+                .map(|workflow| workflow.name.as_str()),
+            Some("second")
         );
 
         let _ = fs::remove_file(path);
@@ -323,6 +343,19 @@ impl DatabaseImpl for SqliteDb {
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
         info!("Running embedded SQLite table initialization script");
         self.execute_script(SQLITE_TABLE_INIT_SQL).await?;
+        let columns = sqlx::query("PRAGMA table_info(workflow_runs)")
+            .fetch_all(&self.pool)
+            .await?;
+        let has_snapshot = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "workflow_snapshot");
+        if !has_snapshot {
+            self.pool
+                .execute(sqlx::query(
+                    "ALTER TABLE workflow_runs ADD COLUMN workflow_snapshot TEXT NULL",
+                ))
+                .await?;
+        }
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
@@ -608,15 +641,17 @@ impl DatabaseImpl for SqliteDb {
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
+        workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
     ) -> Result<WorkflowRun, SendableError> {
         let row = sqlx::query(
-            "INSERT INTO workflow_runs (workflow_id, status, active_node_id, parameters, state, created_at)
-             VALUES (?, ?, NULL, ?, ?, ?)
-             RETURNING id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
+            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at)
+             VALUES (?, ?, ?, NULL, ?, ?, ?)
+             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
         )
         .bind(workflow_id)
+        .bind(serde_json::to_string(&workflow_snapshot)?)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
         .bind(state.to_string())
@@ -630,7 +665,7 @@ impl DatabaseImpl for SqliteDb {
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = ?")
+        let row = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = ?")
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -641,7 +676,7 @@ impl DatabaseImpl for SqliteDb {
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = ? ORDER BY id")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = ? ORDER BY id")
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
@@ -652,7 +687,7 @@ impl DatabaseImpl for SqliteDb {
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows
@@ -665,7 +700,7 @@ impl DatabaseImpl for SqliteDb {
         &self,
         workflow_id: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = ? ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = ? ORDER BY id DESC")
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;

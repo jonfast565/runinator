@@ -319,6 +319,207 @@ async fn step_debug_workflow_run<T: DatabaseImpl>(
     }
 }
 
+async fn continue_debug_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::continue_debug_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn update_workflow_run_debug<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+    Json(patch): Json<serde_json::Value>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::update_workflow_run_debug(db.as_ref(), workflow_run_id, patch).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn cancel_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::cancel_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RunToCursorRequest {
+    node_id: String,
+}
+
+async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+    Json(req): Json<RunToCursorRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::run_to_cursor_workflow_run(db.as_ref(), workflow_run_id, req.node_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SkipDebugRequest {
+    output_json: serde_json::Value,
+    message: Option<String>,
+}
+
+async fn skip_debug_workflow_node<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+    Json(req): Json<SkipDebugRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::skip_debug_workflow_node(
+        db.as_ref(),
+        workflow_run_id,
+        req.output_json,
+        req.message,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RerunNodeRequest {
+    parameters: serde_json::Value,
+}
+
+async fn rerun_debug_workflow_node<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+    Json(req): Json<RerunNodeRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::rerun_debug_workflow_node(db.as_ref(), workflow_run_id, req.parameters).await
+    {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn replay_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::replay_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(run) => {
+            emit(&events, AppEvent::WorkflowRunChanged { run_id: run.id });
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                    run,
+                    nodes: Vec::new(),
+                })),
+            )
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
+    let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH")
+        .unwrap_or_else(|_| "./.runinator-supervisor/state.json".to_string());
+    let path_buf = std::path::PathBuf::from(&path);
+    if !path_buf.exists() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "configured": false,
+                "path": path
+            })),
+        );
+    }
+    match runinator_supervisor::snapshot::read_snapshot(&path_buf) {
+        Ok(snapshot) => {
+            let stale_seconds = compute_stale_seconds(&snapshot.updated_at);
+            let mut body = serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("stale_seconds".into(), serde_json::json!(stale_seconds));
+                obj.insert("configured".into(), serde_json::json!(true));
+            }
+            (StatusCode::OK, Json(body))
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "configured": true,
+                "error": err.to_string()
+            })),
+        ),
+    }
+}
+
+fn compute_stale_seconds(updated_at: &str) -> Option<i64> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(updated_at).ok()?;
+    let now = chrono::Utc::now();
+    Some((now - parsed.with_timezone(&chrono::Utc)).num_seconds())
+}
+
 async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Query(query): Query<WorkflowRunStatusQuery>,
@@ -1234,6 +1435,35 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
             "/workflow_runs/{id}/debug/step",
             post(step_debug_workflow_run::<T>).layer(Extension(pool.clone())),
         )
+        .route(
+            "/workflow_runs/{id}/debug/continue",
+            post(continue_debug_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug",
+            patch(update_workflow_run_debug::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/cancel",
+            post(cancel_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug/run_to_cursor",
+            post(run_to_cursor_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug/skip",
+            post(skip_debug_workflow_node::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug/rerun_node",
+            post(rerun_debug_workflow_node::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/replay",
+            post(replay_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route("/supervisor/status", get(get_supervisor_status))
         .route(
             "/workflow_runs/{id}/nodes",
             post(create_workflow_node_run::<T>).layer(Extension(pool.clone())),

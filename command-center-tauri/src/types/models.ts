@@ -29,6 +29,33 @@ export type WorkflowPathSegment = string | number;
 
 export type WorkflowEditorEdgeKind = "direct" | "branch" | "control";
 
+export interface WorkflowEdgeSemanticOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export type WorkflowEdgeEditorMatchKind = "equals" | "not_equals" | "exists" | "when";
+
+export interface WorkflowEdgeEditorDraft {
+  edgeId: string;
+  source: string;
+  target: string;
+  optionId: string;
+  sourceHandle?: WorkflowConnectionHandle | null;
+  targetHandle?: WorkflowConnectionHandle | null;
+  label: string;
+  whenJson: string;
+  matchKind: WorkflowEdgeEditorMatchKind;
+  matchJson: string;
+  canEditLabel: boolean;
+  canEditCondition: boolean;
+  canEditSwitchCase: boolean;
+  canMove: boolean;
+  orderIndex: number;
+  orderCount: number;
+}
+
 export interface WorkflowEditorEdgeData {
   kind: WorkflowEditorEdgeKind;
   transitionKey?: WorkflowDirectTransitionKey;
@@ -103,6 +130,7 @@ export interface ProviderMetadata {
 export interface RunSummary {
   id: number;
   workflow_id?: number;
+  workflow_snapshot?: WorkflowDefinition | null;
   status: string;
   parameters?: JsonRecord;
   output_json?: any;
@@ -192,7 +220,7 @@ export interface WorkflowNodeRun {
 }
 
 export interface WorkflowRunDetail {
-  run: RunSummary & { workflow_id: number; message?: string | null };
+  run: RunSummary & { workflow_id: number; workflow_snapshot?: WorkflowDefinition | null; message?: string | null };
   nodes: WorkflowNodeRun[];
 }
 

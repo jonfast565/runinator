@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { WorkflowDefinition } from "../../types/models";
 import {
   addDirectTransition,
+  applyWorkflowEdgeEditorDraft,
+  applyWorkflowEdgeSemantic,
   autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
@@ -16,6 +18,11 @@ import {
   setWorkflowEdgeHandles,
   stampWorkflowTaskConfiguration,
   uniqueWorkflowNodeId,
+  moveWorkflowEdgeEditorDraft,
+  workflowEdgeEditorDraft,
+  workflowEdgeOptionId,
+  workflowEdgeSemanticOptions,
+  workflowNodeResultMetadata,
   workflowRunSearchText
 } from "../workflows";
 import { newWorkflowTriggerDraft } from "../../stores/workflows";
@@ -65,6 +72,44 @@ describe("workflow graph utils", () => {
     );
 
     expect(nodes[0].data.summary).toBe("Action: Console.run");
+  });
+
+  it("resolves run result metadata from workflow node action configuration", () => {
+    const results = workflowNodeResultMetadata(
+      {
+        id: "run",
+        kind: "action",
+        action: { provider: "Console", function: "run", configuration: {} },
+        action_name: "Legacy",
+        action_function: "ignored"
+      },
+      [
+        {
+          name: "Console",
+          actions: [
+            {
+              function_name: "run",
+              parameters: [],
+              results: [{ name: "stdout", value_type: "string", label: "Standard Output" }]
+            }
+          ],
+          metadata: { credential_scopes: [], contract: null }
+        },
+        {
+          name: "Legacy",
+          actions: [
+            {
+              function_name: "ignored",
+              parameters: [],
+              results: [{ name: "legacy", value_type: "string" }]
+            }
+          ],
+          metadata: { credential_scopes: [], contract: null }
+        }
+      ]
+    );
+
+    expect(results).toEqual([{ name: "stdout", value_type: "string", label: "Standard Output" }]);
   });
 
   it("builds transition edges", () => {
@@ -132,7 +177,7 @@ describe("workflow graph utils", () => {
         expect.objectContaining({ source: "race", target: "fast", label: "race" })
       ])
     );
-    expect(edges.find((edge) => edge.label === "body")?.data).toMatchObject({ kind: "control", editable: false, parameterKey: "body" });
+    expect(edges.find((edge) => edge.label === "body")?.data).toMatchObject({ kind: "control", editable: true, parameterKey: "body" });
   });
 
   it("creates default nodes for editor palette kinds", () => {
@@ -218,6 +263,265 @@ describe("workflow graph utils", () => {
     expect(node.transitions.on_failure).toEqual({ "$node": "c" });
     expect(addDirectTransition(node, "d", "branches")).toBe("on_success");
     expect(node.transitions.on_success).toEqual({ "$node": "d" });
+  });
+
+  it("offers and applies semantic edge operations for rich nodes", () => {
+    const condition: any = { id: "guard", kind: "condition", transitions: {} };
+    expect(workflowEdgeSemanticOptions(condition).map((option) => option.id)).toContain("branch:new");
+    expect(applyWorkflowEdgeSemantic(condition, "approved", "branch:new")).toBe("branches.0");
+    expect(condition.transitions.branches[0]).toEqual({
+      when: { value: { "$ref": { input: ["value"] } }, equals: true },
+      target: { "$node": "approved" }
+    });
+
+    const route: any = { id: "route", kind: "switch", parameters: { cases: [] } };
+    expect(workflowEdgeSemanticOptions(route).map((option) => option.id)).toEqual(expect.arrayContaining(["control:cases:new", "control:default"]));
+    expect(applyWorkflowEdgeSemantic(route, "fanout", "control:cases:new")).toBe("cases.0");
+    expect(applyWorkflowEdgeSemantic(route, "done", "control:default")).toBe("default");
+    expect(route.parameters.cases[0]).toMatchObject({ equals: true, target: { "$node": "fanout" } });
+    expect(route.parameters.default).toEqual({ "$node": "done" });
+  });
+
+  it("identifies edge semantic option ids", () => {
+    expect(workflowEdgeOptionId({ source: "a", target: "b", data: { kind: "direct", transitionKey: "next", editable: true } } as any)).toBe("direct:next");
+    expect(workflowEdgeOptionId({ source: "a", target: "b", data: { kind: "branch", branchIndex: 2, editable: true } } as any)).toBe("branch:2");
+    expect(workflowEdgeOptionId({ source: "a", target: "b", data: { kind: "control", parameterKey: "branches", parameterIndex: 1, editable: true } } as any)).toBe("control:branches:1");
+  });
+
+  it("reads editable details from condition branch and switch case edges", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "guard",
+            kind: "condition",
+            transitions: {
+              branches: [{ label: "approved", when: { value: { "$ref": { input: ["approved"] } }, equals: true }, target: { "$node": "ok" } }]
+            }
+          },
+          {
+            id: "route",
+            kind: "switch",
+            parameters: {
+              cases: [{ label: "premium", not_equals: "free", target: { "$node": "done" } }]
+            }
+          },
+          { id: "ok", kind: "emit" },
+          { id: "done", kind: "end" }
+        ]
+      }
+    };
+    const edges = buildGraphEdges(rich);
+    const branchDraft = workflowEdgeEditorDraft(rich, edges.find((edge) => edge.source === "guard")!);
+    const caseDraft = workflowEdgeEditorDraft(rich, edges.find((edge) => edge.source === "route")!);
+
+    expect(branchDraft).toMatchObject({
+      optionId: "branch:0",
+      label: "approved",
+      canEditCondition: true,
+      canMove: true,
+      orderIndex: 0,
+      orderCount: 1
+    });
+    expect(JSON.parse(branchDraft!.whenJson)).toEqual({ value: { "$ref": { input: ["approved"] } }, equals: true });
+    expect(caseDraft).toMatchObject({
+      optionId: "control:cases:0",
+      label: "premium",
+      matchKind: "not_equals",
+      canEditSwitchCase: true,
+      canMove: true
+    });
+    expect(JSON.parse(caseDraft!.matchJson)).toBe("free");
+  });
+
+  it("applies condition branch label, predicate, and target edits", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "guard",
+            kind: "condition",
+            transitions: {
+              branches: [{ when: { equals: true }, target: { "$node": "ok" } }]
+            }
+          },
+          { id: "ok", kind: "emit" },
+          { id: "fail", kind: "end" }
+        ]
+      }
+    };
+    const edge = buildGraphEdges(rich).find((item) => item.source === "guard")!;
+    const draft = workflowEdgeEditorDraft(rich, edge)!;
+    draft.label = "rejected";
+    draft.whenJson = JSON.stringify({ value: { "$ref": { input: ["approved"] } }, equals: false });
+    draft.target = "fail";
+
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, edge, draft)).toEqual({ ok: true, semanticKey: "branches.0" });
+    expect((rich.definition.nodes[0] as any).transitions.branches[0]).toEqual({
+      label: "rejected",
+      when: { value: { "$ref": { input: ["approved"] } }, equals: false },
+      target: { "$node": "fail" }
+    });
+  });
+
+  it("applies switch case match edits and default target edits", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "route",
+            kind: "switch",
+            parameters: {
+              cases: [{ equals: "basic", target: { "$node": "a" } }],
+              default: { "$node": "b" }
+            }
+          },
+          { id: "a", kind: "emit" },
+          { id: "b", kind: "emit" },
+          { id: "c", kind: "end" }
+        ]
+      }
+    };
+    const edges = buildGraphEdges(rich);
+    const caseEdge = edges.find((edge) => workflowEdgeOptionId(edge) === "control:cases:0")!;
+    const caseDraft = workflowEdgeEditorDraft(rich, caseEdge)!;
+    caseDraft.label = "not premium";
+    caseDraft.matchKind = "not_equals";
+    caseDraft.matchJson = JSON.stringify("premium");
+    caseDraft.target = "c";
+
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, caseEdge, caseDraft)).toEqual({ ok: true, semanticKey: "cases.0" });
+    expect((rich.definition.nodes[0] as any).parameters.cases[0]).toEqual({
+      label: "not premium",
+      not_equals: "premium",
+      target: { "$node": "c" }
+    });
+
+    const defaultEdge = buildGraphEdges(rich).find((edge) => workflowEdgeOptionId(edge) === "control:default")!;
+    const defaultDraft = workflowEdgeEditorDraft(rich, defaultEdge)!;
+    defaultDraft.target = "c";
+
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, defaultEdge, defaultDraft)).toEqual({ ok: true, semanticKey: "default" });
+    expect((rich.definition.nodes[0] as any).parameters.default).toEqual({ "$node": "c" });
+  });
+
+  it("moves condition branches and switch cases while preserving edge handle metadata", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "guard",
+            kind: "condition",
+            transitions: {
+              branches: [
+                { label: "first", when: { equals: true }, target: { "$node": "a" } },
+                { label: "second", when: { equals: false }, target: { "$node": "b" } }
+              ]
+            }
+          },
+          {
+            id: "route",
+            kind: "switch",
+            parameters: {
+              cases: [
+                { label: "case a", equals: "a", target: { "$node": "a" } },
+                { label: "case b", equals: "b", target: { "$node": "b" } }
+              ]
+            }
+          },
+          { id: "a", kind: "emit" },
+          { id: "b", kind: "end" }
+        ],
+        ui: {
+          edge_handles: {
+            "guard:branches.0": { sourceHandle: "left", targetHandle: "right" },
+            "guard:branches.1": { sourceHandle: "right", targetHandle: "left" },
+            "route:cases.0": { sourceHandle: "top", targetHandle: "bottom" },
+            "route:cases.1": { sourceHandle: "bottom", targetHandle: "top" }
+          }
+        }
+      }
+    };
+    const branchEdge = buildGraphEdges(rich).find((edge) => workflowEdgeOptionId(edge) === "branch:0")!;
+    const branchDraft = workflowEdgeEditorDraft(rich, branchEdge)!;
+    const caseEdge = buildGraphEdges(rich).find((edge) => workflowEdgeOptionId(edge) === "control:cases:1")!;
+    const caseDraft = workflowEdgeEditorDraft(rich, caseEdge)!;
+
+    expect(moveWorkflowEdgeEditorDraft(rich.definition, branchDraft, 1)).toMatchObject({ ok: true, draft: { optionId: "branch:1" } });
+    expect((rich.definition.nodes[0] as any).transitions.branches.map((branch: any) => branch.label)).toEqual(["second", "first"]);
+    expect((rich.definition.ui as any).edge_handles["guard:branches.0"]).toEqual({ sourceHandle: "right", targetHandle: "left" });
+    expect((rich.definition.ui as any).edge_handles["guard:branches.1"]).toEqual({ sourceHandle: "left", targetHandle: "right" });
+
+    expect(moveWorkflowEdgeEditorDraft(rich.definition, caseDraft, -1)).toMatchObject({ ok: true, draft: { optionId: "control:cases:0" } });
+    expect((rich.definition.nodes[1] as any).parameters.cases.map((switchCase: any) => switchCase.label)).toEqual(["case b", "case a"]);
+    expect((rich.definition.ui as any).edge_handles["route:cases.0"]).toEqual({ sourceHandle: "bottom", targetHandle: "top" });
+    expect((rich.definition.ui as any).edge_handles["route:cases.1"]).toEqual({ sourceHandle: "top", targetHandle: "bottom" });
+  });
+
+  it("edits ordered parallel, race, and join target arrays", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          { id: "fanout", kind: "parallel", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
+          { id: "race", kind: "race", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
+          { id: "join", kind: "join", parameters: { wait_for: [{ "$node": "a" }, { "$node": "b" }] } },
+          { id: "a", kind: "emit" },
+          { id: "b", kind: "emit" },
+          { id: "c", kind: "end" }
+        ]
+      }
+    };
+    const parallelEdge = buildGraphEdges(rich).find((edge) => edge.source === "fanout" && workflowEdgeOptionId(edge) === "control:branches:0")!;
+    const raceEdge = buildGraphEdges(rich).find((edge) => edge.source === "race" && workflowEdgeOptionId(edge) === "control:branches:1")!;
+    const joinEdge = buildGraphEdges(rich).find((edge) => edge.source === "join" && workflowEdgeOptionId(edge) === "control:wait_for:0")!;
+
+    const parallelDraft = workflowEdgeEditorDraft(rich, parallelEdge)!;
+    parallelDraft.target = "c";
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, parallelEdge, parallelDraft)).toEqual({ ok: true, semanticKey: "branches.0" });
+
+    const raceDraft = workflowEdgeEditorDraft(rich, raceEdge)!;
+    raceDraft.target = "c";
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, raceEdge, raceDraft)).toEqual({ ok: true, semanticKey: "branches.1" });
+
+    const joinDraft = workflowEdgeEditorDraft(rich, joinEdge)!;
+    joinDraft.target = "c";
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, joinEdge, joinDraft)).toEqual({ ok: true, semanticKey: "wait_for.0" });
+
+    expect((rich.definition.nodes[0] as any).parameters.branches).toEqual([{ "$node": "c" }, { "$node": "b" }]);
+    expect((rich.definition.nodes[1] as any).parameters.branches).toEqual([{ "$node": "a" }, { "$node": "c" }]);
+    expect((rich.definition.nodes[2] as any).parameters.wait_for).toEqual([{ "$node": "c" }, { "$node": "b" }]);
+  });
+
+  it("rejects invalid predicate JSON without mutating the workflow", () => {
+    const rich: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        nodes: [
+          {
+            id: "guard",
+            kind: "condition",
+            transitions: {
+              branches: [{ when: { equals: true }, target: { "$node": "ok" } }]
+            }
+          },
+          { id: "ok", kind: "emit" },
+          { id: "fail", kind: "end" }
+        ]
+      }
+    };
+    const before = JSON.stringify(rich.definition);
+    const edge = buildGraphEdges(rich).find((item) => item.source === "guard")!;
+    const draft = workflowEdgeEditorDraft(rich, edge)!;
+    draft.whenJson = "{";
+    draft.target = "fail";
+
+    expect(applyWorkflowEdgeEditorDraft(rich.definition, edge, draft)).toEqual({ ok: false, message: "Condition branch predicate must be valid JSON" });
+    expect(JSON.stringify(rich.definition)).toBe(before);
   });
 
   it("edits condition branches", () => {

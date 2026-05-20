@@ -24,7 +24,7 @@
               <h2>Structured Result</h2>
               <pre class="output">{{ selectedOutput }}</pre>
               <h2>Run Output Chunks</h2>
-              <pre class="output">{{ logOutput }}</pre>
+              <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
               <h2>Selected Node Artifacts</h2>
               <div class="table-scroll compact-scroll">
                 <table>
@@ -61,6 +61,7 @@ import { computed, ref, watch } from "vue";
 import { fetchWorkflowNodeRunArtifacts } from "../api/commandCenterApi";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
+import LogPanel from "../components/workflow/LogPanel.vue";
 import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
@@ -84,9 +85,5 @@ watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
   artifacts.value = id > 0 ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
 }, { immediate: true });
 
-const { chunks: logChunks } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
-const logOutput = computed(() => {
-  if (logChunks.value.length > 0) return logChunks.value.map(c => `[${c.stream}] ${c.content}`).join("\n");
-  return workflows.workflowRunDetailText;
-});
+const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 </script>

@@ -34,6 +34,12 @@ export const useSecretsStore = defineStore("secrets", () => {
     }
   }
 
+  function clearSecrets() {
+    secrets.value = [];
+    selectedSecretKey.value = "";
+    clearDraft();
+  }
+
   async function saveDraft() {
     const scope = draft.scope.trim();
     const name = draft.name.trim();
@@ -89,6 +95,7 @@ export const useSecretsStore = defineStore("secrets", () => {
     filteredSecrets,
     scopes,
     refreshSecrets,
+    clearSecrets,
     saveDraft,
     deleteSelectedSecret,
     selectSecret,

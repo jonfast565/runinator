@@ -5,11 +5,11 @@
       <span>{{ activeSubtitle }}</span>
     </div>
     <div class="toolbar-search">
-      <input id="global-search" v-model="app.searchQuery" placeholder="Search" />
+      <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" placeholder="Search" />
     </div>
     <div class="actions">
-      <button @click="$emit('refresh')">Refresh</button>
-      <button v-if="app.activeTab === 'Workflows'" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
+      <button :disabled="app.serviceBlocked" @click="$emit('refresh')">Refresh</button>
+      <button v-if="app.activeTab === 'Workflows'" :disabled="app.serviceBlocked || !workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
         Run Workflow
       </button>
     </div>

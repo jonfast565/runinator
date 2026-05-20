@@ -12,6 +12,30 @@ export function useKeyboardShortcuts() {
   function handleKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    // debug shortcuts intentionally run even while editing as long as the editor
+    // doesn't swallow them — CodeMirror handles its own focus.
+    if (event.key === "F5") {
+      event.preventDefault();
+      if (event.shiftKey) workflows.cancelSelectedWorkflowRun();
+      else workflows.continueSelectedWorkflowRun();
+      return;
+    }
+    if (event.key === "F10") {
+      event.preventDefault();
+      if (event.ctrlKey) {
+        const nodeId = workflows.selectedWorkflowRunNodeId;
+        if (nodeId) workflows.runToCursor(nodeId);
+      } else {
+        workflows.stepSelectedWorkflowRun();
+      }
+      return;
+    }
+    if (event.key === "F9") {
+      event.preventDefault();
+      const nodeId = workflows.selectedWorkflowRunNodeId;
+      if (nodeId) workflows.toggleBreakpoint(nodeId);
+      return;
+    }
     if (editing) return;
     if (event.key === "/") {
       event.preventDefault();

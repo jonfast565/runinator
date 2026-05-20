@@ -4,7 +4,7 @@
       <h2>Workflow Run #{{ workflows.workflowRunDetail?.run.id }}</h2>
       <StatusBadge :status="workflows.workflowRunDetail?.run.status" />
     </div>
-    
+
     <div v-if="workflows.workflowRunDetail" class="workflow-run-meta">
       <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
       <div v-if="workflows.workflowRunDetail.run.finished_at">Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}</div>
@@ -13,28 +13,43 @@
       </div>
     </div>
 
-    <div v-if="debugState?.enabled" class="debug-panel">
+    <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">
+      <div class="summary-row">
+        <span class="summary-label">Final status</span>
+        <StatusBadge :status="workflows.workflowRunDetail.run.status" />
+      </div>
+      <div v-if="runDurationText" class="summary-row">
+        <span class="summary-label">Duration</span>
+        <span>{{ runDurationText }}</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-label">Nodes</span>
+        <span>
+          <span class="summary-chip success">{{ nodeCounts.succeeded }} ok</span>
+          <span v-if="nodeCounts.failed" class="summary-chip danger">{{ nodeCounts.failed }} failed</span>
+          <span v-if="nodeCounts.canceled" class="summary-chip warning">{{ nodeCounts.canceled }} canceled</span>
+        </span>
+      </div>
+      <div class="summary-row">
+        <button class="replay-btn" @click="workflows.replaySelectedWorkflowRun()">↻ Replay in Debug</button>
+      </div>
+    </div>
+
+    <div v-if="debugState?.enabled && !isTerminalRun" class="debug-panel">
       <div class="debug-panel-header">
         <div>
           <h3>Debug</h3>
           <span v-if="debugState.current_node_id">{{ debugState.current_node_id }} · {{ debugState.current_node_kind }}</span>
         </div>
-        <button :disabled="!workflows.canStepWorkflowRun" @click="workflows.stepSelectedWorkflowRun">Step</button>
       </div>
+      <DebugControlBar />
+      <WatchExpressions />
       <div class="debug-grid">
-        <section>
-          <h4>Input</h4>
-          <pre class="output debug-json">{{ pretty(debugState.input_json ?? {}) }}</pre>
-        </section>
-        <section>
-          <h4>Last Output</h4>
-          <pre class="output debug-json">{{ pretty(debugState.last_output_json ?? null) }}</pre>
-        </section>
+        <JsonEditor :title="'Input'" :model-value="inputJsonText" readonly />
+        <JsonEditor :title="'Last Output'" :model-value="lastOutputJsonText" readonly />
       </div>
-      <details>
-        <summary>Context</summary>
-        <pre class="output debug-json context">{{ pretty(debugState.context_json ?? {}) }}</pre>
-      </details>
+      <JsonDiff :before="debugState.input_json ?? null" :after="debugState.last_output_json ?? null" />
+      <JsonEditor :title="'Context'" :model-value="contextJsonText" readonly />
     </div>
 
     <h3>Steps</h3>
@@ -88,15 +103,18 @@
 
 <script setup lang="ts">
 import { useWorkflowsStore } from "../../stores/workflows";
-import { useTasksStore } from "../../stores/tasks";
 import { useProvidersStore } from "../../stores/providers";
 import StatusBadge from "../shared/StatusBadge.vue";
+import JsonEditor from "../shared/JsonEditor.vue";
+import DebugControlBar from "./DebugControlBar.vue";
+import JsonDiff from "./JsonDiff.vue";
+import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";
 import { computed } from "vue";
 import type { ActionResultMetadata } from "../../types/models";
+import { workflowNodeResultMetadata } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
-const tasksStore = useTasksStore();
 const providersStore = useProvidersStore();
 
 const selectedNodeOutput = computed<Record<string, any> | null>(() => {
@@ -112,6 +130,39 @@ const debugState = computed<Record<string, any> | null>(() => {
   return null;
 });
 
+const inputJsonText = computed(() => pretty(debugState.value?.input_json ?? {}));
+const lastOutputJsonText = computed(() => pretty(debugState.value?.last_output_json ?? null));
+const contextJsonText = computed(() => pretty(debugState.value?.context_json ?? {}));
+
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
+const isTerminalRun = computed(() => {
+  const status = workflows.workflowRunDetail?.run.status;
+  return Boolean(status && TERMINAL_STATUSES.has(status));
+});
+
+const nodeCounts = computed(() => {
+  const counts = { succeeded: 0, failed: 0, canceled: 0 };
+  for (const node of workflows.workflowRunDetail?.nodes ?? []) {
+    if (node.status === "succeeded") counts.succeeded += 1;
+    else if (node.status === "failed" || node.status === "timed_out") counts.failed += 1;
+    else if (node.status === "canceled") counts.canceled += 1;
+  }
+  return counts;
+});
+
+const runDurationText = computed(() => {
+  const run = workflows.workflowRunDetail?.run;
+  if (!run?.started_at || !run.finished_at) return "";
+  const start = Date.parse(run.started_at);
+  const end = Date.parse(run.finished_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "";
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSec = seconds % 60;
+  return remSec === 0 ? `${minutes}m` : `${minutes}m ${remSec}s`;
+});
+
 const selectedNodeResultText = computed(() => {
   const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
   return pretty(node?.output_json ?? {});
@@ -122,12 +173,8 @@ const resultFields = computed<ActionResultMetadata[]>(() => {
   if (!nodeId) return [];
   const definition = workflows.workflowRunWorkflow?.definition ?? workflows.workflowDraft.definition;
   const defNode = (definition?.nodes ?? []).find((n: any) => n.id === nodeId);
-  if (!defNode?.task_id) return [];
-  const task = tasksStore.tasks.find(t => t.id === defNode.task_id);
-  if (!task) return [];
-  const provider = providersStore.providers.find(p => p.name === task.action_name);
-  const action = provider?.actions.find(a => a.function_name === task.action_function);
-  return action?.results ?? [];
+  if (!defNode) return [];
+  return workflowNodeResultMetadata(defNode, providersStore.providers);
 });
 
 const hasExtraFields = computed(() => {
@@ -191,18 +238,73 @@ function formatResultValue(value: any): string {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  margin-bottom: 8px;
 }
 .debug-panel h4 {
   margin: 0 0 4px;
   font-size: 11px;
   color: #66717e;
 }
-.debug-json {
-  max-height: 150px;
-  font-size: 11px;
+.debug-panel :deep(.json-editor-container) {
+  height: 180px;
 }
-.debug-json.context {
-  max-height: 220px;
+.run-summary-card {
+  border: 1px solid #d8e2ec;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #475569;
+}
+.summary-label {
+  width: 90px;
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.summary-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  margin-right: 6px;
+}
+.summary-chip.success {
+  background: #dcfce7;
+  color: #166534;
+}
+.summary-chip.danger {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.summary-chip.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+.replay-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+.replay-btn:hover {
+  background: #fde68a;
 }
 .workflow-detail-logs {
   flex: 1;

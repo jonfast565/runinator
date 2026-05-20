@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS workflow_triggers (
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id BIGSERIAL PRIMARY KEY,
     workflow_id BIGINT NOT NULL REFERENCES workflows(id),
+    workflow_snapshot TEXT NULL,
     status TEXT NOT NULL,
     active_node_id TEXT NULL,
     parameters TEXT NOT NULL,
@@ -260,6 +261,10 @@ impl DatabaseImpl for PostgresDb {
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
         info!("Running embedded PostgreSQL table initialization script");
         self.execute_script(POSTGRES_TABLE_INIT_SQL).await?;
+        self.execute_script(
+            "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_snapshot TEXT NULL;",
+        )
+        .await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
@@ -548,15 +553,17 @@ impl DatabaseImpl for PostgresDb {
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
+        workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
     ) -> Result<WorkflowRun, SendableError> {
         let row = sqlx::query(
-            "INSERT INTO workflow_runs (workflow_id, status, active_node_id, parameters, state, created_at)
-             VALUES ($1, $2, NULL, $3, $4, $5)
-             RETURNING id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
+            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at)
+             VALUES ($1, $2, $3, NULL, $4, $5, $6)
+             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
         )
         .bind(workflow_id)
+        .bind(serde_json::to_string(&workflow_snapshot)?)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
         .bind(state.to_string())
@@ -570,7 +577,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = $1")
+        let row = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = $1")
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -581,7 +588,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = $1 ORDER BY id")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = $1 ORDER BY id")
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
@@ -592,7 +599,7 @@ impl DatabaseImpl for PostgresDb {
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows
@@ -605,7 +612,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_id: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;

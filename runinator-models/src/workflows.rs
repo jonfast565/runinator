@@ -410,6 +410,8 @@ pub struct WorkflowNode {
 pub struct WorkflowRun {
     pub id: i64,
     pub workflow_id: i64,
+    #[serde(default)]
+    pub workflow_snapshot: Option<WorkflowDefinition>,
     pub status: WorkflowStatus,
     pub active_node_id: Option<String>,
     pub parameters: Value,

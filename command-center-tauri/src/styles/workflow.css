@@ -145,6 +145,62 @@
   background: #eef4ff;
 }
 
+.workflow-edge-popover {
+  position: fixed;
+  z-index: 21;
+  display: grid;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(560px, calc(100vh - 24px));
+  overflow: auto;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.workflow-edge-popover strong {
+  color: #17202a;
+  font-size: 12px;
+}
+
+.workflow-edge-popover button {
+  display: grid;
+  justify-items: start;
+  border-color: transparent;
+  background: #f6f9fc;
+  color: #17202a;
+  text-align: left;
+}
+
+.workflow-edge-popover button:hover:not(:disabled) {
+  background: #eef4ff;
+}
+
+.workflow-edge-popover small {
+  color: #66717e;
+  font-size: 11px;
+}
+
+.workflow-edge-editor label {
+  display: grid;
+  gap: 4px;
+  color: #4b5663;
+  font-size: 12px;
+}
+
+.workflow-edge-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-edge-json {
+  min-height: 110px;
+  max-height: 190px;
+}
+
 .workflow-json-editor {
   height: 100%;
   padding: 12px;

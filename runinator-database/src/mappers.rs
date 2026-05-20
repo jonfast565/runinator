@@ -154,6 +154,9 @@ macro_rules! workflow_run_from_row {
         WorkflowRun {
             id: $row.get("id"),
             workflow_id: $row.get("workflow_id"),
+            workflow_snapshot: $row
+                .get::<Option<String>, _>("workflow_snapshot")
+                .and_then(|raw| serde_json::from_str(&raw).ok()),
             status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
                 .unwrap_or(WorkflowStatus::Failed),
             active_node_id: $row.get("active_node_id"),

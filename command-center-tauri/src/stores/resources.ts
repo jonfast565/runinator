@@ -40,6 +40,11 @@ export const useResourcesStore = defineStore("resources", () => {
     selectedResourceRecord.value = resourceRecords.value[0] ?? null;
   }
 
+  function clearResources() {
+    resourceRecords.value = [];
+    selectedResourceRecord.value = null;
+  }
+
   async function handleApprovalAction(approvalId: number, action: ApprovalAction) {
     const response = await app.runOperation(`${action === "approve" ? "Approving" : "Rejecting"} approval`, () =>
       action === "approve" ? approveApproval(approvalId) : rejectApproval(approvalId)
@@ -96,6 +101,7 @@ export const useResourcesStore = defineStore("resources", () => {
     canResolveApproval,
     filteredResourceRecords,
     refreshResources,
+    clearResources,
     handleApprovalAction,
     resolveApproval,
     resolveWorkflowApproval,
