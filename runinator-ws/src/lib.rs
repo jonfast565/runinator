@@ -20,15 +20,15 @@ use futures::{SinkExt, StreamExt};
 use log::info;
 use models::{
     ApiError, ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, CatalogQuery,
-    CredentialPutRequest, CredentialQuery, IdempotencyRequest, WebhookWakeRequest,
-    WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest, WorkflowRunRequest,
+    CredentialPutRequest, CredentialQuery, IdempotencyRequest, RunStatusQuery, RunStatusRequest,
+    WebhookWakeRequest, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest, WorkflowRunRequest,
     WorkflowRunStatusQuery, WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
     errors::SendableError,
     providers::ProviderMetadata,
-    runs::{NewRunArtifact, NewRunChunk},
+    runs::{NewRunArtifact, NewRunChunk, RunStatus},
     web::TaskResponse,
     workflows::{WorkflowDefinition, WorkflowTrigger},
 };
@@ -44,11 +44,12 @@ use tokio::{
 #[derive(Clone, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppEvent {
-    RunStatusChanged { run_id: i64 },
+    RunStatusChanged { run_id: i64, terminal: bool },
     RunChunkAdded { run_id: i64 },
     WorkflowsChanged,
     WorkflowRunChanged { run_id: i64 },
     WorkflowRunActivity,
+    TasksChanged,
 }
 
 type EventSender = broadcast::Sender<AppEvent>;
@@ -59,6 +60,24 @@ fn emit(events: &EventSender, event: AppEvent) {
 
 fn emit_workflow_run(events: &EventSender, run_id: i64) {
     emit(events, AppEvent::WorkflowRunChanged { run_id });
+}
+
+fn emit_task_run(events: &EventSender, run_id: i64, status: RunStatus) {
+    emit(
+        events,
+        AppEvent::RunStatusChanged {
+            run_id,
+            terminal: is_terminal_run_status(status),
+        },
+    );
+    emit(events, AppEvent::TasksChanged);
+}
+
+fn is_terminal_run_status(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
+    )
 }
 
 async fn emit_workflow_node_run<T: DatabaseImpl>(
@@ -537,6 +556,94 @@ async fn get_workflow_runs<T: DatabaseImpl>(
 
     match repository::fetch_recent_workflow_runs(db.as_ref()).await {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_runs<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(query): Query<RunStatusQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let Some(status) = query.status else {
+        return bad_request("run status query is required");
+    };
+    match repository::fetch_runs_by_status(db.as_ref(), status).await {
+        Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn update_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(run_id): Path<i64>,
+    Json(request): Json<RunStatusRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::update_run_status(
+        db.as_ref(),
+        run_id,
+        request.status,
+        request.output_json,
+        request.message,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit_task_run(&events, run_id, request.status);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_run_chunks<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(run_id): Path<i64>,
+    Query(query): Query<ChunkQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_run_chunks(db.as_ref(), run_id, query.cursor, query.limit.unwrap_or(100))
+        .await
+    {
+        Ok(chunks) => (StatusCode::OK, Json(ApiResponse::RunChunks(chunks))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn append_run_chunk<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(run_id): Path<i64>,
+    Json(chunk): Json<NewRunChunk>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
+        Ok(chunk) => {
+            emit(&events, AppEvent::RunChunkAdded { run_id });
+            (StatusCode::ACCEPTED, Json(ApiResponse::RunChunks(vec![chunk])))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn get_run_artifacts<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
+        Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn add_run_artifact<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(run_id): Path<i64>,
+    Json(artifact): Json<NewRunArtifact>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
+        Ok(artifact) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::RunArtifacts(vec![artifact])),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -1264,12 +1371,9 @@ async fn ws_workflow_run<T: DatabaseImpl>(
                     if !relevant {
                         continue;
                     }
-                    let Ok(terminal) = send_workflow_run(db.as_ref(), &mut tx, run_id).await else {
+                    let Ok(_) = send_workflow_run(db.as_ref(), &mut tx, run_id).await else {
                         break;
                     };
-                    if terminal {
-                        break;
-                    }
                 }
                 msg = rx_ws.next() => {
                     match msg {
@@ -1345,7 +1449,7 @@ async fn ws_run_stream<T: DatabaseImpl>(
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
                     let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
-                    let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id } if *id == run_id);
+                    let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id, terminal: true } if *id == run_id);
                     if is_chunk || is_done {
                         if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
                             return;
@@ -1417,6 +1521,23 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
         .route(
             "/workflow_runs",
             get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route("/runs", get(get_runs::<T>).layer(Extension(pool.clone())))
+        .route(
+            "/runs/{id}",
+            patch(update_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/runs/{id}/chunks",
+            get(get_run_chunks::<T>)
+                .post(append_run_chunk::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/runs/{id}/artifacts",
+            get(get_run_artifacts::<T>)
+                .post(add_run_artifact::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/runs",

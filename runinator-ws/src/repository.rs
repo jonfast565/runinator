@@ -2,7 +2,7 @@ use chrono::Utc;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    runs::{NewRunArtifact, NewRunChunk, RunChunk},
+    runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -33,6 +33,51 @@ pub async fn fetch_run_chunks<T: DatabaseImpl>(
     limit: i64,
 ) -> Result<Vec<RunChunk>, SendableError> {
     db.fetch_run_chunks(run_id, cursor, limit).await
+}
+
+pub async fn fetch_runs_by_status<T: DatabaseImpl>(
+    db: &T,
+    status: RunStatus,
+) -> Result<Vec<RunSummary>, SendableError> {
+    db.fetch_runs_by_status(status).await
+}
+
+pub async fn update_run_status<T: DatabaseImpl>(
+    db: &T,
+    run_id: i64,
+    status: RunStatus,
+    output_json: Option<Value>,
+    message: Option<String>,
+) -> Result<TaskResponse, SendableError> {
+    db.update_run_status(run_id, status, output_json, message)
+        .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Run updated".into(),
+    })
+}
+
+pub async fn append_run_chunk<T: DatabaseImpl>(
+    db: &T,
+    run_id: i64,
+    chunk: &NewRunChunk,
+) -> Result<RunChunk, SendableError> {
+    db.append_run_chunk(run_id, chunk).await
+}
+
+pub async fn fetch_run_artifacts<T: DatabaseImpl>(
+    db: &T,
+    run_id: i64,
+) -> Result<Vec<RunArtifact>, SendableError> {
+    db.fetch_run_artifacts(run_id).await
+}
+
+pub async fn add_run_artifact<T: DatabaseImpl>(
+    db: &T,
+    run_id: i64,
+    artifact: &NewRunArtifact,
+) -> Result<RunArtifact, SendableError> {
+    db.add_run_artifact(run_id, artifact).await
 }
 
 pub async fn upsert_workflow<T: DatabaseImpl>(

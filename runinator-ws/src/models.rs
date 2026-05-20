@@ -1,5 +1,6 @@
 use runinator_models::{
     providers::ProviderMetadata,
+    runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -19,6 +20,9 @@ pub struct ApiError {
 pub enum ApiResponse {
     TaskResponse(TaskResponse),
     ApiError(ApiError),
+    RunList(Vec<RunSummary>),
+    RunChunks(Vec<RunChunk>),
+    RunArtifacts(Vec<RunArtifact>),
     Workflow(WorkflowDefinition),
     WorkflowList(Vec<WorkflowDefinition>),
     WorkflowTrigger(WorkflowTrigger),
@@ -54,6 +58,20 @@ pub struct WorkflowTriggerRunRequest {
 pub struct WorkflowRunStatusQuery {
     pub status: Option<WorkflowStatus>,
     pub workflow_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunStatusQuery {
+    pub status: Option<RunStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunStatusRequest {
+    pub status: RunStatus,
+    #[serde(default)]
+    pub output_json: Option<Value>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

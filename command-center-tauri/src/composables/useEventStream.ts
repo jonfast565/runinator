@@ -1,6 +1,7 @@
 import { onBeforeUnmount, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { useResourcesStore } from "../stores/resources";
+import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
 
 const RECONNECT_DELAY = 3000;
@@ -10,6 +11,7 @@ export function useEventStream() {
   const app = useAppStore();
   const workflows = useWorkflowsStore();
   const resources = useResourcesStore();
+  const tasks = useTasksStore();
   let ws: WebSocket | null = null;
   let fallbackTimer: number | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -19,6 +21,10 @@ export function useEventStream() {
     switch (event.type) {
       case "run_status_changed":
         if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+        if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
+        break;
+      case "tasks_changed":
+        if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
         break;
       case "workflows_changed":
         if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
@@ -46,6 +52,7 @@ export function useEventStream() {
         workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
       }
       if (app.activeTab === "Resources") resources.refreshResources();
+      if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
     }, FALLBACK_INTERVAL);
   }
 
