@@ -1344,9 +1344,19 @@ async fn ws_events(Extension(events): Extension<EventSender>, ws: WebSocketUpgra
     let mut rx = events.subscribe();
     ws.on_upgrade(move |socket| async move {
         let (mut tx, _rx) = socket.split();
-        while let Ok(event) = rx.recv().await {
-            if send_json(&mut tx, &event).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if send_json(&mut tx, &event).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    if send_json(&mut tx, &serde_json::json!({ "type": "resync", "missed": missed })).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     })
@@ -1364,16 +1374,26 @@ async fn ws_workflow_run<T: DatabaseImpl>(
         let mut event_rx = events.subscribe();
         loop {
             tokio::select! {
-                Ok(event) = event_rx.recv() => {
-                    let relevant = matches!(&event,
-                        AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
-                    );
-                    if !relevant {
-                        continue;
+                event = event_rx.recv() => {
+                    match event {
+                        Ok(event) => {
+                            let relevant = matches!(&event,
+                                AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
+                            );
+                            if !relevant {
+                                continue;
+                            }
+                            let Ok(_) = send_workflow_run(db.as_ref(), &mut tx, run_id).await else {
+                                break;
+                            };
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            if send_workflow_run(db.as_ref(), &mut tx, run_id).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
-                    let Ok(_) = send_workflow_run(db.as_ref(), &mut tx, run_id).await else {
-                        break;
-                    };
                 }
                 msg = rx_ws.next() => {
                     match msg {
@@ -1405,11 +1425,21 @@ async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
         let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
         loop {
             tokio::select! {
-                Ok(event) = event_rx.recv() => {
-                    if matches!(&event, AppEvent::WorkflowRunChanged { .. }) {
-                        if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
-                            return;
+                event = event_rx.recv() => {
+                    match event {
+                        Ok(event) => {
+                            if matches!(&event, AppEvent::WorkflowRunChanged { .. }) {
+                                if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
+                                    return;
+                                }
+                            }
                         }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return,
                     }
                 }
                 _ = poll_interval.tick() => {
@@ -1447,16 +1477,26 @@ async fn ws_run_stream<T: DatabaseImpl>(
         let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
         loop {
             tokio::select! {
-                Ok(event) = event_rx.recv() => {
-                    let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
-                    let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id, terminal: true } if *id == run_id);
-                    if is_chunk || is_done {
-                        if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
-                            return;
+                event = event_rx.recv() => {
+                    match event {
+                        Ok(event) => {
+                            let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
+                            let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id, terminal: true } if *id == run_id);
+                            if is_chunk || is_done {
+                                if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
+                                    return;
+                                }
+                                if is_done {
+                                    break;
+                                }
+                            }
                         }
-                        if is_done {
-                            break;
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500).await.is_err() {
+                                return;
+                            }
                         }
+                        Err(broadcast::error::RecvError::Closed) => return,
                     }
                 }
                 _ = poll_interval.tick() => {
@@ -1696,7 +1736,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
-    let (events_tx, _) = broadcast::channel::<AppEvent>(256);
+    let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
     let app = build_router(pool, events_tx);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let listener = TcpListener::bind(addr).await?;

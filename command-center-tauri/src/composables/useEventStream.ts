@@ -23,6 +23,9 @@ export function useEventStream() {
         if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
         if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
         break;
+      case "resync":
+        refreshActiveState();
+        break;
       case "tasks_changed":
         if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
         break;
@@ -54,6 +57,16 @@ export function useEventStream() {
       if (app.activeTab === "Resources") resources.refreshResources();
       if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
     }, FALLBACK_INTERVAL);
+  }
+
+  function refreshActiveState() {
+    if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
+    if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
+    if (workflows.selectedWorkflowRunId > 0) {
+      workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+    }
+    if (app.activeTab === "Resources") resources.refreshResources();
+    if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
   }
 
   function stopFallback() {

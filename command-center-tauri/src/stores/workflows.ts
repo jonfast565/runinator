@@ -112,6 +112,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const latestWorkflowRunHttpRequest = new Map<number, number>();
   let nextWorkflowRunDetailVersion = 0;
   let nextWorkflowRunHttpRequestId = 0;
+  let pendingBreakpointPatch: { runId: number; breakpoints: string[] } | null = null;
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
   const selectedGraphEdgeId = ref("");
@@ -377,16 +378,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   async function toggleBreakpoint(nodeId: string) {
     if (!workflowRunDetail.value || !isDebugRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
     const current = currentBreakpoints.value;
     const next = current.includes(nodeId)
       ? current.filter((id) => id !== nodeId)
       : [...current, nodeId];
+    pendingBreakpointPatch = { runId, breakpoints: next };
     // optimistic local update so users get instant visual feedback.
     const debug = (workflowRunDetail.value.run.state as any)?.debug;
     if (debug && typeof debug === "object") {
       debug.breakpoints = next;
     }
-    await patchSelectedWorkflowRunDebug({ breakpoints: next });
+    try {
+      await patchSelectedWorkflowRunDebug({ breakpoints: next });
+    } finally {
+      if (pendingBreakpointPatch?.runId === runId) pendingBreakpointPatch = null;
+    }
   }
 
   async function runToCursor(nodeId: string) {
@@ -553,6 +560,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       }
     }
     workflowRunDetail.value = detail;
+    reapplyPendingBreakpointPatch();
     workflowNodeDetailExtra.value = "";
     if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
       selectedWorkflowRunNodeId.value = detail?.nodes[0]?.node_id ?? "";
@@ -563,6 +571,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         n.status === "waiting" || n.status === "approval_required" || n.status === "pending"
       );
       if (hasWaiting) resources.refreshResources();
+    }
+  }
+
+  function reapplyPendingBreakpointPatch() {
+    if (!workflowRunDetail.value || !pendingBreakpointPatch) return;
+    if (workflowRunDetail.value.run.id !== pendingBreakpointPatch.runId) return;
+    const debug = (workflowRunDetail.value.run.state as any)?.debug;
+    if (debug && typeof debug === "object") {
+      debug.breakpoints = pendingBreakpointPatch.breakpoints;
     }
   }
 
