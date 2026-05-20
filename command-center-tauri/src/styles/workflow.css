@@ -145,6 +145,36 @@
   background: #eef4ff;
 }
 
+.workflow-command-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 18;
+  display: flex;
+  max-width: min(760px, calc(100vw - 32px));
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  padding: 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+}
+
+.workflow-command-bar button {
+  white-space: nowrap;
+}
+
+.workflow-command-issues {
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-edge-popover {
   position: fixed;
   z-index: 21;

@@ -10,6 +10,16 @@
         <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
       </header>
 
+      <section v-if="workflows.selectedNodeIssues.length" class="detail-section validation-section">
+        <h3>Validation</h3>
+        <div class="detail-rows">
+          <div v-for="issue in workflows.selectedNodeIssues" :key="issue.message" class="detail-row">
+            <span>{{ issue.severity }}</span>
+            <strong>{{ issue.message }}</strong>
+          </div>
+        </div>
+      </section>
+
       <section v-if="taskDraft" class="detail-band">
         <div class="metric">
           <span>Task</span>

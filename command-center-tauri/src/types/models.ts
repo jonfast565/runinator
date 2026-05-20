@@ -20,7 +20,7 @@ export type WorkflowNodeKind =
   | "fail";
 
 export type WorkflowDirectTransitionKey = "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
-export type WorkflowConnectionHandle = "top" | "right" | "bottom" | "left";
+export type WorkflowConnectionHandle = string;
 export type WorkflowNodeId = string;
 export interface WorkflowNodeRef {
   "$node": WorkflowNodeId;
@@ -33,6 +33,28 @@ export interface WorkflowEdgeSemanticOption {
   id: string;
   label: string;
   description: string;
+}
+
+export interface WorkflowSemanticHandle {
+  id: string;
+  label: string;
+  type: "source" | "target";
+  semanticOptionId?: string;
+}
+
+export type WorkflowValidationSeverity = "error" | "warning";
+
+export interface WorkflowValidationIssue {
+  severity: WorkflowValidationSeverity;
+  message: string;
+  nodeId: string;
+  edgeKey?: string;
+}
+
+export interface WorkflowInlineEditDescriptor {
+  label: string;
+  value: string;
+  valueKind: "text" | "number";
 }
 
 export type WorkflowEdgeEditorMatchKind = "equals" | "not_equals" | "exists" | "when";
@@ -64,6 +86,9 @@ export interface WorkflowEditorEdgeData {
   parameterIndex?: number;
   sourceHandle?: WorkflowConnectionHandle;
   targetHandle?: WorkflowConnectionHandle;
+  validationCount?: number;
+  validationSeverity?: WorkflowValidationSeverity;
+  validationMessages?: string[];
   editable: boolean;
 }
 

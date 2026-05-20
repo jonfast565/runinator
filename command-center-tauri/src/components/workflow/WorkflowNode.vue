@@ -4,9 +4,25 @@
     <div class="node-topline">
       <span class="node-kind">{{ data.kind }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
+      <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
     </div>
-    <div class="node-title">{{ data.title }}</div>
-    <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
+    <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @click.stop>
+      <input v-model="inlineId" aria-label="Node ID" />
+      <input
+        v-if="data.inlineEdit"
+        v-model="inlineValue"
+        :type="data.inlineEdit.valueKind === 'number' ? 'number' : 'text'"
+        :aria-label="data.inlineEdit.label"
+      />
+      <div class="node-inline-actions">
+        <button type="submit" class="node-icon-btn">Apply</button>
+        <button type="button" class="node-icon-btn" @click="workflows.openStepEditor(id)">Edit</button>
+      </div>
+    </form>
+    <template v-else>
+      <div class="node-title">{{ data.title }}</div>
+      <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
+    </template>
     <div v-if="isWaiting && data.approvalPrompt" class="node-prompt">{{ data.approvalPrompt }}</div>
     <div v-if="isNodeRunning" class="node-loader">
       <div class="spinner"></div>
@@ -21,40 +37,53 @@
       <div class="spinner"></div>
     </div>
 
-    <template v-for="handle in compassHandles" :key="handle.id">
+    <template v-for="handle in semanticTargets" :key="handle.id">
       <Handle
-        class="workflow-handle workflow-handle-target"
+        class="workflow-handle workflow-handle-target workflow-handle-semantic"
         type="target"
         :id="handle.id"
-        :position="handle.position"
-        :style="handle.style"
+        :position="Position.Left"
       />
+    </template>
+    <template v-for="(handle, index) in semanticSources" :key="handle.id">
       <Handle
-        class="workflow-handle workflow-handle-source"
+        class="workflow-handle workflow-handle-source workflow-handle-semantic"
         type="source"
         :id="handle.id"
-        :position="handle.position"
-        :style="handle.style"
+        :position="Position.Right"
+        :style="semanticHandleStyle(index, semanticSources.length)"
       />
+      <span class="workflow-handle-label" :style="semanticLabelStyle(index, semanticSources.length)">{{ handle.label }}</span>
+    </template>
+    <template v-for="handle in compassHandles" :key="handle.id">
+      <Handle class="workflow-handle workflow-handle-target workflow-handle-compass" type="target" :id="handle.id" :position="handle.position" :style="handle.style" />
+      <Handle class="workflow-handle workflow-handle-source workflow-handle-compass" type="source" :id="handle.id" :position="handle.position" :style="handle.style" />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useResourcesStore } from "../../stores/resources";
 import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { statusClassForNode } from "../../utils/status";
+import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 
 const props = defineProps<{
   id: string;
+  selected?: boolean;
   data: {
     title: string;
     kind: string;
     summary?: string;
+    semanticHandles?: WorkflowSemanticHandle[];
+    inlineEdit?: WorkflowInlineEditDescriptor | null;
+    validationCount?: number;
+    validationSeverity?: WorkflowValidationSeverity;
+    validationIssues?: WorkflowValidationIssue[];
     statusLabel?: string;
     approvalPrompt?: string;
     running?: boolean;
@@ -69,6 +98,8 @@ const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const app = useAppStore();
 const submitting = ref(false);
+const inlineId = ref(props.id);
+const inlineValue = ref(props.data.inlineEdit?.value ?? "");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 
@@ -87,12 +118,38 @@ const isDebugActive = computed(() => {
   if (!debug?.paused) return false;
   return debug.current_node_id === props.id;
 });
+const isSelected = computed(() => workflows.selectedStepId === props.id);
 const compassHandles = computed(() => [
   { id: "top", position: Position.Top, style: { left: "50%", top: "0" } },
   { id: "right", position: Position.Right, style: { right: "0", top: "50%" } },
   { id: "bottom", position: Position.Bottom, style: { left: "50%", bottom: "0" } },
   { id: "left", position: Position.Left, style: { left: "0", top: "50%" } }
 ]);
+const semanticSources = computed(() => (props.data.semanticHandles ?? []).filter((handle) => handle.type === "source"));
+const semanticTargets = computed(() => (props.data.semanticHandles ?? []).filter((handle) => handle.type === "target"));
+const validationTitle = computed(() => (props.data.validationIssues ?? []).map((issue) => issue.message).join("\n"));
+
+watch(() => [props.id, props.data.inlineEdit?.value], () => {
+  inlineId.value = props.id;
+  inlineValue.value = props.data.inlineEdit?.value ?? "";
+});
+
+function semanticHandleStyle(index: number, total: number) {
+  return { right: "0", top: `${semanticHandleTop(index, total)}%` };
+}
+
+function semanticLabelStyle(index: number, total: number) {
+  return { top: `${semanticHandleTop(index, total)}%` };
+}
+
+function semanticHandleTop(index: number, total: number) {
+  if (total <= 1) return 50;
+  return 18 + (64 * index) / Math.max(1, total - 1);
+}
+
+function applyInlineEdit() {
+  workflows.applyInlineNodeEdit(props.id, inlineId.value, inlineValue.value);
+}
 
 async function onApprove() {
   await resolveApproval("approve");
@@ -141,6 +198,14 @@ async function resolveApproval(action: ApprovalAction) {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
+.workflow-handle-semantic {
+  opacity: 0.8;
+}
+
+.workflow-handle-compass {
+  opacity: 0;
+}
+
 .workflow-node-content:hover .workflow-handle,
 .vue-flow__node.selected .workflow-handle {
   opacity: 1;
@@ -152,6 +217,74 @@ async function resolveApproval(action: ApprovalAction) {
 
 .workflow-handle-source {
   transform: scale(0.68);
+}
+
+.workflow-handle-label {
+  position: absolute;
+  right: -8px;
+  max-width: 72px;
+  overflow: hidden;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef4ff;
+  color: #34495e;
+  font-size: 9px;
+  opacity: 0;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translate(100%, -50%);
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.workflow-node-content:hover .workflow-handle-label,
+.vue-flow__node.selected .workflow-handle-label {
+  opacity: 1;
+}
+
+.node-validation-badge {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #f59e0b;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.node-validation-badge.error {
+  background: #dc2626;
+}
+
+.node-inline-editor {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+}
+
+.node-inline-editor input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 11px;
+}
+
+.node-inline-actions {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+
+.node-icon-btn {
+  padding: 2px 5px;
+  font-size: 10px;
+  pointer-events: all;
 }
 
 .waiting-node {

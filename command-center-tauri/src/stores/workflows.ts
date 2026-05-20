@@ -23,11 +23,12 @@ import {
   type WorkflowDebugPatch
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
 import {
   applyWorkflowEdgeEditorDraft,
+  applyWorkflowInlineNodeEdit,
   autoArrangeWorkflowEdgeHandles,
   autoArrangeWorkflowLayout,
   buildGraphEdges,
@@ -44,11 +45,14 @@ import {
   removeWorkflowEdgeHandles,
   removeWorkflowNodeReferences,
   setConditionBranch,
+  setWorkflowEdgeHandles,
   moveWorkflowEdgeEditorDraft,
+  optionIdForSourceHandle,
   workflowEdgeOptionId,
   workflowEdgeEditorDraft,
   workflowEdgeSemanticOptions,
   uniqueWorkflowNodeId,
+  validateWorkflowIssues,
   validateWorkflowReferenceSyntax,
   valueRef,
   workflowNodeActionConfig,
@@ -106,6 +110,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
+  const selectedGraphEdgeId = ref("");
   const selectedWorkflowRunNodeId = ref("");
   const selectedWorkflowNodeRunId = ref(0);
   const stepEditor = reactive({
@@ -207,6 +212,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
   const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, Object.values(workflowTaskDrafts.value)));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
+  const graphValidationIssues = computed(() => validateWorkflowIssues(workflowDraft.definition, useProvidersStore().providers));
   const workflowRunWorkflow = computed(() => {
     const snapshot = workflowRunDetail.value?.run.workflow_snapshot;
     if (snapshot) return snapshot;
@@ -221,6 +227,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     : []);
   const runGraphEdges = computed(() => workflowRunWorkflow.value ? buildGraphEdges(workflowRunWorkflow.value) : []);
   const selectedNode = computed(() => ensureWorkflowNodes().find((item: JsonRecord) => item.id === selectedStepId.value) ?? null);
+  const selectedGraphEdge = computed(() => graphEdges.value.find((edge: Edge) => edge.id === selectedGraphEdgeId.value) ?? null);
+  const selectedNodeIssues = computed<WorkflowValidationIssue[]>(() => graphValidationIssues.value.filter((issue) => issue.nodeId === selectedStepId.value));
+  const selectedEdgeIssues = computed<WorkflowValidationIssue[]>(() => {
+    const edge = selectedGraphEdge.value;
+    if (!edge) return [];
+    const data = edge.data as any;
+    const semanticKey = data?.transitionKey ?? (typeof data?.branchIndex === "number" ? `branches.${data.branchIndex}` : parameterSemanticKey(data?.parameterKey, data?.parameterIndex));
+    return graphValidationIssues.value.filter((issue) => issue.edgeKey === `${edge.source}:${semanticKey}`);
+  });
   const selectedNodePendingApproval = computed(() => {
     const detail = workflowRunDetail.value;
     if (!detail || !selectedStepId.value) return null;
@@ -560,6 +575,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     openStepEditor(newNode.id, true);
   }
 
+  async function addConnectedWorkflowNode(kind: WorkflowNodeKind = "task") {
+    if (!selectedStepId.value) return addWorkflowNode(kind);
+    if (!syncWorkflowJson()) return;
+    const nodes = ensureWorkflowNodes();
+    const sourceId = selectedStepId.value;
+    const sourceNode = nodes.find((node: JsonRecord) => String(node.id) === sourceId);
+    if (!sourceNode) return;
+    const newNode = createWorkflowNode(kind, nodes, 1);
+    const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
+    if (endNode?.id) normalizeNewNodeTargets(newNode, endNode.id);
+    const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
+    if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
+    else nodes.push(newNode);
+    setGraphNodePosition(newNode.id, nextNodePosition(nodes.length));
+    const option = workflowEdgeOptions(sourceId)[0];
+    if (option) applyWorkflowEdgeEditorDraft(workflowDraft.definition, null, { ...defaultEdgeEditorDraft(), source: sourceId, target: newNode.id, optionId: option.id });
+    syncWorkflowDraftToJson();
+    populateStepEditor(newNode.id);
+  }
+
   function removeWorkflowStep() {
     if (!selectedStepId.value || !canRemoveSelectedStep.value) return;
     removeWorkflowNode(selectedStepId.value);
@@ -574,6 +609,27 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     delete workflowTaskDrafts.value[nodeId];
     if (selectedStepId.value === nodeId) selectedStepId.value = "";
     syncWorkflowDraftToJson();
+  }
+
+  function applyInlineNodeEdit(nodeId: string, nextId: string, inlineValue: string): boolean {
+    const previousId = nodeId;
+    const result = applyWorkflowInlineNodeEdit(workflowDraft.definition, nodeId, nextId, inlineValue);
+    if (!result.ok) {
+      app.setError(result.message);
+      return false;
+    }
+    if (previousId !== result.nodeId) {
+      renameLayoutNode(previousId, result.nodeId);
+      const taskDraft = workflowTaskDrafts.value[previousId];
+      if (taskDraft) {
+        workflowTaskDrafts.value[result.nodeId] = { ...taskDraft, configuration: { ...(taskDraft.configuration ?? {}), workflow_node_id: result.nodeId } };
+        delete workflowTaskDrafts.value[previousId];
+      }
+    }
+    selectedStepId.value = result.nodeId;
+    syncWorkflowDraftToJson();
+    populateStepEditor(result.nodeId);
+    return true;
   }
 
   function applyStepEditor(): boolean {
@@ -846,7 +902,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function onGraphNodeClick(event: any) {
     const nodeId = event?.node?.id;
-    if (nodeId) populateStepEditor(nodeId);
+    if (nodeId) {
+      selectedGraphEdgeId.value = "";
+      populateStepEditor(nodeId);
+    }
   }
 
   function onGraphNodeDoubleClick(event: any) {
@@ -881,6 +940,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return edge ? workflowEdgeEditorDraft(workflowDraft, edge) : null;
   }
 
+  function selectGraphEdge(edgeId: string) {
+    selectedGraphEdgeId.value = edgeId;
+  }
+
   function applyEdgeEditorDraft(draft: WorkflowEdgeEditorDraft): boolean {
     const previousEdge = draft.edgeId ? graphEdges.value.find((edge: Edge) => edge.id === draft.edgeId) ?? null : null;
     const result = applyWorkflowEdgeEditorDraft(workflowDraft.definition, previousEdge, draft);
@@ -909,6 +972,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return movedEdge ? { ...result.draft, edgeId: movedEdge.id } : result.draft;
   }
 
+  function moveSelectedEdge(direction: -1 | 1): boolean {
+    const draft = selectedGraphEdgeId.value ? openEdgeEditorDraft(selectedGraphEdgeId.value) : null;
+    if (!draft) return false;
+    const moved = moveEdgeEditorItem(draft, direction);
+    if (!moved) return false;
+    selectedGraphEdgeId.value = moved.edgeId;
+    return true;
+  }
+
+  function reverseSelectedEdgeHandles(): boolean {
+    const edge = selectedGraphEdge.value;
+    if (!edge) return false;
+    const data = edge.data as any;
+    const semanticKey = data?.transitionKey ?? (typeof data?.branchIndex === "number" ? `branches.${data.branchIndex}` : parameterSemanticKey(data?.parameterKey, data?.parameterIndex));
+    setWorkflowEdgeHandles(workflowDraft.definition, edge.source, semanticKey, edge.targetHandle, edge.sourceHandle);
+    syncWorkflowDraftToJson();
+    selectedGraphEdgeId.value = "";
+    return true;
+  }
+
   function applyGraphEdgeSemantic(connection: any, optionId: string, previousEdgeId = ""): boolean {
     const { source, target, sourceHandle } = connection;
     if (!source || !target) return false;
@@ -932,9 +1015,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function onGraphConnect(connection: any) {
     const source = connection?.source;
+    const handleOptionId = optionIdForSourceHandle(connection?.sourceHandle);
     const options = source ? workflowEdgeOptions(source) : [];
-    if (!source || options.length !== 1) return;
-    applyGraphEdgeSemantic(connection, options[0].id);
+    if (!source || options.length === 0) return;
+    const optionId = handleOptionId && options.some((option) => option.id === handleOptionId) ? handleOptionId : options.length === 1 ? options[0].id : "";
+    if (optionId) applyGraphEdgeSemantic(connection, optionId);
+  }
+
+  function onGraphEdgeClick(event: any) {
+    const edgeId = event?.edge?.id;
+    if (edgeId) selectedGraphEdgeId.value = edgeId;
   }
 
   function onGraphEdgeUpdate(event: any) {
@@ -950,6 +1040,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (applyGraphEdgeSemantic(connection, optionId, edge.id) && selectedStepId.value === edge.source) {
       populateStepEditor(edge.source);
     }
+    selectedGraphEdgeId.value = "";
   }
 
   function onGraphEdgesChange(changes: any[]) {
@@ -1364,10 +1455,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepNeeds,
     graphNodes,
     graphEdges,
+    graphValidationIssues,
     workflowRunWorkflow,
     runGraphNodes,
     runGraphEdges,
     selectedNode,
+    selectedGraphEdgeId,
+    selectedGraphEdge,
+    selectedNodeIssues,
+    selectedEdgeIssues,
     selectedNodePendingApproval,
     canStepWorkflowRun,
     canContinueWorkflowRun,
@@ -1406,12 +1502,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectWorkflowRunNode,
     addWorkflowStep,
     addWorkflowNode,
+    addConnectedWorkflowNode,
+    applyInlineNodeEdit,
     removeWorkflowStep,
     removeWorkflowNode,
     removeWorkflowEdgeById,
     openEdgeEditorDraft,
+    selectGraphEdge,
     applyEdgeEditorDraft,
     moveEdgeEditorItem,
+    moveSelectedEdge,
+    reverseSelectedEdgeHandles,
     workflowEdgeOptions,
     applyGraphEdgeSemantic,
     applyStepEditor,
@@ -1422,6 +1523,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     onGraphNodeDragStop,
     onGraphNodesChange,
     onGraphConnect,
+    onGraphEdgeClick,
     onGraphEdgeUpdate,
     onGraphEdgesChange,
     autoArrangeWorkflowNodes,

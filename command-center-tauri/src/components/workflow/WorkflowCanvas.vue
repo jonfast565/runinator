@@ -17,6 +17,7 @@
       @nodes-change="workflows.onGraphNodesChange"
       @connect="openConnectMenu"
       @edge-update="workflows.onGraphEdgeUpdate"
+      @edge-click="workflows.onGraphEdgeClick"
       @edge-context-menu="openEdgeMenu"
       @edge-double-click="openEdgeEditorFromEvent"
       @edges-change="workflows.onGraphEdgesChange"
@@ -31,6 +32,24 @@
         <WorkflowNode v-bind="nodeProps" />
       </template>
     </VueFlow>
+    <div v-if="showCommandBar" class="workflow-command-bar">
+      <template v-if="workflows.selectedGraphEdge">
+        <button @click="editSelectedEdge">Edit</button>
+        <button @click="workflows.removeWorkflowEdgeById(workflows.selectedGraphEdge.id)">Delete</button>
+        <button @click="workflows.reverseSelectedEdgeHandles">Reverse handles</button>
+        <button :disabled="!selectedEdgeCanMoveUp" @click="workflows.moveSelectedEdge(-1)">Move up</button>
+        <button :disabled="!selectedEdgeCanMoveDown" @click="workflows.moveSelectedEdge(1)">Move down</button>
+        <span v-if="workflows.selectedEdgeIssues.length" class="workflow-command-issues">{{ workflows.selectedEdgeIssues[0].message }}</span>
+      </template>
+      <template v-else-if="workflows.selectedNode">
+        <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
+        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Delete</button>
+        <button @click="workflows.addConnectedWorkflowNode('task')">Add connected node</button>
+        <button @click="workflows.autoArrangeWorkflowNodes()">Auto arrange from here</button>
+        <span v-if="workflows.selectedNodeIssues.length" class="workflow-command-issues">{{ workflows.selectedNodeIssues[0].message }}</span>
+      </template>
+    </div>
     <div
       v-if="contextMenu"
       class="workflow-context-menu"
@@ -122,6 +141,7 @@ import { watch, nextTick, ref, computed } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
 import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
+import { optionIdForSourceHandle } from "../../utils/workflows";
 import JsonEditor from "../shared/JsonEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
@@ -149,6 +169,10 @@ const edgeEditorCanMove = computed(() => {
     optionId.startsWith("control:wait_for:")
   );
 });
+const selectedEdgeDraft = computed(() => workflows.selectedGraphEdgeId ? workflows.openEdgeEditorDraft(workflows.selectedGraphEdgeId) : null);
+const selectedEdgeCanMoveUp = computed(() => Boolean(selectedEdgeDraft.value?.canMove && selectedEdgeDraft.value.orderIndex > 0));
+const selectedEdgeCanMoveDown = computed(() => Boolean(selectedEdgeDraft.value?.canMove && selectedEdgeDraft.value.orderIndex < selectedEdgeDraft.value.orderCount - 1));
+const showCommandBar = computed(() => Boolean(workflows.selectedGraphEdge || workflows.selectedNode));
 
 async function recenter() {
   await nextTick();
@@ -215,6 +239,15 @@ function openConnectMenu(connection: any) {
   const source = connection?.source;
   const options = source ? workflows.workflowEdgeOptions(source) : [];
   if (!source || !connection?.target || options.length === 0) return;
+  const handleOptionId = optionIdForSourceHandle(connection?.sourceHandle);
+  if (handleOptionId && options.some((option) => option.id === handleOptionId)) {
+    workflows.applyGraphEdgeSemantic(connection, handleOptionId);
+    return;
+  }
+  if (options.length === 1) {
+    workflows.applyGraphEdgeSemantic(connection, options[0].id);
+    return;
+  }
   closeContextMenu();
   pendingConnect.value = {
     connection,
@@ -222,6 +255,11 @@ function openConnectMenu(connection: any) {
     x: lastPointer.value.x || window.innerWidth / 2,
     y: lastPointer.value.y || window.innerHeight / 2
   };
+}
+
+function editSelectedEdge() {
+  if (!workflows.selectedGraphEdge) return;
+  openEdgeEditorAt(workflows.selectedGraphEdge.id, lastPointer.value.x || window.innerWidth / 2, lastPointer.value.y || window.innerHeight / 2);
 }
 
 function applyPendingConnect(optionId: string) {

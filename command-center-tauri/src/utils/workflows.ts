@@ -8,10 +8,14 @@ import type {
   WorkflowEdgeEditorMatchKind,
   WorkflowEdgeSemanticOption,
   WorkflowEditorEdgeData,
+  WorkflowInlineEditDescriptor,
   WorkflowEditorNodeRecord,
   WorkflowLayoutDirection,
   WorkflowLayoutPosition,
   WorkflowNodeKind,
+  WorkflowSemanticHandle,
+  WorkflowValidationIssue,
+  WorkflowValidationSeverity,
   WorkflowRunDetail,
   ScheduledTask,
   RunSummary,
@@ -38,10 +42,12 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
 
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = ["next", "on_success", "on_failure", "on_timeout", "on_reject"];
 export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "right", "bottom", "left"];
+const semanticTargetHandleId = "target:in";
 
 export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, tasks: ScheduledTask[] = []): Node[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const issuesByNode = validationIssuesByNode(validateWorkflowIssues(definition));
   const layout = workflowLayoutNodes(definition);
   const fallbackLayout = autoArrangeWorkflowLayout(definition);
   const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
@@ -66,6 +72,11 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         title: id,
         kind,
         summary: nodeSummary(node, taskById.get(Number(node.task_id)) ?? null),
+        semanticHandles: workflowNodeSemanticHandles(node),
+        inlineEdit: workflowInlineEditDescriptor(node, taskById.get(Number(node.task_id)) ?? null),
+        validationIssues: issuesByNode.get(id) ?? [],
+        validationCount: issuesByNode.get(id)?.length ?? 0,
+        validationSeverity: validationSeverity(issuesByNode.get(id) ?? []),
         statusLabel: run ? `${run.status} a${run.attempt}` : status,
         approvalPrompt: approvalPrompt(node, run?.state),
         running: status === "running" || status === "queued",
@@ -92,7 +103,17 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
   const nodeIds = new Set(nodes.map((node: JsonRecord) => String(node.id)));
+  const issuesByEdge = validationIssuesByEdge(validateWorkflowIssues(definition));
   const edges: Edge[] = [];
+  const edgeData = (source: string, semanticKey: string, data: WorkflowEditorEdgeData): WorkflowEditorEdgeData => {
+    const issues = issuesByEdge.get(edgeValidationKey(source, semanticKey)) ?? [];
+    return {
+      ...data,
+      validationCount: issues.length,
+      validationSeverity: validationSeverity(issues),
+      validationMessages: issues.map((issue) => issue.message)
+    };
+  };
   for (const node of nodes) {
     const source = String(node.id ?? "");
     const transitions = node.transitions ?? {};
@@ -100,17 +121,18 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
       const target = nodeRefId(transitions[key]);
       if (target && nodeIds.has(target)) {
         const handles = edgeHandles(definition, source, key);
-        edges.push(graphEdge(source, target, key, { kind: "direct", transitionKey: key, ...handles, editable: true }));
+        edges.push(graphEdge(source, target, key, edgeData(source, key, { kind: "direct", transitionKey: key, ...handles, editable: true })));
       }
     }
     for (const [index, branch] of (transitions.branches ?? []).entries()) {
       const target = nodeRefId(branch.target);
       if (target && nodeIds.has(target)) {
-        const handles = edgeHandles(definition, source, `branches.${index}`);
-        edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, { kind: "branch", branchIndex: index, ...handles, editable: true }));
+        const semanticKey = `branches.${index}`;
+        const handles = edgeHandles(definition, source, semanticKey);
+        edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, edgeData(source, semanticKey, { kind: "branch", branchIndex: index, ...handles, editable: true })));
       }
     }
-    edges.push(...controlFlowEdges(definition, node, nodeIds));
+    edges.push(...controlFlowEdges(definition, node, nodeIds, issuesByEdge));
   }
   return separateParallelEdges(edges);
 }
@@ -165,6 +187,149 @@ export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSeman
     options.push({ id: "control:target", label: `${titleCase(kind)} target`, description: "Set the repeated target node" });
   }
   return options;
+}
+
+export function workflowNodeSemanticHandles(node: JsonRecord): WorkflowSemanticHandle[] {
+  const handles: WorkflowSemanticHandle[] = [{ id: semanticTargetHandleId, label: "in", type: "target" }];
+  for (const option of workflowEdgeSemanticOptions(node)) {
+    handles.push({
+      id: semanticSourceHandleId(option.id),
+      label: option.label,
+      type: "source",
+      semanticOptionId: option.id
+    });
+  }
+  return handles;
+}
+
+export function workflowInlineEditDescriptor(node: JsonRecord, task: ScheduledTask | null = null): WorkflowInlineEditDescriptor | null {
+  switch (workflowNodeKind(node.kind)) {
+    case "action":
+    case "task": {
+      const config = workflowNodeActionConfig(node, task);
+      return { label: "Action", value: [config.provider, config.action].filter(Boolean).join("."), valueKind: "text" };
+    }
+    case "approval":
+      return { label: "Prompt", value: String(node.parameters?.prompt ?? "Approval required"), valueKind: "text" };
+    case "wait":
+      return { label: "Seconds", value: String(Number(node.wait?.seconds ?? 60)), valueKind: "number" };
+    case "emit":
+      return { label: "Event", value: String(node.parameters?.event_type ?? "workflow.event"), valueKind: "text" };
+    case "subflow":
+      return { label: "Workflow ID", value: String(Number(node.subflow_id ?? 0)), valueKind: "number" };
+    default:
+      return null;
+  }
+}
+
+export function applyWorkflowInlineNodeEdit(
+  definition: JsonRecord,
+  nodeId: string,
+  nextId: string,
+  inlineValue: string
+): { ok: true; nodeId: string } | { ok: false; message: string } {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const node = nodes.find((item: JsonRecord) => String(item.id) === nodeId);
+  if (!node) return { ok: false, message: "Node no longer exists" };
+  const trimmedId = nextId.trim();
+  if (!trimmedId) return { ok: false, message: "Node ID is required" };
+  if (trimmedId !== nodeId && nodes.some((item: JsonRecord) => String(item.id) === trimmedId)) {
+    return { ok: false, message: `Node ID ${trimmedId} already exists` };
+  }
+
+  if (trimmedId !== nodeId) renameWorkflowNodeReferences(definition, nodeId, trimmedId);
+  node.id = trimmedId;
+
+  const value = inlineValue.trim();
+  switch (workflowNodeKind(node.kind)) {
+    case "action": {
+      const parsed = parseActionSummary(value);
+      node.action = isRecord(node.action) ? node.action : {};
+      node.action.provider = parsed.provider;
+      node.action.function = parsed.action;
+      break;
+    }
+    case "task": {
+      const parsed = parseActionSummary(value);
+      node.action_name = parsed.provider;
+      node.action_function = parsed.action;
+      break;
+    }
+    case "approval":
+      node.parameters = isRecord(node.parameters) ? node.parameters : {};
+      node.parameters.prompt = value || "Approval required";
+      break;
+    case "wait":
+      node.wait = isRecord(node.wait) ? node.wait : {};
+      node.wait.seconds = Math.max(0, Number(value || 0));
+      break;
+    case "emit":
+      node.parameters = isRecord(node.parameters) ? node.parameters : {};
+      node.parameters.event_type = value || "workflow.event";
+      break;
+    case "subflow":
+      node.subflow_id = Math.max(0, Number(value || 0));
+      break;
+  }
+
+  return { ok: true, nodeId: trimmedId };
+}
+
+export function renameWorkflowNodeReferences(definition: JsonRecord, previousId: string, nextId: string) {
+  if (!previousId || !nextId || previousId === nextId) return;
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  if (definition.start === previousId) definition.start = nextId;
+  for (const node of nodes) {
+    renameNodeRefs(node.transitions, previousId, nextId);
+    renameNodeRefs(node.parameters, previousId, nextId);
+    renameNodeRefs(node.wait, previousId, nextId);
+    renameNodeRefs(node.condition, previousId, nextId);
+  }
+}
+
+export function validateWorkflowIssues(definition: JsonRecord, providers: ProviderMetadata[] = []): WorkflowValidationIssue[] {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+  const issues: WorkflowValidationIssue[] = [];
+  const ids = new Map<string, number>();
+  for (const node of nodes) {
+    const nodeId = String(node.id ?? "");
+    if (!nodeId) {
+      issues.push({ severity: "error", nodeId: "<missing>", message: "Node ID is required" });
+      continue;
+    }
+    ids.set(nodeId, (ids.get(nodeId) ?? 0) + 1);
+  }
+  for (const [id, count] of ids.entries()) {
+    if (count > 1) issues.push({ severity: "error", nodeId: id, message: `Duplicate node ID ${id}` });
+  }
+  const nodeIds = new Set(ids.keys());
+
+  const start = typeof definition.start === "string" ? definition.start : "";
+  if (start && !nodeIds.has(start)) issues.push({ severity: "error", nodeId: start, message: `Workflow start references missing node ${start}` });
+
+  for (const node of nodes) {
+    const nodeId = String(node.id ?? "<missing>");
+    const transitions = isRecord(node.transitions) ? node.transitions : {};
+    for (const key of directTransitionKeys) {
+      pushNodeRefIssue(issues, nodeIds, nodeId, key, transitions[key], false);
+    }
+    if (Array.isArray(transitions.branches)) {
+      transitions.branches.forEach((branch: JsonRecord, index: number) =>
+        pushNodeRefIssue(issues, nodeIds, nodeId, `branches.${index}`, branch?.target, true)
+      );
+    }
+    pushControlFlowIssues(issues, node, nodeIds, nodeId);
+    pushExpressionIssues(issues, node.parameters, nodeIds, nodeId, `${nodeId}.parameters`);
+    pushExpressionIssues(issues, node.wait, nodeIds, nodeId, `${nodeId}.wait`);
+    pushExpressionIssues(issues, node.condition, nodeIds, nodeId, `${nodeId}.condition`);
+    if (Array.isArray(transitions.branches)) {
+      transitions.branches.forEach((branch: JsonRecord, index: number) =>
+        pushExpressionIssues(issues, branch.when, nodeIds, nodeId, `${nodeId}.transitions.branches[${index}].when`, `branches.${index}`)
+      );
+    }
+    pushProviderIssues(issues, node, providers, nodeId);
+  }
+  return issues;
 }
 
 export function workflowEdgeOptionId(edge: Edge): string {
@@ -970,6 +1135,7 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function graphEdge(source: string, target: string, label: string, data: WorkflowEditorEdgeData): Edge {
+  const edgeLabel = data.validationCount ? `${label} !` : label;
   return {
     id: edgeId(source, target, label, data),
     type: "smoothstep",
@@ -977,7 +1143,7 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
     target,
     sourceHandle: data.sourceHandle,
     targetHandle: data.targetHandle,
-    label,
+    label: edgeLabel,
     data,
     updatable: data.editable,
     interactionWidth: 24,
@@ -1150,19 +1316,24 @@ function separateParallelEdges(edges: Edge[]): Edge[] {
   });
 }
 
-function controlFlowEdges(definition: JsonRecord, node: JsonRecord, nodeIds: Set<string>): Edge[] {
+function controlFlowEdges(definition: JsonRecord, node: JsonRecord, nodeIds: Set<string>, issuesByEdge = new Map<string, WorkflowValidationIssue[]>): Edge[] {
   const source = String(node.id ?? "");
   return controlFlowTargetValues(node)
     .filter(({ target }) => nodeIds.has(target))
-    .map(({ target, label, parameterKey, parameterIndex }) =>
-      graphEdge(source, target, label, {
+    .map(({ target, label, parameterKey, parameterIndex }) => {
+      const semanticKey = parameterSemanticKey(parameterKey, parameterIndex);
+      const issues = issuesByEdge.get(edgeValidationKey(source, semanticKey)) ?? [];
+      return graphEdge(source, target, label, {
         kind: "control",
         parameterKey,
         parameterIndex,
-        ...edgeHandles(definition, source, parameterSemanticKey(parameterKey, parameterIndex)),
+        ...edgeHandles(definition, source, semanticKey),
+        validationCount: issues.length,
+        validationSeverity: validationSeverity(issues),
+        validationMessages: issues.map((issue) => issue.message),
         editable: true
-      })
-    );
+      });
+    });
 }
 
 function controlFlowTargetValues(node: JsonRecord): Array<{ target: string; label: string; parameterKey?: string; parameterIndex?: number }> {
@@ -1218,65 +1389,161 @@ export function valueRef(source: "input" | "prev" | "workflow", path: Array<stri
 }
 
 export function validateWorkflowReferenceSyntax(definition: JsonRecord): string[] {
-  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
-  const nodeIds = new Set(nodes.map((node: JsonRecord) => String(node.id)).filter(Boolean));
-  const errors: string[] = [];
-  for (const node of nodes) {
-    const nodeId = String(node.id ?? "<missing>");
-    validateNodeRefs(node, nodeIds, nodeId, errors);
-    validateExpressions(node.parameters, nodeIds, `${nodeId}.parameters`, errors);
-    validateExpressions(node.wait, nodeIds, `${nodeId}.wait`, errors);
-    validateExpressions(node.condition, nodeIds, `${nodeId}.condition`, errors);
-    if (Array.isArray(node.transitions?.branches)) {
-      for (const [index, branch] of node.transitions.branches.entries()) {
-        validateExpressions(branch.when, nodeIds, `${nodeId}.transitions.branches[${index}].when`, errors);
-      }
-    }
-  }
-  return errors;
+  return validateWorkflowIssues(definition).filter((issue) => issue.severity === "error").map((issue) => issue.message);
 }
 
-function validateNodeRefs(node: JsonRecord, nodeIds: Set<string>, nodeId: string, errors: string[]) {
-  const transitions = isRecord(node.transitions) ? node.transitions : {};
-  for (const key of directTransitionKeys) validateNodeRef(transitions[key], nodeIds, `${nodeId}.transitions.${key}`, errors, false);
-  if (Array.isArray(transitions.branches)) {
-    transitions.branches.forEach((branch: JsonRecord, index: number) => validateNodeRef(branch?.target, nodeIds, `${nodeId}.transitions.branches[${index}].target`, errors, true));
-  }
-  for (const { target, label } of controlFlowTargetValues(node)) {
-    if (!nodeIds.has(target)) errors.push(`${nodeId}.${label} references missing node ${target}`);
-  }
-}
-
-function validateNodeRef(value: unknown, nodeIds: Set<string>, label: string, errors: string[], required: boolean) {
+function pushNodeRefIssue(
+  issues: WorkflowValidationIssue[],
+  nodeIds: Set<string>,
+  nodeId: string,
+  semanticKey: string,
+  value: unknown,
+  required: boolean
+) {
+  const label = `${nodeId}.${semanticKey}`;
   if (value == null && !required) return;
   const target = nodeRefId(value);
-  if (!target) return errors.push(`${label} must be { "$node": "node_id" }`);
-  if (!nodeIds.has(target)) errors.push(`${label} references missing node ${target}`);
-}
-
-function validateExpressions(value: unknown, nodeIds: Set<string>, label: string, errors: string[]) {
-  if (value == null) return;
-  if (typeof value === "string") {
-    if (value.includes("{{") || value.includes("}}")) errors.push(`${label} uses removed template reference syntax`);
+  if (!target) {
+    issues.push({ severity: "error", nodeId, edgeKey: edgeValidationKey(nodeId, semanticKey), message: `${label} must be { "$node": "node_id" }` });
     return;
   }
-  if (Array.isArray(value)) return value.forEach((item, index) => validateExpressions(item, nodeIds, `${label}[${index}]`, errors));
+  if (!nodeIds.has(target)) {
+    issues.push({ severity: "error", nodeId, edgeKey: edgeValidationKey(nodeId, semanticKey), message: `${label} references missing node ${target}` });
+  }
+}
+
+function pushControlFlowIssues(issues: WorkflowValidationIssue[], node: JsonRecord, nodeIds: Set<string>, nodeId: string) {
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  const kind = workflowNodeKind(node.kind);
+  if (kind === "switch") {
+    const cases = Array.isArray(parameters.cases) ? parameters.cases : [];
+    cases.forEach((item: JsonRecord, index: number) => pushNodeRefIssue(issues, nodeIds, nodeId, parameterSemanticKey("cases", index), item?.target, true));
+    pushNodeRefIssue(issues, nodeIds, nodeId, "default", parameters.default, false);
+    return;
+  }
+  if (kind === "parallel" || kind === "race") {
+    const branches = Array.isArray(parameters.branches) ? parameters.branches : [];
+    branches.forEach((target: unknown, index: number) => pushNodeRefIssue(issues, nodeIds, nodeId, parameterSemanticKey("branches", index), target, true));
+    return;
+  }
+  if (kind === "join") {
+    const waitFor = Array.isArray(parameters.wait_for) ? parameters.wait_for : [];
+    waitFor.forEach((target: unknown, index: number) => pushNodeRefIssue(issues, nodeIds, nodeId, parameterSemanticKey("wait_for", index), target, true));
+    return;
+  }
+  if (kind === "try") {
+    for (const key of ["body", "catch", "finally"]) pushNodeRefIssue(issues, nodeIds, nodeId, key, parameters[key], false);
+    return;
+  }
+  if (kind === "loop" || kind === "map") {
+    pushNodeRefIssue(issues, nodeIds, nodeId, "target", parameters.target, false);
+  }
+}
+
+function pushExpressionIssues(
+  issues: WorkflowValidationIssue[],
+  value: unknown,
+  nodeIds: Set<string>,
+  nodeId: string,
+  label: string,
+  edgeKey?: string
+) {
+  if (value == null) return;
+  if (typeof value === "string") {
+    if (value.includes("{{") || value.includes("}}")) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} uses removed template reference syntax` });
+    return;
+  }
+  if (Array.isArray(value)) return value.forEach((item, index) => pushExpressionIssues(issues, item, nodeIds, nodeId, `${label}[${index}]`, edgeKey));
   if (!isRecord(value)) return;
-  if ("$value" in value) errors.push(`${label} uses removed $value reference syntax`);
+  if ("$value" in value) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} uses removed $value reference syntax` });
   const operators = ["$ref", "$concat", "$literal", "$node"].filter((key) => key in value);
-  if (operators.length > 0 && Object.keys(value).length !== 1) errors.push(`${label} expression object must contain exactly one operator`);
+  if (operators.length > 0 && Object.keys(value).length !== 1) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} expression object must contain exactly one operator` });
   if (isRecord(value.$ref)) {
-    if (typeof value.$ref.node === "string" && !nodeIds.has(value.$ref.node)) errors.push(`${label} references missing node ${value.$ref.node}`);
+    if (typeof value.$ref.node === "string" && !nodeIds.has(value.$ref.node)) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} references missing node ${value.$ref.node}` });
     for (const path of [value.$ref.input, value.$ref.prev, value.$ref.workflow, value.$ref.output]) {
-      if (path !== undefined && !validRefPath(path)) errors.push(`${label} has invalid reference path`);
+      if (path !== undefined && !validRefPath(path)) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} has invalid reference path` });
     }
   }
-  if (Array.isArray(value.$concat)) value.$concat.forEach((item, index) => validateExpressions(item, nodeIds, `${label}.$concat[${index}]`, errors));
-  if (operators.length === 0) Object.entries(value).forEach(([key, nested]) => validateExpressions(nested, nodeIds, `${label}.${key}`, errors));
+  if (Array.isArray(value.$concat)) value.$concat.forEach((item, index) => pushExpressionIssues(issues, item, nodeIds, nodeId, `${label}.$concat[${index}]`, edgeKey));
+  if (operators.length === 0) Object.entries(value).forEach(([key, nested]) => pushExpressionIssues(issues, nested, nodeIds, nodeId, `${label}.${key}`, edgeKey));
+}
+
+function pushProviderIssues(issues: WorkflowValidationIssue[], node: JsonRecord, providers: ProviderMetadata[], nodeId: string) {
+  const kind = workflowNodeKind(node.kind);
+  if (kind !== "task" && kind !== "action") return;
+  const config = workflowNodeActionConfig(node);
+  if (!config.provider || !config.action) {
+    issues.push({ severity: "warning", nodeId, message: `${nodeId} has no provider action selected` });
+    return;
+  }
+  if (providers.length === 0) return;
+  const provider = providers.find((item) => item.name === config.provider);
+  if (!provider) {
+    issues.push({ severity: "error", nodeId, message: `${nodeId} references unknown provider ${config.provider}` });
+    return;
+  }
+  if (!provider.actions.some((item) => item.function_name === config.action)) {
+    issues.push({ severity: "error", nodeId, message: `${nodeId} references unknown action ${config.provider}.${config.action}` });
+  }
 }
 
 function validRefPath(value: unknown): boolean {
   return Array.isArray(value) && value.every((item) => typeof item === "string" || (Number.isInteger(item) && Number(item) >= 0));
+}
+
+function renameNodeRefs(value: unknown, previousId: string, nextId: string) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => renameNodeRefs(item, previousId, nextId));
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (value.$node === previousId) value.$node = nextId;
+  for (const nested of Object.values(value)) renameNodeRefs(nested, previousId, nextId);
+}
+
+function parseActionSummary(value: string): { provider: string; action: string } {
+  const [provider, ...rest] = value.split(".");
+  return { provider: provider?.trim() ?? "", action: rest.join(".").trim() };
+}
+
+function validationIssuesByNode(issues: WorkflowValidationIssue[]): Map<string, WorkflowValidationIssue[]> {
+  const map = new Map<string, WorkflowValidationIssue[]>();
+  for (const issue of issues) {
+    const list = map.get(issue.nodeId) ?? [];
+    list.push(issue);
+    map.set(issue.nodeId, list);
+  }
+  return map;
+}
+
+function validationIssuesByEdge(issues: WorkflowValidationIssue[]): Map<string, WorkflowValidationIssue[]> {
+  const map = new Map<string, WorkflowValidationIssue[]>();
+  for (const issue of issues) {
+    if (!issue.edgeKey) continue;
+    const list = map.get(issue.edgeKey) ?? [];
+    list.push(issue);
+    map.set(issue.edgeKey, list);
+  }
+  return map;
+}
+
+function validationSeverity(issues: WorkflowValidationIssue[]): WorkflowValidationSeverity | undefined {
+  if (issues.some((issue) => issue.severity === "error")) return "error";
+  return issues.length > 0 ? "warning" : undefined;
+}
+
+function edgeValidationKey(source: string, semanticKey: string): string {
+  return `${source}:${semanticKey}`;
+}
+
+function semanticSourceHandleId(optionId: string): string {
+  return `source:${optionId.replace(/:/g, ".")}`;
+}
+
+export function optionIdForSourceHandle(handleId?: string | null): string | null {
+  return typeof handleId === "string" && handleId.startsWith("source:")
+    ? handleId.slice("source:".length).replace(/\./g, ":")
+    : null;
 }
 
 function workflowNodeKind(value: unknown): WorkflowNodeKind {
@@ -1337,8 +1604,8 @@ function firstAvailableTransition(node: JsonRecord): WorkflowDirectTransitionKey
 function edgeHandles(definition: JsonRecord, source: string, semanticKey: string): Pick<WorkflowEditorEdgeData, "sourceHandle" | "targetHandle"> {
   const saved = definition.ui?.edge_handles?.[edgeHandleKey(source, semanticKey)];
   return {
-    sourceHandle: normalizeConnectionHandle(saved?.sourceHandle) ?? "bottom",
-    targetHandle: normalizeConnectionHandle(saved?.targetHandle) ?? "top"
+    sourceHandle: normalizeConnectionHandle(saved?.sourceHandle) ?? semanticSourceHandleId(optionIdFromSemanticKey(semanticKey)),
+    targetHandle: normalizeConnectionHandle(saved?.targetHandle) ?? semanticTargetHandleId
   };
 }
 
@@ -1360,6 +1627,16 @@ function edgeHandleKey(source: string, semanticKey: string): string {
   return `${source}:${semanticKey}`;
 }
 
+function optionIdFromSemanticKey(semanticKey: string): string {
+  if (directTransitionKeys.includes(semanticKey as WorkflowDirectTransitionKey)) return `direct:${semanticKey}`;
+  if (semanticKey.startsWith("branches.")) return `branch:${semanticKey.slice("branches.".length)}`;
+  if (semanticKey.includes(".")) {
+    const [parameterKey, parameterIndex] = semanticKey.split(".");
+    return `control:${parameterKey}:${parameterIndex}`;
+  }
+  return `control:${semanticKey}`;
+}
+
 function titleCase(value: string): string {
   return value
     .split(/[_\s-]+/)
@@ -1373,7 +1650,7 @@ function transitionLabel(value: string): string {
 }
 
 function normalizeConnectionHandle(value: unknown): WorkflowConnectionHandle | undefined {
-  return workflowConnectionHandles.includes(value as WorkflowConnectionHandle) ? (value as WorkflowConnectionHandle) : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function titleFromNodeId(nodeId: string): string {

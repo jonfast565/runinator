@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkflowDefinition } from "../../types/models";
 import {
   addDirectTransition,
+  applyWorkflowInlineNodeEdit,
   applyWorkflowEdgeEditorDraft,
   applyWorkflowEdgeSemantic,
   autoArrangeWorkflowLayout,
@@ -22,6 +23,8 @@ import {
   workflowEdgeEditorDraft,
   workflowEdgeOptionId,
   workflowEdgeSemanticOptions,
+  workflowNodeSemanticHandles,
+  validateWorkflowIssues,
   workflowNodeResultMetadata,
   workflowRunSearchText
 } from "../workflows";
@@ -114,7 +117,7 @@ describe("workflow graph utils", () => {
 
   it("builds transition edges", () => {
     expect(buildGraphEdges(workflow)).toMatchObject([{ source: "a", target: "b", label: "next" }]);
-    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", sourceHandle: "bottom", targetHandle: "top", editable: true });
+    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", sourceHandle: "source:direct.next", targetHandle: "target:in", editable: true });
   });
 
   it("persists connection handle choices in edge data", () => {
@@ -124,6 +127,37 @@ describe("workflow graph utils", () => {
     expect(edge.sourceHandle).toBe("right");
     expect(edge.targetHandle).toBe("left");
     expect(edge.data).toMatchObject({ sourceHandle: "right", targetHandle: "left" });
+  });
+
+  it("generates semantic handles for rich workflow nodes", () => {
+    expect(workflowNodeSemanticHandles({ id: "guard", kind: "condition", transitions: { branches: [{ target: { "$node": "end" } }] } })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "target:in", type: "target" }),
+        expect.objectContaining({ id: "source:branch.0", label: "Condition branch 1", semanticOptionId: "branch:0" }),
+        expect.objectContaining({ id: "source:branch.new", label: "New condition branch", semanticOptionId: "branch:new" })
+      ])
+    );
+    expect(workflowNodeSemanticHandles({ id: "route", kind: "switch", parameters: { cases: [{}] } })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "source:control.cases.0", semanticOptionId: "control:cases:0" }),
+        expect.objectContaining({ id: "source:control.default", semanticOptionId: "control:default" })
+      ])
+    );
+    expect(workflowNodeSemanticHandles({ id: "fanout", kind: "parallel", parameters: { branches: [{ "$node": "a" }] } })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "source:control.branches.0", semanticOptionId: "control:branches:0" })])
+    );
+    expect(workflowNodeSemanticHandles({ id: "join", kind: "join", parameters: { wait_for: [{ "$node": "a" }] } })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "source:control.wait_for.0", semanticOptionId: "control:wait_for:0" })])
+    );
+    expect(workflowNodeSemanticHandles({ id: "guard", kind: "try" })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ semanticOptionId: "control:body" }), expect.objectContaining({ semanticOptionId: "control:catch" })])
+    );
+    expect(workflowNodeSemanticHandles({ id: "batch", kind: "map" })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ semanticOptionId: "control:target" })])
+    );
+    expect(workflowNodeSemanticHandles({ id: "task", kind: "task" })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ semanticOptionId: "direct:next" })])
+    );
   });
 
   it("rejects only exact same connection point loops", () => {
@@ -522,6 +556,50 @@ describe("workflow graph utils", () => {
 
     expect(applyWorkflowEdgeEditorDraft(rich.definition, edge, draft)).toEqual({ ok: false, message: "Condition branch predicate must be valid JSON" });
     expect(JSON.stringify(rich.definition)).toBe(before);
+  });
+
+  it("maps workflow validation issues to nodes and edges", () => {
+    const definition: any = {
+      start: "missing_start",
+      nodes: [
+        { id: "task", kind: "task", action_name: "Unknown", action_function: "run", transitions: { next: { "$node": "missing" } } },
+        { id: "task", kind: "emit", parameters: { data: { "$ref": { node: "missing" } } } },
+        { id: "guard", kind: "condition", transitions: { branches: [{ when: { value: "{{legacy}}" } }] } },
+        { id: "route", kind: "switch", parameters: { cases: [{ equals: true }] } }
+      ]
+    };
+
+    const issues = validateWorkflowIssues(definition, [{ name: "Console", actions: [], metadata: { credential_scopes: [], contract: null } }]);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nodeId: "missing_start", message: "Workflow start references missing node missing_start" }),
+        expect.objectContaining({ nodeId: "task", message: "Duplicate node ID task" }),
+        expect.objectContaining({ nodeId: "task", edgeKey: "task:next", message: "task.next references missing node missing" }),
+        expect.objectContaining({ nodeId: "guard", edgeKey: "guard:branches.0", message: "guard.branches.0 must be { \"$node\": \"node_id\" }" }),
+        expect.objectContaining({ nodeId: "route", edgeKey: "route:cases.0", message: "route.cases.0 must be { \"$node\": \"node_id\" }" }),
+        expect.objectContaining({ nodeId: "task", message: "task references unknown provider Unknown" })
+      ])
+    );
+  });
+
+  it("applies inline node edits while preserving layout and references", () => {
+    const definition: any = {
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: { "$node": "approve" } } },
+        { id: "approve", kind: "approval", parameters: { prompt: "Old prompt" }, transitions: { next: { "$node": "end" } } },
+        { id: "end", kind: "end" }
+      ],
+      ui: { layout: { nodes: { approve: { x: 20, y: 40 } } } }
+    };
+
+    expect(applyWorkflowInlineNodeEdit(definition, "approve", "review", "New prompt")).toEqual({ ok: true, nodeId: "review" });
+    definition.ui.layout.nodes.review = definition.ui.layout.nodes.approve;
+    delete definition.ui.layout.nodes.approve;
+
+    expect(definition.nodes[1]).toMatchObject({ id: "review", parameters: { prompt: "New prompt" } });
+    expect(definition.nodes[0].transitions.next).toEqual({ "$node": "review" });
+    expect(definition.ui.layout.nodes.review).toEqual({ x: 20, y: 40 });
   });
 
   it("edits condition branches", () => {
