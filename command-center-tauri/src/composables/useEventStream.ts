@@ -31,12 +31,6 @@ export function useEventStream() {
         if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
         break;
       }
-      case "workflow_run_activity":
-        if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
-        if (workflows.selectedWorkflowRunId > 0) {
-          workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
-        }
-        break;
       case "resources_changed":
         if (app.activeTab === "Resources") resources.refreshResources();
         break;

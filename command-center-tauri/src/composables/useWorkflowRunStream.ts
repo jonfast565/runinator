@@ -3,16 +3,30 @@ import { useAppStore } from "../stores/app";
 import { useWorkflowsStore } from "../stores/workflows";
 import type { WorkflowRunDetail } from "../types/models";
 
+const RECONNECT_DELAY = 3000;
+
 export function useWorkflowRunStream() {
   const workflows = useWorkflowsStore();
   const app = useAppStore();
   let ws: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearReconnectTimer() {
+    if (reconnectTimer === null) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 
   function connect(runId: number) {
+    clearReconnectTimer();
+    if (workflows.selectedWorkflowRunId !== runId) return;
     const base = app.serviceUrl?.replace(/^http/, "ws");
     if (!base) return;
     ws = new WebSocket(`${base}/ws/workflow-runs/${runId}`);
-    ws.onopen = () => console.info("[command-center] workflow run stream connected", { runId });
+    ws.onopen = () => {
+      clearReconnectTimer();
+      console.info("[command-center] workflow run stream connected", { runId });
+    };
     ws.onmessage = ({ data }) => {
       try {
         console.info("[command-center] workflow run stream message", { runId, data });
@@ -28,10 +42,14 @@ export function useWorkflowRunStream() {
     ws.onclose = () => {
       console.info("[command-center] workflow run stream closed", { runId });
       ws = null;
+      if (workflows.selectedWorkflowRunId === runId && app.serviceConnected) {
+        reconnectTimer = setTimeout(() => connect(runId), RECONNECT_DELAY);
+      }
     };
   }
 
   function disconnect() {
+    clearReconnectTimer();
     ws?.close();
     ws = null;
   }

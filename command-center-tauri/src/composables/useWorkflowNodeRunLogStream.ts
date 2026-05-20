@@ -2,19 +2,31 @@ import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { useAppStore } from "../stores/app";
 import type { RunChunk } from "../types/models";
 
+const RECONNECT_DELAY = 3000;
+
 export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
   const app = useAppStore();
   const chunks = ref<RunChunk[]>([]);
   const lastChunkAt = ref<number>(0);
   let ws: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearReconnectTimer() {
+    if (reconnectTimer === null) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 
   function connect(id: number) {
-    chunks.value = [];
-    lastChunkAt.value = 0;
+    clearReconnectTimer();
+    if (nodeRunId.value !== id) return;
     const base = app.serviceUrl?.replace(/^http/, "ws");
     if (!base) return;
     ws = new WebSocket(`${base}/ws/workflow-node-runs/${id}/stream`);
-    ws.onopen = () => console.info("[command-center] workflow node run log stream connected", { nodeRunId: id });
+    ws.onopen = () => {
+      clearReconnectTimer();
+      console.info("[command-center] workflow node run log stream connected", { nodeRunId: id });
+    };
     ws.onmessage = ({ data }) => {
       try {
         chunks.value.push(JSON.parse(data) as RunChunk);
@@ -30,22 +42,31 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
     ws.onclose = () => {
       console.info("[command-center] workflow node run log stream closed", { nodeRunId: id });
       ws = null;
+      if (nodeRunId.value === id && app.serviceConnected) {
+        reconnectTimer = setTimeout(() => connect(id), RECONNECT_DELAY);
+      }
     };
+  }
+
+  function disconnect() {
+    clearReconnectTimer();
+    ws?.close();
+    ws = null;
   }
 
   watch(
     nodeRunId,
     (id) => {
-      ws?.close();
-      ws = null;
+      disconnect();
+      chunks.value = [];
+      lastChunkAt.value = 0;
       if (id > 0) connect(id);
-      else chunks.value = [];
     },
     { immediate: true }
   );
 
   onBeforeUnmount(() => {
-    ws?.close();
+    disconnect();
   });
 
   return { chunks, lastChunkAt };

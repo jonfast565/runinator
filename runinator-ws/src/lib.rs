@@ -59,7 +59,6 @@ fn emit(events: &EventSender, event: AppEvent) {
 
 fn emit_workflow_run(events: &EventSender, run_id: i64) {
     emit(events, AppEvent::WorkflowRunChanged { run_id });
-    emit(events, AppEvent::WorkflowRunActivity);
 }
 
 async fn emit_workflow_node_run<T: DatabaseImpl>(
@@ -70,8 +69,6 @@ async fn emit_workflow_node_run<T: DatabaseImpl>(
     if let Ok(Some(node_run)) = repository::fetch_workflow_node_run(db, workflow_node_run_id).await
     {
         emit_workflow_run(events, node_run.workflow_run_id);
-    } else {
-        emit(events, AppEvent::WorkflowRunActivity);
     }
 }
 
@@ -1263,7 +1260,7 @@ async fn ws_workflow_run<T: DatabaseImpl>(
                 Ok(event) = event_rx.recv() => {
                     let relevant = matches!(&event,
                         AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
-                    ) || matches!(&event, AppEvent::WorkflowRunActivity);
+                    );
                     if !relevant {
                         continue;
                     }
@@ -1305,7 +1302,7 @@ async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
         loop {
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
-                    if matches!(&event, AppEvent::WorkflowRunActivity | AppEvent::WorkflowRunChanged { .. }) {
+                    if matches!(&event, AppEvent::WorkflowRunChanged { .. }) {
                         if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
                             return;
                         }

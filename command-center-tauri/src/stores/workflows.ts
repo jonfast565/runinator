@@ -108,6 +108,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
   const selectedWorkflowRunId = ref(0);
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
+  const latestWorkflowRunPushVersion = new Map<number, number>();
+  const latestWorkflowRunHttpRequest = new Map<number, number>();
+  let nextWorkflowRunDetailVersion = 0;
+  let nextWorkflowRunHttpRequestId = 0;
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
   const selectedGraphEdgeId = ref("");
@@ -520,14 +524,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   async function fetchWorkflowRunDetail(workflowRunId: number, silent = false) {
     console.info("[command-center] refreshing workflow run detail", { workflowRunId, silent });
+    const requestStartedVersion = ++nextWorkflowRunDetailVersion;
+    const requestId = ++nextWorkflowRunHttpRequestId;
+    latestWorkflowRunHttpRequest.set(workflowRunId, requestId);
     const detail = silent
       ? await fetchWorkflowRun(workflowRunId).catch(() => null)
       : await app.runOperation("Loading workflow run", () => fetchWorkflowRun(workflowRunId)).catch(() => null);
-    applyWorkflowRunDetail(detail);
+    applyWorkflowRunDetail(detail, { source: "http", requestStartedVersion, requestId });
   }
 
   function setWorkflowRunDetail(detail: WorkflowRunDetail | null) {
-    applyWorkflowRunDetail(detail);
+    if (detail) latestWorkflowRunPushVersion.set(detail.run.id, ++nextWorkflowRunDetailVersion);
+    applyWorkflowRunDetail(detail, { source: "ws" });
   }
 
   function selectWorkflowRunNode(nodeId: string) {
@@ -535,7 +543,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     updateSelectedWorkflowNodeDetail();
   }
 
-  function applyWorkflowRunDetail(detail: WorkflowRunDetail | null) {
+  function applyWorkflowRunDetail(detail: WorkflowRunDetail | null, metadata: { source: "http"; requestStartedVersion: number; requestId: number } | { source: "ws" } = { source: "ws" }) {
+    if (detail && metadata.source === "http") {
+      const latestPushVersion = latestWorkflowRunPushVersion.get(detail.run.id) ?? 0;
+      const latestRequestId = latestWorkflowRunHttpRequest.get(detail.run.id) ?? 0;
+      if (latestPushVersion > metadata.requestStartedVersion || latestRequestId !== metadata.requestId) {
+        console.info("[command-center] dropped stale workflow run detail", { runId: detail.run.id });
+        return;
+      }
+    }
     workflowRunDetail.value = detail;
     workflowNodeDetailExtra.value = "";
     if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
