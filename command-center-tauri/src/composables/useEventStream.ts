@@ -48,6 +48,7 @@ export function useEventStream() {
 
   function startFallback() {
     if (fallbackTimer !== null) return;
+    app.setEventStreamState("fallback");
     fallbackTimer = window.setInterval(() => {
       if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
       if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
@@ -86,9 +87,11 @@ export function useEventStream() {
       startFallback();
       return;
     }
+    app.setEventStreamState("connecting");
     ws = new WebSocket(`${base}/ws/events`);
     ws.onopen = () => {
       console.info("[command-center] event stream connected", { url: `${base}/ws/events` });
+      app.setEventStreamState("connected");
       stopFallback();
     };
     ws.onmessage = ({ data }) => {
@@ -121,6 +124,7 @@ export function useEventStream() {
     ws?.close();
     ws = null;
     stopFallback();
+    app.setEventStreamState("disconnected");
   }
 
   watch(

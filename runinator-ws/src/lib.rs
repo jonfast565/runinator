@@ -601,8 +601,13 @@ async fn get_run_chunks<T: DatabaseImpl>(
     Path(run_id): Path<i64>,
     Query(query): Query<ChunkQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_run_chunks(db.as_ref(), run_id, query.cursor, query.limit.unwrap_or(100))
-        .await
+    match repository::fetch_run_chunks(
+        db.as_ref(),
+        run_id,
+        query.cursor,
+        query.limit.unwrap_or(100),
+    )
+    .await
     {
         Ok(chunks) => (StatusCode::OK, Json(ApiResponse::RunChunks(chunks))),
         Err(err) => api_error(err.to_string()),
@@ -618,7 +623,10 @@ async fn append_run_chunk<T: DatabaseImpl>(
     match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
         Ok(chunk) => {
             emit(&events, AppEvent::RunChunkAdded { run_id });
-            (StatusCode::ACCEPTED, Json(ApiResponse::RunChunks(vec![chunk])))
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::RunChunks(vec![chunk])),
+            )
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -1352,7 +1360,13 @@ async fn ws_events(Extension(events): Extension<EventSender>, ws: WebSocketUpgra
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    if send_json(&mut tx, &serde_json::json!({ "type": "resync", "missed": missed })).await.is_err() {
+                    if send_json(
+                        &mut tx,
+                        &serde_json::json!({ "type": "resync", "missed": missed }),
+                    )
+                    .await
+                    .is_err()
+                    {
                         break;
                     }
                 }

@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import type { AppTab } from "../types/app";
 
 export const tabs: AppTab[] = ["Workflows", "Runs", "Resources", "Secrets"];
+export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 
 export const useAppStore = defineStore("app", () => {
   const activeTab = ref<AppTab>("Workflows");
@@ -15,6 +16,7 @@ export const useAppStore = defineStore("app", () => {
   const errorText = ref("");
   const searchQuery = ref("");
   const lastRefreshAt = ref<Date | null>(null);
+  const eventStreamState = ref<EventStreamState>("disconnected");
   let statusTimer = 0;
 
   const normalizedSearch = computed(() => searchQuery.value.trim().toLowerCase());
@@ -28,6 +30,18 @@ export const useAppStore = defineStore("app", () => {
   const serviceConnected = computed(() => Boolean(serviceUrl.value || backendReachable.value));
   const serviceBlocked = computed(() => initialLoading.value || (!errorText.value && !serviceConnected.value));
   const loadingMessage = computed(() => (serviceConnected.value ? "Loading Runinator..." : "Waiting for Runinator service..."));
+  const eventStreamLabel = computed(() => {
+    switch (eventStreamState.value) {
+      case "connected":
+        return "WS live";
+      case "connecting":
+        return "WS connecting";
+      case "fallback":
+        return "Polling";
+      default:
+        return "WS offline";
+    }
+  });
 
   function setStatus(text: string) {
     statusText.value = text;
@@ -52,6 +66,11 @@ export const useAppStore = defineStore("app", () => {
     serviceUrl.value = url;
     backendReachable.value = Boolean(url);
     if (url) errorText.value = "";
+    if (!url) eventStreamState.value = "disconnected";
+  }
+
+  function setEventStreamState(state: EventStreamState) {
+    eventStreamState.value = state;
   }
 
   async function runOperation<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -86,6 +105,7 @@ export const useAppStore = defineStore("app", () => {
     errorText,
     searchQuery,
     lastRefreshAt,
+    eventStreamState,
     normalizedSearch,
     lastRefreshText,
     statusLine,
@@ -93,10 +113,12 @@ export const useAppStore = defineStore("app", () => {
     serviceConnected,
     serviceBlocked,
     loadingMessage,
+    eventStreamLabel,
     setStatus,
     setError,
     markBackendReachable,
     setServiceUrl,
+    setEventStreamState,
     runOperation,
     dispose
   };

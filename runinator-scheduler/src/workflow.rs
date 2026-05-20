@@ -39,6 +39,18 @@ pub async fn process_workflow_run(
     api: &dyn WorkflowSchedulerApi,
     mut workflow_run: WorkflowRun,
 ) -> Result<(), SendableError> {
+    if workflow_run.status == WorkflowStatus::Queued {
+        api.update_workflow_run(
+            workflow_run.id,
+            WorkflowStatus::Running,
+            workflow_run.active_node_id.clone(),
+            None,
+            Some("Workflow run claimed by scheduler".into()),
+        )
+        .await?;
+        workflow_run.status = WorkflowStatus::Running;
+    }
+
     for _ in 0..MAX_INLINE_WORKFLOW_STEPS {
         let before = WorkflowProgressKey::from_run(api, &workflow_run).await?;
         process_workflow_run_step(broker, api, workflow_run.clone()).await?;

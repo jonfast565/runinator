@@ -8,6 +8,7 @@
       <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" placeholder="Search" />
     </div>
     <div class="actions">
+      <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
       <button :disabled="app.serviceBlocked" @click="$emit('refresh')">Refresh</button>
       <button v-if="app.activeTab === 'Workflows'" :disabled="app.serviceBlocked || !workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
         Run Workflow
@@ -37,3 +38,26 @@ const activeSubtitle = computed(() => {
   return `${secrets.secrets.length} secrets`;
 });
 </script>
+
+<style scoped>
+.stream-state {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.stream-state.connected {
+  background: #dff5e7;
+  color: #1f6f49;
+}
+
+.stream-state.connecting,
+.stream-state.fallback {
+  background: #fff2cc;
+  color: #84620d;
+}
+
+.stream-state.disconnected {
+  background: #eef2f6;
+  color: #66717e;
+}
+</style>
