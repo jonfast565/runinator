@@ -500,7 +500,10 @@ fn validate_graph_cycles(
                     if node_map.get(target.as_str()).is_some_and(|target_node| {
                         matches!(
                             target_node.kind,
-                            WorkflowNodeKind::Try | WorkflowNodeKind::Map | WorkflowNodeKind::Race
+                            WorkflowNodeKind::Loop
+                                | WorkflowNodeKind::Try
+                                | WorkflowNodeKind::Map
+                                | WorkflowNodeKind::Race
                         ) || target_node.reentry.enabled
                     }) {
                         continue;

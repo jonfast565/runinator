@@ -312,6 +312,39 @@ fn rejects_invalid_map_concurrency() {
 }
 
 #[test]
+fn validates_loop_body_returning_to_loop_node() {
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "for_each_ticket" } } },
+            {
+                "id": "for_each_ticket",
+                "kind": "loop",
+                "parameters": {
+                    "items": { "$ref": { "input": ["tickets"] } }
+                },
+                "max_iterations": 50,
+                "transitions": {
+                    "next": { "$node": "process_ticket" },
+                    "on_success": { "$node": "done" }
+                }
+            },
+            {
+                "id": "process_ticket",
+                "kind": "emit",
+                "parameters": {
+                    "data": { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                },
+                "transitions": { "next": { "$node": "for_each_ticket" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow(&wf).expect("loop body can return to loop node");
+}
+
+#[test]
 fn validates_explicit_bounded_reentry_cycle() {
     let wf = workflow(serde_json::json!({
         "start": "start",
@@ -542,11 +575,9 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
     assert_eq!(definition["start"], "start");
     assert_eq!(definition["ui"]["layout"]["nodes"]["build"]["x"], 10);
     let (_, nodes) = validate_workflow(&normalized).expect("normalized workflow is valid");
-    assert!(
-        nodes
-            .iter()
-            .any(|node| node.kind == WorkflowNodeKind::Start)
-    );
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == WorkflowNodeKind::Start));
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::End));
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::Fail));
     let build = nodes.iter().find(|node| node.id == "build").unwrap();
