@@ -4453,6 +4453,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-provider-slack"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "runinator-provider-sql"
 version = "0.1.0"
 dependencies = [
@@ -4538,6 +4549,7 @@ dependencies = [
  "runinator-provider-git",
  "runinator-provider-github",
  "runinator-provider-jira",
+ "runinator-provider-slack",
  "runinator-provider-sql",
  "runinator-utilities",
  "serde",

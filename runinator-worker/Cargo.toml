@@ -24,6 +24,7 @@ runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-provider-jira = { path = "../runinator-provider-jira" }
 runinator-provider-github = { path = "../runinator-provider-github" }
+runinator-provider-slack = { path = "../runinator-provider-slack" }
 runinator-provider-git = { path = "../runinator-provider-git" }
 runinator-provider-ai = { path = "../runinator-provider-ai" }
 runinator-provider-approval = { path = "../runinator-provider-approval" }

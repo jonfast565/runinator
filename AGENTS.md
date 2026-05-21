@@ -74,6 +74,7 @@ Providers execute task actions; they are not schedulers, API clients, or persist
 - Keep dynamic library loading and FFI safety wrappers in `runinator-plugin`.
 - Treat plugin ABI names (`runinator_marker`, `name`, `call_service`) as public contracts.
 - Provider/action metadata belongs next to the executable provider: built-ins expose it through `Provider::metadata()`, and plugins expose it through the `metadata` ABI function. Do not duplicate provider metadata in workflow or provider packs.
+- For third-party integrations, look for a well-maintained client library before hand-rolling HTTP payloads and API semantics.
 - Always add a new provider as a separate crate: `runinator-provider-<name>`.
 - Keep `action_name`, `action_function`, and `action_configuration` semantics compatible with existing task import and execution paths.
 

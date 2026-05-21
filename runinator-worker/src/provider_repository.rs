@@ -12,6 +12,7 @@ use runinator_provider_aws::AwsProvider;
 use runinator_provider_git::GitProvider;
 use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
+use runinator_provider_slack::SlackProvider;
 use runinator_provider_sql::SqlProvider;
 
 use crate::console_provider::ConsoleProvider;
@@ -25,6 +26,7 @@ fn get_providers() -> Vec<StaticProvider> {
         Box::new(SqlProvider {}) as StaticProvider,
         Box::new(JiraProvider {}) as StaticProvider,
         Box::new(GitHubProvider {}) as StaticProvider,
+        Box::new(SlackProvider {}) as StaticProvider,
         Box::new(GitProvider {}) as StaticProvider,
         Box::new(AiCommandProvider {}) as StaticProvider,
         Box::new(ApprovalProvider {}) as StaticProvider,

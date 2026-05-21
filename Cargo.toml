@@ -13,6 +13,7 @@ members = [
     "runinator-api",
     "runinator-plugin",
     "runinator-provider-aws",
+    "runinator-provider-slack",
     "runinator-provider-sql",
     "runinator-plugin-console",
     "runinator-utilities",
