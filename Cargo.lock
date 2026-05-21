@@ -4330,6 +4330,16 @@ dependencies = [
  "runinator-api",
  "runinator-comm",
  "runinator-models",
+ "runinator-plugin",
+ "runinator-provider-ai",
+ "runinator-provider-approval",
+ "runinator-provider-aws",
+ "runinator-provider-console",
+ "runinator-provider-git",
+ "runinator-provider-github",
+ "runinator-provider-jira",
+ "runinator-provider-slack",
+ "runinator-provider-sql",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -4418,6 +4428,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "runinator-provider-console"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "runinator-models",
+ "runinator-plugin",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4546,6 +4567,7 @@ dependencies = [
  "runinator-provider-ai",
  "runinator-provider-approval",
  "runinator-provider-aws",
+ "runinator-provider-console",
  "runinator-provider-git",
  "runinator-provider-github",
  "runinator-provider-jira",

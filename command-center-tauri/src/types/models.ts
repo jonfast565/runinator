@@ -212,6 +212,11 @@ export interface WorkflowDefinition {
   definition: JsonRecord;
 }
 
+export interface WorkflowBundle {
+  workflows: WorkflowDefinition[];
+  triggers: WorkflowTrigger[];
+}
+
 export type WorkflowTriggerKind = "cron" | "manual";
 
 export interface WorkflowTrigger {
@@ -254,16 +259,6 @@ export interface TaskResponse {
   message: string;
 }
 
-
-export interface WorkflowBundleSaveRequest {
-  workflow: WorkflowDefinition;
-  tasks?: ScheduledTask[];
-}
-
-export interface WorkflowBundleSaveResponse {
-  workflow: WorkflowDefinition;
-  tasks: any[];
-}
 
 export interface CredentialSummary {
   scope: string;

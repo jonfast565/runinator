@@ -1,5 +1,4 @@
 mod config;
-mod console_provider;
 mod executor;
 mod output_sink;
 mod provider_repository;
@@ -38,7 +37,6 @@ async fn main() -> Result<(), SendableError> {
     let libraries = Arc::new(load_libraries(&config.dll_path)?);
     let broker = build_broker(&config)?;
     let api_client = build_api_client(&config)?;
-    publish_provider_metadata(&api_client, &libraries).await;
 
     let shutdown = Arc::new(Notify::new());
     let mut worker_task = {
@@ -154,21 +152,6 @@ fn build_api_client(
             err.to_string(),
         )) as SendableError
     })
-}
-
-async fn publish_provider_metadata(
-    api_client: &AsyncApiClient<StaticLocator>,
-    libraries: &HashMap<String, Plugin>,
-) {
-    for provider in provider_repository::provider_metadata(libraries) {
-        match api_client.upsert_provider(&provider).await {
-            Ok(_) => info!("Registered provider metadata for {}", provider.name),
-            Err(err) => warn!(
-                "Failed to register provider metadata for {}: {}",
-                provider.name, err
-            ),
-        }
-    }
 }
 
 async fn run_worker_loop(

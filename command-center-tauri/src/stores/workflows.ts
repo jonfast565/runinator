@@ -23,7 +23,7 @@ import {
   type WorkflowDebugPatch
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
 import {
@@ -1419,6 +1419,20 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     app.setError(message);
   }
 
+  function workflowBundleSaveRequest(): WorkflowBundle {
+    const workflow = cloneJson(workflowDraft);
+    const workflowId = workflow.id;
+    const triggers = workflowId === null
+      ? []
+      : workflowTriggers.value
+          .filter((trigger) => trigger.workflow_id === workflowId)
+          .map((trigger) => cloneJson(trigger));
+    return {
+      workflows: [workflow],
+      triggers
+    };
+  }
+
   function parseStepJson(label: string, text: string): { ok: true; value: any } | { ok: false } {
     const value = parseRequiredJson(text);
     if (value !== null || text.trim() === "null") return { ok: true, value };
@@ -1454,12 +1468,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (!syncWorkflowJson()) return;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
-    const saved = await app.runOperation("Saving workflow", () => saveWorkflowBundle({ workflow: cloneJson(workflowDraft), tasks: [] }));
-    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(saved.workflow)));
+    const saved = await app.runOperation("Saving workflow", () => saveWorkflowBundle(workflowBundleSaveRequest()));
+    const savedWorkflow = saved.workflows[0];
+    if (!savedWorkflow) {
+      app.setError("Workflow bundle save returned no workflow");
+      return;
+    }
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(savedWorkflow)));
+    workflowTriggers.value = saved.triggers.filter((trigger) => trigger.workflow_id === workflowDraft.id);
     workflowJson.value = pretty(workflowDraft.definition);
-    app.setStatus(`Workflow saved: ${saved.workflow.name}`);
+    app.setStatus(`Workflow saved: ${savedWorkflow.name}`);
     isDirty.value = false;
-    selectedWorkflowId.value = saved.workflow.id;
+    selectedWorkflowId.value = savedWorkflow.id;
     await refreshWorkflows();
   }
 

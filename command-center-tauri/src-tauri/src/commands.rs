@@ -3,8 +3,8 @@ use runinator_models::{
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
     workflows::{
-        WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun,
-        WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
+        WorkflowRun, WorkflowTrigger,
     },
 };
 use serde_json::{json, Value};
@@ -16,8 +16,8 @@ use crate::{
     error::{CommandError, CommandResult},
     state::CommandCenterState,
     types::{
-        CredentialPutRequest, CredentialSummary, ServiceStatus, WorkflowBundleSaveRequest,
-        WorkflowBundleSaveResponse, WorkflowRunCreated, WorkflowRunDetail,
+        CredentialPutRequest, CredentialSummary, ServiceStatus, WorkflowRunCreated,
+        WorkflowRunDetail,
     },
 };
 
@@ -53,14 +53,16 @@ pub async fn save_workflow(
 #[tauri::command]
 pub async fn save_workflow_bundle(
     state: State<'_, CommandCenterState>,
-    request: WorkflowBundleSaveRequest,
-) -> CommandResult<WorkflowBundleSaveResponse> {
-    let saved_workflow = save_workflow_to_service(&state, &request.workflow).await?;
-
-    Ok(WorkflowBundleSaveResponse {
-        workflow: saved_workflow,
-        tasks: vec![],
-    })
+    request: WorkflowBundle,
+) -> CommandResult<WorkflowBundle> {
+    let url = build_state_url(&state, "workflows/import").await?;
+    let response = state.client.post(url.clone()).json(&request).send().await?;
+    let response = handle_response(url, response).await?;
+    let saved = response.json::<WorkflowBundle>().await?;
+    let Some(workflow_id) = saved.workflows.first().and_then(|workflow| workflow.id) else {
+        return Ok(saved);
+    };
+    get_json(&state, &format!("workflows/{workflow_id}/export")).await
 }
 
 #[tauri::command]
@@ -346,9 +348,7 @@ pub async fn rerun_workflow_node(
 }
 
 #[tauri::command]
-pub async fn fetch_supervisor_status(
-    state: State<'_, CommandCenterState>,
-) -> CommandResult<Value> {
+pub async fn fetch_supervisor_status(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
     let url = build_state_url(&state, "supervisor/status").await?;
     let response = state.client.get(url.clone()).send().await?;
     // accept both 200 (with snapshot) and 404 (configured: false) — both return JSON.

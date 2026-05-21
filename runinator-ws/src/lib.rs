@@ -26,6 +26,7 @@ use models::{
 };
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
+    bundles::ProviderBundle,
     errors::SendableError,
     providers::ProviderMetadata,
     runs::{NewRunArtifact, NewRunChunk, RunStatus},
@@ -1223,6 +1224,30 @@ async fn upsert_provider<T: DatabaseImpl>(
     }
 }
 
+async fn import_provider_bundle<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(bundle): Json<ProviderBundle>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let mut imported = Vec::with_capacity(bundle.providers.len());
+    for provider in &bundle.providers {
+        let item = provider_catalog_item(provider);
+        let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
+            Ok(item) => item,
+            Err(err) => return api_error(err.to_string()),
+        };
+        match provider_metadata_from_item(item) {
+            Ok(provider) => imported.push(provider),
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::ProviderBundle(ProviderBundle {
+            providers: imported,
+        })),
+    )
+}
+
 fn provider_metadata_from_items(
     items: Vec<serde_json::Value>,
 ) -> Result<Vec<ProviderMetadata>, serde_json::Error> {
@@ -1793,6 +1818,10 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
             get(get_providers::<T>)
                 .post(upsert_provider::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/providers/import",
+            post(import_provider_bundle::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/webhooks/wake",

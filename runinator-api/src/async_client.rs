@@ -1,5 +1,6 @@
 use reqwest::{Client, Response, Url};
 use runinator_models::{
+    bundles::{Bundle, ProviderBundle},
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
     web::TaskResponse,
@@ -136,11 +137,20 @@ where
         Ok(response.json::<WorkflowDefinition>().await?)
     }
 
-    pub async fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
-        let url = self.build_url("/workflows/import").await?;
+    /// POST a typed bundle to its associated import endpoint.
+    pub async fn import_bundle<B: Bundle>(&self, bundle: &B) -> Result<B> {
+        let url = self.build_url(B::RESOURCE).await?;
         let response = self.client.post(url.clone()).json(bundle).send().await?;
         let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<WorkflowBundle>().await?)
+        Ok(response.json::<B>().await?)
+    }
+
+    pub async fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
+        self.import_bundle(bundle).await
+    }
+
+    pub async fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {
+        self.import_bundle(bundle).await
     }
 
     pub async fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {

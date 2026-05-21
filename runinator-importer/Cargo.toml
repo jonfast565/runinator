@@ -18,6 +18,16 @@ async-trait = "0.1"
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 runinator-api = { path = "../runinator-api" }
+runinator-plugin = { path = "../runinator-plugin" }
+runinator-provider-ai = { path = "../runinator-provider-ai" }
+runinator-provider-approval = { path = "../runinator-provider-approval" }
+runinator-provider-aws = { path = "../runinator-provider-aws" }
+runinator-provider-console = { path = "../runinator-provider-console" }
+runinator-provider-git = { path = "../runinator-provider-git" }
+runinator-provider-github = { path = "../runinator-provider-github" }
+runinator-provider-jira = { path = "../runinator-provider-jira" }
+runinator-provider-slack = { path = "../runinator-provider-slack" }
+runinator-provider-sql = { path = "../runinator-provider-sql" }
 
 [dev-dependencies]
 runinator-workflows = { path = "../runinator-workflows" }

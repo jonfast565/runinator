@@ -28,6 +28,10 @@ pub struct WorkflowBundle {
     pub triggers: Vec<WorkflowTrigger>,
 }
 
+impl crate::bundles::Bundle for WorkflowBundle {
+    const RESOURCE: &'static str = "/workflows/import";
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowTriggerKind {

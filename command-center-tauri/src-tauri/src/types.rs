@@ -24,17 +24,6 @@ pub struct WorkflowRunDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowBundleSaveRequest {
-    pub workflow: runinator_models::workflows::WorkflowDefinition,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowBundleSaveResponse {
-    pub workflow: runinator_models::workflows::WorkflowDefinition,
-    pub tasks: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRunCreated {
     pub id: i64,
 }

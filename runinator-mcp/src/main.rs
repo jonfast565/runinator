@@ -295,6 +295,14 @@ impl McpServer {
     }
 
     fn recent_resource_entries(&self) -> Result<Vec<Value>, String> {
+        let mut workflow_runs = match self.fetch_api_json("workflow_runs") {
+            Ok(Value::Array(items)) => items,
+            _ => Vec::new(),
+        };
+        workflow_runs.sort_by_key(|run| run.get("id").and_then(Value::as_i64).unwrap_or_default());
+        workflow_runs.reverse();
+        workflow_runs.truncate(20);
+
         let mut runs = Vec::new();
         for status in [
             RunStatus::Running,
@@ -314,7 +322,8 @@ impl McpServer {
         runs.reverse();
         runs.truncate(20);
 
-        let mut resources = resource_entries_from_runs(&runs);
+        let mut resources = resource_entries_from_workflow_runs(&workflow_runs);
+        resources.extend(resource_entries_from_runs(&runs));
         for run in &runs {
             let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
                 continue;
@@ -570,6 +579,25 @@ fn resource_path_for_uri(uri: &str) -> Option<String> {
     None
 }
 
+fn resource_entries_from_workflow_runs(workflow_runs: &[Value]) -> Vec<Value> {
+    let mut resources = Vec::new();
+    for run in workflow_runs {
+        let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let status = run
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        resources.push(json!({
+            "uri": format!("runinator://workflow_runs/{run_id}"),
+            "name": format!("Workflow run {run_id}: {status}"),
+            "mimeType": "application/json",
+        }));
+    }
+    resources
+}
+
 fn resource_entries_from_runs(runs: &[Value]) -> Vec<Value> {
     let mut resources = Vec::new();
     for run in runs {
@@ -650,6 +678,44 @@ mod tests {
         }
     }
 
+    fn spawn_resource_list_api() -> (String, thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for _ in 0..7 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+
+                let path = request_line.split_whitespace().nth(1).unwrap_or("");
+                let body = if path == "/workflow_runs" {
+                    json!([{ "id": 12, "workflow_id": 3, "status": "running" }])
+                } else if path.starts_with("/runs?status=") {
+                    json!([])
+                } else {
+                    panic!("unexpected path {path}");
+                };
+                let body = body.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
     #[test]
     fn tools_include_only_enabled_workflows() {
         let tools = tools_from_workflows(vec![
@@ -711,6 +777,10 @@ mod tests {
             resource_path_for_uri("runinator://workflows/7").as_deref(),
             Some("workflows/7")
         );
+        assert_eq!(
+            resource_path_for_uri("runinator://workflow_runs/12").as_deref(),
+            Some("workflow_runs/12")
+        );
     }
 
     #[test]
@@ -737,5 +807,42 @@ mod tests {
         assert!(uris.contains(&"runinator://runs/7"));
         assert!(uris.contains(&"runinator://runs/7/chunks"));
         assert!(uris.contains(&"runinator://runs/7/artifacts"));
+    }
+
+    #[test]
+    fn resources_list_includes_recent_workflow_runs() {
+        let (base_url, handle) = spawn_resource_list_api();
+        let server = McpServer::new(base_url).unwrap();
+
+        let response = server.resources_list().unwrap();
+        handle.join().unwrap();
+
+        let uris = response["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.get("uri").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(uris.contains(&"runinator://workflow_runs/12"));
+    }
+
+    #[test]
+    fn resource_entries_include_workflow_runs() {
+        let entries = resource_entries_from_workflow_runs(&[json!({
+            "id": 12,
+            "workflow_id": 3,
+            "status": "running"
+        })]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].get("uri").and_then(Value::as_str),
+            Some("runinator://workflow_runs/12")
+        );
+        assert_eq!(
+            entries[0].get("name").and_then(Value::as_str),
+            Some("Workflow run 12: running")
+        );
     }
 }

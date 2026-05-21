@@ -2,7 +2,7 @@ use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
-    #[arg(long, default_value = "/opt/runinator/workflows/workflows.json")]
+    #[arg(long, default_value = "/opt/runinator/workflows/workflow-pack.json")]
     pub workflows_file: String,
 
     #[arg(long, default_value_t = 10)]

@@ -1,4 +1,5 @@
 use runinator_models::{
+    bundles::ProviderBundle,
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
@@ -35,6 +36,7 @@ pub enum ApiResponse {
     WorkflowNodeRunArtifacts(Vec<WorkflowNodeRunArtifact>),
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
+    ProviderBundle(ProviderBundle),
     JsonValue(Value),
     JsonList(Vec<Value>),
 }

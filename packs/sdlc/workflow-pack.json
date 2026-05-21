@@ -2,112 +2,574 @@
   "uri": "runinator://packs/sdlc",
   "item_type": "workflow_pack",
   "name": "SDLC Automation Pack",
-  "version": "1",
+  "version": "3",
   "document": {
     "workflows": {
-      "implement_review_qa_until_done": {
-        "start": "find_items",
+      "jira_sdlc_pipeline": {
         "metadata": {
+          "description": "End-to-end SDLC pipeline that walks JIRA tickets from To Do through In Progress, In Review, and Done. Mirrors a standard Atlassian software workflow with automated implementation, CI gating, manual approval, and merge.",
           "deployment_dispatch": "opt_in"
         },
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "jira",
+            "github",
+            "slack",
+            "git",
+            "claude",
+            "transitions"
+          ],
+          "properties": {
+            "jira": {
+              "type": "object",
+              "required": ["base_url", "email", "token", "jql"],
+              "properties": {
+                "base_url": { "type": "string" },
+                "email": { "type": "string" },
+                "token": { "type": "string" },
+                "jql": {
+                  "type": "string",
+                  "description": "JQL selecting tickets ready for automated implementation (e.g. project = \"ITP\" AND status = \"To Do\" AND labels = \"auto-implement\")."
+                }
+              }
+            },
+            "transitions": {
+              "type": "object",
+              "required": ["in_progress", "in_review", "done"],
+              "description": "JIRA transition IDs for the target workflow scheme. Look up with GET /rest/api/3/issue/{key}/transitions.",
+              "properties": {
+                "in_progress": { "type": "string" },
+                "in_review": { "type": "string" },
+                "done": { "type": "string" }
+              }
+            },
+            "github": {
+              "type": "object",
+              "required": ["token", "owner", "repo", "base_branch"],
+              "properties": {
+                "token": { "type": "string" },
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "base_branch": { "type": "string" }
+              }
+            },
+            "slack": {
+              "type": "object",
+              "required": ["token", "channel"],
+              "properties": {
+                "token": { "type": "string" },
+                "channel": { "type": "string" }
+              }
+            },
+            "git": {
+              "type": "object",
+              "required": ["repo", "remote"],
+              "properties": {
+                "repo": { "type": "string", "description": "Local path to the working git repository." },
+                "remote": { "type": "string", "description": "Remote name to push to (typically \"origin\")." }
+              }
+            },
+            "claude": {
+              "type": "object",
+              "required": ["prompt_intro"],
+              "description": "Configuration for the ai-command.claude_code action that performs the implementation step.",
+              "properties": {
+                "binary":          { "type": "string", "default": "claude", "description": "Path or name of the Claude Code CLI binary." },
+                "model":           { "type": "string", "default": "claude-sonnet-4-6", "description": "Claude model alias or full ID." },
+                "prompt_intro":    { "type": "string", "description": "Prefix text prepended to every prompt, e.g. 'You are an automated SDLC bot. Implement the following JIRA ticket end-to-end.'" },
+                "allowed_tools":   { "type": "string", "description": "Space-separated tool names passed to --allowedTools, e.g. 'Bash Edit Read Write Grep Glob'." },
+                "output_format":   { "type": "string", "default": "json", "description": "--output-format value: text, json, or stream-json." },
+                "permission_mode": { "type": "string", "description": "--permission-mode value, e.g. acceptEdits." },
+                "extra_args":      { "type": "array",  "items": { "type": "string" }, "description": "Additional CLI args appended verbatim." }
+              }
+            },
+            "ci_poll": {
+              "type": "object",
+              "properties": {
+                "interval_seconds": { "type": "integer", "default": 60 },
+                "max_polls": { "type": "integer", "default": 30 }
+              }
+            }
+          }
+        },
+        "start": "find_tickets",
         "nodes": [
           {
-            "id": "find_items",
-            "kind": "task",
-            "parameters": {
-              "labels": ["automation"],
-              "assigned_to": { "$ref": { "input": ["operator_id"] } }
+            "id": "find_tickets",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "search",
+              "timeout_seconds": 60,
+              "configuration": {
+                "base_url": { "$ref": { "input": ["jira", "base_url"] } },
+                "email":    { "$ref": { "input": ["jira", "email"] } },
+                "token":    { "$ref": { "input": ["jira", "token"] } },
+                "jql":      { "$ref": { "input": ["jira", "jql"] } }
+              }
             },
-            "transitions": { "on_success": { "$node": "for_each_item" } }
+            "transitions": { "on_success": { "$node": "for_each_ticket" } }
           },
+
           {
-            "id": "for_each_item",
+            "id": "for_each_ticket",
             "kind": "loop",
             "parameters": {
-              "items": { "$ref": { "node": "find_items", "output": ["items"] } }
+              "items": { "$ref": { "node": "find_tickets", "output": ["issues"] } }
             },
-            "max_iterations": 20,
+            "max_iterations": 50,
             "transitions": {
-              "next": { "$node": "create_workspace" },
+              "next": { "$node": "transition_in_progress" },
               "on_success": { "$node": "done" }
             }
           },
+
           {
-            "id": "create_workspace",
-            "kind": "task",
-            "parameters": {
-              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } }
-            },
-            "transitions": { "on_success": { "$node": "implement_change" } }
-          },
-          {
-            "id": "implement_change",
-            "kind": "task",
-            "parameters": {
-              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } },
-              "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } }
-            },
-            "transitions": { "on_success": { "$node": "create_pr" } }
-          },
-          {
-            "id": "create_pr",
-            "kind": "task",
-            "parameters": {
-              "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } },
-              "change_set": { "$ref": { "node": "implement_change", "output": ["change_set"] } }
-            },
-            "transitions": { "on_success": { "$node": "wait_for_checks" } }
-          },
-          {
-            "id": "wait_for_checks",
-            "kind": "wait",
-            "wait": { "seconds": 60 },
-            "transitions": { "next": { "$node": "read_checks" } }
-          },
-          {
-            "id": "read_checks",
-            "kind": "task",
-            "parameters": {
-              "pull_request": { "$ref": { "node": "create_pr", "output": ["pull_request"] } }
+            "id": "transition_in_progress",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url":      { "$ref": { "input": ["jira", "base_url"] } },
+                "email":         { "$ref": { "input": ["jira", "email"] } },
+                "token":         { "$ref": { "input": ["jira", "token"] } },
+                "key":           { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "transition_id": { "$ref": { "input": ["transitions", "in_progress"] } }
+              }
             },
             "transitions": {
-              "branches": [
-                {
-                  "when": {
-                    "value": { "$ref": { "node": "read_checks", "output": ["status"] } },
-                    "equals": "passed"
-                  },
-                  "target": { "$node": "merge_approval" }
-                }
-              ],
-              "on_failure": { "$node": "wait_for_checks" }
+              "on_success": { "$node": "kickoff_comment" },
+              "on_failure": { "$node": "notify_failure" }
             }
           },
+
           {
-            "id": "merge_approval",
+            "id": "kickoff_comment",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url": { "$ref": { "input": ["jira", "base_url"] } },
+                "email":    { "$ref": { "input": ["jira", "email"] } },
+                "token":    { "$ref": { "input": ["jira", "token"] } },
+                "key":      { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "body": {
+                  "$concat": [
+                    "Automation started for ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    ". Run ",
+                    { "$ref": { "workflow": ["run_id"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": { "on_success": { "$node": "create_workspace" } }
+          },
+
+          {
+            "id": "create_workspace",
+            "kind": "action",
+            "action": {
+              "provider": "git",
+              "function": "worktree",
+              "timeout_seconds": 120,
+              "configuration": {
+                "repo": { "$ref": { "input": ["git", "repo"] } },
+                "branch": {
+                  "$concat": [
+                    "feature/",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "implement_change" },
+              "on_failure": { "$node": "notify_failure" }
+            }
+          },
+
+          {
+            "id": "implement_change",
+            "kind": "action",
+            "action": {
+              "provider": "ai-command",
+              "function": "claude_code",
+              "timeout_seconds": 1800,
+              "configuration": {
+                "binary":          { "$ref": { "input": ["claude", "binary"] } },
+                "model":           { "$ref": { "input": ["claude", "model"] } },
+                "output_format":   { "$ref": { "input": ["claude", "output_format"] } },
+                "allowed_tools":   { "$ref": { "input": ["claude", "allowed_tools"] } },
+                "permission_mode": { "$ref": { "input": ["claude", "permission_mode"] } },
+                "extra_args":      { "$ref": { "input": ["claude", "extra_args"] } },
+                "working_dir":     { "$ref": { "node": "create_workspace", "output": ["workspace"] } },
+                "prompt": {
+                  "$concat": [
+                    { "$ref": { "input": ["claude", "prompt_intro"] } },
+                    "\n\nTicket: ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    "\nSummary: ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "fields", "summary"] } },
+                    "\n\nFull issue payload follows as JSON:\n",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "commit_change" },
+              "on_failure": { "$node": "notify_failure" }
+            }
+          },
+
+          {
+            "id": "commit_change",
+            "kind": "action",
+            "action": {
+              "provider": "git",
+              "function": "commit",
+              "timeout_seconds": 60,
+              "configuration": {
+                "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } },
+                "message": {
+                  "$concat": [
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    " ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "fields", "summary"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "push_branch" },
+              "on_failure": { "$node": "notify_failure" }
+            }
+          },
+
+          {
+            "id": "push_branch",
+            "kind": "action",
+            "action": {
+              "provider": "git",
+              "function": "push",
+              "timeout_seconds": 60,
+              "configuration": {
+                "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } },
+                "remote":    { "$ref": { "input": ["git", "remote"] } },
+                "branch": {
+                  "$concat": [
+                    "feature/",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "create_pr" },
+              "on_failure": { "$node": "notify_failure" }
+            }
+          },
+
+          {
+            "id": "create_pr",
+            "kind": "action",
+            "action": {
+              "provider": "github",
+              "function": "create_pr",
+              "timeout_seconds": 60,
+              "configuration": {
+                "token": { "$ref": { "input": ["github", "token"] } },
+                "owner": { "$ref": { "input": ["github", "owner"] } },
+                "repo":  { "$ref": { "input": ["github", "repo"] } },
+                "base":  { "$ref": { "input": ["github", "base_branch"] } },
+                "head": {
+                  "$concat": [
+                    "feature/",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                  ]
+                },
+                "title": {
+                  "$concat": [
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    ": ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "fields", "summary"] } }
+                  ]
+                },
+                "body": {
+                  "$concat": [
+                    "Automated implementation for ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    "."
+                  ]
+                }
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "link_pr_to_ticket" },
+              "on_failure": { "$node": "notify_failure" }
+            }
+          },
+
+          {
+            "id": "link_pr_to_ticket",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url": { "$ref": { "input": ["jira", "base_url"] } },
+                "email":    { "$ref": { "input": ["jira", "email"] } },
+                "token":    { "$ref": { "input": ["jira", "token"] } },
+                "key":      { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "body": {
+                  "$concat": [
+                    "Pull request opened: ",
+                    { "$ref": { "node": "create_pr", "output": ["html_url"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": { "on_success": { "$node": "transition_in_review" } }
+          },
+
+          {
+            "id": "transition_in_review",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url":      { "$ref": { "input": ["jira", "base_url"] } },
+                "email":         { "$ref": { "input": ["jira", "email"] } },
+                "token":         { "$ref": { "input": ["jira", "token"] } },
+                "key":           { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "transition_id": { "$ref": { "input": ["transitions", "in_review"] } }
+              }
+            },
+            "transitions": { "on_success": { "$node": "wait_for_ci" } }
+          },
+
+          {
+            "id": "wait_for_ci",
+            "kind": "wait",
+            "wait": {
+              "seconds": { "$ref": { "input": ["ci_poll", "interval_seconds"] } }
+            },
+            "reentry": {
+              "enabled": true,
+              "max_visits": 30,
+              "on_exhausted": { "$node": "notify_failure" }
+            },
+            "transitions": { "next": { "$node": "poll_checks" } }
+          },
+
+          {
+            "id": "poll_checks",
+            "kind": "action",
+            "action": {
+              "provider": "github",
+              "function": "checks_summary",
+              "timeout_seconds": 30,
+              "configuration": {
+                "token": { "$ref": { "input": ["github", "token"] } },
+                "owner": { "$ref": { "input": ["github", "owner"] } },
+                "repo":  { "$ref": { "input": ["github", "repo"] } },
+                "ref":   { "$ref": { "node": "create_pr", "output": ["head", "sha"] } }
+              }
+            },
+            "transitions": { "on_success": { "$node": "evaluate_checks" } }
+          },
+
+          {
+            "id": "evaluate_checks",
+            "kind": "switch",
+            "parameters": {
+              "value": { "$ref": { "node": "poll_checks", "output": ["conclusion"] } },
+              "cases": [
+                {
+                  "when": {
+                    "value": { "$ref": { "node": "poll_checks", "output": ["conclusion"] } },
+                    "equals": "success"
+                  },
+                  "target": { "$node": "review_gate" }
+                },
+                {
+                  "when": {
+                    "value": { "$ref": { "node": "poll_checks", "output": ["conclusion"] } },
+                    "equals": "failure"
+                  },
+                  "target": { "$node": "notify_failure" }
+                }
+              ],
+              "default": { "$node": "wait_for_ci" }
+            }
+          },
+
+          {
+            "id": "review_gate",
             "kind": "approval",
             "parameters": {
               "approval_type": "merge",
-              "prompt": "Approve merge for generated PR"
+              "prompt": {
+                "$concat": [
+                  "Approve merge of automated PR for ",
+                  { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                ]
+              }
+            },
+            "transitions": {
+              "on_success": { "$node": "merge_pr" },
+              "on_reject":  { "$node": "comment_rejected" }
+            }
+          },
+
+          {
+            "id": "merge_pr",
+            "kind": "action",
+            "action": {
+              "provider": "github",
+              "function": "merge_pr",
+              "timeout_seconds": 60,
+              "configuration": {
+                "token":  { "$ref": { "input": ["github", "token"] } },
+                "owner":  { "$ref": { "input": ["github", "owner"] } },
+                "repo":   { "$ref": { "input": ["github", "repo"] } },
+                "number": { "$ref": { "node": "create_pr", "output": ["number"] } },
+                "method": "squash"
+              }
             },
             "transitions": {
               "on_success": { "$node": "transition_done" },
-              "on_failure": { "$node": "for_each_item" }
+              "on_failure": { "$node": "notify_failure" }
             }
           },
+
           {
             "id": "transition_done",
-            "kind": "task",
-            "parameters": {
-              "item": { "$ref": { "node": "for_each_item", "output": ["item"] } },
-              "status": "Done"
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "transition",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url":      { "$ref": { "input": ["jira", "base_url"] } },
+                "email":         { "$ref": { "input": ["jira", "email"] } },
+                "token":         { "$ref": { "input": ["jira", "token"] } },
+                "key":           { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "transition_id": { "$ref": { "input": ["transitions", "done"] } }
+              }
             },
-            "transitions": { "on_success": { "$node": "for_each_item" } }
+            "transitions": { "on_success": { "$node": "comment_merged" } }
           },
+
           {
-            "id": "done",
-            "kind": "end"
-          }
+            "id": "comment_merged",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url": { "$ref": { "input": ["jira", "base_url"] } },
+                "email":    { "$ref": { "input": ["jira", "email"] } },
+                "token":    { "$ref": { "input": ["jira", "token"] } },
+                "key":      { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "body": {
+                  "$concat": [
+                    "Merged ",
+                    { "$ref": { "node": "create_pr", "output": ["html_url"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": { "on_success": { "$node": "notify_done" } }
+          },
+
+          {
+            "id": "notify_done",
+            "kind": "action",
+            "action": {
+              "provider": "slack",
+              "function": "send_message",
+              "timeout_seconds": 15,
+              "configuration": {
+                "token":   { "$ref": { "input": ["slack", "token"] } },
+                "channel": { "$ref": { "input": ["slack", "channel"] } },
+                "text": {
+                  "$concat": [
+                    ":white_check_mark: ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                    " merged and closed."
+                  ]
+                }
+              }
+            },
+            "transitions": { "on_success": { "$node": "cleanup_workspace" } }
+          },
+
+          {
+            "id": "comment_rejected",
+            "kind": "action",
+            "action": {
+              "provider": "jira",
+              "function": "comment",
+              "timeout_seconds": 30,
+              "configuration": {
+                "base_url": { "$ref": { "input": ["jira", "base_url"] } },
+                "email":    { "$ref": { "input": ["jira", "email"] } },
+                "token":    { "$ref": { "input": ["jira", "token"] } },
+                "key":      { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } },
+                "body":     "Reviewer rejected automated merge. Manual follow-up required."
+              }
+            },
+            "transitions": { "on_success": { "$node": "cleanup_workspace" } }
+          },
+
+          {
+            "id": "notify_failure",
+            "kind": "action",
+            "action": {
+              "provider": "slack",
+              "function": "send_message",
+              "timeout_seconds": 15,
+              "configuration": {
+                "token":   { "$ref": { "input": ["slack", "token"] } },
+                "channel": { "$ref": { "input": ["slack", "channel"] } },
+                "text": {
+                  "$concat": [
+                    ":x: SDLC pipeline failed on ",
+                    { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
+                  ]
+                }
+              }
+            },
+            "transitions": { "on_success": { "$node": "cleanup_workspace" } }
+          },
+
+          {
+            "id": "cleanup_workspace",
+            "kind": "action",
+            "action": {
+              "provider": "git",
+              "function": "cleanup",
+              "timeout_seconds": 60,
+              "configuration": {
+                "repo": { "$ref": { "input": ["git", "repo"] } },
+                "workspace": { "$ref": { "node": "create_workspace", "output": ["workspace"] } }
+              }
+            },
+            "transitions": { "on_success": { "$node": "for_each_ticket" } }
+          },
+
+          { "id": "done", "kind": "end" }
         ]
       }
     }

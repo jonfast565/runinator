@@ -11,8 +11,7 @@ import type {
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
-  WorkflowBundleSaveRequest,
-  WorkflowBundleSaveResponse,
+  WorkflowBundle,
   WorkflowDefinition,
   WorkflowRunCreated,
   WorkflowRunDetail,
@@ -78,8 +77,8 @@ export async function saveWorkflow(workflow: WorkflowDefinition) {
   return command<WorkflowDefinition>("save_workflow", { workflow });
 }
 
-export async function saveWorkflowBundle(request: WorkflowBundleSaveRequest) {
-  return command<WorkflowBundleSaveResponse>("save_workflow_bundle", { request });
+export async function saveWorkflowBundle(request: WorkflowBundle) {
+  return command<WorkflowBundle>("save_workflow_bundle", { request });
 }
 
 export async function deleteWorkflow(workflowId: number) {
