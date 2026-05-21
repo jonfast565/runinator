@@ -30,7 +30,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     runs::{NewRunArtifact, NewRunChunk, RunStatus},
     web::TaskResponse,
-    workflows::{WorkflowDefinition, WorkflowTrigger},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
@@ -148,11 +148,56 @@ async fn upsert_workflow<T: DatabaseImpl>(
     }
 }
 
+async fn validate_workflow(
+    Json(workflow): Json<WorkflowDefinition>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::validate_workflow_definition(&workflow) {
+        Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 async fn get_workflows<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflows(db.as_ref()).await {
         Ok(workflows) => (StatusCode::OK, Json(ApiResponse::WorkflowList(workflows))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn import_workflow_bundle<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Json(bundle): Json<WorkflowBundle>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::import_workflow_bundle(db.as_ref(), bundle).await {
+        Ok(bundle) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn export_workflow_bundle<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::export_workflow_bundle(db.as_ref(), None).await {
+        Ok(bundle) => (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn export_single_workflow_bundle<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(workflow_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::export_workflow_bundle(db.as_ref(), Some(workflow_id)).await {
+        Ok(bundle) if bundle.workflows.is_empty() => {
+            not_found(format!("Workflow {workflow_id} not found"))
+        }
+        Ok(bundle) => (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -513,7 +558,8 @@ async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
     match runinator_supervisor::snapshot::read_snapshot(&path_buf) {
         Ok(snapshot) => {
             let stale_seconds = compute_stale_seconds(&snapshot.updated_at);
-            let mut body = serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
+            let mut body =
+                serde_json::to_value(&snapshot).unwrap_or_else(|_| serde_json::json!({}));
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("stale_seconds".into(), serde_json::json!(stale_seconds));
                 obj.insert("configured".into(), serde_json::json!(true));
@@ -1543,12 +1589,25 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
                 .post(upsert_workflow::<T>)
                 .layer(Extension(pool.clone())),
         )
+        .route("/workflows/validate", post(validate_workflow))
+        .route(
+            "/workflows/import",
+            post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/export",
+            get(export_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/workflows/{id}",
             get(get_workflow::<T>)
                 .patch(upsert_workflow::<T>)
                 .delete(delete_workflow::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/export",
+            get(export_single_workflow_bundle::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/triggers",

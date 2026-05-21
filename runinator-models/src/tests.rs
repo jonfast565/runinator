@@ -171,3 +171,40 @@ fn provider_metadata_accepts_catalog_provider_name() {
     assert_eq!(metadata.actions[0].function_name, "diff");
     assert!(metadata.metadata.credential_scopes.is_empty());
 }
+
+#[test]
+fn workflow_bundle_uses_importer_shape() {
+    let bundle: WorkflowBundle = serde_json::from_value(json!({
+        "workflows": [
+            {
+                "id": 7,
+                "name": "dev workflow",
+                "version": 1,
+                "enabled": true,
+                "input_schema": {},
+                "definition": {}
+            }
+        ],
+        "triggers": [
+            {
+                "id": 3,
+                "workflow_id": 7,
+                "kind": "manual",
+                "enabled": true,
+                "configuration": {},
+                "next_execution": null,
+                "blackout_start": null,
+                "blackout_end": null,
+                "metadata": {}
+            }
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(bundle.workflows[0].id, Some(7));
+    assert_eq!(bundle.triggers[0].workflow_id, 7);
+
+    let value = serde_json::to_value(bundle).unwrap();
+    assert!(value.get("workflows").is_some());
+    assert!(value.get("triggers").is_some());
+}

@@ -5,8 +5,8 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{
-        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
 use serde_json::Value;
@@ -84,10 +84,17 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
+    let workflow = validate_workflow_definition(workflow)?;
+    db.upsert_workflow(&workflow).await
+}
+
+pub fn validate_workflow_definition(
+    workflow: &WorkflowDefinition,
+) -> Result<WorkflowDefinition, SendableError> {
     let workflow = runinator_workflows::normalize_workflow(workflow);
     runinator_workflows::validate_workflow(&workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    db.upsert_workflow(&workflow).await
+    Ok(workflow)
 }
 
 pub async fn fetch_workflows<T: DatabaseImpl>(
@@ -109,6 +116,52 @@ pub async fn fetch_workflow<T: DatabaseImpl>(
         return Ok(None);
     };
     Ok(Some(normalize_persisted_workflow(db, workflow).await?))
+}
+
+pub async fn import_workflow_bundle<T: DatabaseImpl>(
+    db: &T,
+    bundle: WorkflowBundle,
+) -> Result<WorkflowBundle, SendableError> {
+    let mut workflows = Vec::with_capacity(bundle.workflows.len());
+    for workflow in bundle.workflows {
+        workflows.push(upsert_workflow(db, &workflow).await?);
+    }
+
+    let mut triggers = Vec::with_capacity(bundle.triggers.len());
+    for trigger in bundle.triggers {
+        triggers.push(upsert_workflow_trigger(db, &trigger).await?);
+    }
+
+    Ok(WorkflowBundle {
+        workflows,
+        triggers,
+    })
+}
+
+pub async fn export_workflow_bundle<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Option<i64>,
+) -> Result<WorkflowBundle, SendableError> {
+    let workflows = match workflow_id {
+        Some(id) => match fetch_workflow(db, id).await? {
+            Some(workflow) => vec![workflow],
+            None => return Ok(WorkflowBundle::default()),
+        },
+        None => fetch_workflows(db).await?,
+    };
+
+    let mut triggers = Vec::new();
+    for workflow in &workflows {
+        let Some(id) = workflow.id else {
+            continue;
+        };
+        triggers.extend(fetch_workflow_triggers(db, id).await?);
+    }
+
+    Ok(WorkflowBundle {
+        workflows,
+        triggers,
+    })
 }
 
 async fn normalize_persisted_workflow<T: DatabaseImpl>(
@@ -383,14 +436,12 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
         debug.insert("breakpoints".into(), bps.clone());
     }
     if let Some(m) = patch_obj.get("mode") {
-        let mode = m
-            .as_str()
-            .ok_or_else(|| -> SendableError {
-                Box::new(RuntimeError::new(
-                    "workflow.debug.invalid_patch".into(),
-                    "mode must be a string".into(),
-                ))
-            })?;
+        let mode = m.as_str().ok_or_else(|| -> SendableError {
+            Box::new(RuntimeError::new(
+                "workflow.debug.invalid_patch".into(),
+                "mode must be a string".into(),
+            ))
+        })?;
         if mode != "step_all" && mode != "breakpoints" {
             return Err(Box::new(RuntimeError::new(
                 "workflow.debug.invalid_patch".into(),
@@ -409,10 +460,7 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
                     "one_shot_breakpoint must be a node id string or null".into(),
                 ))
             })?;
-            debug.insert(
-                "one_shot_breakpoint".into(),
-                Value::String(id.to_string()),
-            );
+            debug.insert("one_shot_breakpoint".into(), Value::String(id.to_string()));
         }
     }
 
@@ -481,10 +529,7 @@ pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     debug.insert("enabled".into(), Value::Bool(true));
     debug.insert("paused".into(), Value::Bool(false));
     debug.insert("step_requested".into(), Value::Bool(false));
-    debug.insert(
-        "one_shot_breakpoint".into(),
-        Value::String(node_id.clone()),
-    );
+    debug.insert("one_shot_breakpoint".into(), Value::String(node_id.clone()));
 
     db.update_workflow_run_status(
         workflow_run_id,
@@ -520,9 +565,10 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
         .max_by_key(|n| n.attempt);
     let node_run = match latest_node_run {
         Some(n) => n,
-        None => db
-            .create_workflow_node_run(workflow_run_id, active_node_id.clone(), Value::Null)
-            .await?,
+        None => {
+            db.create_workflow_node_run(workflow_run_id, active_node_id.clone(), Value::Null)
+                .await?
+        }
     };
     let skip_message = message.clone().unwrap_or_else(|| "Skipped in debug".into());
     db.update_workflow_node_run(
@@ -574,10 +620,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
         .into_iter()
         .filter(|n| n.node_id == active_node_id)
         .max_by_key(|n| n.attempt);
-    let next_attempt = latest_node_run
-        .as_ref()
-        .map(|r| r.attempt + 1)
-        .unwrap_or(1);
+    let next_attempt = latest_node_run.as_ref().map(|r| r.attempt + 1).unwrap_or(1);
     if let Some(prior) = latest_node_run {
         db.update_workflow_node_run(
             prior.id,

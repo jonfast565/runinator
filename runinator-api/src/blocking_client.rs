@@ -2,7 +2,10 @@ use reqwest::{
     blocking::{Client, Response},
     Url,
 };
-use runinator_models::providers::ProviderMetadata;
+use runinator_models::{
+    providers::ProviderMetadata,
+    workflows::{WorkflowBundle, WorkflowDefinition},
+};
 
 use crate::{
     error::{ApiError, Result},
@@ -45,6 +48,30 @@ where
         let response = self.client.post(url.clone()).json(provider).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<ProviderMetadata>()?)
+    }
+
+    pub fn validate_workflow(&self, workflow: &WorkflowDefinition) -> Result<WorkflowDefinition> {
+        let url = self.build_url("/workflows/validate")?;
+        let response = self.client.post(url.clone()).json(workflow).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<WorkflowDefinition>()?)
+    }
+
+    pub fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
+        let url = self.build_url("/workflows/import")?;
+        let response = self.client.post(url.clone()).json(bundle).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<WorkflowBundle>()?)
+    }
+
+    pub fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
+        let path = workflow_id
+            .map(|id| format!("/workflows/{id}/export"))
+            .unwrap_or_else(|| "/workflows/export".into());
+        let url = self.build_url(&path)?;
+        let response = self.client.get(url.clone()).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<WorkflowBundle>()?)
     }
 
     fn build_url(&self, path: &str) -> Result<Url> {

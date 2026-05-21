@@ -20,6 +20,14 @@ pub struct WorkflowDefinition {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowBundle {
+    #[serde(default)]
+    pub workflows: Vec<WorkflowDefinition>,
+    #[serde(default)]
+    pub triggers: Vec<WorkflowTrigger>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowTriggerKind {

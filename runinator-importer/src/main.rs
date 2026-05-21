@@ -10,8 +10,7 @@ use config::Config;
 use log::{error, info};
 use runinator_api::AsyncApiClient;
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
-use runinator_models::workflows::{WorkflowDefinition, WorkflowTrigger};
-use serde::Deserialize;
+use runinator_models::workflows::WorkflowBundle;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -51,14 +50,6 @@ impl runinator_api::ServiceLocator for GossipServiceLocator {
     async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
         Ok(self.inner.wait_for_service_url().await)
     }
-}
-
-#[derive(Deserialize)]
-struct ImportFile {
-    #[serde(default)]
-    workflows: Vec<WorkflowDefinition>,
-    #[serde(default)]
-    triggers: Vec<WorkflowTrigger>,
 }
 
 #[tokio::main]
@@ -141,16 +132,7 @@ async fn sync_workflows_if_changed(
     Ok(())
 }
 
-struct ImportSeed {
-    workflows: Vec<WorkflowDefinition>,
-    triggers: Vec<WorkflowTrigger>,
-}
-
-async fn load_import_file(path: &Path) -> Result<ImportSeed, DynError> {
+async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     let data = tokio::fs::read_to_string(path).await?;
-    let parsed: ImportFile = serde_json::from_str(&data)?;
-    Ok(ImportSeed {
-        workflows: parsed.workflows,
-        triggers: parsed.triggers,
-    })
+    Ok(serde_json::from_str(&data)?)
 }

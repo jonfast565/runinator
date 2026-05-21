@@ -3,8 +3,8 @@ use runinator_models::{
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{
-        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ pub enum ApiResponse {
     RunChunks(Vec<RunChunk>),
     RunArtifacts(Vec<RunArtifact>),
     Workflow(WorkflowDefinition),
+    WorkflowBundle(WorkflowBundle),
     WorkflowList(Vec<WorkflowDefinition>),
     WorkflowTrigger(WorkflowTrigger),
     WorkflowTriggerList(Vec<WorkflowTrigger>),

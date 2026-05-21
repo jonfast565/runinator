@@ -4,8 +4,8 @@ use runinator_models::{
     runs::{RunStatus, RunSummary},
     web::TaskResponse,
     workflows::{
-        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
 use serde_json::{json, Value};
@@ -124,6 +124,33 @@ where
         };
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn validate_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition> {
+        let url = self.build_url("/workflows/validate").await?;
+        let response = self.client.post(url.clone()).json(workflow).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    pub async fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
+        let url = self.build_url("/workflows/import").await?;
+        let response = self.client.post(url.clone()).json(bundle).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowBundle>().await?)
+    }
+
+    pub async fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
+        let path = workflow_id
+            .map(|id| format!("/workflows/{id}/export"))
+            .unwrap_or_else(|| "/workflows/export".into());
+        let url = self.build_url(&path).await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowBundle>().await?)
     }
 
     pub async fn create_workflow_run(
