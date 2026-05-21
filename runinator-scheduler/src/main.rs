@@ -2,7 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use log::{error, info};
 use reqwest::Url;
-use runinator_broker::{Broker, http::client::HttpBroker, in_memory::InMemoryBroker};
+use runinator_broker::{
+    Broker, http::client::HttpBroker, in_memory::InMemoryBroker, tcp::client::TcpBroker,
+};
 use runinator_models::errors::{RuntimeError, SendableError};
 use tokio::{sync::Notify, task::JoinHandle};
 
@@ -75,7 +77,6 @@ fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
                     err.to_string().into(),
                 ))
             })?;
-            let poll_timeout = Duration::from_secs(config.broker_poll_timeout_seconds);
             let client = reqwest::Client::builder()
                 .build()
                 .map_err(|err| -> SendableError {
@@ -85,9 +86,10 @@ fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
                     ))
                 })?;
 
-            Ok(Arc::new(HttpBroker::new(url, client, poll_timeout)))
+            Ok(Arc::new(HttpBroker::new(url, client)))
         }
         "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
+        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
         "rabbitmq" | "kafka" => Err(Box::new(RuntimeError::new(
             "scheduler.broker.backend_not_ready".into(),
             format!(

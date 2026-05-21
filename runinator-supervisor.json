@@ -47,11 +47,9 @@
         "--api-timeout-seconds",
         "30",
         "--broker-backend",
-        "http",
+        "tcp",
         "--broker-endpoint",
-        "http://127.0.0.1:7070/",
-        "--broker-poll-timeout-seconds",
-        "5"
+        "127.0.0.1:7070"
       ]
     },
     {
@@ -61,11 +59,11 @@
         "--dll-path",
         ".",
         "--broker-backend",
-        "http",
+        "tcp",
         "--broker-endpoint",
-        "http://127.0.0.1:7070/",
-        "--broker-poll-timeout-seconds",
-        "5",
+        "127.0.0.1:7070",
+        "--max-concurrent-actions",
+        "4",
         "--api-base-url",
         "http://127.0.0.1:8080/"
       ]

@@ -7,19 +7,24 @@ mod provider_repository;
 use std::{
     collections::{BTreeSet, HashMap},
     sync::Arc,
-    time::Duration,
 };
 
 use config::parse_config;
 use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, StaticLocator, WorkflowNodeRunStatusPayload};
-use runinator_broker::{Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker};
+use runinator_broker::{
+    Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker,
+    tcp::client::TcpBroker,
+};
 use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
 use runinator_utilities::startup;
 use serde_json::json;
-use tokio::sync::Notify;
+use tokio::{
+    sync::{Notify, Semaphore},
+    task::JoinSet,
+};
 
 use crate::output_sink::RunOutputSink;
 
@@ -36,34 +41,36 @@ async fn main() -> Result<(), SendableError> {
     publish_provider_metadata(&api_client, &libraries).await;
 
     let shutdown = Arc::new(Notify::new());
-    let worker_task = {
+    let mut worker_task = {
         let broker = broker.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
         let consumer = config.broker_consumer_id.clone();
-        let poll_timeout = Duration::from_secs(config.broker_poll_timeout_seconds);
+        let max_concurrent_actions = config.max_concurrent_actions;
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            if let Err(err) = run_worker_loop(
+            run_worker_loop(
                 broker,
                 consumer,
                 libraries,
                 api_client,
-                poll_timeout,
+                max_concurrent_actions,
                 shutdown,
             )
             .await
-            {
-                error!("Worker loop terminated with error: {}", err);
-            }
         })
     };
 
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C");
-    info!("Shutdown signal received. Stopping worker...");
-    shutdown.notify_waiters();
+    tokio::select! {
+        signal = tokio::signal::ctrl_c() => {
+            signal.expect("Failed to listen for Ctrl+C");
+            info!("Shutdown signal received. Stopping worker...");
+            shutdown.notify_waiters();
+        }
+        result = &mut worker_task => {
+            return handle_worker_task_result(result);
+        }
+    }
 
     if let Err(err) = worker_task.await {
         if !err.is_cancelled() {
@@ -72,6 +79,25 @@ async fn main() -> Result<(), SendableError> {
     }
 
     Ok(())
+}
+
+fn handle_worker_task_result(
+    result: Result<Result<(), SendableError>, tokio::task::JoinError>,
+) -> Result<(), SendableError> {
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => {
+            error!("Worker loop terminated with error: {}", err);
+            Err(err)
+        }
+        Err(err) => {
+            error!("Worker task join error: {}", err);
+            Err(Box::new(RuntimeError::new(
+                "worker.loop.join".into(),
+                err.to_string(),
+            )))
+        }
+    }
 }
 
 fn load_libraries(path: &str) -> Result<HashMap<String, Plugin>, SendableError> {
@@ -100,13 +126,10 @@ fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableErro
                     ))
                 })?;
 
-            Ok(Arc::new(HttpBroker::new(
-                url,
-                client,
-                Duration::from_secs(config.broker_poll_timeout_seconds),
-            )))
+            Ok(Arc::new(HttpBroker::new(url, client)))
         }
         "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
+        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
         "rabbitmq" | "kafka" => Err(Box::new(RuntimeError::new(
             "worker.broker.backend_not_ready".into(),
             format!(
@@ -153,37 +176,65 @@ async fn run_worker_loop(
     consumer_id: String,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
-    poll_timeout: Duration,
+    max_concurrent_actions: usize,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
+    let max_concurrent_actions = max_concurrent_actions.max(1);
+    let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
+    let mut deliveries = JoinSet::new();
+    info!("Worker processing up to {max_concurrent_actions} concurrent action(s)");
+
     loop {
-        tokio::select! {
+        let permit = tokio::select! {
+            biased;
             _ = shutdown.notified() => {
                 info!("Worker loop shutting down");
                 break;
             }
-            result = broker.poll(&consumer_id) => {
-                let maybe_delivery = result.map_err(|err| broker_error("poll", err))?;
-                match maybe_delivery {
-                    Some(delivery) => {
-                        match process_delivery(
-                            &broker,
-                            &consumer_id,
-                            Arc::clone(&libraries),
-                            api_client.clone(),
-                            delivery,
-                        ).await {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("Error processing task: {}", err);
-                            }
-                        }
-                    }
-                    None => {
-                        tokio::time::sleep(poll_timeout).await;
-                    }
+            Some(result) = deliveries.join_next(), if !deliveries.is_empty() => {
+                if let Err(err) = result {
+                    error!("Worker delivery task join error: {}", err);
                 }
+                continue;
             }
+            permit = semaphore.clone().acquire_owned() => {
+                permit.map_err(|err| {
+                    Box::new(RuntimeError::new(
+                        "worker.concurrency.closed".into(),
+                        err.to_string(),
+                    )) as SendableError
+                })?
+            }
+        };
+
+        let maybe_delivery = tokio::select! {
+            _ = shutdown.notified() => {
+                drop(permit);
+                info!("Worker loop shutting down");
+                break;
+            }
+            result = broker.receive(&consumer_id) => {
+                result.map_err(|err| broker_error("receive", err))?
+            }
+        };
+
+        let broker = broker.clone();
+        let consumer_id = consumer_id.clone();
+        let libraries = Arc::clone(&libraries);
+        let api_client = api_client.clone();
+        deliveries.spawn(async move {
+            let _permit = permit;
+            if let Err(err) =
+                process_delivery(&broker, &consumer_id, libraries, api_client, maybe_delivery).await
+            {
+                error!("Error processing task: {}", err);
+            }
+        });
+    }
+
+    while let Some(result) = deliveries.join_next().await {
+        if let Err(err) = result {
+            error!("Worker delivery task join error: {}", err);
         }
     }
 

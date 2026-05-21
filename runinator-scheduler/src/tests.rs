@@ -538,7 +538,7 @@ async fn queued_start_to_action_is_dispatched_in_one_pass() {
     assert_eq!(update.status, WorkflowStatus::Running);
     assert_eq!(update.active_node_id.as_deref(), Some("run"));
     assert_eq!(api.last_node_update().status, WorkflowStatus::Running);
-    assert!(broker.poll("test").await.unwrap().is_some());
+    broker.receive("test").await.unwrap();
 }
 
 #[tokio::test]

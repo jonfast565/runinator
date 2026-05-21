@@ -58,6 +58,14 @@ This uses `runinator-supervisor.json` to start:
 - `runinator-worker`
 - `runinator-importer`
 
+The default worker configuration processes up to four actions concurrently. Tune
+`--max-concurrent-actions` when long-running actions should not block unrelated
+workflow action pickup.
+
+The local stack uses the built-in broker over raw TCP by default. Consumers keep
+receive sockets open, so published action messages are delivered immediately
+without HTTP polling.
+
 Runtime files are written under `.runinator-supervisor/`. Child process stdout and stderr are collected under `.runinator-supervisor/logs/` with one file per process start:
 
 ```text

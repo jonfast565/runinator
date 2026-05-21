@@ -15,8 +15,8 @@ impl Broker for RabbitMqBroker {
         Err(BrokerError::NotImplemented("rabbitmq publish"))
     }
 
-    async fn poll(&self, _consumer: &str) -> Result<Option<BrokerDelivery>, BrokerError> {
-        Err(BrokerError::NotImplemented("rabbitmq poll"))
+    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("rabbitmq receive"))
     }
 
     async fn ack(&self, _consumer: &str, _delivery_id: uuid::Uuid) -> Result<(), BrokerError> {

@@ -2,6 +2,7 @@ pub mod adapters;
 mod errors;
 pub mod http;
 pub mod in_memory;
+pub mod tcp;
 mod types;
 
 pub use errors::BrokerError;
@@ -15,8 +16,8 @@ pub trait Broker: Send + Sync + 'static {
     /// Publish a message to the broker, optionally using a deduplication key.
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError>;
 
-    /// Retrieve the next available delivery for the supplied consumer group.
-    async fn poll(&self, consumer: &str) -> Result<Option<BrokerDelivery>, BrokerError>;
+    /// Wait for and retrieve the next available delivery for the supplied consumer group.
+    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError>;
 
     /// Acknowledge successful processing of a delivery.
     async fn ack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;

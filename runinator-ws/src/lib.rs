@@ -1320,16 +1320,15 @@ async fn send_workflow_run<T: DatabaseImpl>(
     db: &T,
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
     run_id: i64,
-) -> Result<bool, ()> {
+) -> Result<(), ()> {
     let Some((run, nodes)) = repository::fetch_workflow_run(db, run_id)
         .await
         .map_err(|_| ())?
     else {
         return Err(());
     };
-    let terminal = run.status.is_terminal();
     send_json(tx, &models::WorkflowRunResponse { run, nodes }).await?;
-    Ok(terminal)
+    Ok(())
 }
 
 fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {

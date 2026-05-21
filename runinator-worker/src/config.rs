@@ -8,7 +8,7 @@ pub struct Config {
     pub broker_backend: String,
     pub broker_endpoint: String,
     pub broker_consumer_id: String,
-    pub broker_poll_timeout_seconds: u64,
+    pub max_concurrent_actions: usize,
     pub api_base_url: String,
     pub worker_id: Uuid,
 }
@@ -19,17 +19,17 @@ struct CliArgs {
     #[arg(long, default_value = "/opt/runinator/plugins")]
     dll_path: String,
 
-    #[arg(long, default_value = "http")]
+    #[arg(long, default_value = "tcp")]
     broker_backend: String,
 
-    #[arg(long, default_value = "http://127.0.0.1:7070/")]
+    #[arg(long, default_value = "127.0.0.1:7070")]
     broker_endpoint: String,
 
     #[arg(long)]
     broker_consumer_id: Option<String>,
 
-    #[arg(long, default_value_t = 5)]
-    broker_poll_timeout_seconds: u64,
+    #[arg(long, default_value_t = 4)]
+    max_concurrent_actions: usize,
 
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     api_base_url: String,
@@ -56,7 +56,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_backend: args.broker_backend,
         broker_endpoint: args.broker_endpoint,
         broker_consumer_id: consumer_id,
-        broker_poll_timeout_seconds: args.broker_poll_timeout_seconds,
+        max_concurrent_actions: args.max_concurrent_actions.max(1),
         api_base_url: args.api_base_url,
         worker_id,
     })

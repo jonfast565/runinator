@@ -112,7 +112,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const latestWorkflowRunHttpRequest = new Map<number, number>();
   let nextWorkflowRunDetailVersion = 0;
   let nextWorkflowRunHttpRequestId = 0;
-  let pendingBreakpointPatch: { runId: number; breakpoints: string[] } | null = null;
+  let nextBreakpointMutationId = 0;
+  let pendingBreakpointPatch: { runId: number; breakpoints: string[]; mutationId: number } | null = null;
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
   const selectedGraphEdgeId = ref("");
@@ -259,6 +260,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflows.value = [];
     workflowRuns.value = [];
     workflowRunDetail.value = null;
+    pendingBreakpointPatch = null;
     workflowNodeDetailExtra.value = "";
     selectedWorkflowRunId.value = 0;
     selectedWorkflowRunNodeId.value = "";
@@ -383,16 +385,23 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const next = current.includes(nodeId)
       ? current.filter((id) => id !== nodeId)
       : [...current, nodeId];
-    pendingBreakpointPatch = { runId, breakpoints: next };
-    // optimistic local update so users get instant visual feedback.
-    const debug = (workflowRunDetail.value.run.state as any)?.debug;
-    if (debug && typeof debug === "object") {
-      debug.breakpoints = next;
-    }
+    const mutationId = ++nextBreakpointMutationId;
+    pendingBreakpointPatch = { runId, breakpoints: next, mutationId };
+    applyBreakpointPatch(workflowRunDetail.value, next);
     try {
-      await patchSelectedWorkflowRunDebug({ breakpoints: next });
-    } finally {
-      if (pendingBreakpointPatch?.runId === runId) pendingBreakpointPatch = null;
+      const response = await app.runOperation(`Updating debug settings for run ${runId}`, () => patchWorkflowRunDebug(runId, { breakpoints: next }));
+      if (response.success === false) {
+        app.setError(response.message || "Failed to update debug settings");
+        if (clearPendingBreakpointPatch(runId, mutationId)) {
+          applyBreakpointPatch(workflowRunDetail.value, current);
+        }
+        return;
+      }
+      await fetchWorkflowRunDetail(runId, true);
+    } catch {
+      if (clearPendingBreakpointPatch(runId, mutationId)) {
+        applyBreakpointPatch(workflowRunDetail.value, current);
+      }
     }
   }
 
@@ -559,6 +568,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         return;
       }
     }
+    if (detail) confirmPendingBreakpointPatch(detail);
     workflowRunDetail.value = detail;
     reapplyPendingBreakpointPatch();
     workflowNodeDetailExtra.value = "";
@@ -577,10 +587,42 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function reapplyPendingBreakpointPatch() {
     if (!workflowRunDetail.value || !pendingBreakpointPatch) return;
     if (workflowRunDetail.value.run.id !== pendingBreakpointPatch.runId) return;
-    const debug = (workflowRunDetail.value.run.state as any)?.debug;
-    if (debug && typeof debug === "object") {
-      debug.breakpoints = pendingBreakpointPatch.breakpoints;
+    applyBreakpointPatch(workflowRunDetail.value, pendingBreakpointPatch.breakpoints);
+  }
+
+  function confirmPendingBreakpointPatch(detail: WorkflowRunDetail) {
+    if (!pendingBreakpointPatch || detail.run.id !== pendingBreakpointPatch.runId) return;
+    if (sameBreakpoints(readBreakpoints(detail), pendingBreakpointPatch.breakpoints)) {
+      pendingBreakpointPatch = null;
     }
+  }
+
+  function clearPendingBreakpointPatch(runId: number, mutationId: number) {
+    if (pendingBreakpointPatch?.runId === runId && pendingBreakpointPatch.mutationId === mutationId) {
+      pendingBreakpointPatch = null;
+      return true;
+    }
+    return false;
+  }
+
+  function applyBreakpointPatch(detail: WorkflowRunDetail | null, breakpoints: string[]) {
+    const debug = (detail?.run.state as any)?.debug;
+    if (debug && typeof debug === "object" && !Array.isArray(debug)) {
+      debug.breakpoints = [...breakpoints];
+    }
+  }
+
+  function readBreakpoints(detail: WorkflowRunDetail): string[] {
+    const debug = (detail.run.state as any)?.debug;
+    const breakpoints = debug && typeof debug === "object" && !Array.isArray(debug) ? debug.breakpoints : null;
+    return Array.isArray(breakpoints) ? breakpoints.filter((id): id is string => typeof id === "string") : [];
+  }
+
+  function sameBreakpoints(left: string[], right: string[]) {
+    const normalizedLeft = [...new Set(left)].sort();
+    const normalizedRight = [...new Set(right)].sort();
+    if (normalizedLeft.length !== normalizedRight.length) return false;
+    return normalizedLeft.every((id, index) => id === normalizedRight[index]);
   }
 
   async function addWorkflowStep() {

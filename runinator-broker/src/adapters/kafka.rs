@@ -15,8 +15,8 @@ impl Broker for KafkaBroker {
         Err(BrokerError::NotImplemented("kafka publish"))
     }
 
-    async fn poll(&self, _consumer: &str) -> Result<Option<BrokerDelivery>, BrokerError> {
-        Err(BrokerError::NotImplemented("kafka poll"))
+    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("kafka receive"))
     }
 
     async fn ack(&self, _consumer: &str, _delivery_id: uuid::Uuid) -> Result<(), BrokerError> {

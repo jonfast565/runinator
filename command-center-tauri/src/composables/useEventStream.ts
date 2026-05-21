@@ -3,9 +3,11 @@ import { useAppStore } from "../stores/app";
 import { useResourcesStore } from "../stores/resources";
 import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
+import { buildWebSocketUrl } from "../utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 const FALLBACK_INTERVAL = 30000;
+const CONNECT_TIMEOUT = 5000;
 
 export function useEventStream() {
   const app = useAppStore();
@@ -15,6 +17,8 @@ export function useEventStream() {
   let ws: WebSocket | null = null;
   let fallbackTimer: number | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectionId = 0;
 
   function handleEvent(event: { type: string; [k: string]: unknown }) {
     console.info("[command-center] server event", event);
@@ -77,24 +81,45 @@ export function useEventStream() {
     }
   }
 
+  function clearReconnectTimer() {
+    if (reconnectTimer === null) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  function clearConnectTimer() {
+    if (connectTimer === null) return;
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
+
   function connect() {
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    const base = app.serviceUrl?.replace(/^http/, "ws");
-    if (!base) {
+    clearReconnectTimer();
+    clearConnectTimer();
+    const serviceUrl = app.serviceUrl;
+    if (!serviceUrl) {
       startFallback();
       return;
     }
+    const currentConnection = ++connectionId;
     app.setEventStreamState("connecting");
-    ws = new WebSocket(`${base}/ws/events`);
+    const url = buildWebSocketUrl(serviceUrl, "/ws/events");
+    ws = new WebSocket(url);
+    connectTimer = setTimeout(() => {
+      if (currentConnection !== connectionId) return;
+      console.info("[command-center] event stream connection timed out", { url });
+      ws?.close();
+      startFallback();
+    }, CONNECT_TIMEOUT);
     ws.onopen = () => {
-      console.info("[command-center] event stream connected", { url: `${base}/ws/events` });
+      if (currentConnection !== connectionId) return;
+      clearConnectTimer();
+      console.info("[command-center] event stream connected", { url });
       app.setEventStreamState("connected");
       stopFallback();
     };
     ws.onmessage = ({ data }) => {
+      if (currentConnection !== connectionId) return;
       try {
         console.info("[command-center] event stream message", data);
         handleEvent(JSON.parse(data));
@@ -103,6 +128,8 @@ export function useEventStream() {
       }
     };
     ws.onclose = () => {
+      if (currentConnection !== connectionId) return;
+      clearConnectTimer();
       console.info("[command-center] event stream closed");
       ws = null;
       startFallback();
@@ -111,16 +138,17 @@ export function useEventStream() {
       }
     };
     ws.onerror = (event) => {
+      if (currentConnection !== connectionId) return;
+      clearConnectTimer();
       console.info("[command-center] event stream error", event);
       ws?.close();
     };
   }
 
   function disconnect() {
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
+    connectionId += 1;
+    clearReconnectTimer();
+    clearConnectTimer();
     ws?.close();
     ws = null;
     stopFallback();

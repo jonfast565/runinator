@@ -26,7 +26,7 @@ spec:
   selector:
     app: runinator-ws
   ports:
-    - name: http
+    - name: tcp
       port: 8080
       targetPort: 8080
       protocol: TCP
@@ -78,11 +78,9 @@ spec:
             - '--api-timeout-seconds'
             - '30'
             - '--broker-backend'
-            - 'http'
+            - 'tcp'
             - '--broker-endpoint'
-            - 'http://runinator-broker.runinator.svc.cluster.local:7070/'
-            - '--broker-poll-timeout-seconds'
-            - '5'
+            - 'runinator-broker.runinator.svc.cluster.local:7070'
           env:
             - name: RUST_LOG
               value: info
@@ -127,11 +125,11 @@ spec:
             - '--dll-path'
             - '/opt/runinator/plugins'
             - '--broker-backend'
-            - 'http'
+            - 'tcp'
             - '--broker-endpoint'
-            - 'http://runinator-broker.runinator.svc.cluster.local:7070/'
-            - '--broker-poll-timeout-seconds'
-            - '5'
+            - 'runinator-broker.runinator.svc.cluster.local:7070'
+            - '--max-concurrent-actions'
+            - '4'
             - '--api-base-url'
             - 'http://runinator-ws.runinator.svc.cluster.local:8080/'
           env:

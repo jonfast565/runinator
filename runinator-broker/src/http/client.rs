@@ -1,26 +1,20 @@
 use crate::{
-    http::types::{AckRequest, PollRequest, PollResponse, PublishRequest},
+    http::types::{AckRequest, PublishRequest, ReceiveRequest, ReceiveResponse},
     Broker, BrokerDelivery, BrokerError, BrokerMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
-use tokio::time::Duration;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct HttpBroker {
     client: Client,
     base_url: Url,
-    default_poll_timeout: Duration,
 }
 
 impl HttpBroker {
-    pub fn new(base_url: Url, client: Client, default_poll_timeout: Duration) -> Self {
-        Self {
-            client,
-            base_url,
-            default_poll_timeout,
-        }
+    pub fn new(base_url: Url, client: Client) -> Self {
+        Self { client, base_url }
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, BrokerError> {
@@ -52,14 +46,13 @@ impl Broker for HttpBroker {
         }
     }
 
-    async fn poll(&self, consumer: &str) -> Result<Option<BrokerDelivery>, BrokerError> {
-        let url = self.endpoint("poll")?;
+    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        let url = self.endpoint("receive")?;
         let response = self
             .client
             .post(url)
-            .json(&PollRequest {
+            .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
-                timeout_ms: Some(self.default_poll_timeout.as_millis() as u64),
             })
             .send()
             .await
@@ -68,14 +61,13 @@ impl Broker for HttpBroker {
         match response.status() {
             StatusCode::OK => {
                 let payload = response
-                    .json::<PollResponse>()
+                    .json::<ReceiveResponse>()
                     .await
                     .map_err(|err| BrokerError::Internal(err.to_string()))?;
                 Ok(payload.delivery)
             }
-            StatusCode::NO_CONTENT => Ok(None),
             status => Err(BrokerError::Internal(format!(
-                "unexpected poll status: {status}"
+                "unexpected receive status: {status}"
             ))),
         }
     }

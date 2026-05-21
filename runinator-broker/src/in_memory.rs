@@ -41,7 +41,7 @@ impl Broker for InMemoryBroker {
         Ok(())
     }
 
-    async fn poll(&self, _consumer: &str) -> Result<Option<BrokerDelivery>, BrokerError> {
+    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
@@ -54,7 +54,7 @@ impl Broker for InMemoryBroker {
                     None
                 }
             } {
-                return Ok(Some(delivery));
+                return Ok(delivery);
             }
 
             self.notify.notified().await;

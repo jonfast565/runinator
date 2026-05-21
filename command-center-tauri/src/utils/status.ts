@@ -6,6 +6,10 @@ export function isGoodStatus(status?: string) {
   return ["approved", "succeeded", "passed"].includes(status ?? "");
 }
 
+export function isTerminalWorkflowRunStatus(status?: string) {
+  return ["succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
+}
+
 export function statusBadgeClass(status?: string) {
   if (isBadStatus(status)) return "status-failed";
   if (isGoodStatus(status)) return "status-succeeded";

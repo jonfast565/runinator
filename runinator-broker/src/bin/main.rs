@@ -1,4 +1,4 @@
-use runinator_broker::{http::server::run_server, in_memory::InMemoryBroker};
+use runinator_broker::{in_memory::InMemoryBroker, tcp::server::run_server};
 use std::{env, net::SocketAddr};
 
 #[tokio::main]
@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
 
     let broker = InMemoryBroker::new();
-    println!("Runinator broker listening on {}", addr);
+    println!("Runinator TCP broker listening on {}", addr);
     run_server(addr, broker).await?;
     Ok(())
 }

@@ -161,9 +161,8 @@ impl StackHarness {
                         "--gossip-port", ports.scheduler_gossip.to_string(),
                         "--gossip-targets", format!("127.0.0.1:{}", ports.web_gossip),
                         "--api-timeout-seconds", "30",
-                        "--broker-backend", "http",
-                        "--broker-endpoint", format!("http://127.0.0.1:{}/", ports.broker),
-                        "--broker-poll-timeout-seconds", "5"
+                        "--broker-backend", "tcp",
+                        "--broker-endpoint", format!("127.0.0.1:{}", ports.broker)
                     ]
                 }
             ]

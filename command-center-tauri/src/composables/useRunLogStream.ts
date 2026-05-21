@@ -1,6 +1,7 @@
 import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { useAppStore } from "../stores/app";
 import type { RunChunk } from "../types/models";
+import { buildWebSocketUrl } from "../utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 
@@ -20,9 +21,8 @@ export function useRunLogStream(runId: Ref<number>) {
   function connect(id: number) {
     clearReconnectTimer();
     if (runId.value !== id) return;
-    const base = app.serviceUrl?.replace(/^http/, "ws");
-    if (!base) return;
-    ws = new WebSocket(`${base}/ws/run-stream/${id}`);
+    if (!app.serviceUrl) return;
+    ws = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/run-stream/${id}`));
     ws.onopen = () => {
       clearReconnectTimer();
       console.info("[command-center] run log stream connected", { runId: id });

@@ -1,6 +1,7 @@
 import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { useAppStore } from "../stores/app";
 import type { RunChunk } from "../types/models";
+import { buildWebSocketUrl } from "../utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 
@@ -20,9 +21,8 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
   function connect(id: number) {
     clearReconnectTimer();
     if (nodeRunId.value !== id) return;
-    const base = app.serviceUrl?.replace(/^http/, "ws");
-    if (!base) return;
-    ws = new WebSocket(`${base}/ws/workflow-node-runs/${id}/stream`);
+    if (!app.serviceUrl) return;
+    ws = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/workflow-node-runs/${id}/stream`));
     ws.onopen = () => {
       clearReconnectTimer();
       console.info("[command-center] workflow node run log stream connected", { nodeRunId: id });

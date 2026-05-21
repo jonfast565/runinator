@@ -8,6 +8,16 @@ pub struct PublishRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveRequest {
+    pub consumer: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveResponse {
+    pub delivery: BrokerDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PollRequest {
     pub consumer: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

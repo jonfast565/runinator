@@ -25,7 +25,7 @@ runinator-supervisor --config runinator-supervisor.json stop
     {
       "name": "worker",
       "command": "./target/debug/runinator-worker",
-      "args": ["--broker-endpoint", "http://127.0.0.1:7070/"],
+      "args": ["--broker-backend", "tcp", "--broker-endpoint", "127.0.0.1:7070"],
       "cwd": ".",
       "env": {
         "RUST_LOG": "info"

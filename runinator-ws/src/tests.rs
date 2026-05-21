@@ -1,6 +1,32 @@
 use serde_json::json;
 
 #[test]
+fn workflow_run_stream_terminal_status_stays_snapshot_message() {
+    let response = crate::models::WorkflowRunResponse {
+        run: runinator_models::workflows::WorkflowRun {
+            id: 42,
+            workflow_id: 7,
+            workflow_snapshot: None,
+            status: runinator_models::workflows::WorkflowStatus::Succeeded,
+            active_node_id: None,
+            parameters: json!({}),
+            state: json!({}),
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            finished_at: Some(chrono::Utc::now()),
+            message: None,
+        },
+        nodes: vec![],
+    };
+
+    let value = serde_json::to_value(response).unwrap();
+
+    assert_eq!(value["run"]["status"], "succeeded");
+    assert_eq!(value["nodes"], json!([]));
+    assert!(value.get("type").is_none());
+}
+
+#[test]
 fn workflow_run_request_defaults_to_non_debug() {
     let request: crate::models::WorkflowRunRequest =
         serde_json::from_value(json!({ "parameters": { "mode": "test" } })).unwrap();

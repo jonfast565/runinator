@@ -19,14 +19,11 @@ pub struct Config {
     #[arg(long, default_value_t = 30)]
     pub api_timeout_seconds: u64,
 
-    #[arg(long, default_value = "http")]
+    #[arg(long, default_value = "tcp")]
     pub broker_backend: String,
 
-    #[arg(long, default_value = "http://127.0.0.1:7070/")]
+    #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
-
-    #[arg(long, default_value_t = 5)]
-    pub broker_poll_timeout_seconds: u64,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

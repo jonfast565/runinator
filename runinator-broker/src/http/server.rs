@@ -1,5 +1,7 @@
 use crate::{
-    http::types::{AckRequest, PollRequest, PollResponse, PublishRequest},
+    http::types::{
+        AckRequest, PollRequest, PollResponse, PublishRequest, ReceiveRequest, ReceiveResponse,
+    },
     Broker, BrokerError,
 };
 use axum::{
@@ -36,6 +38,7 @@ where
 
     let app = Router::new()
         .route("/publish", post(publish::<B>))
+        .route("/receive", post(receive::<B>))
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
         .route("/nack", post(nack::<B>))
@@ -57,6 +60,19 @@ where
     )
 }
 
+async fn receive<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
 async fn poll<B>(State(state): State<AppState<B>>, Json(request): Json<PollRequest>) -> Response
 where
     B: Broker,
@@ -65,12 +81,12 @@ where
         let broker = state.broker.clone();
         let consumer = request.consumer.clone();
         let timeout = tokio::time::Duration::from_millis(timeout_ms);
-        match tokio::time::timeout(timeout, broker.poll(&consumer)).await {
-            Ok(result) => result,
+        match tokio::time::timeout(timeout, broker.receive(&consumer)).await {
+            Ok(result) => result.map(Some),
             Err(_) => Ok(None),
         }
     } else {
-        state.broker.poll(&request.consumer).await
+        state.broker.receive(&request.consumer).await.map(Some)
     };
 
     match poll_result {
