@@ -92,16 +92,11 @@ PowerShell can build and run a local artifact layout:
 ./build.ps1 -Mode Local -Run
 ```
 
-This publishes binaries and the workflow seed file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
+This publishes binaries and the workflow import file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
 
-## Seeded Workflows
+## Workflow Import
 
-The importer reads `runinator-importer/workflows/workflows.json`. It seeds workflow definitions and triggers, including:
-
-- workflow `1003`: `SDLC: Implement, Review, QA Until Done`
-- workflow `1004`: `SDLC: Process Issue`
-
-The real-provider SDLC workflow uses Jira, git, AI command, GitHub, `map`, `subflow`, wait, and approval nodes to process matching Jira issues into generated PRs, merge approved pull requests, and transition completed items. It requires runtime input for Jira credentials/query, done and rework transition IDs, repo/workspace paths, the implementation command, and GitHub credentials.
+The importer reads `runinator-importer/workflows/workflows.json`. The bundled file intentionally contains no default workflows or triggers; add workflow definitions there, or point the importer at another file, when you want to import workflows into a local stack.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 
@@ -132,7 +127,7 @@ Then launch the generated app from `command-center/build` and connect to the loc
 
 ## Verification
 
-For importer/workflow seed changes, run:
+For importer workflow import changes, run:
 
 ```bash
 jq empty runinator-importer/workflows/workflows.json

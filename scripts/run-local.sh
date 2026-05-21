@@ -81,7 +81,7 @@ Useful commands:
 
 Command-center:
   Build it with CMake/Qt from command-center/, then connect to the discovered local service.
-  The importer seeds workflow "Mock SDLC: Feature Delivery".
+  The bundled importer file starts empty; add workflows before syncing if needed.
 MSG
     ;;
   foreground)
