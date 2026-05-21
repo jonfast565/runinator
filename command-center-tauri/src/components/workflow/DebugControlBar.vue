@@ -7,7 +7,7 @@
         title="Continue to next breakpoint (F5)"
         @click="workflows.continueSelectedWorkflowRun"
       >
-        ▶ Continue
+        Continue
       </button>
       <button
         class="debug-btn"
@@ -15,7 +15,7 @@
         title="Step over current node (F10)"
         @click="workflows.stepSelectedWorkflowRun"
       >
-        ⤵ Step
+        Step
       </button>
       <button
         class="debug-btn"
@@ -23,7 +23,7 @@
         title="Run until selected node (Ctrl+F10)"
         @click="onRunToCursor"
       >
-        ➜ Run to cursor
+        To cursor
       </button>
       <button
         class="debug-btn"
@@ -31,7 +31,7 @@
         title="Skip current node with synthetic output"
         @click="openSkip"
       >
-        ⤳ Skip…
+        Skip…
       </button>
       <button
         class="debug-btn"
@@ -39,7 +39,7 @@
         title="Re-run current node with modified input"
         @click="openRerun"
       >
-        ↻ Re-run…
+        Re-run…
       </button>
       <button
         class="debug-btn debug-btn-danger"
@@ -47,7 +47,7 @@
         title="Cancel run (Shift+F5)"
         @click="workflows.cancelSelectedWorkflowRun"
       >
-        ■ Stop
+        Stop
       </button>
     </div>
     <div class="debug-mode-row">
@@ -152,21 +152,21 @@ function onSubmitRerun(value: any) {
 .debug-control-bar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 .debug-controls {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 .debug-btn {
-  padding: 5px 12px;
+  padding: 4px 9px;
   border: 1px solid #ccd4dd;
   background: #fff;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
 }
 .debug-btn:disabled {
@@ -193,7 +193,8 @@ function onSubmitRerun(value: any) {
 }
 .debug-mode-row {
   display: flex;
-  gap: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
   font-size: 11px;
   color: #475569;
 }

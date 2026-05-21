@@ -107,6 +107,12 @@ function formatValue(v: any): string {
   background: #fbfcfe;
   padding: 6px 10px;
   font-size: 11px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.json-diff[open] {
+  max-height: 220px;
+  overflow: auto;
 }
 .json-diff summary {
   cursor: pointer;

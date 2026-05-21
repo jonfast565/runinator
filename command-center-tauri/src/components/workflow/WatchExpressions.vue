@@ -1,5 +1,5 @@
 <template>
-  <details class="watch-panel" open>
+  <details class="watch-panel">
     <summary>Watch expressions ({{ expressions.length }})</summary>
     <div class="watch-add">
       <input
@@ -68,7 +68,7 @@ function onAdd() {
   border: 1px solid #d8e2ec;
   border-radius: 6px;
   background: #fff;
-  padding: 6px 10px;
+  padding: 5px 8px;
   font-size: 12px;
   margin-bottom: 8px;
 }

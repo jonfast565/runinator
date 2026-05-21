@@ -38,21 +38,27 @@
     <div v-if="debugState?.enabled && !isTerminalRun" class="debug-panel">
       <div class="debug-panel-header">
         <div>
-          <h3>Debug</h3>
+          <h3>Debugger</h3>
           <span v-if="debugState.current_node_id">{{ debugState.current_node_id }} · {{ debugState.current_node_kind }}</span>
         </div>
       </div>
       <DebugControlBar />
       <WatchExpressions />
-      <div class="debug-grid">
-        <JsonEditor :title="'Input'" :model-value="inputJsonText" readonly />
-        <JsonEditor :title="'Last Output'" :model-value="lastOutputJsonText" readonly />
-      </div>
-      <JsonDiff :before="debugState.input_json ?? null" :after="debugState.last_output_json ?? null" />
-      <JsonEditor :title="'Context'" :model-value="contextJsonText" readonly />
+      <details class="debug-json-group" open>
+        <summary>State snapshots</summary>
+        <div class="debug-grid">
+          <JsonEditor :title="'Input'" :model-value="inputJsonText" readonly />
+          <JsonEditor :title="'Last Output'" :model-value="lastOutputJsonText" readonly />
+        </div>
+      </details>
+      <JsonDiff title="Input/output diff" :before="debugState.input_json ?? null" :after="debugState.last_output_json ?? null" />
+      <details class="debug-json-group">
+        <summary>Context JSON</summary>
+        <JsonEditor class="debug-context-editor" :title="'Context'" :model-value="contextJsonText" readonly />
+      </details>
     </div>
 
-    <h3>Steps</h3>
+    <h3 class="run-detail-section-title">Steps</h3>
     <div class="table-scroll compact-scroll">
       <table class="compact">
         <thead>
@@ -78,7 +84,7 @@
     </div>
 
     <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
-      <h3>Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
+      <h3 class="run-detail-section-title">Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
         <div v-for="field in resultFields" :key="field.name" class="result-field-row">
           <div class="result-field-key">
@@ -95,7 +101,7 @@
         </details>
       </div>
       <pre v-else class="output workflow-detail-result">{{ selectedNodeResultText }}</pre>
-      <h3>Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
+      <h3 class="run-detail-section-title">Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <pre class="output workflow-detail-logs">{{ workflows.workflowNodeDetailExtra || 'No logs for this step' }}</pre>
     </div>
   </div>
@@ -191,13 +197,18 @@ function formatResultValue(value: any): string {
 </script>
 
 <style scoped>
+.inspector-section {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .workflow-run-meta {
   font-size: 12px;
   color: #66717e;
-  margin-bottom: 12px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 10px;
 }
 .run-message {
   padding: 4px 8px;
@@ -207,17 +218,17 @@ function formatResultValue(value: any): string {
   color: #c53030;
 }
 .node-logs-section {
-  margin-top: 16px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
 }
 .debug-panel {
   border: 1px solid #d8e2ec;
   border-radius: 6px;
-  padding: 10px;
-  margin-bottom: 14px;
+  padding: 8px;
+  margin-bottom: 10px;
   background: #fbfcfe;
 }
 .debug-panel-header {
@@ -225,7 +236,7 @@ function formatResultValue(value: any): string {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .debug-panel-header h3 {
   margin: 0;
@@ -238,7 +249,22 @@ function formatResultValue(value: any): string {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  margin-top: 6px;
+}
+.debug-json-group {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
   margin-bottom: 8px;
+  overflow: hidden;
+  padding: 6px 8px;
+}
+.debug-json-group summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  user-select: none;
 }
 .debug-panel h4 {
   margin: 0 0 4px;
@@ -246,7 +272,14 @@ function formatResultValue(value: any): string {
   color: #66717e;
 }
 .debug-panel :deep(.json-editor-container) {
-  height: 180px;
+  height: 132px;
+}
+.debug-context-editor :deep(.json-editor-container) {
+  height: 170px;
+  margin-top: 6px;
+}
+.run-detail-section-title {
+  margin-top: 2px;
 }
 .run-summary-card {
   border: 1px solid #d8e2ec;
@@ -307,11 +340,12 @@ function formatResultValue(value: any): string {
   background: #fde68a;
 }
 .workflow-detail-logs {
-  flex: 1;
+  flex: 0 0 auto;
+  max-height: 220px;
   font-size: 11px;
 }
 .workflow-detail-result {
-  max-height: 160px;
+  max-height: 140px;
   font-size: 11px;
 }
 .result-fields {
@@ -388,5 +422,11 @@ function formatResultValue(value: any): string {
   margin: 0;
   border-top: 1px solid #e2e8f0;
   border-radius: 0;
+}
+
+@media (max-width: 920px) {
+  .debug-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

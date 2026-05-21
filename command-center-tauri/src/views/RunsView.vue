@@ -14,18 +14,25 @@
         </div>
       </template>
       <template #second>
-        <SplitPane class="runs-detail-split" storage-key="command-center.runs.detail-split" :initial-first-pct="58" :min-first="420" :min-second="360">
+        <SplitPane
+          class="runs-detail-split"
+          orientation="vertical"
+          storage-key="command-center.runs.detail-vertical-split"
+          :initial-first-pct="55"
+          :min-first="260"
+          :min-second="320"
+        >
           <template #first>
             <WorkflowRunGraph />
           </template>
           <template #second>
             <div class="panel details runs-detail-panel">
               <WorkflowRunDetail />
-              <h2>Structured Result</h2>
-              <pre class="output">{{ selectedOutput }}</pre>
-              <h2>Run Output Chunks</h2>
+              <h2 class="runs-detail-heading">Structured Result</h2>
+              <pre class="output runs-detail-output">{{ selectedOutput }}</pre>
+              <h2 class="runs-detail-heading">Run Output Chunks</h2>
               <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
-              <h2>Selected Node Artifacts</h2>
+              <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
               <div class="table-scroll compact-scroll">
                 <table>
                   <thead>

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use runinator_models::{
     errors::{RuntimeError, SendableError},
@@ -53,9 +53,23 @@ pub fn resolve_provider(
 pub fn provider_metadata(libraries: &HashMap<String, Plugin>) -> Vec<ProviderMetadata> {
     let mut providers = get_providers()
         .into_iter()
-        .map(|provider| provider.metadata())
-        .collect::<Vec<_>>();
-    providers.extend(libraries.values().map(|plugin| plugin.metadata()));
-    providers.sort_by(|left, right| left.name.cmp(&right.name));
-    providers
+        .map(|provider| {
+            let metadata = provider.metadata();
+            (metadata.name.clone(), metadata)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for plugin in libraries.values() {
+        if providers.contains_key(&plugin.name) {
+            continue;
+        }
+        let metadata = plugin.metadata();
+        providers.entry(metadata.name.clone()).or_insert(metadata);
+    }
+
+    providers.into_values().collect()
 }
+
+#[cfg(test)]
+#[path = "provider_repository/tests.rs"]
+mod tests;

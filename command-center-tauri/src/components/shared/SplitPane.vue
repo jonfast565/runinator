@@ -1,9 +1,9 @@
 <template>
-  <div ref="container" class="split-pane" :style="splitStyle">
+  <div ref="container" class="split-pane" :class="orientationClass" :style="splitStyle">
     <div class="split-section split-section-first">
       <slot name="first" />
     </div>
-    <div class="split-handle" role="separator" aria-orientation="vertical" tabindex="0" @pointerdown="startDrag" @keydown="onHandleKeydown" />
+    <div class="split-handle" role="separator" :aria-orientation="separatorOrientation" tabindex="0" @pointerdown="startDrag" @keydown="onHandleKeydown" />
     <div class="split-section split-section-second">
       <slot name="second" />
     </div>
@@ -15,12 +15,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{
+    orientation?: "horizontal" | "vertical";
     initialFirstPct?: number;
     minFirst?: number;
     minSecond?: number;
     storageKey?: string;
   }>(),
   {
+    orientation: "horizontal",
     initialFirstPct: 50,
     minFirst: 260,
     minSecond: 320,
@@ -29,18 +31,21 @@ const props = withDefaults(
 );
 
 const container = ref<HTMLElement | null>(null);
-const firstWidth = ref(0);
+const firstSize = ref(0);
 let observer: ResizeObserver | undefined;
 
-const splitStyle = computed(() => ({
-  gridTemplateColumns: `${firstWidth.value}px 10px minmax(${props.minSecond}px, 1fr)`
-}));
+const orientationClass = computed(() => `split-pane-${props.orientation}`);
+const separatorOrientation = computed(() => (props.orientation === "vertical" ? "horizontal" : "vertical"));
+const splitStyle = computed(() => props.orientation === "vertical"
+  ? { gridTemplateRows: `${firstSize.value}px 10px minmax(${props.minSecond}px, 1fr)` }
+  : { gridTemplateColumns: `${firstSize.value}px 10px minmax(${props.minSecond}px, 1fr)` }
+);
 
 onMounted(() => {
   const saved = props.storageKey ? Number(window.localStorage.getItem(props.storageKey)) : 0;
-  firstWidth.value = saved > 0 ? saved : initialWidth();
+  firstSize.value = saved > 0 ? saved : initialSize();
   observer = new ResizeObserver(() => {
-    firstWidth.value = clampWidth(firstWidth.value || initialWidth());
+    firstSize.value = clampSize(firstSize.value || initialSize());
   });
   if (container.value) observer.observe(container.value);
 });
@@ -61,7 +66,7 @@ function startDrag(event: PointerEvent) {
 function onPointerMove(event: PointerEvent) {
   const rect = container.value?.getBoundingClientRect();
   if (!rect) return;
-  setFirstWidth(event.clientX - rect.left);
+  setFirstSize(props.orientation === "vertical" ? event.clientY - rect.top : event.clientX - rect.left);
 }
 
 function stopDrag() {
@@ -71,30 +76,43 @@ function stopDrag() {
 
 function onHandleKeydown(event: KeyboardEvent) {
   const step = event.shiftKey ? 60 : 20;
-  if (event.key === "ArrowLeft") {
+  if (event.key === decrementKey()) {
     event.preventDefault();
-    setFirstWidth(firstWidth.value - step);
+    setFirstSize(firstSize.value - step);
   }
-  if (event.key === "ArrowRight") {
+  if (event.key === incrementKey()) {
     event.preventDefault();
-    setFirstWidth(firstWidth.value + step);
+    setFirstSize(firstSize.value + step);
   }
 }
 
-function setFirstWidth(width: number) {
-  firstWidth.value = clampWidth(width);
-  if (props.storageKey) window.localStorage.setItem(props.storageKey, String(firstWidth.value));
+function setFirstSize(size: number) {
+  firstSize.value = clampSize(size);
+  if (props.storageKey) window.localStorage.setItem(props.storageKey, String(firstSize.value));
 }
 
-function initialWidth(): number {
-  const width = container.value?.clientWidth ?? 1000;
-  return clampWidth((width * props.initialFirstPct) / 100);
+function initialSize(): number {
+  const total = totalSize() || 1000;
+  return clampSize((total * props.initialFirstPct) / 100);
 }
 
-function clampWidth(width: number): number {
-  const total = container.value?.clientWidth ?? 0;
-  if (total <= 0) return width;
+function clampSize(size: number): number {
+  const total = totalSize();
+  if (total <= 0) return size;
   const max = Math.max(props.minFirst, total - props.minSecond - 10);
-  return Math.min(max, Math.max(props.minFirst, width));
+  return Math.min(max, Math.max(props.minFirst, size));
+}
+
+function totalSize(): number {
+  if (!container.value) return 0;
+  return props.orientation === "vertical" ? container.value.clientHeight : container.value.clientWidth;
+}
+
+function decrementKey(): string {
+  return props.orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+}
+
+function incrementKey(): string {
+  return props.orientation === "vertical" ? "ArrowDown" : "ArrowRight";
 }
 </script>
