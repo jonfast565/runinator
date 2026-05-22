@@ -1,8 +1,8 @@
 pub mod api;
 pub mod config;
 mod context;
-pub mod debug;
 mod db_extensions;
+pub mod debug;
 mod iteration;
 mod nodes;
 mod worker_comm;

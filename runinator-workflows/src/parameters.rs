@@ -1,0 +1,368 @@
+use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRef};
+use serde_json::{Map, Value};
+
+use crate::conditions::{evaluate_condition, validate_condition};
+use crate::errors::WorkflowValidationError;
+use crate::expressions::parse_value_ref;
+use crate::types::{
+    BranchPolicy, EmitParameters, JoinParameters, MapParameters, ParallelParameters,
+    RaceParameters, SwitchCase, SwitchParameters, TryParameters, WorkflowValueRef,
+};
+
+pub fn parse_switch_parameters(
+    node: &WorkflowNode,
+) -> Result<SwitchParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let value = object
+        .get("value")
+        .cloned()
+        .ok_or_else(|| invalid_parameters(node, "switch.value is required"))?;
+    let cases = object
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_parameters(node, "switch.cases must be an array"))?;
+    let cases = cases
+        .iter()
+        .map(|case| {
+            let case_object = case
+                .as_object()
+                .ok_or_else(|| invalid_parameters(node, "switch case must be an object"))?;
+            let target = required_node_ref(case_object.get("target"), node, "switch case target")?;
+            let condition = if let Some(when) = case_object.get("when") {
+                when.clone()
+            } else {
+                let mut condition = Map::new();
+                condition.insert("value".into(), value.clone());
+                for key in ["equals", "not_equals", "exists"] {
+                    if let Some(expected) = case_object.get(key) {
+                        condition.insert(key.into(), expected.clone());
+                    }
+                }
+                if condition.len() == 1 {
+                    return Err(invalid_parameters(
+                        node,
+                        "switch case requires when, equals, not_equals, or exists",
+                    ));
+                }
+                Value::Object(condition)
+            };
+            Ok(SwitchCase { target, condition })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let default = object
+        .get("default")
+        .map(|value| parse_node_ref_value(value, Some(node), "switch.default"))
+        .transpose()?;
+    Ok(SwitchParameters {
+        value,
+        cases,
+        default,
+    })
+}
+
+pub fn parse_parallel_parameters(
+    node: &WorkflowNode,
+) -> Result<ParallelParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let branches = node_ref_array(object.get("branches"), node, "parallel.branches")?;
+    if branches.is_empty() {
+        return Err(invalid_parameters(
+            node,
+            "parallel.branches cannot be empty",
+        ));
+    }
+    Ok(ParallelParameters { branches })
+}
+
+pub fn parse_join_parameters(
+    node: &WorkflowNode,
+) -> Result<JoinParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let wait_for = node_ref_array(object.get("wait_for"), node, "join.wait_for")?;
+    if wait_for.is_empty() {
+        return Err(invalid_parameters(node, "join.wait_for cannot be empty"));
+    }
+    let mode = BranchPolicy::parse(object.get("mode"), BranchPolicy::All)
+        .map_err(|message| invalid_parameters(node, message))?;
+    Ok(JoinParameters { wait_for, mode })
+}
+
+pub fn parse_try_parameters(node: &WorkflowNode) -> Result<TryParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let body = required_node_ref(object.get("body"), node, "try.body")?;
+    let catch = optional_node_ref(object.get("catch"), node, "try.catch")?;
+    let finally = optional_node_ref(object.get("finally"), node, "try.finally")?;
+    Ok(TryParameters {
+        body,
+        catch,
+        finally,
+    })
+}
+
+pub fn parse_map_parameters(node: &WorkflowNode) -> Result<MapParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let items = object
+        .get("items")
+        .cloned()
+        .ok_or_else(|| invalid_parameters(node, "map.items is required"))?;
+    let target = required_node_ref(object.get("target"), node, "map.target")?;
+    let concurrency = object.get("concurrency").and_then(Value::as_i64);
+    if concurrency.is_some_and(|value| value <= 0) {
+        return Err(invalid_parameters(
+            node,
+            "map.concurrency must be greater than zero",
+        ));
+    }
+    Ok(MapParameters {
+        items,
+        target,
+        concurrency,
+    })
+}
+
+pub fn parse_race_parameters(
+    node: &WorkflowNode,
+) -> Result<RaceParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let branches = node_ref_array(object.get("branches"), node, "race.branches")?;
+    if branches.is_empty() {
+        return Err(invalid_parameters(node, "race.branches cannot be empty"));
+    }
+    let winner = BranchPolicy::parse(object.get("winner"), BranchPolicy::FirstSuccess)
+        .map_err(|message| invalid_parameters(node, message))?;
+    Ok(RaceParameters { branches, winner })
+}
+
+pub fn parse_emit_parameters(
+    node: &WorkflowNode,
+) -> Result<EmitParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let event_type = optional_string(object.get("event_type"));
+    let data = object.get("data").cloned().unwrap_or(Value::Null);
+    Ok(EmitParameters { event_type, data })
+}
+
+pub fn evaluate_switch(
+    switch: &SwitchParameters,
+    context: &Value,
+) -> Result<Option<String>, WorkflowValidationError> {
+    for case in &switch.cases {
+        if evaluate_condition(&case.condition, context)? {
+            return Ok(Some(case.target.as_str().to_string()));
+        }
+    }
+    Ok(switch
+        .default
+        .as_ref()
+        .map(|target| target.as_str().to_string()))
+}
+
+pub(crate) fn validate_control_node_parameters(
+    node: &WorkflowNode,
+) -> Result<(), WorkflowValidationError> {
+    match node.kind {
+        WorkflowNodeKind::Switch => {
+            let params = parse_switch_parameters(node)?;
+            for case in params.cases {
+                validate_condition(&case.condition)?;
+            }
+        }
+        WorkflowNodeKind::Parallel => {
+            parse_parallel_parameters(node)?;
+        }
+        WorkflowNodeKind::Join => {
+            parse_join_parameters(node)?;
+        }
+        WorkflowNodeKind::Try => {
+            parse_try_parameters(node)?;
+        }
+        WorkflowNodeKind::Map => {
+            parse_map_parameters(node)?;
+        }
+        WorkflowNodeKind::Race => {
+            parse_race_parameters(node)?;
+        }
+        WorkflowNodeKind::Emit => {
+            parse_emit_parameters(node)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub(crate) fn parameter_targets(
+    node: &WorkflowNode,
+) -> Result<Vec<WorkflowNodeRef>, WorkflowValidationError> {
+    let mut targets = Vec::new();
+    match node.kind {
+        WorkflowNodeKind::Switch => {
+            let params = parse_switch_parameters(node)?;
+            targets.extend(params.cases.into_iter().map(|case| case.target));
+            targets.extend(params.default);
+        }
+        WorkflowNodeKind::Parallel => {
+            targets.extend(parse_parallel_parameters(node)?.branches);
+        }
+        WorkflowNodeKind::Join => {
+            targets.extend(parse_join_parameters(node)?.wait_for);
+        }
+        WorkflowNodeKind::Try => {
+            let params = parse_try_parameters(node)?;
+            targets.push(params.body);
+            targets.extend(params.catch);
+            targets.extend(params.finally);
+        }
+        WorkflowNodeKind::Map => {
+            targets.push(parse_map_parameters(node)?.target);
+        }
+        WorkflowNodeKind::Race => {
+            targets.extend(parse_race_parameters(node)?.branches);
+        }
+        _ => {}
+    }
+    Ok(targets)
+}
+
+pub(crate) fn parameter_object(
+    node: &WorkflowNode,
+) -> Result<&Map<String, Value>, WorkflowValidationError> {
+    node.parameters
+        .as_object()
+        .ok_or_else(|| invalid_parameters(node, "parameters must be an object"))
+}
+
+pub(crate) fn optional_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub(crate) fn required_node_ref(
+    value: Option<&Value>,
+    node: &WorkflowNode,
+    label: &str,
+) -> Result<WorkflowNodeRef, WorkflowValidationError> {
+    let value = value.ok_or_else(|| invalid_parameters(node, format!("{label} is required")))?;
+    parse_node_ref_value(value, Some(node), label)
+}
+
+pub(crate) fn optional_node_ref(
+    value: Option<&Value>,
+    node: &WorkflowNode,
+    label: &str,
+) -> Result<Option<WorkflowNodeRef>, WorkflowValidationError> {
+    value
+        .map(|value| parse_node_ref_value(value, Some(node), label))
+        .transpose()
+}
+
+pub(crate) fn parse_node_ref_value(
+    value: &Value,
+    node: Option<&WorkflowNode>,
+    label: &str,
+) -> Result<WorkflowNodeRef, WorkflowValidationError> {
+    let invalid = || {
+        if let Some(node) = node {
+            invalid_parameters(
+                node,
+                format!("{label} must be {{ \"$node\": \"node_id\" }}"),
+            )
+        } else {
+            WorkflowValidationError::InvalidValueRef(value.to_string())
+        }
+    };
+    let object = value.as_object().ok_or_else(invalid)?;
+    if object.len() != 1 || !object.contains_key("$node") {
+        return Err(invalid());
+    }
+    let target = object
+        .get("$node")
+        .and_then(Value::as_str)
+        .filter(|target| !target.is_empty())
+        .ok_or_else(invalid)?;
+    Ok(WorkflowNodeRef::new(target))
+}
+
+pub(crate) fn node_ref_array(
+    value: Option<&Value>,
+    node: &WorkflowNode,
+    label: &str,
+) -> Result<Vec<WorkflowNodeRef>, WorkflowValidationError> {
+    let items = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_parameters(node, format!("{label} must be an array")))?;
+    items
+        .iter()
+        .map(|item| parse_node_ref_value(item, Some(node), label))
+        .collect()
+}
+
+pub(crate) fn invalid_parameters(
+    node: &WorkflowNode,
+    message: impl Into<String>,
+) -> WorkflowValidationError {
+    WorkflowValidationError::InvalidNodeParameters {
+        node: node.id.as_str().to_string(),
+        message: message.into(),
+    }
+}
+
+pub(crate) fn value_refs(
+    node: &WorkflowNode,
+) -> Result<Vec<WorkflowValueRef>, WorkflowValidationError> {
+    let mut refs = Vec::new();
+    collect_value_refs(&node.parameters, &mut refs)?;
+    collect_value_refs(&node.wait, &mut refs)?;
+    collect_value_refs(&node.condition, &mut refs)?;
+    for branch in &node.transitions.branches {
+        collect_value_refs(&branch.when, &mut refs)?;
+    }
+    Ok(refs)
+}
+
+pub(crate) fn collect_value_refs(
+    value: &Value,
+    refs: &mut Vec<WorkflowValueRef>,
+) -> Result<(), WorkflowValidationError> {
+    match value {
+        Value::Object(map) if map.contains_key("$value") => {
+            return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
+        }
+        Value::Object(map)
+            if map.contains_key("$ref")
+                || map.contains_key("$concat")
+                || map.contains_key("$literal")
+                || map.contains_key("$node") =>
+        {
+            if map.len() != 1 {
+                return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
+            }
+            if let Some(reference) = map.get("$ref") {
+                refs.push(parse_value_ref(reference)?);
+            } else if let Some(items) = map.get("$concat") {
+                let items = items
+                    .as_array()
+                    .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+                for item in items {
+                    collect_value_refs(item, refs)?;
+                }
+            }
+        }
+        Value::Object(map) => {
+            for nested in map.values() {
+                collect_value_refs(nested, refs)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_value_refs(item, refs)?;
+            }
+        }
+        Value::String(raw) if raw.contains("{{") || raw.contains("}}") => {
+            return Err(WorkflowValidationError::InvalidValueRef(raw.clone()));
+        }
+        _ => {}
+    }
+    Ok(())
+}

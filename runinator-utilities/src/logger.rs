@@ -39,7 +39,11 @@ fn open_log_output() -> std::io::Result<fern::Output> {
         if let Some(parent) = path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
                 had_failure = true;
-                error!("Failed to create log directory at {}: {}", parent.display(), err);
+                error!(
+                    "Failed to create log directory at {}: {}",
+                    parent.display(),
+                    err
+                );
                 last_error = Some(err);
                 continue;
             }

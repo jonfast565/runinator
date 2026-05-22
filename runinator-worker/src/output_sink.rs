@@ -43,8 +43,7 @@ impl RunOutputSink {
     }
 
     pub async fn persist_result(&self, result: &TaskExecutionResult) {
-        // We only persist artifacts because chunks are typically streamed via events.jsonl
-        // If we also persisted chunks here, they would be duplicated for most providers.
+        // only persist artifacts; chunks are streamed via events.jsonl and would otherwise duplicate.
         for artifact in &result.artifacts {
             if let Err(err) = self
                 .api_client

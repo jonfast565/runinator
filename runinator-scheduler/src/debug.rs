@@ -121,10 +121,7 @@ pub fn merge_user_debug_patch(state: &mut Value, patch: &Value) {
         if osb.is_null() {
             debug.insert("one_shot_breakpoint".into(), Value::Null);
         } else if let Some(s) = osb.as_str() {
-            debug.insert(
-                "one_shot_breakpoint".into(),
-                Value::String(s.to_string()),
-            );
+            debug.insert("one_shot_breakpoint".into(), Value::String(s.to_string()));
         }
     }
 }

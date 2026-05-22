@@ -1,3 +1,6 @@
+mod helpers;
+mod params;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,68 +13,19 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[derive(Deserialize)]
-struct GitHubBaseParams {
-    token: String,
-    owner: String,
-    repo: String,
-}
+use helpers::{
+    auth_param, checks_summary_response, first_pull_number, json_response, json_results,
+    parse_params, repo_owner_param, repo_param,
+};
+use params::{
+    CreatePrParams, DispatchParams, GitHubBaseParams, IssueNumberParams, MergePrParams,
+    PrNumberParams, RefParams,
+};
 
-#[derive(Deserialize)]
-struct CreatePrParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    title: String,
-    head: String,
-    base_branch: Option<String>,
-    body: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PrNumberParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    pull_number: String,
-}
-
-#[derive(Deserialize)]
-struct MergePrParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    pull_number: String,
-    merge_method: Option<String>,
-    commit_title: Option<String>,
-    commit_message: Option<String>,
-    sha: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct IssueNumberParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    issue_number: String,
-}
-
-#[derive(Deserialize)]
-struct RefParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    #[serde(rename = "ref")]
-    git_ref: String,
-}
-
-#[derive(Deserialize)]
-struct DispatchParams {
-    #[serde(flatten)]
-    base: GitHubBaseParams,
-    workflow_id: String,
-    #[serde(rename = "ref")]
-    git_ref: String,
-    inputs: Option<Value>,
-}
+#[cfg(test)]
+pub(crate) use helpers::summarize_check_runs;
 
 #[derive(Clone)]
 pub struct GitHubProvider;
@@ -341,150 +295,6 @@ impl Provider for GitHubProvider {
         };
         json_response("github", response)
     }
-}
-
-fn parse_params<T: serde::de::DeserializeOwned>(
-    request: &ProviderExecutionRequest,
-) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
-        Box::new(RuntimeError::new(
-            "github.invalid_params".into(),
-            e.to_string(),
-        )) as SendableError
-    })
-}
-
-fn first_pull_number(response: reqwest::blocking::Response) -> Result<Option<i64>, SendableError> {
-    let text = response.text()?;
-    let value: Value = serde_json::from_str(&text).map_err(|err| {
-        RuntimeError::new(
-            "github.invalid_json".into(),
-            format!("GitHub pull request list response was not JSON: {err}"),
-        )
-    })?;
-    Ok(value
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("number"))
-        .and_then(Value::as_i64))
-}
-
-fn checks_summary_response(
-    response: reqwest::blocking::Response,
-) -> Result<TaskExecutionResult, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            "github.http_error".into(),
-            format!("HTTP {status}: {text}"),
-        )));
-    }
-    let raw: Value = serde_json::from_str(&text)
-        .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }));
-    let summary = summarize_check_runs(raw);
-    Ok(TaskExecutionResult {
-        message: Some("github checks summary completed".into()),
-        output_json: Some(summary),
-        chunks: Vec::new(),
-        artifacts: Vec::new(),
-    })
-}
-
-pub(crate) fn summarize_check_runs(raw: Value) -> Value {
-    let mut passed = 0;
-    let mut pending = 0;
-    let mut failed = 0;
-    let check_runs = raw
-        .get("check_runs")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    for run in &check_runs {
-        let status = run
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let conclusion = run
-            .get("conclusion")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if matches!(
-            conclusion,
-            "failure" | "timed_out" | "cancelled" | "action_required"
-        ) {
-            failed += 1;
-        } else if status != "completed" || conclusion.is_empty() {
-            pending += 1;
-        } else if matches!(conclusion, "success" | "neutral" | "skipped") {
-            passed += 1;
-        } else {
-            failed += 1;
-        }
-    }
-
-    let status = if failed > 0 {
-        "failed"
-    } else if pending > 0 || check_runs.is_empty() {
-        "pending"
-    } else {
-        "passed"
-    };
-
-    json!({
-        "status": status,
-        "passed": passed,
-        "pending": pending,
-        "failed": failed,
-        "total": check_runs.len(),
-        "raw": raw
-    })
-}
-
-fn json_response(
-    provider: &str,
-    response: reqwest::blocking::Response,
-) -> Result<TaskExecutionResult, SendableError> {
-    let status = response.status();
-    let text = response.text()?;
-    if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            format!("{provider}.http_error"),
-            format!("HTTP {status}: {text}"),
-        )));
-    }
-    let output = if text.trim().is_empty() {
-        json!({ "status": status.as_u16() })
-    } else {
-        serde_json::from_str(&text)
-            .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }))
-    };
-    Ok(TaskExecutionResult {
-        message: Some(format!("{provider} action completed")),
-        output_json: Some(output),
-        chunks: Vec::new(),
-        artifacts: Vec::new(),
-    })
-}
-
-fn auth_param() -> ParameterMetadata {
-    ParameterMetadata::required("token", ParameterValueType::String).secret()
-}
-
-fn repo_owner_param() -> ParameterMetadata {
-    ParameterMetadata::required("owner", ParameterValueType::String)
-}
-
-fn repo_param() -> ParameterMetadata {
-    ParameterMetadata::required("repo", ParameterValueType::String)
-}
-
-fn json_results() -> Vec<ResultMetadata> {
-    vec![
-        ResultMetadata::new("response", ParameterValueType::Json)
-            .with_description("Raw GitHub API response body."),
-    ]
 }
 
 #[cfg(test)]

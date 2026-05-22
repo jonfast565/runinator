@@ -186,11 +186,11 @@ fn evaluates_conditions() {
         "steps": { "check": { "output": { "status": "ok", "count": 10 } } }
     });
 
-    // Simple equality
+    // simple equality.
     let cond1 = serde_json::json!({ "value": { "$ref": { "node": "check", "output": ["status"] } }, "equals": "ok" });
     assert!(evaluate_condition(&cond1, &context).unwrap());
 
-    // Logical ALL (AND)
+    // logical all (and).
     let cond3 = serde_json::json!({
         "all": [
             { "value": { "$ref": { "input": ["env"] } }, "equals": "prod" },
@@ -199,7 +199,7 @@ fn evaluates_conditions() {
     });
     assert!(evaluate_condition(&cond3, &context).unwrap());
 
-    // Logical ANY (OR)
+    // logical any (or).
     let cond4 = serde_json::json!({
         "any": [
             { "value": { "$ref": { "input": ["env"] } }, "equals": "dev" },
@@ -473,7 +473,7 @@ fn evaluates_switch_cases_and_default() {
 
 #[test]
 fn test_workflow_state_machine_logic_integration() {
-    // 1. Define a simple state-machine workflow
+    // 1. define a simple state-machine workflow.
     let definition = serde_json::json!({
         "start": "start",
         "nodes": [
@@ -517,13 +517,13 @@ fn test_workflow_state_machine_logic_integration() {
         updated_at: None,
     };
 
-    // 2. Validate the workflow
+    // 2. validate the workflow.
     let (start, nodes) = validate_workflow(&wf).expect("Workflow should be valid");
     assert_eq!(start, "start");
     let node_map: HashMap<String, &WorkflowNode> =
         nodes.iter().map(|n| (n.id.clone(), n)).collect();
 
-    // 3. Simulate execution - Step 1 succeeds
+    // 3. simulate execution - step 1 succeeds.
     let step1_node = node_map.get("step1").unwrap();
     let next = next_transition(
         step1_node,
@@ -533,7 +533,7 @@ fn test_workflow_state_machine_logic_integration() {
     .unwrap();
     assert_eq!(next.unwrap(), "step2");
 
-    // 4. Simulate Step 2 - Condition evaluation
+    // 4. simulate step 2 - condition evaluation.
     let outputs = {
         let mut m = HashMap::new();
         m.insert("step1".to_string(), serde_json::json!({ "ok": true }));
@@ -545,7 +545,7 @@ fn test_workflow_state_machine_logic_integration() {
     let next = next_transition(step2_node, WorkflowStatus::Running, &context).unwrap();
     assert_eq!(next.unwrap(), "success");
 
-    // 5. Simulate Step 2 - Condition failure
+    // 5. simulate step 2 - condition failure.
     let outputs_fail = {
         let mut m = HashMap::new();
         m.insert("step1".to_string(), serde_json::json!({ "ok": false }));
@@ -575,9 +575,11 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
     assert_eq!(definition["start"], "start");
     assert_eq!(definition["ui"]["layout"]["nodes"]["build"]["x"], 10);
     let (_, nodes) = validate_workflow(&normalized).expect("normalized workflow is valid");
-    assert!(nodes
-        .iter()
-        .any(|node| node.kind == WorkflowNodeKind::Start));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.kind == WorkflowNodeKind::Start)
+    );
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::End));
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::Fail));
     let build = nodes.iter().find(|node| node.id == "build").unwrap();

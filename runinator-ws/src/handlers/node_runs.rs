@@ -1,0 +1,137 @@
+use std::sync::Arc;
+
+use axum::{
+    Extension, Json,
+    extract::{Path, Query},
+    http::StatusCode,
+};
+use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::runs::{NewRunArtifact, NewRunChunk};
+
+use crate::events::{EventSender, emit_workflow_node_run, emit_workflow_run};
+use crate::handlers::runs::ChunkQuery;
+use crate::models::{ApiResponse, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest};
+use crate::repository;
+use crate::responses::api_error;
+
+pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+    Json(request): Json<WorkflowNodeRunRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::create_workflow_node_run(
+        db.as_ref(),
+        workflow_run_id,
+        request.node_id,
+        request.parameters,
+    )
+    .await
+    {
+        Ok(step) => {
+            emit_workflow_run(&events, workflow_run_id);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRun(step)),
+            )
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(request): Json<WorkflowNodeRunStatusRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::update_workflow_node_run(
+        db.as_ref(),
+        node_run_id,
+        request.status,
+        request.attempt,
+        request.parameters,
+        request.output_json,
+        request.state,
+        request.transition_reason,
+        request.message,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(node_run_id): Path<i64>,
+    Query(query): Query<ChunkQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_node_run_chunks(
+        db.as_ref(),
+        node_run_id,
+        query.cursor,
+        query.limit.unwrap_or(100),
+    )
+    .await
+    {
+        Ok(chunks) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowNodeRunChunks(chunks)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(chunk): Json<NewRunChunk>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
+        Ok(chunk) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRunChunks(vec![chunk])),
+            )
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(node_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_workflow_node_run_artifacts(db.as_ref(), node_run_id).await {
+        Ok(artifacts) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowNodeRunArtifacts(artifacts)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(artifact): Json<NewRunArtifact>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {
+        Ok(artifact) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::WorkflowNodeRunArtifacts(vec![artifact])),
+            )
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}

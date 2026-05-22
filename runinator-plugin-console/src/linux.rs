@@ -7,7 +7,7 @@ pub fn kill_console_other(child: &mut Child) {
 
     let pid = child.id() as i32;
 
-    // Try to emulate the CTRL+C behavior on Linux by sending SIGINT first.
+    // emulate ctrl+c behavior on linux by sending sigint first.
     unsafe {
         if kill(pid, SIGINT) != 0 {
             let err = std::io::Error::last_os_error();

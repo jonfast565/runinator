@@ -5,8 +5,7 @@ use serde_json::json;
 
 use super::{
     WorkflowBundleImporter, build_provider_bundle, config::Config, load_import_file,
-    load_secret_bundle,
-    sync_workflows_if_changed, unwrap_workflow_pack,
+    load_secret_bundle, sync_workflows_if_changed, unwrap_workflow_pack,
 };
 use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
 use runinator_models::workflows::WorkflowBundle;

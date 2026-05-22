@@ -281,10 +281,8 @@ impl DatabaseImpl for PostgresDb {
             "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_snapshot TEXT NULL;",
         )
         .await?;
-        self.execute_script(
-            "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS name TEXT NULL;",
-        )
-        .await?;
+        self.execute_script("ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS name TEXT NULL;")
+            .await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
@@ -1115,12 +1113,10 @@ impl DatabaseImpl for PostgresDb {
     }
 
     async fn mark_all_notifications_read(&self) -> Result<u64, SendableError> {
-        let result = sqlx::query(
-            "UPDATE notifications SET read_at = $1 WHERE read_at IS NULL",
-        )
-        .bind(Utc::now().timestamp())
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("UPDATE notifications SET read_at = $1 WHERE read_at IS NULL")
+            .bind(Utc::now().timestamp())
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 }

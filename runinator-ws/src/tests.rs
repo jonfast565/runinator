@@ -265,7 +265,10 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
         updated_at: None,
     };
     let result = crate::repository::ancestors_in_snapshot(&snapshot, "inside");
-    assert!(result.is_err(), "expected refusal for control-flow ancestor");
+    assert!(
+        result.is_err(),
+        "expected refusal for control-flow ancestor"
+    );
     let message = result.unwrap_err().to_string();
     assert!(
         message.contains("control-flow") || message.contains("Loop") || message.contains("safely"),

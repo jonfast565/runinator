@@ -339,13 +339,11 @@ pub async fn process_config_node(
     let resolved = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
 
-    let new_name = resolved
-        .get("name")
-        .and_then(|value| match value {
-            Value::Null => None,
-            Value::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
-            other => Some(other.to_string()),
-        });
+    let new_name = resolved.get("name").and_then(|value| match value {
+        Value::Null => None,
+        Value::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        other => Some(other.to_string()),
+    });
     let metadata_patch = resolved.get("metadata").cloned();
 
     if new_name.is_some() {
@@ -361,7 +359,7 @@ pub async fn process_config_node(
         summary_state.insert("metadata".into(), metadata.clone());
     }
 
-    // Merge metadata into the run's state.run_metadata bag.
+    // merge metadata into the run's state.run_metadata bag.
     if let Some(metadata) = metadata_patch {
         let mut state = workflow_run.state.clone();
         if !state.is_object() {

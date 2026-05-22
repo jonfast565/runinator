@@ -124,7 +124,7 @@ impl PostgresConnector {
                 .map_err(to_sendable)?
                 .unwrap_or_default(),
             _ => {
-                // Attempt a generic string conversion; fall back to an unsupported marker.
+                // attempt a generic string conversion; fall back to an unsupported marker.
                 match row.try_get::<usize, Option<String>>(idx) {
                     Ok(value) => value.unwrap_or_default(),
                     Err(_) => format!("<unsupported:{}>", ty.name()),

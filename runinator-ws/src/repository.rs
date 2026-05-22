@@ -98,7 +98,13 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
 
     let safe_name: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let safe_name = if safe_name.is_empty() {
         "artifact".to_string()
@@ -772,7 +778,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         "replay": { "source_run_id": source.id }
     });
 
-    // Phase D: support resuming from a specific step.
+    // phase d: support resuming from a specific step.
     if let Some(target_node_id) = from_step_id.as_deref() {
         let ancestor_ids = ancestors_in_snapshot(&snapshot, target_node_id)?;
         state["replay"]["from_step_id"] = serde_json::Value::String(target_node_id.into());
@@ -876,7 +882,7 @@ pub fn ancestors_in_snapshot(
         )));
     }
 
-    // Build reverse adjacency: for each node, the set of nodes that transition into it.
+    // build reverse adjacency: for each node, the set of nodes that transition into it.
     let mut reverse: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let by_id: BTreeMap<&str, &WorkflowNode> =
         nodes.iter().map(|node| (node.id.as_str(), node)).collect();
@@ -923,12 +929,11 @@ pub fn ancestors_in_snapshot(
         }
     }
 
-    // Topologically sort the ancestor set so each node only depends on
-    // earlier-seeded outputs.
+    // topologically sort the ancestor set so each node only depends on earlier-seeded outputs.
     let mut order = Vec::new();
     let mut remaining: BTreeSet<String> = visited.clone();
     while !remaining.is_empty() {
-        // Pick any node in `remaining` whose ancestors are all already placed.
+        // pick any node in `remaining` whose ancestors are all already placed.
         let next = remaining
             .iter()
             .find(|node_id| {
@@ -942,7 +947,7 @@ pub fn ancestors_in_snapshot(
             remaining.remove(&node_id);
             order.push(node_id);
         } else {
-            // Fallback: cycle detected; fall back to insertion order.
+            // fallback: cycle detected; fall back to insertion order.
             order.extend(remaining.iter().cloned());
             remaining.clear();
         }

@@ -622,7 +622,11 @@ pub async fn mark_notification_read(
     state: State<'_, CommandCenterState>,
     notification_id: i64,
 ) -> CommandResult<Value> {
-    post_empty(&state, &format!("notifications/{notification_id}/mark_read")).await
+    post_empty(
+        &state,
+        &format!("notifications/{notification_id}/mark_read"),
+    )
+    .await
 }
 
 #[tauri::command]

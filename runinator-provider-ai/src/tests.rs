@@ -152,8 +152,7 @@ fn test_claude_code_invalid_params_missing_prompt() {
 #[test]
 fn test_claude_code_json_output_parsed() {
     let provider = AiCommandProvider;
-    // /bin/echo prints its args followed by newline. We feed it valid JSON as the
-    // trailing positional "prompt"; with output_format=json the provider parses it.
+    // /bin/echo prints args plus a newline; we feed valid json as the trailing positional "prompt" and the provider parses it when output_format=json.
     let request = ProviderExecutionRequest {
         run_id: Some(1),
         action_name: "ai-command".into(),
