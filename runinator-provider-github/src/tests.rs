@@ -16,7 +16,11 @@ fn test_github_provider_missing_token() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }
 

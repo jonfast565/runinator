@@ -5,8 +5,10 @@ use reqwest::{
 use runinator_models::{
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
+    web::TaskResponse,
     workflows::{WorkflowBundle, WorkflowDefinition},
 };
+use serde_json::json;
 
 use crate::{
     error::{ApiError, Result},
@@ -86,6 +88,29 @@ where
         let response = self.client.get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowBundle>()?)
+    }
+
+    pub fn pause_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "pause")
+    }
+
+    pub fn resume_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "resume")
+    }
+
+    pub fn cancel_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "cancel")
+    }
+
+    fn post_workflow_run_command(
+        &self,
+        workflow_run_id: i64,
+        command: &str,
+    ) -> Result<TaskResponse> {
+        let url = self.build_url(&format!("/workflow_runs/{workflow_run_id}/{command}"))?;
+        let response = self.client.post(url.clone()).json(&json!({})).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<TaskResponse>()?)
     }
 
     fn build_url(&self, path: &str) -> Result<Url> {

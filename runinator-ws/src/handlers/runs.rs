@@ -5,6 +5,7 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
 };
+use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
@@ -81,10 +82,49 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
 
 pub(crate) async fn cancel_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
     Extension(events): Extension<EventSender>,
     Path(workflow_run_id): Path<i64>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::cancel_workflow_run(db.as_ref(), workflow_run_id).await {
+    match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), workflow_run_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+pub(crate) async fn pause_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::pause_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(resp) => {
+            emit(
+                &events,
+                AppEvent::WorkflowRunChanged {
+                    run_id: workflow_run_id,
+                },
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+pub(crate) async fn resume_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_run_id): Path<i64>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::resume_workflow_run(db.as_ref(), workflow_run_id).await {
         Ok(resp) => {
             emit(
                 &events,

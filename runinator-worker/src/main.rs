@@ -12,16 +12,19 @@ use config::parse_config;
 use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, StaticLocator, WorkflowNodeRunStatusPayload};
 use runinator_broker::{
-    Broker, BrokerError, http::client::HttpBroker, in_memory::InMemoryBroker,
+    Broker, BrokerError, ControlDelivery, http::client::HttpBroker, in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
 };
+use runinator_comm::ControlKind;
 use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_models::workflows::WorkflowStatus;
-use runinator_plugin::{load_libraries_from_path, plugin::Plugin, print_libs};
+use runinator_plugin::{
+    cancel::CancellationToken, load_libraries_from_path, plugin::Plugin, print_libs,
+};
 use runinator_utilities::startup;
 use serde_json::json;
 use tokio::{
-    sync::{Notify, Semaphore},
+    sync::{Mutex, Notify, Semaphore},
     task::JoinSet,
 };
 
@@ -172,6 +175,13 @@ async fn run_worker_loop(
 ) -> Result<(), SendableError> {
     let max_concurrent_actions = max_concurrent_actions.max(1);
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
+    let in_flight = Arc::new(Mutex::new(HashMap::<i64, CancellationToken>::new()));
+    let control_task = tokio::spawn(run_control_loop(
+        broker.clone(),
+        consumer_id.clone(),
+        Arc::clone(&in_flight),
+        shutdown.clone(),
+    ));
     let mut deliveries = JoinSet::new();
     info!("Worker processing up to {max_concurrent_actions} concurrent action(s)");
 
@@ -213,10 +223,18 @@ async fn run_worker_loop(
         let consumer_id = consumer_id.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
+        let in_flight = Arc::clone(&in_flight);
         deliveries.spawn(async move {
             let _permit = permit;
-            if let Err(err) =
-                process_delivery(&broker, &consumer_id, libraries, api_client, maybe_delivery).await
+            if let Err(err) = process_delivery(
+                &broker,
+                &consumer_id,
+                libraries,
+                api_client,
+                maybe_delivery,
+                in_flight,
+            )
+            .await
             {
                 error!("Error processing task: {}", err);
             }
@@ -229,7 +247,78 @@ async fn run_worker_loop(
         }
     }
 
+    match control_task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => error!("Worker control loop terminated with error: {}", err),
+        Err(err) if err.is_cancelled() => {}
+        Err(err) => error!("Worker control task join error: {}", err),
+    }
+
     Ok(())
+}
+
+async fn run_control_loop(
+    broker: Arc<dyn Broker>,
+    consumer_id: String,
+    in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
+    shutdown: Arc<Notify>,
+) -> Result<(), SendableError> {
+    loop {
+        let delivery = tokio::select! {
+            _ = shutdown.notified() => {
+                info!("Worker control loop shutting down");
+                return Ok(());
+            }
+            result = broker.receive_control(&consumer_id) => {
+                result.map_err(|err| broker_error("receive_control", err))?
+            }
+        };
+        handle_control_delivery(&broker, &consumer_id, &in_flight, delivery).await?;
+    }
+}
+
+async fn handle_control_delivery(
+    broker: &Arc<dyn Broker>,
+    consumer_id: &str,
+    in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>,
+    delivery: ControlDelivery,
+) -> Result<(), SendableError> {
+    match delivery.command.kind {
+        ControlKind::Cancel => {
+            let token = {
+                let guard = in_flight.lock().await;
+                guard.get(&delivery.command.workflow_run_id).cloned()
+            };
+            if let Some(token) = token {
+                token.cancel();
+                info!(
+                    "Cancellation requested for workflow run {}",
+                    delivery.command.workflow_run_id
+                );
+            } else {
+                info!(
+                    "Cancellation requested for workflow run {}, but no local execution is active",
+                    delivery.command.workflow_run_id
+                );
+            }
+        }
+        ControlKind::Pause => {
+            info!(
+                "Pause control received for workflow run {}; scheduler will stop dispatching at the next boundary",
+                delivery.command.workflow_run_id
+            );
+        }
+        ControlKind::Resume => {
+            info!(
+                "Resume control received for workflow run {}; scheduler controls dispatch resumption",
+                delivery.command.workflow_run_id
+            );
+        }
+    }
+    broker
+        .ack_control(consumer_id, delivery.delivery_id)
+        .await
+        .map_err(|err| broker_error("ack_control", err))
 }
 
 async fn process_delivery(
@@ -238,9 +327,15 @@ async fn process_delivery(
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
     delivery: runinator_broker::BrokerDelivery,
+    in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
 ) -> Result<(), SendableError> {
     let command = delivery.command.clone();
     let action = command.action.clone();
+    let token = CancellationToken::new();
+    in_flight
+        .lock()
+        .await
+        .insert(command.workflow_run_id, token.clone());
     let payload = WorkflowNodeRunStatusPayload {
         status: WorkflowStatus::Running,
         output_json: None,
@@ -281,6 +376,7 @@ async fn process_delivery(
                 .ack(consumer_id, delivery.delivery_id)
                 .await
                 .map_err(|err| broker_error("ack", err))?;
+            in_flight.lock().await.remove(&command.workflow_run_id);
             return Ok(());
         }
     };
@@ -291,13 +387,14 @@ async fn process_delivery(
     );
     let result = executor::execute_task(
         libraries,
-        command.command_id,
         action.clone(),
         command.workflow_node_run_id,
         parameters,
         Some(Arc::new(sink.clone())),
+        token,
     )
     .await;
+    in_flight.lock().await.remove(&command.workflow_run_id);
     if let Some(execution_result) = &result.execution_result {
         sink.persist_result(execution_result).await;
     }

@@ -4,6 +4,7 @@ use axum::{
     Extension, Router,
     routing::{get, patch, post},
 };
+use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 
 use crate::events::EventSender;
@@ -35,8 +36,9 @@ use crate::handlers::{
     providers::{get_providers, import_provider_bundle, upsert_provider},
     runs::{
         append_run_chunk, cancel_workflow_run, create_workflow_run, create_workflow_trigger_run,
-        get_run_chunks, get_runs, get_workflow_run, get_workflow_runs, rename_workflow_run,
-        replay_workflow_run, update_run, update_workflow_run,
+        get_run_chunks, get_runs, get_workflow_run, get_workflow_runs, pause_workflow_run,
+        rename_workflow_run, replay_workflow_run, resume_workflow_run, update_run,
+        update_workflow_run,
     },
     supervisor::get_supervisor_status,
     triggers::{
@@ -51,7 +53,11 @@ use crate::handlers::{
 };
 use crate::websocket::{ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run};
 
-pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Router {
+pub fn build_router<T: DatabaseImpl>(
+    pool: Arc<T>,
+    events: EventSender,
+    broker: Arc<dyn Broker>,
+) -> Router {
     Router::new()
         .route("/ws/events", get(ws_events))
         .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
@@ -179,6 +185,14 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
         .route(
             "/workflow_runs/{id}/cancel",
             post(cancel_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/pause",
+            post(pause_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/resume",
+            post(resume_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/debug/run_to_cursor",
@@ -311,4 +325,5 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
             post(webhook_wake::<T>).layer(Extension(pool.clone())),
         )
         .layer(Extension(events))
+        .layer(Extension(broker))
 }

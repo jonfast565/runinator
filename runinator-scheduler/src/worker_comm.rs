@@ -1,48 +1,25 @@
-use std::{
-    collections::HashMap,
-    convert::Infallible,
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error, info};
+use log::info;
 use runinator_api::ServiceLocator;
 use runinator_comm::{
-    ActionCommand, GossipMessage, TaskResult, WorkerAnnouncement, WorkerPeer,
+    GossipMessage, WorkerAnnouncement, WorkerPeer,
     discovery::{
         WebServiceDiscovery, apply_service_address, bind_gossip_socket, spawn_gossip_listener,
     },
 };
-use runinator_models::{
-    errors::{RuntimeError, SendableError},
-    workflows::WorkflowAction,
-};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{TcpStream, UdpSocket},
-    sync::RwLock,
-    time,
-};
+use runinator_models::errors::SendableError;
+use tokio::{net::UdpSocket, sync::RwLock, time};
 use uuid::Uuid;
 
 use crate::config::Config;
 
 #[derive(Clone, Debug)]
 pub struct WorkerInfo {
-    id: Uuid,
     address: String,
-    command_port: u16,
     last_seen: DateTime<Utc>,
-    last_failure: Option<Instant>,
-}
-
-impl WorkerInfo {
-    fn socket_addr(&self) -> String {
-        format!("{}:{}", self.address, self.command_port)
-    }
 }
 
 #[derive(Clone)]
@@ -120,142 +97,12 @@ impl WorkerManager {
         });
     }
 
-    pub async fn dispatch_action(
-        &self,
-        workflow_run_id: i64,
-        workflow_node_run_id: i64,
-        node_id: String,
-        action: &WorkflowAction,
-        parameters: serde_json::Value,
-        attempt: i64,
-        timeout: Duration,
-        retries: u8,
-    ) -> Result<TaskResult, SendableError> {
-        let command = ActionCommand {
-            command_id: Uuid::new_v4(),
-            workflow_run_id,
-            workflow_node_run_id,
-            node_id,
-            action: action.clone(),
-            attempt,
-            parameters,
-        };
-
-        let mut last_error: Option<SendableError> = None;
-
-        for attempt in 0..retries.max(1) {
-            let worker = match self.select_worker().await {
-                Some(worker) => worker,
-                None => {
-                    return Err(Box::new(RuntimeError::new(
-                        "scheduler.no_workers".into(),
-                        "No available workers discovered".into(),
-                    )));
-                }
-            };
-
-            debug!(
-                "Dispatching action {}.{} to worker {} (attempt {}/{})",
-                action.provider,
-                action.function,
-                worker.id,
-                attempt + 1,
-                retries.max(1)
-            );
-
-            match self.send_command(&worker, command.clone(), timeout).await {
-                Ok(result) => return Ok(result),
-                Err(err) => {
-                    error!(
-                        "Worker {} dispatch failed: {}. Trying another worker...",
-                        worker.id, err
-                    );
-                    last_error = Some(err);
-                    self.mark_failure(worker.id).await;
-                    continue;
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            Box::new(RuntimeError::new(
-                "scheduler.dispatch.failed".into(),
-                "Action dispatch failed without specific error".into(),
-            ))
-        }))
-    }
-
     pub async fn wait_for_service_url(&self) -> Result<String, SendableError> {
         Ok(self.service_registry().wait_for_service_url().await)
     }
 
     pub async fn current_service_url(&self) -> Option<String> {
         self.service_registry().current_service_url().await
-    }
-
-    async fn select_worker(&self) -> Option<WorkerInfo> {
-        let guard = self.workers.read().await;
-        guard
-            .values()
-            .filter(|info| {
-                if let Some(last_failure) = info.last_failure {
-                    last_failure.elapsed() > Duration::from_secs(10)
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .max_by_key(|info| info.last_seen)
-    }
-
-    async fn mark_failure(&self, worker_id: Uuid) {
-        if let Some(worker) = self.workers.write().await.get_mut(&worker_id) {
-            worker.last_failure = Some(Instant::now());
-        }
-    }
-
-    async fn send_command(
-        &self,
-        worker: &WorkerInfo,
-        command: ActionCommand,
-        timeout: Duration,
-    ) -> Result<TaskResult, SendableError> {
-        let target = worker.socket_addr();
-        let payload = command
-            .to_json()
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-
-        let connect_future = TcpStream::connect(target.clone());
-        let mut stream = time::timeout(timeout, connect_future)
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-
-        stream
-            .write_all(payload.as_bytes())
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-        stream
-            .flush()
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-
-        let mut reader = BufReader::new(stream);
-        let mut response = String::new();
-
-        time::timeout(timeout, reader.read_line(&mut response))
-            .await
-            .map_err(|err| -> SendableError { Box::new(err) })?
-            .map_err(|err| -> SendableError { Box::new(err) })?;
-
-        let trimmed = response.trim();
-        let result =
-            TaskResult::from_json(trimmed).map_err(|err| -> SendableError { Box::new(err) })?;
-        Ok(result)
     }
 }
 
@@ -290,17 +137,12 @@ async fn update_worker(
         let entry = guard
             .entry(announcement.worker_id)
             .or_insert_with(|| WorkerInfo {
-                id: announcement.worker_id,
                 address: address.clone(),
-                command_port: announcement.command_port,
                 last_seen: announcement.last_heartbeat,
-                last_failure: None,
             });
 
         entry.address = address;
-        entry.command_port = announcement.command_port;
         entry.last_seen = announcement.last_heartbeat;
-        entry.last_failure = None;
     }
 
     for peer in announcement.known_peers {
@@ -311,14 +153,10 @@ async fn update_worker(
 async fn update_peer(workers: Arc<RwLock<HashMap<Uuid, WorkerInfo>>>, peer: WorkerPeer) {
     let mut guard = workers.write().await;
     let entry = guard.entry(peer.worker_id).or_insert_with(|| WorkerInfo {
-        id: peer.worker_id,
         address: peer.address.clone(),
-        command_port: peer.command_port,
         last_seen: peer.last_heartbeat,
-        last_failure: None,
     });
 
     entry.address = peer.address;
-    entry.command_port = peer.command_port;
     entry.last_seen = peer.last_heartbeat;
 }

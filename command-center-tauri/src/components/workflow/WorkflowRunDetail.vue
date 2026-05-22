@@ -56,6 +56,8 @@
       </div>
     </div>
 
+    <RunControlBar v-if="!isTerminalRun && workflows.workflowRunDetail" />
+
     <div v-if="debugState?.enabled && !isTerminalRun" class="debug-panel">
       <div class="debug-panel-header">
         <div>
@@ -146,6 +148,7 @@ import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import DebugControlBar from "./DebugControlBar.vue";
+import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";

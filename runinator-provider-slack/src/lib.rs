@@ -65,6 +65,7 @@ impl Provider for SlackProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let function = request.action_function.as_str();
         let params: SendMessageParams = match function {

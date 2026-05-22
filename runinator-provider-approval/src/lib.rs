@@ -60,6 +60,7 @@ impl Provider for ApprovalProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let params = parse_params(&request)?;
         let result = ApprovalResult {

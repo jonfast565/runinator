@@ -272,6 +272,38 @@ pub async fn cancel_workflow_run(
 }
 
 #[tauri::command]
+pub async fn pause_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/pause")).await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn resume_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: i64,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/resume")).await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
 pub async fn patch_workflow_run_debug(
     state: State<'_, CommandCenterState>,
     workflow_run_id: i64,

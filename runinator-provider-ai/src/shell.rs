@@ -5,14 +5,22 @@ use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
+use runinator_plugin::cancel::CancellationToken;
 use serde_json::{Value, json};
 
 use crate::params::{AiCommandParams, parse_params};
 
 pub(crate) fn run_shell_command(
     request: &ProviderExecutionRequest,
+    token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: AiCommandParams = parse_params(request)?;
+    if token.is_cancelled() {
+        return Err(Box::new(RuntimeError::new(
+            "ai_command.canceled".into(),
+            "AI command canceled".into(),
+        )));
+    }
     let input = params.input.unwrap_or_else(|| json!({}));
     let mut child = Command::new("sh")
         .arg("-c")
@@ -23,6 +31,13 @@ pub(crate) fn run_shell_command(
         .spawn()?;
     if let Some(stdin) = child.stdin.as_mut() {
         stdin.write_all(serde_json::to_string(&input)?.as_bytes())?;
+    }
+    if token.is_cancelled() {
+        let _ = child.kill();
+        return Err(Box::new(RuntimeError::new(
+            "ai_command.canceled".into(),
+            "AI command canceled".into(),
+        )));
     }
     let output = child.wait_with_output()?;
     if !output.status.success() {

@@ -335,6 +335,39 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
+    pub async fn pause_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "pause")
+            .await
+    }
+
+    pub async fn resume_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "resume")
+            .await
+    }
+
+    pub async fn cancel_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+        self.post_workflow_run_command(workflow_run_id, "cancel")
+            .await
+    }
+
+    async fn post_workflow_run_command(
+        &self,
+        workflow_run_id: i64,
+        command: &str,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}/{command}"))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({}))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
     pub async fn fetch_workflow_run(
         &self,
         workflow_run_id: i64,

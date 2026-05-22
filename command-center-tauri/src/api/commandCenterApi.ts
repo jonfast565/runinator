@@ -122,6 +122,14 @@ export async function cancelWorkflowRun(workflowRunId: number) {
   return command<TaskResponse>("cancel_workflow_run", { workflowRunId });
 }
 
+export async function pauseWorkflowRun(workflowRunId: number) {
+  return command<TaskResponse>("pause_workflow_run", { workflowRunId });
+}
+
+export async function resumeWorkflowRun(workflowRunId: number) {
+  return command<TaskResponse>("resume_workflow_run", { workflowRunId });
+}
+
 export type WorkflowDebugPatch = {
   breakpoints?: string[];
   mode?: "step_all" | "breakpoints";

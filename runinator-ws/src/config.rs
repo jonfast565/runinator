@@ -50,4 +50,12 @@ pub(crate) struct CliArgs {
     /// Seconds between gossip announcements
     #[arg(long, default_value_t = 5)]
     pub gossip_interval_seconds: u64,
+
+    /// Broker backend used for workflow control messages
+    #[arg(long, default_value = "tcp")]
+    pub broker_backend: String,
+
+    /// Broker endpoint used for workflow control messages
+    #[arg(long, default_value = "127.0.0.1:7070")]
+    pub broker_endpoint: String,
 }

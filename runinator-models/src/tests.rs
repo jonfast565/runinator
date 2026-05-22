@@ -10,6 +10,7 @@ fn workflow_status_terminal_and_active() {
     assert!(WorkflowStatus::Canceled.is_terminal());
 
     assert!(!WorkflowStatus::Queued.is_terminal());
+    assert!(!WorkflowStatus::Paused.is_terminal());
     assert!(WorkflowStatus::Queued.is_active());
     assert!(WorkflowStatus::Running.is_active());
     assert!(WorkflowStatus::DebugPaused.is_active());
@@ -17,6 +18,7 @@ fn workflow_status_terminal_and_active() {
     assert!(WorkflowStatus::ApprovalRequired.is_active());
 
     assert!(!WorkflowStatus::Blocked.is_terminal());
+    assert!(!WorkflowStatus::Paused.is_active());
     assert!(!WorkflowStatus::Blocked.is_active());
 }
 
@@ -32,6 +34,10 @@ fn workflow_status_serialization() {
     let debug: WorkflowStatus = serde_json::from_str("\"debug_paused\"").unwrap();
     assert_eq!(debug, WorkflowStatus::DebugPaused);
     assert_eq!(debug.as_str(), "debug_paused");
+
+    let paused: WorkflowStatus = serde_json::from_str("\"paused\"").unwrap();
+    assert_eq!(paused, WorkflowStatus::Paused);
+    assert_eq!(paused.as_str(), "paused");
 }
 
 #[test]

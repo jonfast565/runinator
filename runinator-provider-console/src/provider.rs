@@ -44,7 +44,8 @@ impl Provider for ConsoleProvider {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
+        token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        execute_command(&request, sink)
+        execute_command(&request, sink, token)
     }
 }

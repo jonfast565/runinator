@@ -3,8 +3,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use log::info;
+use runinator_broker::{
+    Broker, http::client::HttpBroker, in_memory::InMemoryBroker, tcp::client::TcpBroker,
+};
 use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
-use runinator_models::errors::SendableError;
+use runinator_models::errors::{RuntimeError, SendableError};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -42,7 +45,10 @@ async fn main() -> Result<(), SendableError> {
         announce_address,
         announce_base_path,
         gossip_interval_seconds,
+        broker_backend,
+        broker_endpoint,
     } = args;
+    let broker = build_broker(&broker_backend, &broker_endpoint)?;
 
     let service_id = Uuid::new_v4();
     spawn_web_service_advertiser(WebServiceAdvertiserConfig {
@@ -69,7 +75,7 @@ async fn main() -> Result<(), SendableError> {
             );
             let sqlite_path = sqlite_path.to_string_lossy();
             let db = Arc::new(SqliteDb::new(sqlite_path.as_ref()).await?);
-            run_webserver(db, notify.clone(), port).await?;
+            run_webserver(db, notify.clone(), port, broker).await?;
         }
         DatabaseKind::Postgres => {
             let url = database_url
@@ -83,9 +89,41 @@ async fn main() -> Result<(), SendableError> {
 
             info!("Starting Runinator webservice with Postgres database");
             let db = Arc::new(PostgresDb::new(&url).await?);
-            run_webserver(db, notify.clone(), port).await?;
+            run_webserver(db, notify.clone(), port, broker).await?;
         }
     }
 
     Ok(())
+}
+
+fn build_broker(backend: &str, endpoint: &str) -> Result<Arc<dyn Broker>, SendableError> {
+    match backend {
+        "http" => {
+            let url = reqwest::Url::parse(endpoint).map_err(|err| -> SendableError {
+                Box::new(RuntimeError::new(
+                    "ws.broker.invalid_endpoint".into(),
+                    err.to_string(),
+                ))
+            })?;
+            let client = reqwest::Client::builder()
+                .build()
+                .map_err(|err| -> SendableError {
+                    Box::new(RuntimeError::new(
+                        "ws.broker.client".into(),
+                        err.to_string(),
+                    ))
+                })?;
+            Ok(Arc::new(HttpBroker::new(url, client)))
+        }
+        "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
+        "tcp" => Ok(Arc::new(TcpBroker::new(endpoint.to_string()))),
+        "rabbitmq" | "kafka" => Err(Box::new(RuntimeError::new(
+            "ws.broker.backend_not_ready".into(),
+            format!("Broker backend '{backend}' is not implemented yet"),
+        ))),
+        other => Err(Box::new(RuntimeError::new(
+            "ws.broker.unknown_backend".into(),
+            format!("Unknown broker backend '{other}'"),
+        ))),
+    }
 }

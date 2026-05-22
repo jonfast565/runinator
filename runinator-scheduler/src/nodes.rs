@@ -1350,6 +1350,7 @@ fn parse_workflow_status(value: &str) -> Option<WorkflowStatus> {
     match value {
         "queued" => Some(WorkflowStatus::Queued),
         "running" => Some(WorkflowStatus::Running),
+        "paused" => Some(WorkflowStatus::Paused),
         "waiting" => Some(WorkflowStatus::Waiting),
         "approval_required" => Some(WorkflowStatus::ApprovalRequired),
         "blocked" => Some(WorkflowStatus::Blocked),

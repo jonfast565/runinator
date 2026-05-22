@@ -1,6 +1,7 @@
 use crate::{
     http::types::{
-        AckRequest, PollRequest, PollResponse, PublishRequest, ReceiveRequest, ReceiveResponse,
+        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishRequest,
+        ReceiveControlResponse, ReceiveRequest, ReceiveResponse,
     },
     Broker, BrokerError,
 };
@@ -38,6 +39,9 @@ where
 
     let app = Router::new()
         .route("/publish", post(publish::<B>))
+        .route("/control/publish", post(publish_control::<B>))
+        .route("/control/receive", post(receive_control::<B>))
+        .route("/control/ack", post(ack_control::<B>))
         .route("/receive", post(receive::<B>))
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
@@ -57,6 +61,48 @@ where
     respond(
         state.broker.publish(request.message).await,
         StatusCode::CREATED,
+    )
+}
+
+async fn publish_control<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishControlRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_control(request.command).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_control<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_control(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveControlResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
+async fn ack_control<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_control(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
     )
 }
 

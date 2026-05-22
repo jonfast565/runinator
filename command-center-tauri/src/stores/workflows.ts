@@ -13,8 +13,10 @@ import {
   fetchWorkflowTriggers,
   fetchWorkflows,
   patchWorkflowRunDebug,
+  pauseWorkflowRun,
   renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi,
+  resumeWorkflowRun,
   rerunWorkflowNode,
   runToCursorWorkflowRun,
   saveWorkflowBundle,
@@ -178,6 +180,20 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
   const isDebugRun = computed(() => Boolean(debugState.value?.enabled));
   const canContinueWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
+  const controlState = computed<Record<string, any> | null>(() => {
+    const control = workflowRunDetail.value?.run.state?.control;
+    if (control && typeof control === "object" && !Array.isArray(control)) return control as Record<string, any>;
+    return null;
+  });
+  const pauseRequested = computed(() => Boolean(controlState.value?.pause_requested));
+  const canPauseWorkflowRun = computed(() => {
+    const status = workflowRunDetail.value?.run.status;
+    return Boolean(status && ["running", "waiting", "approval_required"].includes(status) && !pauseRequested.value);
+  });
+  const canResumeWorkflowRun = computed(() => {
+    const status = workflowRunDetail.value?.run.status;
+    return status === "paused" || (status === "debug_paused" && pauseRequested.value);
+  });
   const canCancelWorkflowRun = computed(() => {
     const status = workflowRunDetail.value?.run.status;
     if (!status) return false;
@@ -370,6 +386,30 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       return;
     }
     app.setStatus(response.message || `Workflow run ${runId} canceled`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function pauseSelectedWorkflowRun() {
+    if (!workflowRunDetail.value || !canPauseWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Pausing workflow run ${runId}`, () => pauseWorkflowRun(runId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to pause workflow run");
+      return;
+    }
+    app.setStatus(response.message || `Workflow run ${runId} pause requested`);
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  async function resumeSelectedWorkflowRun() {
+    if (!workflowRunDetail.value || !canResumeWorkflowRun.value) return;
+    const runId = workflowRunDetail.value.run.id;
+    const response = await app.runOperation(`Resuming workflow run ${runId}`, () => resumeWorkflowRun(runId));
+    if (response.success === false) {
+      app.setError(response.message || "Failed to resume workflow run");
+      return;
+    }
+    app.setStatus(response.message || `Workflow run ${runId} resumed`);
     await fetchWorkflowRunDetail(runId, true);
   }
 
@@ -1662,8 +1702,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedNodePendingApproval,
     canStepWorkflowRun,
     canContinueWorkflowRun,
+    canPauseWorkflowRun,
+    canResumeWorkflowRun,
     canCancelWorkflowRun,
     debugState,
+    controlState,
     isDebugRun,
     currentBreakpoints,
     isBreakpointed,
@@ -1679,6 +1722,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runSelectedWorkflowDebug,
     stepSelectedWorkflowRun,
     continueSelectedWorkflowRun,
+    pauseSelectedWorkflowRun,
+    resumeSelectedWorkflowRun,
     cancelSelectedWorkflowRun,
     patchSelectedWorkflowRunDebug,
     toggleBreakpoint,

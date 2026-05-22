@@ -13,7 +13,11 @@ fn test_git_provider_unsupported_action() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }
 
@@ -50,6 +54,10 @@ fn push_requires_branch_before_execution() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }

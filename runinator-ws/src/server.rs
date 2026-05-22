@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use log::info;
+use runinator_broker::Broker;
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::errors::SendableError;
 use tokio::{
@@ -16,11 +17,12 @@ pub async fn run_webserver<T: DatabaseImpl>(
     pool: Arc<T>,
     notify: Arc<Notify>,
     port: u16,
+    broker: Arc<dyn Broker>,
 ) -> Result<(), SendableError> {
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
     let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
-    let app = build_router(pool, events_tx);
+    let app = build_router(pool, events_tx, broker);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(listener, app);

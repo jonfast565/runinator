@@ -14,6 +14,7 @@ use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
+use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 
 use crate::params::{ConsoleResult, parse_params, to_runtime_error};
@@ -21,6 +22,7 @@ use crate::params::{ConsoleResult, parse_params, to_runtime_error};
 pub(crate) fn execute_command(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params = parse_params(request)?;
     let command_text = params.command;
@@ -59,7 +61,7 @@ pub(crate) fn execute_command(
     let stdout_thread = spawn_output_thread(stdout, Arc::clone(&stop_flag), "stdout", sink.clone());
     let stderr_thread = spawn_output_thread(stderr, Arc::clone(&stop_flag), "stderr", sink);
     let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
-    let status = wait_for_child(&mut child, timeout, started)?;
+    let status = wait_for_child(&mut child, timeout, started, token)?;
 
     stop_flag.store(true, Ordering::Relaxed);
     let _ = stdout_thread.join();
@@ -128,8 +130,18 @@ fn wait_for_child(
     child: &mut Child,
     timeout: Duration,
     start: Instant,
+    token: CancellationToken,
 ) -> Result<ExitStatus, SendableError> {
     loop {
+        if token.is_cancelled() {
+            warn!("Console child received cancellation; killing process");
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Box::new(RuntimeError::new(
+                "console.canceled".into(),
+                "Console command canceled".into(),
+            )));
+        }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {

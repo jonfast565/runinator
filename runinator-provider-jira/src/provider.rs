@@ -84,6 +84,7 @@ impl Provider for JiraProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))

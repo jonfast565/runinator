@@ -1,4 +1,4 @@
-use crate::{Broker, BrokerDelivery, BrokerError, BrokerMessage};
+use crate::{Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery};
 use async_trait::async_trait;
 
 pub struct RabbitMqBroker;
@@ -25,5 +25,21 @@ impl Broker for RabbitMqBroker {
 
     async fn nack(&self, _consumer: &str, _delivery_id: uuid::Uuid) -> Result<(), BrokerError> {
         Err(BrokerError::NotImplemented("rabbitmq nack"))
+    }
+
+    async fn publish_control(&self, _message: ControlCommand) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("rabbitmq publish_control"))
+    }
+
+    async fn receive_control(&self, _consumer: &str) -> Result<ControlDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("rabbitmq receive_control"))
+    }
+
+    async fn ack_control(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("rabbitmq ack_control"))
     }
 }

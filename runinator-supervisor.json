@@ -26,7 +26,11 @@
         "--announce-address",
         "127.0.0.1",
         "--announce-base-path",
-        "/"
+        "/",
+        "--broker-backend",
+        "tcp",
+        "--broker-endpoint",
+        "127.0.0.1:7070"
       ]
     },
     {

@@ -46,15 +46,6 @@
         <Icon name="replay" :size="14" />
         <span>Re-run</span>
       </button>
-      <button
-        class="btn btn-danger btn-sm"
-        :disabled="!workflows.canCancelWorkflowRun"
-        title="Cancel run (Shift+F5)"
-        @click="workflows.cancelSelectedWorkflowRun"
-      >
-        <Icon name="stop" :size="14" />
-        <span>Stop</span>
-      </button>
     </div>
     <div class="debug-mode-row">
       <label>

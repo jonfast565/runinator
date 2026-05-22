@@ -1,9 +1,9 @@
 use chrono::Utc;
 use runinator_broker::{
     tcp::{client::TcpBroker, server::serve},
-    Broker, BrokerMessage,
+    Broker, BrokerMessage, ControlCommand,
 };
-use runinator_comm::ActionCommand;
+use runinator_comm::{ActionCommand, ControlKind};
 use runinator_models::workflows::WorkflowAction;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -46,6 +46,31 @@ async fn tcp_broker_delivers_published_messages() {
     assert_eq!(delivery.dedupe_key, "tcp-test");
     broker
         .ack("test-consumer", delivery.delivery_id)
+        .await
+        .unwrap();
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn tcp_broker_delivers_control_messages() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(
+        listener,
+        runinator_broker::in_memory::InMemoryBroker::new(),
+    ));
+    let broker = TcpBroker::new(addr.to_string());
+
+    broker
+        .publish_control(ControlCommand::new(42, ControlKind::Cancel))
+        .await
+        .unwrap();
+    let delivery = broker.receive_control("test-consumer").await.unwrap();
+    assert_eq!(delivery.command.workflow_run_id, 42);
+    assert!(matches!(delivery.command.kind, ControlKind::Cancel));
+    broker
+        .ack_control("test-consumer", delivery.delivery_id)
         .await
         .unwrap();
 

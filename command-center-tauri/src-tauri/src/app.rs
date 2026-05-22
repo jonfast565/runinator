@@ -30,6 +30,8 @@ pub fn run() {
             crate::commands::step_workflow_run,
             crate::commands::continue_workflow_run,
             crate::commands::cancel_workflow_run,
+            crate::commands::pause_workflow_run,
+            crate::commands::resume_workflow_run,
             crate::commands::patch_workflow_run_debug,
             crate::commands::run_to_cursor_workflow_run,
             crate::commands::skip_workflow_node,

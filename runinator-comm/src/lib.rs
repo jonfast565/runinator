@@ -10,7 +10,6 @@ use uuid::Uuid;
 pub struct WorkerPeer {
     pub worker_id: Uuid,
     pub address: String,
-    pub command_port: u16,
     pub last_heartbeat: DateTime<Utc>,
 }
 
@@ -18,7 +17,6 @@ pub struct WorkerPeer {
 pub struct WorkerAnnouncement {
     pub worker_id: Uuid,
     pub address: String,
-    pub command_port: u16,
     pub last_heartbeat: DateTime<Utc>,
     pub known_peers: Vec<WorkerPeer>,
 }
@@ -53,12 +51,17 @@ pub struct ActionCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskResult {
-    pub command_id: Uuid,
-    pub success: bool,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
-    pub message: Option<String>,
+#[serde(rename_all = "snake_case")]
+pub enum ControlKind {
+    Cancel,
+    Pause,
+    Resume,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlCommand {
+    pub workflow_run_id: i64,
+    pub kind: ControlKind,
 }
 
 impl WorkerAnnouncement {
@@ -101,9 +104,12 @@ impl ActionCommand {
     }
 }
 
-impl TaskResult {
-    pub fn duration_ms(&self) -> i64 {
-        (self.finished_at - self.started_at).num_milliseconds()
+impl ControlCommand {
+    pub fn new(workflow_run_id: i64, kind: ControlKind) -> Self {
+        Self {
+            workflow_run_id,
+            kind,
+        }
     }
 
     pub fn to_json(&self) -> serde_json::Result<String> {

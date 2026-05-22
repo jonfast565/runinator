@@ -63,8 +63,8 @@ The default worker configuration processes up to four actions concurrently. Tune
 workflow action pickup.
 
 The local stack uses the built-in broker over raw TCP by default. Consumers keep
-receive sockets open, so published action messages are delivered immediately
-without HTTP polling.
+receive sockets open, so published action and workflow control messages are
+delivered immediately without HTTP polling.
 
 Local runtime files are written under `~/.runinator/` by default. This includes
 the SQLite database at `~/.runinator/runinator.db`, credentials at

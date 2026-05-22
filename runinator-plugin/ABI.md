@@ -17,6 +17,7 @@ int call_service(const char *request_json_path, const char *response_json_path);
 - `runinator_abi_version` must return `1` or higher.
 - `call_service` reads a JSON request file and writes a JSON response file.
 - A nonzero `call_service` return marks the task failed.
+- Dynamic plugins do not receive cooperative cancellation tokens in ABI version 1.
 
 ## Request JSON
 

@@ -16,7 +16,13 @@ fn test_approval_provider_execution() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None).unwrap();
+    let result = provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .unwrap();
     assert_eq!(result.message.unwrap(), "Approval request prepared");
     let output = result.output_json.unwrap();
     assert_eq!(output["approval_type"], "deploy");

@@ -22,7 +22,10 @@ use std::{
     time::Duration,
 };
 
-use crate::provider::{Provider, ProviderEventSink};
+use crate::{
+    cancel::CancellationToken,
+    provider::{Provider, ProviderEventSink},
+};
 
 const PLUGIN_MARKER_FN_NAME: &str = "runinator_marker\0";
 const PLUGIN_NAME_FN_NAME: &str = "name\0";
@@ -65,7 +68,9 @@ impl Provider for Plugin {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
+        // dynamic plugin abi does not yet pass cancellation tokens across ffi.
         self.plugin_service_call(request, sink)
     }
 }

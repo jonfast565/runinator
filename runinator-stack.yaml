@@ -239,6 +239,10 @@ spec:
             - '--announce-address=$(POD_IP)'
             - '--announce-base-path'
             - '/'
+            - '--broker-backend'
+            - 'tcp'
+            - '--broker-endpoint'
+            - 'runinator-broker.runinator.svc.cluster.local:7070'
           env:
             - name: RUST_LOG
               value: info

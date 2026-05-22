@@ -45,15 +45,30 @@ where
         Ok(TcpRequest::Publish { message }) => {
             broker.publish(message).await.map(|_| TcpResponse::Ok)
         }
+        Ok(TcpRequest::PublishControl { command }) => broker
+            .publish_control(command)
+            .await
+            .map(|_| TcpResponse::Ok),
         Ok(TcpRequest::Receive { consumer }) => broker
             .receive(&consumer)
             .await
             .map(|delivery| TcpResponse::Delivery { delivery }),
+        Ok(TcpRequest::ReceiveControl { consumer }) => broker
+            .receive_control(&consumer)
+            .await
+            .map(|delivery| TcpResponse::ControlDelivery { delivery }),
         Ok(TcpRequest::Ack {
             consumer,
             delivery_id,
         }) => broker
             .ack(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::AckControl {
+            consumer,
+            delivery_id,
+        }) => broker
+            .ack_control(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         Ok(TcpRequest::Nack {

@@ -7,6 +7,7 @@ use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{NewRunArtifact, TaskExecutionResult},
 };
+use runinator_plugin::cancel::CancellationToken;
 use runinator_utilities::data_export::{
     TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
@@ -54,6 +55,7 @@ impl SqlProvider {
         &self,
         parameters: serde_json::Value,
         timeout_secs: i64,
+        token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let request: DumpDataRequest = serde_json::from_value(parameters).map_err(to_sendable)?;
 
@@ -81,8 +83,20 @@ impl SqlProvider {
         let mut exports = Vec::new();
 
         for (idx, query) in request.queries.iter().enumerate() {
+            if token.is_cancelled() {
+                return Err(Box::new(RuntimeError::new(
+                    "QUERY_CANCELED".to_string(),
+                    "SQL dump canceled".to_string(),
+                )));
+            }
             info!("Executing query {} for database dump", idx + 1);
             let table_data = connector.execute_query(&query.sql, timeout)?;
+            if token.is_cancelled() {
+                return Err(Box::new(RuntimeError::new(
+                    "QUERY_CANCELED".to_string(),
+                    "SQL dump canceled".to_string(),
+                )));
+            }
 
             let default_stem = format!("query_{:02}", idx + 1);
             let query_stem = query

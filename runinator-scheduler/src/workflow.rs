@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::{
     api::WorkflowSchedulerApi,
     context::{build_node_parameters, latest_node_run, runtime_context},
-    debug,
+    control, debug,
     nodes::*,
 };
 
@@ -51,6 +51,10 @@ pub async fn process_workflow_run(
         workflow_run.status = WorkflowStatus::Running;
     }
 
+    if should_pause_without_debug(api, &workflow_run).await? {
+        return Ok(());
+    }
+
     for _ in 0..MAX_INLINE_WORKFLOW_STEPS {
         let before = WorkflowProgressKey::from_run(api, &workflow_run).await?;
         process_workflow_run_step(broker, api, workflow_run.clone()).await?;
@@ -78,7 +82,7 @@ async fn process_workflow_run_step(
     api: &dyn WorkflowSchedulerApi,
     workflow_run: WorkflowRun,
 ) -> Result<(), SendableError> {
-    if workflow_run.status.is_terminal() {
+    if workflow_run.status.is_terminal() || workflow_run.status == WorkflowStatus::Paused {
         return Ok(());
     }
     let workflow = match workflow_run.workflow_snapshot.clone() {
@@ -276,6 +280,7 @@ fn should_stop_inline_progress(workflow_run: &WorkflowRun, node_runs: &[Workflow
         || matches!(
             workflow_run.status,
             WorkflowStatus::DebugPaused
+                | WorkflowStatus::Paused
                 | WorkflowStatus::Waiting
                 | WorkflowStatus::ApprovalRequired
                 | WorkflowStatus::Blocked
@@ -319,6 +324,18 @@ async fn should_pause_for_debug(
     if workflow_run.status == WorkflowStatus::DebugPaused && debug::paused(workflow_run) {
         return Ok(true);
     }
+    if control::pause_requested(workflow_run) {
+        let state = debug_pause_state(api, &workflow_run, node, node_runs).await?;
+        api.update_workflow_run(
+            workflow_run.id,
+            WorkflowStatus::DebugPaused,
+            Some(node.id.clone()),
+            Some(state),
+            Some(format!("Debug paused before node {}", node.id)),
+        )
+        .await?;
+        return Ok(true);
+    }
     if !debug::should_break_at(workflow_run, &node.id) {
         return Ok(false);
     }
@@ -330,6 +347,40 @@ async fn should_pause_for_debug(
         Some(node.id.clone()),
         Some(state),
         Some(format!("Debug paused before node {}", node.id)),
+    )
+    .await?;
+    Ok(true)
+}
+
+async fn should_pause_without_debug(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+) -> Result<bool, SendableError> {
+    if !control::pause_requested(workflow_run) || debug::enabled(workflow_run) {
+        return Ok(false);
+    }
+    let Some(active_node_id) = workflow_run.active_node_id.as_deref() else {
+        api.update_workflow_run(
+            workflow_run.id,
+            WorkflowStatus::Paused,
+            workflow_run.active_node_id.clone(),
+            None,
+            Some("Workflow pause requested".into()),
+        )
+        .await?;
+        return Ok(true);
+    };
+    let (_, node_runs) = api.fetch_workflow_run(workflow_run.id).await?;
+    let latest = latest_node_run(&node_runs, active_node_id);
+    if latest.is_some_and(|run| run.status == WorkflowStatus::Running) {
+        return Ok(false);
+    }
+    api.update_workflow_run(
+        workflow_run.id,
+        WorkflowStatus::Paused,
+        workflow_run.active_node_id.clone(),
+        None,
+        Some("Workflow pause requested".into()),
     )
     .await?;
     Ok(true)
@@ -358,6 +409,7 @@ async fn debug_pause_state(
         Some(ref id) if id == &node.id
     );
 
+    control::ensure_control_object(&mut state);
     // preserve user-owned fields (mode, breakpoints) when assembling new debug object.
     let debug_obj = debug::ensure_debug_object(&mut state);
     debug_obj.insert("enabled".into(), Value::Bool(true));

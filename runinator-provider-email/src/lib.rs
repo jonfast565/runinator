@@ -80,6 +80,7 @@ impl Provider for EmailProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

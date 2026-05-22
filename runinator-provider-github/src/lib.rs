@@ -127,6 +127,7 @@ impl Provider for GitHubProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let function = request.action_function.as_str();
         let client = reqwest::blocking::Client::builder()

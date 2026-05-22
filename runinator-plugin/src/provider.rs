@@ -6,6 +6,8 @@ use runinator_models::{
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
 
+use crate::cancel::CancellationToken;
+
 pub trait ProviderEventSink: Send + Sync {
     fn emit(&self, event: ProviderExecutionEvent);
 }
@@ -19,5 +21,6 @@ pub trait Provider: Send + Sync {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
+        token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError>;
 }

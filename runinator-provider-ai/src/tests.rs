@@ -16,7 +16,13 @@ fn test_ai_command_provider_execution() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None).unwrap();
+    let result = provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .unwrap();
     assert_eq!(result.message.unwrap(), "AI command completed");
     let output = result.output_json.unwrap();
     assert_eq!(output["test"], "data");
@@ -37,7 +43,11 @@ fn test_ai_command_fails_on_nonzero_exit() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }
 
@@ -62,7 +72,13 @@ fn test_claude_code_stub_binary_passes_argv() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None).unwrap();
+    let result = provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .unwrap();
     assert_eq!(result.message.as_deref(), Some("Claude Code completed"));
     let text = result.output_json.unwrap()["text"]
         .as_str()
@@ -123,7 +139,11 @@ fn test_claude_code_nonzero_exit() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }
 
@@ -142,7 +162,14 @@ fn test_claude_code_invalid_params_missing_prompt() {
         events_jsonl_path: "".into(),
     };
 
-    let err = provider.execute_service(request, None).err().unwrap();
+    let err = provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .err()
+        .unwrap();
     assert!(
         err.to_string().contains("prompt"),
         "error should mention missing prompt: {err}"
@@ -168,7 +195,13 @@ fn test_claude_code_json_output_parsed() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None).unwrap();
+    let result = provider
+        .execute_service(
+            request,
+            None,
+            runinator_plugin::cancel::CancellationToken::new(),
+        )
+        .unwrap();
     let text = result.output_json.unwrap()["text"]
         .as_str()
         .unwrap()

@@ -4740,6 +4740,8 @@ dependencies = [
  "log",
  "log-panics",
  "mime_guess",
+ "reqwest",
+ "runinator-broker",
  "runinator-comm",
  "runinator-database",
  "runinator-models",

@@ -1,4 +1,4 @@
-use crate::{Broker, BrokerDelivery, BrokerError, BrokerMessage};
+use crate::{Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -11,12 +11,15 @@ struct BrokerState {
     queue: VecDeque<BrokerDelivery>,
     inflight: HashMap<Uuid, BrokerDelivery>,
     dedupe: HashSet<String>,
+    control_queue: VecDeque<ControlDelivery>,
+    control_inflight: HashMap<Uuid, ControlDelivery>,
 }
 
 #[derive(Clone, Default)]
 pub struct InMemoryBroker {
     state: Arc<Mutex<BrokerState>>,
     notify: Arc<Notify>,
+    control_notify: Arc<Notify>,
 }
 
 impl InMemoryBroker {
@@ -75,6 +78,43 @@ impl Broker for InMemoryBroker {
         let mut guard = self.state.lock();
         if let Some(delivery) = guard.inflight.remove(&delivery_id) {
             guard.queue.push_front(delivery);
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        guard.control_queue.push_back(command.into());
+        drop(guard);
+        self.control_notify.notify_one();
+        Ok(())
+    }
+
+    async fn receive_control(&self, _consumer: &str) -> Result<ControlDelivery, BrokerError> {
+        loop {
+            if let Some(delivery) = {
+                let mut guard = self.state.lock();
+                if let Some(delivery) = guard.control_queue.pop_front() {
+                    guard
+                        .control_inflight
+                        .insert(delivery.delivery_id, delivery.clone());
+                    Some(delivery)
+                } else {
+                    None
+                }
+            } {
+                return Ok(delivery);
+            }
+
+            self.control_notify.notified().await;
+        }
+    }
+
+    async fn ack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if guard.control_inflight.remove(&delivery_id).is_some() {
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))

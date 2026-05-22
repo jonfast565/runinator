@@ -17,6 +17,10 @@ fn test_jira_provider_missing_base_url() {
         events_jsonl_path: "".into(),
     };
 
-    let result = provider.execute_service(request, None);
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
     assert!(result.is_err());
 }

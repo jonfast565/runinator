@@ -84,6 +84,7 @@ pub struct WorkflowTrigger {
 pub enum WorkflowStatus {
     Queued,
     Running,
+    Paused,
     DebugPaused,
     Waiting,
     ApprovalRequired,
@@ -99,6 +100,7 @@ impl WorkflowStatus {
         match self {
             WorkflowStatus::Queued => "queued",
             WorkflowStatus::Running => "running",
+            WorkflowStatus::Paused => "paused",
             WorkflowStatus::DebugPaused => "debug_paused",
             WorkflowStatus::Waiting => "waiting",
             WorkflowStatus::ApprovalRequired => "approval_required",
@@ -139,6 +141,7 @@ impl TryFrom<&str> for WorkflowStatus {
         match value {
             "queued" => Ok(WorkflowStatus::Queued),
             "running" => Ok(WorkflowStatus::Running),
+            "paused" => Ok(WorkflowStatus::Paused),
             "debug_paused" => Ok(WorkflowStatus::DebugPaused),
             "waiting" => Ok(WorkflowStatus::Waiting),
             "approval_required" => Ok(WorkflowStatus::ApprovalRequired),

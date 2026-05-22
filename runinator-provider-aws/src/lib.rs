@@ -61,6 +61,7 @@ impl Provider for AwsProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         info!("Running AWS provider call '{}'", request.action_function);
 

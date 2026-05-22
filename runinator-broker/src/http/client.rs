@@ -1,6 +1,9 @@
 use crate::{
-    http::types::{AckRequest, PublishRequest, ReceiveRequest, ReceiveResponse},
-    Broker, BrokerDelivery, BrokerError, BrokerMessage,
+    http::types::{
+        AckRequest, PublishControlRequest, PublishRequest, ReceiveControlResponse, ReceiveRequest,
+        ReceiveResponse,
+    },
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -108,6 +111,70 @@ impl Broker for HttpBroker {
             StatusCode::OK => Ok(()),
             status => Err(BrokerError::Internal(format!(
                 "unexpected nack status: {status}"
+            ))),
+        }
+    }
+
+    async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
+        let url = self.endpoint("control/publish")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&PublishControlRequest { command })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected control publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
+        let url = self.endpoint("control/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveControlResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected control receive status: {status}"
+            ))),
+        }
+    }
+
+    async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let url = self.endpoint("control/ack")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&AckRequest {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        match response.status() {
+            StatusCode::OK => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected control ack status: {status}"
             ))),
         }
     }

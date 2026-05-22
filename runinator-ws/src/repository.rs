@@ -1,4 +1,6 @@
 use chrono::Utc;
+use runinator_broker::{Broker, ControlCommand};
+use runinator_comm::ControlKind;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
@@ -327,6 +329,7 @@ async fn fetch_workflow_snapshot<T: DatabaseImpl>(
 
 fn trigger_state(trigger: &WorkflowTrigger) -> Value {
     serde_json::json!({
+        "control": { "pause_requested": false },
         "trigger": {
             "id": trigger.id,
             "kind": trigger.kind,
@@ -344,6 +347,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     let workflow_snapshot = fetch_workflow_snapshot(db, workflow_id).await?;
     let state = if debug {
         serde_json::json!({
+            "control": { "pause_requested": false },
             "debug": {
                 "enabled": true,
                 "paused": false,
@@ -354,7 +358,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
             }
         })
     } else {
-        Value::Object(Default::default())
+        serde_json::json!({ "control": { "pause_requested": false } })
     };
     db.create_workflow_run(workflow_id, workflow_snapshot, parameters, state)
         .await
@@ -559,10 +563,138 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
     })
 }
 
-pub async fn cancel_workflow_run<T: DatabaseImpl>(
+pub async fn pause_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
 ) -> Result<TaskResponse, SendableError> {
+    let command = ControlCommand::new(workflow_run_id, ControlKind::Pause);
+    pause_workflow_run_command(db, &command).await
+}
+
+async fn pause_workflow_run_command<T: DatabaseImpl>(
+    db: &T,
+    command: &ControlCommand,
+) -> Result<TaskResponse, SendableError> {
+    let workflow_run_id = command.workflow_run_id;
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.pause.not_found".into(),
+            format!("Workflow run {workflow_run_id} not found"),
+        )));
+    };
+    if run.status.is_terminal() {
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Workflow run {workflow_run_id} is already terminal"),
+        });
+    }
+    let mut state = run.state.clone();
+    let control = ensure_control_object(&mut state);
+    control.insert("pause_requested".into(), Value::Bool(true));
+
+    let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
+    let has_running_node = run
+        .active_node_id
+        .as_deref()
+        .and_then(|node_id| latest_node_run_for(&node_runs, node_id))
+        .is_some_and(|node_run| node_run.status == WorkflowStatus::Running);
+    let debug_enabled = run
+        .state
+        .pointer("/debug/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let status = if has_running_node || debug_enabled {
+        run.status
+    } else {
+        WorkflowStatus::Paused
+    };
+
+    db.update_workflow_run_status(
+        workflow_run_id,
+        status,
+        run.active_node_id,
+        Some(state),
+        Some("Workflow pause requested".into()),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Workflow run {workflow_run_id} pause requested"),
+    })
+}
+
+pub async fn resume_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+) -> Result<TaskResponse, SendableError> {
+    let command = ControlCommand::new(workflow_run_id, ControlKind::Resume);
+    resume_workflow_run_command(db, &command).await
+}
+
+async fn resume_workflow_run_command<T: DatabaseImpl>(
+    db: &T,
+    command: &ControlCommand,
+) -> Result<TaskResponse, SendableError> {
+    let workflow_run_id = command.workflow_run_id;
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.resume.not_found".into(),
+            format!("Workflow run {workflow_run_id} not found"),
+        )));
+    };
+    if run.status.is_terminal() {
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Workflow run {workflow_run_id} is already terminal"),
+        });
+    }
+    let mut state = run.state.clone();
+    let control = ensure_control_object(&mut state);
+    control.insert("pause_requested".into(), Value::Bool(false));
+    let status = if matches!(
+        run.status,
+        WorkflowStatus::Paused | WorkflowStatus::DebugPaused
+    ) {
+        WorkflowStatus::Running
+    } else {
+        run.status
+    };
+    if run.status == WorkflowStatus::DebugPaused {
+        let debug = ensure_debug_object(&mut state);
+        debug.insert("paused".into(), Value::Bool(false));
+        debug.insert("step_requested".into(), Value::Bool(false));
+    }
+
+    db.update_workflow_run_status(
+        workflow_run_id,
+        status,
+        run.active_node_id,
+        Some(state),
+        Some("Workflow resume requested".into()),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Workflow run {workflow_run_id} resumed"),
+    })
+}
+
+pub async fn cancel_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    workflow_run_id: i64,
+) -> Result<TaskResponse, SendableError> {
+    let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
+    let response = cancel_workflow_run_command(db, &command).await?;
+    publish_worker_control_command(broker, command).await?;
+    Ok(response)
+}
+
+async fn cancel_workflow_run_command<T: DatabaseImpl>(
+    db: &T,
+    command: &ControlCommand,
+) -> Result<TaskResponse, SendableError> {
+    let workflow_run_id = command.workflow_run_id;
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Err(Box::new(RuntimeError::new(
             "workflow.cancel.not_found".into(),
@@ -585,6 +717,8 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
             }
         }
     }
+    let control = ensure_control_object(&mut state);
+    control.insert("pause_requested".into(), Value::Bool(false));
     db.update_workflow_run_status(
         workflow_run_id,
         WorkflowStatus::Canceled,
@@ -597,6 +731,21 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
         success: true,
         message: format!("Workflow run {workflow_run_id} canceled"),
     })
+}
+
+async fn publish_worker_control_command(
+    broker: &dyn Broker,
+    command: ControlCommand,
+) -> Result<(), SendableError> {
+    broker
+        .publish_control(command)
+        .await
+        .map_err(|err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "workflow.control.publish".into(),
+                err.to_string(),
+            ))
+        })
 }
 
 pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
@@ -767,6 +916,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     };
 
     let mut state = serde_json::json!({
+        "control": { "pause_requested": false },
         "debug": {
             "enabled": true,
             "paused": false,
@@ -1080,6 +1230,30 @@ fn ensure_debug_object(state: &mut Value) -> &mut serde_json::Map<String, Value>
         *debug = serde_json::json!({});
     }
     debug.as_object_mut().expect("debug object")
+}
+
+fn ensure_control_object(state: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !state.is_object() {
+        *state = serde_json::json!({});
+    }
+    let object = state.as_object_mut().expect("state object");
+    let control = object
+        .entry("control")
+        .or_insert_with(|| serde_json::json!({}));
+    if !control.is_object() {
+        *control = serde_json::json!({});
+    }
+    control.as_object_mut().expect("control object")
+}
+
+fn latest_node_run_for<'a>(
+    node_runs: &'a [WorkflowNodeRun],
+    node_id: &str,
+) -> Option<&'a WorkflowNodeRun> {
+    node_runs
+        .iter()
+        .filter(|node_run| node_run.node_id == node_id)
+        .max_by_key(|node_run| node_run.attempt)
 }
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(

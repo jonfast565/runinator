@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::ActionCommand;
+use runinator_comm::{ActionCommand, ControlCommand};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -21,6 +21,14 @@ pub struct BrokerDelivery {
     pub delivery_id: Uuid,
     pub command: ActionCommand,
     pub dedupe_key: String,
+    pub enqueued_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlDelivery {
+    pub delivery_id: Uuid,
+    pub command: ControlCommand,
+    #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
 }
 
@@ -46,6 +54,16 @@ impl From<BrokerMessage> for BrokerDelivery {
             dedupe_key: dedupe,
             enqueued_at: message.enqueued_at,
             command: message.command,
+        }
+    }
+}
+
+impl From<ControlCommand> for ControlDelivery {
+    fn from(command: ControlCommand) -> Self {
+        Self {
+            delivery_id: Uuid::new_v4(),
+            command,
+            enqueued_at: utc_now(),
         }
     }
 }

@@ -1,10 +1,10 @@
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use log::{error, info, warn};
-use runinator_comm::TaskResult;
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
 use runinator_models::workflows::WorkflowAction;
+use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::plugin::Plugin;
 use runinator_plugin::provider::ProviderEventSink;
 use runinator_utilities::app_data;
@@ -15,30 +15,49 @@ use uuid::Uuid;
 use crate::provider_repository::resolve_provider;
 
 pub struct ExecutionOutcome {
-    pub task_result: TaskResult,
+    pub task_result: ExecutionTaskResult,
     pub execution_result: Option<TaskExecutionResult>,
     pub status: RunStatus,
 }
 
+pub struct ExecutionTaskResult {
+    pub success: bool,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub message: Option<String>,
+}
+
+impl ExecutionTaskResult {
+    pub fn duration_ms(&self) -> i64 {
+        (self.finished_at - self.started_at).num_milliseconds()
+    }
+}
+
 pub async fn execute_task(
     libraries: Arc<HashMap<String, Plugin>>,
-    command_id: Uuid,
     action: WorkflowAction,
     workflow_node_run_id: i64,
     parameters: Value,
     sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
 ) -> ExecutionOutcome {
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
     let request = build_provider_request(&action, workflow_node_run_id, parameters);
 
+    if token.is_cancelled() {
+        return canceled_outcome(started_at);
+    }
+
     match resolve_provider(&libraries, &action) {
         Ok(provider) => {
-            let handle =
-                tokio::task::spawn_blocking(move || provider.execute_service(request, sink));
+            let provider_token = token.clone();
+            let mut handle = tokio::task::spawn_blocking(move || {
+                provider.execute_service(request, sink, provider_token)
+            });
 
-            match time::timeout(Duration::from_secs(timeout), handle).await {
-                Ok(join_result) => match join_result {
+            tokio::select! {
+                join_result = &mut handle => match join_result {
                     Ok(Ok(execution_result)) => {
                         let finished_at = Utc::now();
                         info!(
@@ -49,8 +68,7 @@ pub async fn execute_task(
                         ExecutionOutcome {
                             execution_result: Some(execution_result),
                             status: RunStatus::Succeeded,
-                            task_result: TaskResult {
-                                command_id,
+                            task_result: ExecutionTaskResult {
                                 success: true,
                                 started_at,
                                 finished_at,
@@ -66,8 +84,7 @@ pub async fn execute_task(
                         ExecutionOutcome {
                             execution_result: None,
                             status: RunStatus::Failed,
-                            task_result: TaskResult {
-                                command_id,
+                            task_result: ExecutionTaskResult {
                                 success: false,
                                 started_at,
                                 finished_at: Utc::now(),
@@ -80,8 +97,7 @@ pub async fn execute_task(
                         ExecutionOutcome {
                             execution_result: None,
                             status: RunStatus::Failed,
-                            task_result: TaskResult {
-                                command_id,
+                            task_result: ExecutionTaskResult {
                                 success: false,
                                 started_at,
                                 finished_at: Utc::now(),
@@ -90,7 +106,8 @@ pub async fn execute_task(
                         }
                     }
                 },
-                Err(_) => {
+                _ = time::sleep(Duration::from_secs(timeout)) => {
+                    token.cancel();
                     warn!(
                         "Action {}.{} exceeded timeout of {} seconds",
                         action.provider, action.function, timeout
@@ -98,14 +115,20 @@ pub async fn execute_task(
                     ExecutionOutcome {
                         execution_result: None,
                         status: RunStatus::TimedOut,
-                        task_result: TaskResult {
-                            command_id,
+                        task_result: ExecutionTaskResult {
                             success: false,
                             started_at,
                             finished_at: Utc::now(),
                             message: Some(format!("Task timed out after {} seconds", timeout)),
                         },
                     }
+                },
+                _ = wait_for_cancel(token.clone()) => {
+                    warn!(
+                        "Action {}.{} received cancellation",
+                        action.provider, action.function
+                    );
+                    canceled_outcome(started_at)
                 }
             }
         }
@@ -117,8 +140,7 @@ pub async fn execute_task(
             ExecutionOutcome {
                 execution_result: None,
                 status: RunStatus::Failed,
-                task_result: TaskResult {
-                    command_id,
+                task_result: ExecutionTaskResult {
                     success: false,
                     started_at,
                     finished_at: Utc::now(),
@@ -126,6 +148,25 @@ pub async fn execute_task(
                 },
             }
         }
+    }
+}
+
+async fn wait_for_cancel(token: CancellationToken) {
+    while !token.is_cancelled() {
+        time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn canceled_outcome(started_at: DateTime<Utc>) -> ExecutionOutcome {
+    ExecutionOutcome {
+        execution_result: None,
+        status: RunStatus::Canceled,
+        task_result: ExecutionTaskResult {
+            success: false,
+            started_at,
+            finished_at: Utc::now(),
+            message: Some("Task canceled".into()),
+        },
     }
 }
 

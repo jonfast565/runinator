@@ -70,11 +70,12 @@ impl Provider for AiCommandProvider {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
+        token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
-            "claude_code" => run_claude_code(&request, sink),
+            "claude_code" => run_claude_code(&request, sink, token),
             // legacy default: shell-command execution.
-            _ => run_shell_command(&request),
+            _ => run_shell_command(&request, token),
         }
     }
 }

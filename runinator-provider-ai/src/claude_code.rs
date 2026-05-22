@@ -7,6 +7,7 @@ use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
+use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 use serde_json::{Value, json};
 
@@ -15,8 +16,15 @@ use crate::params::{ClaudeCodeParams, parse_params};
 pub(crate) fn run_claude_code(
     request: &ProviderExecutionRequest,
     sink: Option<Arc<dyn ProviderEventSink>>,
+    token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: ClaudeCodeParams = parse_params(request)?;
+    if token.is_cancelled() {
+        return Err(Box::new(RuntimeError::new(
+            "ai_command.claude_code.canceled".into(),
+            "Claude Code command canceled".into(),
+        )));
+    }
     let argv = build_claude_argv(&params);
 
     let mut command = Command::new(&params.binary);
@@ -40,6 +48,13 @@ pub(crate) fn run_claude_code(
     })?;
 
     let stdout_handle = drain_stdout(&mut child, sink.as_ref());
+    if token.is_cancelled() {
+        let _ = child.kill();
+        return Err(Box::new(RuntimeError::new(
+            "ai_command.claude_code.canceled".into(),
+            "Claude Code command canceled".into(),
+        )));
+    }
     let output = child.wait_with_output().map_err(|err| {
         RuntimeError::new(
             "ai_command.claude_code.wait".into(),
