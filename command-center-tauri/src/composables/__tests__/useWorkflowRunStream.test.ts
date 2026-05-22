@@ -42,7 +42,8 @@ describe("useWorkflowRunStream", () => {
     const app = useAppStore();
     const workflows = useWorkflowsStore();
     app.setServiceUrl("http://127.0.0.1:8080/");
-    workflows.selectedWorkflowRunId = 42;
+    workflows.openRunInTab(42);
+    workflows.activateRunTab(42);
 
     const scope = effectScope();
     scope.run(() => useWorkflowRunStream());

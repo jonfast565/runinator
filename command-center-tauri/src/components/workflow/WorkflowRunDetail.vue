@@ -1,7 +1,25 @@
 <template>
   <div class="inspector-section">
     <div class="detail-header">
-      <h2>Workflow Run #{{ workflows.workflowRunDetail?.run.id }}</h2>
+      <h2 class="run-detail-heading">
+        <template v-if="!renaming">
+          <span>{{ runHeadingLabel }}</span>
+          <button v-if="workflows.workflowRunDetail" class="btn btn-icon btn-ghost btn-sm" title="Rename run" @click="startRename">
+            <Icon name="edit" :size="14" />
+          </button>
+        </template>
+        <template v-else>
+          <input
+            ref="renameInput"
+            v-model="renameDraft"
+            class="rename-input"
+            placeholder="Run name"
+            @keydown.enter.prevent="commitRename"
+            @keydown.escape.prevent="cancelRename"
+            @blur="commitRename"
+          />
+        </template>
+      </h2>
       <StatusBadge :status="workflows.workflowRunDetail?.run.status" />
     </div>
 
@@ -31,7 +49,10 @@
         </span>
       </div>
       <div class="summary-row">
-        <button class="replay-btn" @click="workflows.replaySelectedWorkflowRun()">↻ Replay in Debug</button>
+        <button class="btn" @click="workflows.replaySelectedWorkflowRun()">
+          <Icon name="replay" />
+          <span>Replay in Debug</span>
+        </button>
       </div>
     </div>
 
@@ -67,17 +88,28 @@
             <th>Status</th>
             <th>Try</th>
             <th>Node Run</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="node in workflows.workflowRunDetail?.nodes" 
-              :key="node.id" 
+          <tr v-for="node in workflows.workflowRunDetail?.nodes"
+              :key="node.id"
               :class="{ selected: workflows.selectedWorkflowRunNodeId === node.node_id }"
               @click="workflows.selectWorkflowRunNode(node.node_id)">
             <td>{{ node.node_id }}</td>
             <td><StatusBadge :status="node.status" /></td>
             <td>{{ node.attempt }}</td>
             <td>{{ node.id }}</td>
+            <td class="step-actions">
+              <button
+                v-if="canRestartFromStep(node.node_id)"
+                class="btn btn-icon btn-ghost btn-sm"
+                title="Restart from here"
+                @click.stop="onRestartFromStep(node.node_id)"
+              >
+                <Icon name="restart" :size="14" />
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -110,18 +142,70 @@
 <script setup lang="ts">
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
+import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import DebugControlBar from "./DebugControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 import type { ActionResultMetadata } from "../../types/models";
 import { workflowNodeResultMetadata } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
+
+const renaming = ref(false);
+const renameDraft = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+
+const runHeadingLabel = computed(() => {
+  const run = workflows.workflowRunDetail?.run;
+  if (!run) return "Workflow Run";
+  const trimmed = run.name?.trim();
+  return trimmed ? `${trimmed} (#${run.id})` : `Workflow Run #${run.id}`;
+});
+
+async function startRename() {
+  const run = workflows.workflowRunDetail?.run;
+  if (!run) return;
+  renameDraft.value = run.name?.trim() ?? "";
+  renaming.value = true;
+  await nextTick();
+  renameInput.value?.focus();
+  renameInput.value?.select();
+}
+
+function cancelRename() {
+  renaming.value = false;
+  renameDraft.value = "";
+}
+
+async function commitRename() {
+  if (!renaming.value) return;
+  const run = workflows.workflowRunDetail?.run;
+  if (!run) {
+    renaming.value = false;
+    return;
+  }
+  const next = renameDraft.value.trim();
+  const previous = run.name?.trim() ?? "";
+  renaming.value = false;
+  if (next === previous) return;
+  await workflows.renameSelectedWorkflowRun(run.id, next.length === 0 ? null : next);
+}
+
+function canRestartFromStep(nodeId: string): boolean {
+  if (!isTerminalRun.value) return false;
+  return Boolean(nodeId) && nodeId !== "start" && nodeId !== "end" && nodeId !== "fail";
+}
+
+async function onRestartFromStep(nodeId: string) {
+  const run = workflows.workflowRunDetail?.run;
+  if (!run) return;
+  await workflows.replaySelectedWorkflowRun(run.id, nodeId);
+}
 
 const selectedNodeOutput = computed<Record<string, any> | null>(() => {
   const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
@@ -305,6 +389,24 @@ function formatResultValue(value: any): string {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+.run-detail-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rename-input {
+  font-size: inherit;
+  font-weight: inherit;
+  padding: 4px 8px;
+  min-width: 220px;
+  width: auto;
+}
+
+.step-actions {
+  text-align: right;
+}
 .summary-chip {
   display: inline-block;
   padding: 1px 8px;
@@ -324,20 +426,6 @@ function formatResultValue(value: any): string {
 .summary-chip.warning {
   background: #fef3c7;
   color: #92400e;
-}
-.replay-btn {
-  margin-left: auto;
-  padding: 4px 12px;
-  background: #fef3c7;
-  border: 1px solid #f59e0b;
-  color: #92400e;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 12px;
-}
-.replay-btn:hover {
-  background: #fde68a;
 }
 .workflow-detail-logs {
   flex: 0 0 auto;

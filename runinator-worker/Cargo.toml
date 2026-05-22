@@ -29,3 +29,4 @@ runinator-provider-git = { path = "../runinator-provider-git" }
 runinator-provider-ai = { path = "../runinator-provider-ai" }
 runinator-provider-approval = { path = "../runinator-provider-approval" }
 runinator-provider-console = { path = "../runinator-provider-console" }
+runinator-provider-email = { path = "../runinator-provider-email" }

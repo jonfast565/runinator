@@ -2,7 +2,15 @@
   <AppShell>
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
-    <ResourcesView v-show="app.activeTab === 'Resources'" />
+    <ApprovalsView v-if="app.activeTab === 'Approvals'" />
+    <ArtifactsView v-if="app.activeTab === 'Artifacts'" />
+    <NotificationsView v-if="app.activeTab === 'Notifications'" />
+    <FeedbackView v-if="app.activeTab === 'Feedback'" />
+    <EventsView v-if="app.activeTab === 'Events'" />
+    <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
+    <ChangeSetsView v-if="app.activeTab === 'ChangeSets'" />
+    <WorkspacesView v-if="app.activeTab === 'Workspaces'" />
+    <GatesView v-if="app.activeTab === 'Gates'" />
     <SecretsView v-show="app.activeTab === 'Secrets'" />
   </AppShell>
 </template>
@@ -13,19 +21,31 @@ import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi"
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useEventStream } from "./composables/useEventStream";
-import { useAppStore } from "./stores/app";
+import { endpointForTab, isResourceTab, useAppStore } from "./stores/app";
+import { useArtifactsStore } from "./stores/artifacts";
+import { useNotificationsStore } from "./stores/notifications";
 import { useResourcesStore } from "./stores/resources";
 import { useSecretsStore } from "./stores/secrets";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
 import RunsView from "./views/RunsView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
-import ResourcesView from "./views/ResourcesView.vue";
+import ApprovalsView from "./views/ApprovalsView.vue";
+import ArtifactsView from "./views/ArtifactsView.vue";
+import NotificationsView from "./views/NotificationsView.vue";
+import FeedbackView from "./views/FeedbackView.vue";
+import EventsView from "./views/EventsView.vue";
+import ExternalItemsView from "./views/ExternalItemsView.vue";
+import ChangeSetsView from "./views/ChangeSetsView.vue";
+import WorkspacesView from "./views/WorkspacesView.vue";
+import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
+const artifacts = useArtifactsStore();
+const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
 useEventStream();
@@ -70,8 +90,13 @@ watch(
   (tab) => {
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
-    if (tab === "Resources") resources.refreshResources();
     if (tab === "Secrets") secrets.refreshSecrets();
+    if (tab === "Artifacts") artifacts.refreshArtifacts();
+    if (tab === "Notifications") notifications.refreshNotifications();
+    if (isResourceTab(tab)) {
+      const endpoint = endpointForTab(tab);
+      if (endpoint) void resources.refreshResourcesFor(endpoint);
+    }
   }
 );
 
@@ -104,6 +129,8 @@ async function handleServiceUrlChanged(serviceUrl: string | null) {
 function clearBackendState() {
   workflows.clearServiceState();
   resources.clearResources();
+  artifacts.clearArtifacts();
+  notifications.clearNotifications();
   secrets.clearSecrets();
   providers.clearProviders();
 }
@@ -113,6 +140,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     workflows.refreshWorkflows().catch(() => {}),
     workflows.fetchRecentWorkflowRuns().catch(() => {}),
     resources.refreshResources().catch(() => {}),
+    notifications.refreshNotifications().catch(() => {}),
     secrets.refreshSecrets().catch(() => {}),
     refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()
   ]);

@@ -13,6 +13,7 @@ import {
   fetchWorkflowTriggers,
   fetchWorkflows,
   patchWorkflowRunDebug,
+  renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi,
   rerunWorkflowNode,
   runToCursorWorkflowRun,
@@ -108,6 +109,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
   const selectedWorkflowRunId = ref(0);
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
+  const openRunIds = ref<number[]>([]);
+  const runDetailById = reactive(new Map<number, WorkflowRunDetail | null>());
+  const MAX_OPEN_RUN_TABS = 8;
   const latestWorkflowRunPushVersion = new Map<number, number>();
   const latestWorkflowRunHttpRequest = new Map<number, number>();
   let nextWorkflowRunDetailVersion = 0;
@@ -260,6 +264,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflows.value = [];
     workflowRuns.value = [];
     workflowRunDetail.value = null;
+    openRunIds.value = [];
+    runDetailById.clear();
     pendingBreakpointPatch = null;
     workflowNodeDetailExtra.value = "";
     selectedWorkflowRunId.value = 0;
@@ -441,19 +447,45 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     await fetchWorkflowRunDetail(runId, true);
   }
 
-  async function replaySelectedWorkflowRun(runId?: number) {
+  async function replaySelectedWorkflowRun(runId?: number, fromStepId?: string) {
     const targetId = runId ?? workflowRunDetail.value?.run.id;
     if (!targetId) return;
-    const created = await app.runOperation(`Replaying workflow run ${targetId}`, () => replayWorkflowRunApi(targetId));
+    const label = fromStepId
+      ? `Replaying workflow run ${targetId} from step ${fromStepId}`
+      : `Replaying workflow run ${targetId}`;
+    const created = await app
+      .runOperation(label, () => replayWorkflowRunApi(targetId, { fromStepId }))
+      .catch((error) => {
+        app.setError(String(error));
+        return null;
+      });
     if (!created?.id) {
       app.setError("Failed to start replay");
       return;
     }
     app.setStatus(`Replay started as run ${created.id}`);
-    selectedWorkflowRunId.value = created.id;
+    openRunInTab(created.id);
+    activateRunTab(created.id);
     await fetchWorkflowRunDetail(created.id);
     await fetchRecentWorkflowRuns();
     app.activeTab = "Runs";
+    return created.id;
+  }
+
+  async function renameSelectedWorkflowRun(runId: number, name: string | null) {
+    if (!runId) return;
+    const response = await app
+      .runOperation(`Renaming run ${runId}`, () => renameWorkflowRunApi(runId, name))
+      .catch((error) => {
+        app.setError(String(error));
+        return null;
+      });
+    if (!response) return;
+    app.setStatus(response.message || `Run renamed`);
+    await fetchRecentWorkflowRuns();
+    if (workflowRunDetail.value?.run.id === runId) {
+      await fetchWorkflowRunDetail(runId, true);
+    }
   }
 
   // watch expressions persisted per workflow id in localStorage.
@@ -525,8 +557,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     console.info("[command-center] refreshing recent workflow runs");
     workflowRuns.value = await app.runOperation("Loading workflow runs", () => fetchWorkflowRuns()).catch(() => []);
     const previousRunId = selectedWorkflowRunId.value;
-    if (!workflowRuns.value.some((run) => run.id === selectedWorkflowRunId.value)) {
-      selectedWorkflowRunId.value = workflowRuns.value[0]?.id ?? 0;
+    if (selectedWorkflowRunId.value === 0 && workflowRuns.value.length > 0) {
+      const first = workflowRuns.value[0]?.id ?? 0;
+      if (first) {
+        openRunInTab(first);
+        activateRunTab(first);
+      }
     }
     if (selectedWorkflowRunId.value > 0 && (!workflowRunDetail.value || previousRunId !== selectedWorkflowRunId.value)) {
       await fetchWorkflowRunDetail(selectedWorkflowRunId.value, true);
@@ -534,8 +570,58 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function selectWorkflowRun(run: RunSummary) {
-    selectedWorkflowRunId.value = run.id;
+    openRunInTab(run.id);
+    activateRunTab(run.id);
     return fetchWorkflowRunDetail(run.id);
+  }
+
+  function openRunInTab(runId: number) {
+    if (!runId) return;
+    const ids = openRunIds.value;
+    if (!ids.includes(runId)) {
+      // Cap the tab count by evicting the oldest non-active tab.
+      if (ids.length >= MAX_OPEN_RUN_TABS) {
+        const victim = ids.find((id) => id !== selectedWorkflowRunId.value);
+        if (victim) closeRunTab(victim);
+      }
+      openRunIds.value = [...ids, runId];
+    }
+    if (!runDetailById.has(runId)) {
+      runDetailById.set(runId, null);
+    }
+  }
+
+  function activateRunTab(runId: number) {
+    if (!runId) return;
+    if (!openRunIds.value.includes(runId)) openRunInTab(runId);
+    selectedWorkflowRunId.value = runId;
+    workflowRunDetail.value = runDetailById.get(runId) ?? null;
+    workflowNodeDetailExtra.value = "";
+    selectedWorkflowRunNodeId.value = workflowRunDetail.value?.nodes[0]?.node_id ?? "";
+    if (!runDetailById.get(runId)) {
+      void fetchWorkflowRunDetail(runId, true);
+    }
+  }
+
+  function closeRunTab(runId: number) {
+    const ids = openRunIds.value;
+    const index = ids.indexOf(runId);
+    if (index === -1) return;
+    const next = [...ids.slice(0, index), ...ids.slice(index + 1)];
+    openRunIds.value = next;
+    runDetailById.delete(runId);
+    latestWorkflowRunPushVersion.delete(runId);
+    latestWorkflowRunHttpRequest.delete(runId);
+    if (selectedWorkflowRunId.value === runId) {
+      const replacement = next[Math.min(index, next.length - 1)] ?? 0;
+      if (replacement) {
+        activateRunTab(replacement);
+      } else {
+        selectedWorkflowRunId.value = 0;
+        workflowRunDetail.value = null;
+        selectedWorkflowRunNodeId.value = "";
+      }
+    }
   }
 
   async function fetchWorkflowRunDetail(workflowRunId: number, silent = false) {
@@ -569,11 +655,25 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       }
     }
     if (detail) confirmPendingBreakpointPatch(detail);
-    workflowRunDetail.value = detail;
-    reapplyPendingBreakpointPatch();
-    workflowNodeDetailExtra.value = "";
-    if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
-      selectedWorkflowRunNodeId.value = detail?.nodes[0]?.node_id ?? "";
+    if (detail) {
+      runDetailById.set(detail.run.id, detail);
+      if (!openRunIds.value.includes(detail.run.id)) {
+        openRunIds.value = [...openRunIds.value, detail.run.id].slice(-MAX_OPEN_RUN_TABS);
+      }
+      if (selectedWorkflowRunId.value === 0) {
+        selectedWorkflowRunId.value = detail.run.id;
+      }
+    }
+    const isActiveRun = detail
+      ? detail.run.id === selectedWorkflowRunId.value
+      : true;
+    if (isActiveRun) {
+      workflowRunDetail.value = detail;
+      reapplyPendingBreakpointPatch();
+      workflowNodeDetailExtra.value = "";
+      if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
+        selectedWorkflowRunNodeId.value = detail?.nodes[0]?.node_id ?? "";
+      }
     }
     if (detail) {
       const resources = useResourcesStore();
@@ -1586,6 +1686,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     skipCurrentNode,
     rerunCurrentNode,
     replaySelectedWorkflowRun,
+    renameSelectedWorkflowRun,
+    openRunIds,
+    openRunInTab,
+    closeRunTab,
+    activateRunTab,
+    runDetailById,
     watchExpressionsForActiveWorkflow,
     addWatchExpression,
     removeWatchExpression,

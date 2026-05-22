@@ -46,6 +46,12 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         message: Option<String>,
     ) -> Result<(), SendableError>;
 
+    async fn set_workflow_run_name(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<(), SendableError>;
+
     async fn fetch_workflow_run(
         &self,
         workflow_run_id: i64,
@@ -220,6 +226,18 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    pub async fn set_workflow_run_name(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<(), SendableError> {
+        self.client
+            .rename_workflow_run(workflow_run_id, name)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
     pub async fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,
@@ -344,6 +362,14 @@ impl WorkflowSchedulerApi for SchedulerApi {
             message,
         )
         .await
+    }
+
+    async fn set_workflow_run_name(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::set_workflow_run_name(self, workflow_run_id, name).await
     }
 
     async fn fetch_workflow_run(

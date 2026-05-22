@@ -5,16 +5,29 @@
       <span>Command Center</span>
     </div>
     <nav class="nav-list">
-      <button v-for="tab in tabs" :key="tab" :class="{ active: app.activeTab === tab }" :disabled="app.serviceBlocked" @click="app.activeTab = tab">
-        <span>{{ tab }}</span>
-        <span class="nav-count">{{ navCount(tab) }}</span>
-      </button>
+      <template v-for="section in navSections" :key="section.label">
+        <div class="nav-section-label">{{ section.label }}</div>
+        <button
+          v-for="item in section.items"
+          :key="item.tab"
+          :class="{ active: app.activeTab === item.tab }"
+          :disabled="app.serviceBlocked"
+          @click="app.activeTab = item.tab"
+        >
+          <span class="nav-row">
+            <Icon :name="item.icon" :size="15" />
+            <span class="nav-label">{{ item.label }}</span>
+          </span>
+          <span v-if="countFor(item.tab) !== null" class="nav-count">{{ countFor(item.tab) }}</span>
+        </button>
+      </template>
     </nav>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { tabs, useAppStore } from "../../stores/app";
+import Icon from "../shared/Icon.vue";
+import { navSections, useAppStore } from "../../stores/app";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";
@@ -25,10 +38,46 @@ const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
 
-function navCount(tab: AppTab): number {
+function countFor(tab: AppTab): number | null {
   if (tab === "Runs") return workflows.recentWorkflowRuns.length;
   if (tab === "Workflows") return workflows.workflows.length;
-  if (tab === "Resources") return resources.resourceRecords.length;
-  return secrets.secrets.length;
+  if (tab === "Secrets") return secrets.secrets.length;
+  // Counts for resource tabs are only accurate for the currently-selected endpoint.
+  if (resources.selectedResourceEndpoint === resourceEndpointFor(tab)) return resources.resourceRecords.length;
+  return null;
+}
+
+function resourceEndpointFor(tab: AppTab): string | undefined {
+  const item = navSections.flatMap((section) => section.items).find((entry) => entry.tab === tab);
+  return item?.endpoint;
 }
 </script>
+
+<style scoped>
+.nav-section-label {
+  color: #7e8c9c;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 10px;
+  padding: 0 10px;
+  text-transform: uppercase;
+}
+
+.nav-section-label:first-child {
+  margin-top: 0;
+}
+
+.nav-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

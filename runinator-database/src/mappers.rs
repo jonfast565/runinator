@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use runinator_models::{
+    notifications::Notification,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -171,6 +172,7 @@ macro_rules! workflow_run_from_row {
                 .get::<Option<i64>, _>("finished_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
+            name: $row.get("name"),
         }
     }};
 }
@@ -348,6 +350,35 @@ pub fn sqlite_row_to_idempotency_key(row: &SqliteRow) -> Value {
 
 pub fn postgres_row_to_idempotency_key(row: &PgRow) -> Value {
     idempotency_key_from_row!(row)
+}
+
+macro_rules! notification_from_row {
+    ($row:expr) => {{
+        Notification {
+            id: $row.get::<i64, _>("id"),
+            workflow_run_id: $row.get::<Option<i64>, _>("workflow_run_id"),
+            workflow_node_id: $row.get::<Option<String>, _>("workflow_node_id"),
+            channel: $row.get::<String, _>("channel"),
+            severity: $row.get::<String, _>("severity"),
+            title: $row.get::<String, _>("title"),
+            body: $row.get::<Option<String>, _>("body"),
+            target: $row.get::<Option<String>, _>("target"),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            read_at: $row
+                .get::<Option<i64>, _>("read_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_notification(row: &SqliteRow) -> Notification {
+    notification_from_row!(row)
+}
+
+pub fn postgres_row_to_notification(row: &PgRow) -> Notification {
+    notification_from_row!(row)
 }
 
 #[cfg(test)]

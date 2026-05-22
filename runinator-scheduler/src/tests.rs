@@ -35,6 +35,7 @@ fn builds_runtime_context() {
         started_at: None,
         finished_at: None,
         message: None,
+        name: None,
     };
     let node_runs = vec![WorkflowNodeRun {
         id: 100,
@@ -906,6 +907,18 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         Ok((run, state.node_runs.clone()))
     }
 
+    async fn set_workflow_run_name(
+        &self,
+        _workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<(), SendableError> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(run) = state.workflow_run.as_mut() {
+            run.name = name;
+        }
+        Ok(())
+    }
+
     async fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,
@@ -1024,6 +1037,7 @@ fn workflow_run(
         started_at: None,
         finished_at: None,
         message: None,
+        name: None,
     }
 }
 

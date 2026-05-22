@@ -5,7 +5,10 @@
       <div class="panel workflow-list">
         <div class="panel-toolbar">
           <h2>Workflows</h2>
-          <button @click="workflows.addWorkflow">New</button>
+          <button class="btn btn-primary" @click="workflows.addWorkflow">
+            <Icon name="plus" />
+            <span>New</span>
+          </button>
         </div>
         <DataTable>
           <table>
@@ -53,6 +56,7 @@ import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
 import DataTable from "../components/shared/DataTable.vue";
+import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../stores/workflows";

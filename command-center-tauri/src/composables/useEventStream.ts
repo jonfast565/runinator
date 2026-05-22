@@ -1,5 +1,7 @@
 import { onBeforeUnmount, watch } from "vue";
-import { useAppStore } from "../stores/app";
+import { endpointForTab, isResourceTab, useAppStore } from "../stores/app";
+import { useArtifactsStore } from "../stores/artifacts";
+import { useNotificationsStore } from "../stores/notifications";
 import { useResourcesStore } from "../stores/resources";
 import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
@@ -13,7 +15,16 @@ export function useEventStream() {
   const app = useAppStore();
   const workflows = useWorkflowsStore();
   const resources = useResourcesStore();
-  const tasks = useTasksStore();
+  const artifacts = useArtifactsStore();
+  const notifications = useNotificationsStore();
+  // Tasks store still referenced by the rest of the app; we no longer poll it here.
+  void useTasksStore;
+
+  function refreshResourcesIfActive() {
+    if (!isResourceTab(app.activeTab)) return;
+    const endpoint = endpointForTab(app.activeTab);
+    if (endpoint) void resources.refreshResourcesFor(endpoint);
+  }
   let ws: WebSocket | null = null;
   let fallbackTimer: number | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -25,13 +36,11 @@ export function useEventStream() {
     switch (event.type) {
       case "run_status_changed":
         if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
-        if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
         break;
       case "resync":
         refreshActiveState();
         break;
       case "tasks_changed":
-        if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
         break;
       case "workflows_changed":
         if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
@@ -45,7 +54,16 @@ export function useEventStream() {
         break;
       }
       case "resources_changed":
-        if (app.activeTab === "Resources") resources.refreshResources();
+        refreshResourcesIfActive();
+        break;
+      case "artifact_created":
+      case "artifacts_changed":
+        if (app.activeTab === "Artifacts") void artifacts.refreshArtifacts();
+        break;
+      case "notification_created":
+      case "notifications_changed":
+        // Always refresh notifications so the sidebar badge can stay current.
+        void notifications.refreshNotifications();
         break;
     }
   }
@@ -53,15 +71,7 @@ export function useEventStream() {
   function startFallback() {
     if (fallbackTimer !== null) return;
     app.setEventStreamState("fallback");
-    fallbackTimer = window.setInterval(() => {
-      if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
-      if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
-      if (workflows.selectedWorkflowRunId > 0) {
-        workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
-      }
-      if (app.activeTab === "Resources") resources.refreshResources();
-      if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
-    }, FALLBACK_INTERVAL);
+    fallbackTimer = window.setInterval(refreshActiveState, FALLBACK_INTERVAL);
   }
 
   function refreshActiveState() {
@@ -70,8 +80,9 @@ export function useEventStream() {
     if (workflows.selectedWorkflowRunId > 0) {
       workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
     }
-    if (app.activeTab === "Resources") resources.refreshResources();
-    if (app.activeTab === "Tasks") tasks.refreshRunsForSelectedTask();
+    if (app.activeTab === "Artifacts") void artifacts.refreshArtifacts();
+    if (app.activeTab === "Notifications") void notifications.refreshNotifications();
+    refreshResourcesIfActive();
   }
 
   function stopFallback() {

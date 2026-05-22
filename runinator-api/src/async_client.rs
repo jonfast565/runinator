@@ -317,6 +317,24 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
+    pub async fn rename_workflow_run(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}/rename"))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({ "name": name }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
     pub async fn fetch_workflow_run(
         &self,
         workflow_run_id: i64,

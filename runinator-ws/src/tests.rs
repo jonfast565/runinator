@@ -20,6 +20,7 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
             started_at: None,
             finished_at: Some(chrono::Utc::now()),
             message: None,
+            name: None,
         },
         nodes: vec![],
     };
@@ -207,6 +208,91 @@ fn workflow(id: Option<i64>, name: &str) -> WorkflowDefinition {
         created_at: None,
         updated_at: None,
     }
+}
+
+#[test]
+fn ancestors_in_snapshot_returns_topological_path() {
+    let snapshot = WorkflowDefinition {
+        id: Some(1),
+        name: "ancestors".into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "a" } } },
+                { "id": "a", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "b" } } },
+                { "id": "b", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "c" } } },
+                { "id": "c", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "end" } } },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
+    };
+    let ancestors = crate::repository::ancestors_in_snapshot(&snapshot, "c").unwrap();
+    assert!(ancestors.contains(&"start".to_string()));
+    assert!(ancestors.contains(&"a".to_string()));
+    assert!(ancestors.contains(&"b".to_string()));
+    assert!(!ancestors.contains(&"c".to_string()));
+    // start must come before a, a before b.
+    let pos_start = ancestors.iter().position(|n| n == "start").unwrap();
+    let pos_a = ancestors.iter().position(|n| n == "a").unwrap();
+    let pos_b = ancestors.iter().position(|n| n == "b").unwrap();
+    assert!(pos_start < pos_a);
+    assert!(pos_a < pos_b);
+}
+
+#[test]
+fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
+    let snapshot = WorkflowDefinition {
+        id: Some(1),
+        name: "loop_ancestor".into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "loop1" } } },
+                { "id": "loop1", "kind": "loop", "parameters": { "items": [], "target": { "$node": "inside" } }, "transitions": { "next": { "$node": "end" } } },
+                { "id": "inside", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "loop1" } } },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
+    };
+    let result = crate::repository::ancestors_in_snapshot(&snapshot, "inside");
+    assert!(result.is_err(), "expected refusal for control-flow ancestor");
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("control-flow") || message.contains("Loop") || message.contains("safely"),
+        "error should mention control flow: {message}"
+    );
+}
+
+#[test]
+fn ancestors_in_snapshot_rejects_missing_step() {
+    let snapshot = WorkflowDefinition {
+        id: Some(1),
+        name: "missing".into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
+    };
+    let result = crate::repository::ancestors_in_snapshot(&snapshot, "nope");
+    assert!(result.is_err());
 }
 
 fn trigger(id: Option<i64>, workflow_id: i64) -> WorkflowTrigger {

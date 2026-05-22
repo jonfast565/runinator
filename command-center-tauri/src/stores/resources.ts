@@ -40,6 +40,14 @@ export const useResourcesStore = defineStore("resources", () => {
     selectedResourceRecord.value = resourceRecords.value[0] ?? null;
   }
 
+  async function refreshResourcesFor(endpoint: string) {
+    if (selectedResourceEndpoint.value !== endpoint) {
+      selectedResourceEndpoint.value = endpoint;
+      selectedResourceRecord.value = null;
+    }
+    await refreshResources();
+  }
+
   function clearResources() {
     resourceRecords.value = [];
     selectedResourceRecord.value = null;
@@ -101,6 +109,7 @@ export const useResourcesStore = defineStore("resources", () => {
     canResolveApproval,
     filteredResourceRecords,
     refreshResources,
+    refreshResourcesFor,
     clearResources,
     handleApprovalAction,
     resolveApproval,

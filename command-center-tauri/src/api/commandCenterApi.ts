@@ -3,6 +3,7 @@ import { isTauriRuntime } from "./tauriRuntime";
 import type {
   JsonRecord,
   CredentialSummary,
+  Notification,
   ProviderMetadata,
   RunArtifact,
   RunChunk,
@@ -143,8 +144,48 @@ export async function rerunWorkflowNode(workflowRunId: number, parameters: any) 
   return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
 }
 
-export async function replayWorkflowRun(workflowRunId: number) {
-  return command<WorkflowRunCreated>("replay_workflow_run", { workflowRunId });
+export async function replayWorkflowRun(workflowRunId: number, options: { fromStepId?: string } = {}) {
+  return command<WorkflowRunCreated>("replay_workflow_run", { workflowRunId, fromStepId: options.fromStepId ?? null });
+}
+
+export async function renameWorkflowRun(workflowRunId: number, name: string | null) {
+  return command<TaskResponse>("rename_workflow_run", { workflowRunId, name });
+}
+
+export type ArtifactUploadRequest = {
+  run_id: number;
+  workflow_node_run_id?: number | null;
+};
+
+export type ArtifactDownloadResult = { saved_to: string | null };
+
+export async function fetchAllArtifacts() {
+  return command<RunArtifact[]>("fetch_all_artifacts");
+}
+
+export async function uploadArtifactFromPath(request: ArtifactUploadRequest) {
+  return command<RunArtifact>("upload_artifact", { request });
+}
+
+export async function downloadArtifactToPath(artifactId: number, defaultName: string) {
+  return command<ArtifactDownloadResult>("download_artifact", { artifactId, defaultName });
+}
+
+export type NotificationListOptions = { unreadOnly?: boolean; limit?: number };
+
+export async function fetchNotifications(options: NotificationListOptions = {}) {
+  return command<Notification[]>("fetch_notifications", {
+    unreadOnly: Boolean(options.unreadOnly),
+    limit: options.limit ?? 200
+  });
+}
+
+export async function markNotificationRead(notificationId: number) {
+  return command<Notification>("mark_notification_read", { notificationId });
+}
+
+export async function markAllNotificationsRead() {
+  return command<TaskResponse>("mark_all_notifications_read");
 }
 
 export type SupervisorProcessSnapshot = {

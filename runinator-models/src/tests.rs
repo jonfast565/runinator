@@ -146,6 +146,7 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         ("map", WorkflowNodeKind::Map),
         ("race", WorkflowNodeKind::Race),
         ("emit", WorkflowNodeKind::Emit),
+        ("config", WorkflowNodeKind::Config),
     ] {
         let node: WorkflowNode = serde_json::from_value(json!({
             "id": kind,

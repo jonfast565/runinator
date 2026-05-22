@@ -4,6 +4,7 @@ use crate::{discovery::start_discovery_thread, state::CommandCenterState};
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(CommandCenterState::new())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -34,6 +35,7 @@ pub fn run() {
             crate::commands::skip_workflow_node,
             crate::commands::rerun_workflow_node,
             crate::commands::replay_workflow_run,
+            crate::commands::rename_workflow_run,
             crate::commands::fetch_supervisor_status,
             crate::commands::fetch_workflow_runs,
             crate::commands::fetch_workflow_run,
@@ -43,7 +45,13 @@ pub fn run() {
             crate::commands::save_credential,
             crate::commands::delete_credential,
             crate::commands::approve_approval,
-            crate::commands::reject_approval
+            crate::commands::reject_approval,
+            crate::commands::fetch_all_artifacts,
+            crate::commands::upload_artifact,
+            crate::commands::download_artifact,
+            crate::commands::fetch_notifications,
+            crate::commands::mark_notification_read,
+            crate::commands::mark_all_notifications_read
         ])
         .run(tauri::generate_context!())
         .expect("failed to run command center");

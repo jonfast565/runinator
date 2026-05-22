@@ -80,6 +80,61 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     db.add_run_artifact(run_id, artifact).await
 }
 
+pub async fn fetch_all_artifacts<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Vec<RunArtifact>, SendableError> {
+    db.fetch_all_artifacts().await
+}
+
+pub async fn persist_artifact_file<T: DatabaseImpl>(
+    db: &T,
+    run_id: i64,
+    workflow_node_run_id: Option<i64>,
+    name: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> Result<RunArtifact, SendableError> {
+    use runinator_utilities::app_data;
+
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let safe_name = if safe_name.is_empty() {
+        "artifact".to_string()
+    } else {
+        safe_name
+    };
+
+    let dir = app_data::app_data_path(format!("artifacts/{run_id}"))?;
+    tokio::fs::create_dir_all(&dir).await?;
+    let id_suffix = uuid::Uuid::new_v4().simple().to_string();
+    let final_name = format!("{}-{}", id_suffix, safe_name);
+    let target = dir.join(&final_name);
+    tokio::fs::write(&target, bytes).await?;
+
+    let uri = target.to_string_lossy().to_string();
+    let new_artifact = NewRunArtifact {
+        name: name.to_string(),
+        mime_type: mime_type.to_string(),
+        size_bytes: bytes.len() as i64,
+        uri: uri.clone(),
+        metadata: serde_json::json!({
+            "source": "upload",
+            "workflow_node_run_id": workflow_node_run_id
+        }),
+    };
+    let artifact = db.add_run_artifact(run_id, &new_artifact).await?;
+
+    if let Some(node_run_id) = workflow_node_run_id {
+        let _ = db
+            .add_workflow_node_run_artifact(node_run_id, &new_artifact)
+            .await;
+    }
+
+    Ok(artifact)
+}
+
 pub async fn upsert_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
@@ -332,6 +387,26 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     Ok(TaskResponse {
         success: true,
         message: "Workflow run updated".into(),
+    })
+}
+
+pub async fn set_workflow_run_name<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    name: Option<String>,
+) -> Result<TaskResponse, SendableError> {
+    let trimmed = name.and_then(|value| {
+        let stripped = value.trim().to_string();
+        if stripped.is_empty() {
+            None
+        } else {
+            Some(stripped)
+        }
+    });
+    db.set_workflow_run_name(workflow_run_id, trimmed).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow run renamed".into(),
     })
 }
 
@@ -672,6 +747,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
 pub async fn replay_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
+    from_step_id: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(source) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Err(Box::new(RuntimeError::new(
@@ -683,7 +759,8 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         Some(snap) => snap,
         None => fetch_workflow_snapshot(db, source.workflow_id).await?,
     };
-    let state = serde_json::json!({
+
+    let mut state = serde_json::json!({
         "debug": {
             "enabled": true,
             "paused": false,
@@ -694,8 +771,212 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         },
         "replay": { "source_run_id": source.id }
     });
+
+    // Phase D: support resuming from a specific step.
+    if let Some(target_node_id) = from_step_id.as_deref() {
+        let ancestor_ids = ancestors_in_snapshot(&snapshot, target_node_id)?;
+        state["replay"]["from_step_id"] = serde_json::Value::String(target_node_id.into());
+        let new_run = db
+            .create_workflow_run(
+                source.workflow_id,
+                snapshot.clone(),
+                source.parameters.clone(),
+                state,
+            )
+            .await?;
+
+        if !ancestor_ids.is_empty() {
+            let source_nodes = db.fetch_workflow_node_runs(source.id).await?;
+            for node_id in &ancestor_ids {
+                if let Some(source_node) = source_nodes
+                    .iter()
+                    .rev()
+                    .find(|node| node.node_id == *node_id && node.status.is_terminal())
+                {
+                    let new_node = db
+                        .create_workflow_node_run(
+                            new_run.id,
+                            node_id.clone(),
+                            source_node.parameters.clone(),
+                        )
+                        .await?;
+                    let attempt = if source_node.attempt > 0 {
+                        Some(source_node.attempt)
+                    } else {
+                        Some(1)
+                    };
+                    db.update_workflow_node_run(
+                        new_node.id,
+                        source_node.status,
+                        attempt,
+                        None,
+                        source_node.output_json.clone(),
+                        Some(source_node.state.clone()),
+                        Some("replayed_from_source".into()),
+                        Some(format!("Replayed from run {} step {}", source.id, node_id)),
+                    )
+                    .await?;
+                }
+            }
+        }
+        db.update_workflow_run_status(
+            new_run.id,
+            WorkflowStatus::Queued,
+            Some(target_node_id.to_string()),
+            None,
+            Some(format!(
+                "Replayed from run {} starting at step {}",
+                source.id, target_node_id
+            )),
+        )
+        .await?;
+
+        let Some(refreshed) = db.fetch_workflow_run(new_run.id).await? else {
+            return Err(Box::new(RuntimeError::new(
+                "workflow.replay.not_found".into(),
+                format!("Replay run {} disappeared", new_run.id),
+            )));
+        };
+        return Ok(refreshed);
+    }
+
     db.create_workflow_run(source.workflow_id, snapshot, source.parameters, state)
         .await
+}
+
+/// BFS over reverse transitions from `target_node_id` to find all nodes that must
+/// have completed before the target can run. Refuses to traverse through
+/// `Loop`/`Map`/`Parallel`/`Try` ancestors — multi-iteration state can't be
+/// safely copied in v1 (Phase D limitation).
+pub fn ancestors_in_snapshot(
+    snapshot: &WorkflowDefinition,
+    target_node_id: &str,
+) -> Result<Vec<String>, SendableError> {
+    use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+    let nodes: Vec<WorkflowNode> = match snapshot.definition.get("nodes") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "workflow.replay.snapshot_invalid".into(),
+                format!("Failed to parse workflow nodes: {err}"),
+            ))
+        })?,
+        None => Vec::new(),
+    };
+
+    if nodes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if !nodes.iter().any(|node| node.id == target_node_id) {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.replay.missing_step".into(),
+            format!("Step {target_node_id} not found in workflow snapshot"),
+        )));
+    }
+
+    // Build reverse adjacency: for each node, the set of nodes that transition into it.
+    let mut reverse: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let by_id: BTreeMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    for node in &nodes {
+        for child_id in transition_targets(node) {
+            reverse.entry(child_id).or_default().insert(node.id.clone());
+        }
+    }
+
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    if let Some(parents) = reverse.get(target_node_id) {
+        for parent in parents {
+            queue.push_back(parent.clone());
+        }
+    }
+
+    while let Some(node_id) = queue.pop_front() {
+        if !visited.insert(node_id.clone()) {
+            continue;
+        }
+        if let Some(node) = by_id.get(node_id.as_str()) {
+            if matches!(
+                node.kind,
+                WorkflowNodeKind::Loop
+                    | WorkflowNodeKind::Map
+                    | WorkflowNodeKind::Parallel
+                    | WorkflowNodeKind::Try
+                    | WorkflowNodeKind::Race
+            ) {
+                return Err(Box::new(RuntimeError::new(
+                    "workflow.replay.control_flow".into(),
+                    format!(
+                        "Cannot restart from step {target_node_id}: ancestor {node_id} is a control-flow node ({:?}) whose state is not safely replayable.",
+                        node.kind
+                    ),
+                )));
+            }
+        }
+        if let Some(parents) = reverse.get(&node_id) {
+            for parent in parents {
+                queue.push_back(parent.clone());
+            }
+        }
+    }
+
+    // Topologically sort the ancestor set so each node only depends on
+    // earlier-seeded outputs.
+    let mut order = Vec::new();
+    let mut remaining: BTreeSet<String> = visited.clone();
+    while !remaining.is_empty() {
+        // Pick any node in `remaining` whose ancestors are all already placed.
+        let next = remaining
+            .iter()
+            .find(|node_id| {
+                reverse
+                    .get(*node_id)
+                    .map(|parents| parents.iter().all(|parent| !remaining.contains(parent)))
+                    .unwrap_or(true)
+            })
+            .cloned();
+        if let Some(node_id) = next {
+            remaining.remove(&node_id);
+            order.push(node_id);
+        } else {
+            // Fallback: cycle detected; fall back to insertion order.
+            order.extend(remaining.iter().cloned());
+            remaining.clear();
+        }
+    }
+    Ok(order)
+}
+
+fn transition_targets(node: &runinator_models::workflows::WorkflowNode) -> Vec<String> {
+    use serde_json::Value;
+    let mut targets = Vec::new();
+    fn walk(value: &Value, into: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(target) = map.get("$node").and_then(|value| value.as_str()) {
+                    into.push(target.to_string());
+                    return;
+                }
+                for value in map.values() {
+                    walk(value, into);
+                }
+            }
+            Value::Array(items) => {
+                for value in items {
+                    walk(value, into);
+                }
+            }
+            _ => {}
+        }
+    }
+    let transitions_value = serde_json::to_value(&node.transitions).unwrap_or(Value::Null);
+    walk(&transitions_value, &mut targets);
+    walk(&node.condition, &mut targets);
+    walk(&node.parameters, &mut targets);
+    targets
 }
 
 async fn require_debug_run<T: DatabaseImpl>(

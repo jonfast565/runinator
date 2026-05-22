@@ -190,6 +190,9 @@ async fn process_workflow_run_step(
             process_race_node(api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::Emit => process_emit_node(api, &workflow_run, node, &node_runs).await?,
+        WorkflowNodeKind::Config => {
+            process_config_node(api, &workflow_run, node, &node_runs).await?
+        }
         WorkflowNodeKind::Subflow => {
             process_subflow_node(api, &workflow_run, node, latest, &node_runs).await?
         }

@@ -2,52 +2,58 @@
   <div class="debug-control-bar">
     <div class="debug-controls">
       <button
-        class="debug-btn debug-btn-primary"
+        class="btn btn-primary btn-sm"
         :disabled="!workflows.canContinueWorkflowRun"
         title="Continue to next breakpoint (F5)"
         @click="workflows.continueSelectedWorkflowRun"
       >
-        Continue
+        <Icon name="continue" :size="14" />
+        <span>Continue</span>
       </button>
       <button
-        class="debug-btn"
+        class="btn btn-sm"
         :disabled="!workflows.canStepWorkflowRun"
         title="Step over current node (F10)"
         @click="workflows.stepSelectedWorkflowRun"
       >
-        Step
+        <Icon name="step" :size="14" />
+        <span>Step</span>
       </button>
       <button
-        class="debug-btn"
+        class="btn btn-sm"
         :disabled="!canRunToCursor"
         title="Run until selected node (Ctrl+F10)"
         @click="onRunToCursor"
       >
-        To cursor
+        <Icon name="cursor" :size="14" />
+        <span>To cursor</span>
       </button>
       <button
-        class="debug-btn"
+        class="btn btn-sm"
         :disabled="!workflows.canStepWorkflowRun"
         title="Skip current node with synthetic output"
         @click="openSkip"
       >
-        Skip…
+        <Icon name="skip" :size="14" />
+        <span>Skip</span>
       </button>
       <button
-        class="debug-btn"
+        class="btn btn-sm"
         :disabled="!workflows.canStepWorkflowRun"
         title="Re-run current node with modified input"
         @click="openRerun"
       >
-        Re-run…
+        <Icon name="replay" :size="14" />
+        <span>Re-run</span>
       </button>
       <button
-        class="debug-btn debug-btn-danger"
+        class="btn btn-danger btn-sm"
         :disabled="!workflows.canCancelWorkflowRun"
         title="Cancel run (Shift+F5)"
         @click="workflows.cancelSelectedWorkflowRun"
       >
-        Stop
+        <Icon name="stop" :size="14" />
+        <span>Stop</span>
       </button>
     </div>
     <div class="debug-mode-row">
@@ -99,6 +105,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useWorkflowsStore } from "../../stores/workflows";
+import Icon from "../shared/Icon.vue";
 import DebugJsonModal from "./DebugJsonModal.vue";
 
 const workflows = useWorkflowsStore();
@@ -159,37 +166,6 @@ function onSubmitRerun(value: any) {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
-}
-.debug-btn {
-  padding: 4px 9px;
-  border: 1px solid #ccd4dd;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 500;
-}
-.debug-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.debug-btn:hover:not(:disabled) {
-  background: #f1f5f9;
-}
-.debug-btn-primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-.debug-btn-primary:hover:not(:disabled) {
-  background: #1d4ed8;
-}
-.debug-btn-danger {
-  border-color: #dc2626;
-  color: #dc2626;
-}
-.debug-btn-danger:hover:not(:disabled) {
-  background: #fef2f2;
 }
 .debug-mode-row {
   display: flex;

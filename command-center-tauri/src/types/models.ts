@@ -16,6 +16,7 @@ export type WorkflowNodeKind =
   | "race"
   | "emit"
   | "subflow"
+  | "config"
   | "end"
   | "fail";
 
@@ -168,6 +169,7 @@ export interface RunSummary {
   workflow_node_id?: string | null;
   active_node_id?: string | null;
   state?: JsonRecord;
+  name?: string | null;
 }
 
 export interface RunChunk {
@@ -178,10 +180,30 @@ export interface RunChunk {
 
 export interface RunArtifact {
   id: number;
+  run_id: number;
+  workflow_node_run_id?: number | null;
   name: string;
   mime_type: string;
   size_bytes: number;
   uri: string;
+  metadata?: JsonRecord;
+  created_at: string;
+}
+
+export type NotificationChannel = "in_app" | "email" | "slack";
+export type NotificationSeverity = "info" | "success" | "warning" | "error";
+
+export interface Notification {
+  id: number;
+  workflow_run_id?: number | null;
+  workflow_node_id?: string | null;
+  channel: NotificationChannel | string;
+  severity: NotificationSeverity | string;
+  title: string;
+  body?: string | null;
+  target?: string | null;
+  metadata?: JsonRecord;
+  read_at?: string | null;
   created_at: string;
 }
 

@@ -3,6 +3,7 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 use runinator_models::{
     errors::SendableError,
+    notifications::{NewNotification, Notification},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -60,6 +61,11 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn fetch_run_artifacts(
         &self,
         run_id: i64,
+    ) -> impl Future<Output = Result<Vec<RunArtifact>, SendableError>> + Send;
+
+    /// Fetch every artifact across all runs, most-recent first.
+    fn fetch_all_artifacts(
+        &self,
     ) -> impl Future<Output = Result<Vec<RunArtifact>, SendableError>> + Send;
 
     /// Fetch a single artifact by its identifier.
@@ -162,6 +168,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         active_node_id: Option<String>,
         state: Option<Value>,
         message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Set or clear the user-facing display name of a workflow run.
+    fn set_workflow_run_name(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch a workflow run summary by its identifier.
@@ -293,4 +306,28 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scope: String,
         key: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    /// Persist a notification record.
+    fn create_notification(
+        &self,
+        notification: &NewNotification,
+    ) -> impl Future<Output = Result<Notification, SendableError>> + Send;
+
+    /// Fetch notifications, optionally only unread, most-recent first.
+    fn fetch_notifications(
+        &self,
+        unread_only: bool,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<Notification>, SendableError>> + Send;
+
+    /// Mark a notification as read; returns the updated row.
+    fn mark_notification_read(
+        &self,
+        notification_id: i64,
+    ) -> impl Future<Output = Result<Option<Notification>, SendableError>> + Send;
+
+    /// Mark all unread notifications as read; returns the number updated.
+    fn mark_all_notifications_read(
+        &self,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 }

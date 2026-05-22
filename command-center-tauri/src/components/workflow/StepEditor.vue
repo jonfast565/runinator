@@ -189,6 +189,11 @@ function kindSection(current: JsonRecord): DetailSection {
         item("Event", current.parameters?.event_type ?? "workflow.event"),
         item("Data", valueLabel(current.parameters?.data))
       ]);
+    case "config":
+      return section("Config", [
+        item("Name", valueLabel(current.parameters?.name)),
+        item("Metadata", valueLabel(current.parameters?.metadata))
+      ]);
     case "subflow":
       return section("Subflow", [
         item("Workflow ID", current.subflow_id ?? "-"),

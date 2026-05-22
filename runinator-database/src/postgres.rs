@@ -5,6 +5,7 @@ use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_models::{
     errors::SendableError,
+    notifications::{NewNotification, Notification},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -174,6 +175,21 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     UNIQUE(scope, key)
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    workflow_run_id BIGINT NULL,
+    workflow_node_id TEXT NULL,
+    channel TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    title TEXT NOT NULL,
+    body TEXT NULL,
+    target TEXT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    read_at BIGINT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
@@ -263,6 +279,10 @@ impl DatabaseImpl for PostgresDb {
         self.execute_script(POSTGRES_TABLE_INIT_SQL).await?;
         self.execute_script(
             "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_snapshot TEXT NULL;",
+        )
+        .await?;
+        self.execute_script(
+            "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS name TEXT NULL;",
         )
         .await?;
         for path in paths.iter() {
@@ -408,6 +428,18 @@ impl DatabaseImpl for PostgresDb {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|row| mappers::postgres_row_to_run_artifact(&row)))
+    }
+
+    async fn fetch_all_artifacts(&self) -> Result<Vec<RunArtifact>, SendableError> {
+        let rows = sqlx::query(
+            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts ORDER BY id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_run_artifact)
+            .collect())
     }
 
     async fn upsert_workflow(
@@ -560,7 +592,7 @@ impl DatabaseImpl for PostgresDb {
         let row = sqlx::query(
             "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at)
              VALUES ($1, $2, $3, NULL, $4, $5, $6)
-             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message",
+             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name",
         )
         .bind(workflow_id)
         .bind(serde_json::to_string(&workflow_snapshot)?)
@@ -577,7 +609,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE id = $1")
+        let row = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE id = $1")
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -588,7 +620,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE status = $1 ORDER BY id")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE status = $1 ORDER BY id")
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
@@ -599,7 +631,7 @@ impl DatabaseImpl for PostgresDb {
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs ORDER BY id DESC")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows
@@ -612,7 +644,7 @@ impl DatabaseImpl for PostgresDb {
         &self,
         workflow_id: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
+        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE workflow_id = $1 ORDER BY id DESC")
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;
@@ -620,6 +652,21 @@ impl DatabaseImpl for PostgresDb {
             .iter()
             .map(mappers::postgres_row_to_workflow_run)
             .collect())
+    }
+
+    async fn set_workflow_run_name(
+        &self,
+        workflow_run_id: i64,
+        name: Option<String>,
+    ) -> Result<(), SendableError> {
+        self.pool
+            .execute(
+                sqlx::query("UPDATE workflow_runs SET name = $1 WHERE id = $2")
+                    .bind(name)
+                    .bind(workflow_run_id),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn update_workflow_run_status(
@@ -1001,5 +1048,79 @@ impl DatabaseImpl for PostgresDb {
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|row| mappers::postgres_row_to_idempotency_key(&row)))
+    }
+
+    async fn create_notification(
+        &self,
+        notification: &NewNotification,
+    ) -> Result<Notification, SendableError> {
+        let row = sqlx::query(
+            "INSERT INTO notifications (workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at",
+        )
+        .bind(notification.workflow_run_id)
+        .bind(notification.workflow_node_id.as_ref())
+        .bind(&notification.channel)
+        .bind(&notification.severity)
+        .bind(&notification.title)
+        .bind(notification.body.as_ref())
+        .bind(notification.target.as_ref())
+        .bind(notification.metadata.to_string())
+        .bind(Utc::now().timestamp())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_notification(&row))
+    }
+
+    async fn fetch_notifications(
+        &self,
+        unread_only: bool,
+        limit: i64,
+    ) -> Result<Vec<Notification>, SendableError> {
+        let bounded_limit = limit.clamp(1, 1000);
+        let rows = if unread_only {
+            sqlx::query(
+                "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT $1",
+            )
+            .bind(bounded_limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications ORDER BY created_at DESC LIMIT $1",
+            )
+            .bind(bounded_limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_notification)
+            .collect())
+    }
+
+    async fn mark_notification_read(
+        &self,
+        notification_id: i64,
+    ) -> Result<Option<Notification>, SendableError> {
+        let row = sqlx::query(
+            "UPDATE notifications SET read_at = COALESCE(read_at, $1) WHERE id = $2 RETURNING id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at",
+        )
+        .bind(Utc::now().timestamp())
+        .bind(notification_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| mappers::postgres_row_to_notification(&row)))
+    }
+
+    async fn mark_all_notifications_read(&self) -> Result<u64, SendableError> {
+        let result = sqlx::query(
+            "UPDATE notifications SET read_at = $1 WHERE read_at IS NULL",
+        )
+        .bind(Utc::now().timestamp())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }

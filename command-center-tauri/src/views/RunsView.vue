@@ -14,7 +14,9 @@
         </div>
       </template>
       <template #second>
-        <SplitPane
+        <div class="runs-detail-shell">
+          <RunTabsBar />
+          <SplitPane
           class="runs-detail-split"
           orientation="vertical"
           storage-key="command-center.runs.detail-vertical-split"
@@ -58,6 +60,7 @@
             </div>
           </template>
         </SplitPane>
+        </div>
       </template>
     </SplitPane>
   </section>
@@ -67,6 +70,7 @@
 import { computed, ref, watch } from "vue";
 import { fetchWorkflowNodeRunArtifacts } from "../api/commandCenterApi";
 import RunTable from "../components/shared/RunTable.vue";
+import RunTabsBar from "../components/shared/RunTabsBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import LogPanel from "../components/workflow/LogPanel.vue";
 import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
@@ -94,3 +98,17 @@ watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
 
 const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 </script>
+
+<style scoped>
+.runs-detail-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.runs-detail-shell > .split-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+</style>

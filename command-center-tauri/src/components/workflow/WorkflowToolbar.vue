@@ -5,15 +5,20 @@
       <span>v{{ workflows.workflowDraft.version }} · concurrency {{ workflows.workflowConcurrency }}</span>
     </div>
     <div class="workflow-actions">
-      <button @click="workflows.openWorkflowSettings">Settings</button>
+      <button class="btn" @click="workflows.openWorkflowSettings">
+        <Icon name="settings" />
+        <span>Settings</span>
+      </button>
       <div class="toolbar-menu">
         <button
           type="button"
+          class="btn"
           aria-haspopup="menu"
           :aria-expanded="openMenu === 'nodes'"
           @click="toggleMenu('nodes')"
         >
-          New Node
+          <Icon name="plus" />
+          <span>New Node</span>
         </button>
         <div v-if="openMenu === 'nodes'" class="toolbar-menu-panel" role="menu">
           <button
@@ -21,6 +26,7 @@
             :key="kind"
             type="button"
             role="menuitem"
+            class="btn btn-ghost"
             :title="`Add ${kind} node`"
             @click="addNode(kind)"
           >
@@ -31,41 +37,54 @@
       <div class="toolbar-menu">
         <button
           type="button"
+          class="btn"
           aria-haspopup="menu"
           :aria-expanded="openMenu === 'arrange'"
           @click="toggleMenu('arrange')"
         >
-          Arrange
+          <Icon name="list" />
+          <span>Arrange</span>
         </button>
         <div v-if="openMenu === 'arrange'" class="toolbar-menu-panel" role="menu">
-          <button type="button" role="menuitem" title="Arrange workflow nodes left to right" @click="arrangeNodes('horizontal')">
+          <button type="button" role="menuitem" class="btn btn-ghost" title="Arrange workflow nodes left to right" @click="arrangeNodes('horizontal')">
             Left to right
           </button>
-          <button type="button" role="menuitem" title="Arrange workflow nodes top to bottom" @click="arrangeNodes('vertical')">
+          <button type="button" role="menuitem" class="btn btn-ghost" title="Arrange workflow nodes top to bottom" @click="arrangeNodes('vertical')">
             Top to bottom
           </button>
         </div>
       </div>
-      <button @click="workflows.saveSelectedWorkflow">Save</button>
-      <button :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">Run</button>
+      <button class="btn" @click="workflows.saveSelectedWorkflow">
+        <Icon name="save" />
+        <span>Save</span>
+      </button>
+      <button class="btn btn-primary" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
+        <Icon name="play" />
+        <span>Run</span>
+      </button>
       <button
         v-if="!isActiveDebugRun"
-        class="run-debug-btn"
+        class="btn btn-warn"
         :disabled="!workflows.canRunWorkflow"
         @click="workflows.runSelectedWorkflowDebug"
       >
-        🐞 Run Debug
+        <Icon name="debug" />
+        <span>Run Debug</span>
       </button>
       <button
         v-else
-        class="stop-debug-btn"
+        class="btn btn-danger"
         :disabled="!workflows.canCancelWorkflowRun"
         title="Cancel the active debug run"
         @click="workflows.cancelSelectedWorkflowRun"
       >
-        ■ Stop Debug
+        <Icon name="stop" />
+        <span>Stop Debug</span>
       </button>
-      <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
+      <button class="btn" :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">
+        <Icon name="trash" />
+        <span>Remove</span>
+      </button>
     </div>
     <WorkflowSettingsModal v-if="workflows.workflowSettingsOpen" />
   </div>
@@ -75,6 +94,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
+import Icon from "../shared/Icon.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 
 const workflows = useWorkflowsStore();
@@ -163,22 +183,4 @@ onBeforeUnmount(() => {
   background: #f1f5f9;
 }
 
-.run-debug-btn {
-  background: #fef3c7;
-  border-color: #f59e0b;
-  color: #92400e;
-  font-weight: 600;
-}
-.run-debug-btn:hover:not(:disabled) {
-  background: #fde68a;
-}
-.stop-debug-btn {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
-  font-weight: 600;
-}
-.stop-debug-btn:hover:not(:disabled) {
-  background: #b91c1c;
-}
 </style>

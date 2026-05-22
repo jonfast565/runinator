@@ -16,6 +16,7 @@ members = [
     "runinator-provider-approval",
     "runinator-provider-aws",
     "runinator-provider-console",
+    "runinator-provider-email",
     "runinator-provider-git",
     "runinator-provider-github",
     "runinator-provider-jira",

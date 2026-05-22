@@ -5,9 +5,15 @@
         <div class="panel">
           <div class="panel-toolbar">
             <h2>Secrets</h2>
-            <div>
-              <button @click="secrets.refreshSecrets">Refresh</button>
-              <button :disabled="!secrets.selectedSecret" @click="secrets.deleteSelectedSecret">Remove</button>
+            <div class="btn-row">
+              <button class="btn" @click="secrets.refreshSecrets">
+                <Icon name="refresh" />
+                <span>Refresh</span>
+              </button>
+              <button class="btn btn-danger" :disabled="!secrets.selectedSecret" @click="secrets.deleteSelectedSecret">
+                <Icon name="trash" />
+                <span>Remove</span>
+              </button>
             </div>
           </div>
           <DataTable>
@@ -39,7 +45,10 @@
         <form class="panel secret-form" @submit.prevent="secrets.saveDraft">
           <div class="panel-toolbar">
             <h2>{{ secrets.selectedSecret ? "Update Secret" : "Add Secret" }}</h2>
-            <button type="button" @click="secrets.clearDraft">Clear</button>
+            <button class="btn" type="button" @click="secrets.clearDraft">
+              <Icon name="x" />
+              <span>Clear</span>
+            </button>
           </div>
           <label>
             Scope
@@ -57,7 +66,10 @@
             <textarea v-model="secrets.draft.secret" placeholder="Paste the secret value to add or replace it." />
           </label>
           <p class="hint">Secret values are not shown after saving. Select an existing secret, enter a new value, and save to replace it.</p>
-          <button type="submit">Save Secret</button>
+          <button class="btn btn-primary" type="submit">
+            <Icon name="save" />
+            <span>Save Secret</span>
+          </button>
         </form>
       </template>
     </SplitPane>
@@ -67,6 +79,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
+import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useProvidersStore } from "../stores/providers";
 import { useSecretsStore } from "../stores/secrets";

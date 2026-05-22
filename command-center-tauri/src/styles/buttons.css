@@ -1,0 +1,116 @@
+/* Unified button vocabulary. Override the base.css <button> defaults when applied. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #c4ccd6;
+  background: #ffffff;
+  color: #17202a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #7b8794;
+  background: #f5f7fa;
+}
+
+.btn:disabled {
+  color: #97a1ad;
+  cursor: default;
+  opacity: 0.7;
+}
+
+.btn .icon {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.btn-primary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1864d6;
+  border-color: #1864d6;
+  color: #ffffff;
+}
+
+.btn-danger {
+  background: #d6402b;
+  border-color: #d6402b;
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b73522;
+  border-color: #b73522;
+  color: #ffffff;
+}
+
+.btn-warn {
+  background: #d68d2b;
+  border-color: #d68d2b;
+  color: #ffffff;
+}
+
+.btn-warn:hover:not(:disabled) {
+  background: #b87521;
+  border-color: #b87521;
+  color: #ffffff;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #17202a;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: #eef2f6;
+  border-color: transparent;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  gap: 0;
+}
+
+.btn-sm {
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.btn-row {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-close {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-close:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}

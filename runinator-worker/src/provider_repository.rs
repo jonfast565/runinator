@@ -9,6 +9,7 @@ use runinator_provider_ai::AiCommandProvider;
 use runinator_provider_approval::ApprovalProvider;
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_console::ConsoleProvider;
+use runinator_provider_email::EmailProvider;
 use runinator_provider_git::GitProvider;
 use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
@@ -28,6 +29,7 @@ fn get_providers() -> Vec<StaticProvider> {
         Box::new(GitProvider {}) as StaticProvider,
         Box::new(AiCommandProvider {}) as StaticProvider,
         Box::new(ApprovalProvider {}) as StaticProvider,
+        Box::new(EmailProvider {}) as StaticProvider,
     ]
 }
 

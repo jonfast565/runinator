@@ -7,80 +7,116 @@ import { buildWebSocketUrl } from "../utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 
+interface RunStreamHandle {
+  socket: WebSocket | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  connectionId: number;
+  terminal: boolean;
+  disposed: boolean;
+}
+
 export function useWorkflowRunStream() {
   const workflows = useWorkflowsStore();
   const app = useAppStore();
-  let ws: WebSocket | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let connectionId = 0;
-  const terminalRunIds = new Set<number>();
+  const sockets = new Map<number, RunStreamHandle>();
 
-  function clearReconnectTimer() {
-    if (reconnectTimer === null) return;
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
+  function disposeHandle(runId: number) {
+    const handle = sockets.get(runId);
+    if (!handle) return;
+    handle.disposed = true;
+    handle.connectionId += 1;
+    if (handle.reconnectTimer) {
+      clearTimeout(handle.reconnectTimer);
+      handle.reconnectTimer = null;
+    }
+    handle.socket?.close();
+    handle.socket = null;
+    sockets.delete(runId);
+  }
+
+  function ensureHandle(runId: number): RunStreamHandle {
+    const existing = sockets.get(runId);
+    if (existing) return existing;
+    const handle: RunStreamHandle = {
+      socket: null,
+      reconnectTimer: null,
+      connectionId: 0,
+      terminal: false,
+      disposed: false
+    };
+    sockets.set(runId, handle);
+    return handle;
   }
 
   function connect(runId: number) {
-    clearReconnectTimer();
-    if (workflows.selectedWorkflowRunId !== runId) return;
-    if (!app.serviceUrl) return;
-    const currentConnection = ++connectionId;
-    ws = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/workflow-runs/${runId}`));
-    ws.onopen = () => {
-      if (currentConnection !== connectionId) return;
-      clearReconnectTimer();
+    if (!runId || !app.serviceUrl) return;
+    const handle = ensureHandle(runId);
+    if (handle.reconnectTimer) {
+      clearTimeout(handle.reconnectTimer);
+      handle.reconnectTimer = null;
+    }
+    const myConnectionId = ++handle.connectionId;
+    const socket = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/workflow-runs/${runId}`));
+    handle.socket = socket;
+    socket.onopen = () => {
+      if (handle.disposed || handle.connectionId !== myConnectionId) return;
       console.info("[command-center] workflow run stream connected", { runId });
     };
-    ws.onmessage = ({ data }) => {
-      if (currentConnection !== connectionId) return;
+    socket.onmessage = ({ data }) => {
+      if (handle.disposed || handle.connectionId !== myConnectionId) return;
       try {
-        console.info("[command-center] workflow run stream message", { runId, data });
         const detail = JSON.parse(data) as WorkflowRunDetail;
         workflows.setWorkflowRunDetail(detail);
         if (isTerminalWorkflowRunStatus(detail.run.status)) {
-          terminalRunIds.add(detail.run.id);
+          handle.terminal = true;
         }
       } catch (err) {
         console.info("[command-center] failed to parse workflow run stream message", { runId, data, err });
       }
     };
-    ws.onerror = (event) => {
-      if (currentConnection !== connectionId) return;
+    socket.onerror = (event) => {
+      if (handle.disposed || handle.connectionId !== myConnectionId) return;
       console.info("[command-center] workflow run stream error", { runId, event });
-      ws?.close();
+      socket.close();
     };
-    ws.onclose = () => {
-      if (currentConnection !== connectionId) return;
-      console.info("[command-center] workflow run stream closed", { runId });
-      ws = null;
-      const selectedDetail = workflows.workflowRunDetail;
-      const selectedRunIsTerminal =
-        selectedDetail?.run.id === runId && isTerminalWorkflowRunStatus(selectedDetail.run.status);
-      if (terminalRunIds.has(runId) || selectedRunIsTerminal) {
-        return;
-      }
-      if (workflows.selectedWorkflowRunId === runId && app.serviceConnected) {
-        reconnectTimer = setTimeout(() => connect(runId), RECONNECT_DELAY);
+    socket.onclose = () => {
+      if (handle.disposed || handle.connectionId !== myConnectionId) return;
+      handle.socket = null;
+      if (handle.terminal) return;
+      if (workflows.openRunIds.includes(runId) && app.serviceConnected) {
+        handle.reconnectTimer = setTimeout(() => connect(runId), RECONNECT_DELAY);
       }
     };
   }
 
-  function disconnect() {
-    connectionId += 1;
-    clearReconnectTimer();
-    ws?.close();
-    ws = null;
+  function syncSockets(ids: number[]) {
+    const set = new Set(ids);
+    for (const id of [...sockets.keys()]) {
+      if (!set.has(id)) disposeHandle(id);
+    }
+    for (const id of ids) {
+      if (!id) continue;
+      if (!sockets.has(id)) connect(id);
+    }
   }
 
   watch(
-    () => workflows.selectedWorkflowRunId,
-    (id) => {
-      disconnect();
-      if (id > 0) connect(id);
-    },
-    { immediate: true }
+    () => [...workflows.openRunIds],
+    (ids) => syncSockets(ids),
+    { immediate: true, deep: true }
   );
 
-  onBeforeUnmount(disconnect);
+  watch(
+    () => app.serviceUrl,
+    () => {
+      for (const id of [...sockets.keys()]) disposeHandle(id);
+      syncSockets([...workflows.openRunIds]);
+    }
+  );
+
+  function disposeAll() {
+    for (const id of [...sockets.keys()]) disposeHandle(id);
+  }
+
+  onBeforeUnmount(disposeAll);
 }

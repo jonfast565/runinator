@@ -326,6 +326,96 @@ pub async fn process_switch_node(
     }
 }
 
+pub async fn process_config_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = api
+        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .await?;
+    let context = runtime_context(workflow_run, node_runs);
+    let resolved = runinator_workflows::resolve_value_refs(&node.parameters, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+
+    let new_name = resolved
+        .get("name")
+        .and_then(|value| match value {
+            Value::Null => None,
+            Value::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+            other => Some(other.to_string()),
+        });
+    let metadata_patch = resolved.get("metadata").cloned();
+
+    if new_name.is_some() {
+        api.set_workflow_run_name(workflow_run.id, new_name.clone())
+            .await?;
+    }
+
+    let mut summary_state = serde_json::Map::new();
+    if let Some(ref name) = new_name {
+        summary_state.insert("name".into(), Value::String(name.clone()));
+    }
+    if let Some(metadata) = metadata_patch.as_ref() {
+        summary_state.insert("metadata".into(), metadata.clone());
+    }
+
+    // Merge metadata into the run's state.run_metadata bag.
+    if let Some(metadata) = metadata_patch {
+        let mut state = workflow_run.state.clone();
+        if !state.is_object() {
+            state = Value::Object(Default::default());
+        }
+        let merged_metadata = if let Some(existing) = state.get("run_metadata").cloned() {
+            merge_json(existing, metadata)
+        } else {
+            metadata
+        };
+        if let Value::Object(map) = &mut state {
+            map.insert("run_metadata".into(), merged_metadata);
+        }
+        api.update_workflow_run(
+            workflow_run.id,
+            workflow_run.status,
+            workflow_run.active_node_id.clone(),
+            Some(state),
+            None,
+        )
+        .await?;
+    }
+
+    let output = Value::Object(summary_state);
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        &node_run,
+        WorkflowStatus::Succeeded,
+        Some(output),
+        Some("config_applied".into()),
+        node_runs,
+    )
+    .await
+}
+
+fn merge_json(left: Value, right: Value) -> Value {
+    match (left, right) {
+        (Value::Object(mut left), Value::Object(right)) => {
+            for (key, value) in right {
+                let existing = left.remove(&key);
+                let merged = match existing {
+                    Some(prev) => merge_json(prev, value),
+                    None => value,
+                };
+                left.insert(key, merged);
+            }
+            Value::Object(left)
+        }
+        (_, right) => right,
+    }
+}
+
 pub async fn process_emit_node(
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,

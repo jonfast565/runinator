@@ -37,6 +37,7 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
   "map",
   "race",
   "emit",
+  "config",
   "subflow"
 ];
 
@@ -215,6 +216,8 @@ export function workflowInlineEditDescriptor(node: JsonRecord, task: ScheduledTa
       return { label: "Seconds", value: String(Number(node.wait?.seconds ?? 60)), valueKind: "number" };
     case "emit":
       return { label: "Event", value: String(node.parameters?.event_type ?? "workflow.event"), valueKind: "text" };
+    case "config":
+      return { label: "Name", value: String(node.parameters?.name ?? ""), valueKind: "text" };
     case "subflow":
       return { label: "Workflow ID", value: String(Number(node.subflow_id ?? 0)), valueKind: "number" };
     default:
@@ -266,6 +269,10 @@ export function applyWorkflowInlineNodeEdit(
     case "emit":
       node.parameters = isRecord(node.parameters) ? node.parameters : {};
       node.parameters.event_type = value || "workflow.event";
+      break;
+    case "config":
+      node.parameters = isRecord(node.parameters) ? node.parameters : {};
+      node.parameters.name = value;
       break;
     case "subflow":
       node.subflow_id = Math.max(0, Number(value || 0));
@@ -807,6 +814,9 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], 
       break;
     case "emit":
       node.parameters = { event_type: "workflow.event", data: {} };
+      break;
+    case "config":
+      node.parameters = { name: "", metadata: {} };
       break;
     case "subflow":
       node.subflow_id = 0;

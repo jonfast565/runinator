@@ -1,5 +1,6 @@
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
+    notifications::Notification,
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
@@ -40,6 +41,8 @@ pub enum ApiResponse {
     SecretBundle(SecretBundle),
     JsonValue(Value),
     JsonList(Vec<Value>),
+    Notification(Notification),
+    NotificationList(Vec<Notification>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +90,18 @@ pub struct WorkflowRunStatusRequest {
     pub state: Option<Value>,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowRunRenameRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct WorkflowRunReplayRequest {
+    #[serde(default)]
+    pub from_step_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

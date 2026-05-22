@@ -169,6 +169,7 @@ pub enum WorkflowNodeKind {
     Race,
     Emit,
     Subflow,
+    Config,
     End,
     Fail,
 }
@@ -432,6 +433,8 @@ pub struct WorkflowRun {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

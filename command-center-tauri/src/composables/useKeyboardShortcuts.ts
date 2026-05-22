@@ -1,4 +1,4 @@
-import { useAppStore } from "../stores/app";
+import { endpointForTab, isResourceTab, useAppStore } from "../stores/app";
 import { useResourcesStore } from "../stores/resources";
 import { useSecretsStore } from "../stores/secrets";
 import { useWorkflowsStore } from "../stores/workflows";
@@ -62,17 +62,19 @@ export function useKeyboardShortcuts() {
   async function refreshActive() {
     if (app.activeTab === "Runs") await workflows.fetchRecentWorkflowRuns();
     else if (app.activeTab === "Workflows") await workflows.refreshWorkflows();
-    else if (app.activeTab === "Resources") await resources.refreshResources();
-    else await secrets.refreshSecrets();
+    else if (app.activeTab === "Secrets") await secrets.refreshSecrets();
+    else if (isResourceTab(app.activeTab)) {
+      const endpoint = endpointForTab(app.activeTab);
+      if (endpoint) await resources.refreshResourcesFor(endpoint);
+    }
   }
 
   function moveSelection(delta: number) {
-    if (app.activeTab === "Runs") {
-    } else if (app.activeTab === "Workflows") {
+    if (app.activeTab === "Workflows") {
       workflows.moveWorkflowSelection(delta);
-    } else if (app.activeTab === "Resources") {
+    } else if (isResourceTab(app.activeTab)) {
       resources.moveResourceSelection(delta);
-    } else {
+    } else if (app.activeTab === "Secrets") {
       secrets.moveSecretSelection(delta);
     }
   }

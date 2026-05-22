@@ -1,20 +1,24 @@
 <template>
   <section class="pane resources-pane">
-    <SplitPane class="split" storage-key="command-center.resources.split" :initial-first-pct="58" :min-first="420" :min-second="340">
+    <SplitPane class="split" :storage-key="`command-center.resources.${endpoint}.split`" :initial-first-pct="58" :min-first="420" :min-second="340">
       <template #first>
       <div class="panel">
         <div class="panel-toolbar">
-          <h2>Resources</h2>
-          <div>
-            <select v-model="resourcesStore.selectedResourceEndpoint" @change="resourcesStore.refreshResources">
-              <option v-for="resource in resourcesStore.resources" :key="resource.endpoint" :value="resource.endpoint">
-                {{ resource.label }}
-              </option>
-            </select>
-            <button @click="resourcesStore.refreshResources">Refresh</button>
-            <template v-if="resourcesStore.selectedResourceEndpoint === 'approvals'">
-              <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('approve')">Approve</button>
-              <button :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('reject')">Reject</button>
+          <h2>{{ title }}</h2>
+          <div class="btn-row">
+            <button class="btn" @click="refresh">
+              <Icon name="refresh" />
+              <span>Refresh</span>
+            </button>
+            <template v-if="endpoint === 'approvals'">
+              <button class="btn btn-primary" :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('approve')">
+                <Icon name="approve" />
+                <span>Approve</span>
+              </button>
+              <button class="btn btn-danger" :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('reject')">
+                <Icon name="reject" />
+                <span>Reject</span>
+              </button>
             </template>
           </div>
         </div>
@@ -60,12 +64,32 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
+import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";
 import { pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
+const props = withDefaults(
+  defineProps<{ endpoint?: string; title?: string }>(),
+  { endpoint: "external_items", title: "" }
+);
+
 const resourcesStore = useResourcesStore();
+
+const title = computed(() => props.title || labelFor(props.endpoint));
+
+function labelFor(endpoint: string): string {
+  return resourcesStore.resources.find((resource) => resource.endpoint === endpoint)?.label ?? "Records";
+}
+
+async function refresh() {
+  await resourcesStore.refreshResourcesFor(props.endpoint);
+}
+
+onMounted(refresh);
+watch(() => props.endpoint, refresh);
 </script>

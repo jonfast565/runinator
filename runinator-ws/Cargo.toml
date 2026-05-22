@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 log = "0.4"
-axum = { version = "0.8.9", features = ["ws"] }
+axum = { version = "0.8.9", features = ["ws", "multipart"] }
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.5", features = ["derive"] }
@@ -15,6 +16,7 @@ env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18", features = ["v4"] }
 log-panics = "2.1"
+mime_guess = "2"
 
 runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
