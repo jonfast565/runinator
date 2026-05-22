@@ -1,5 +1,5 @@
 use runinator_models::{
-    bundles::ProviderBundle,
+    bundles::{ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
@@ -37,6 +37,7 @@ pub enum ApiResponse {
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
     ProviderBundle(ProviderBundle),
+    SecretBundle(SecretBundle),
     JsonValue(Value),
     JsonList(Vec<Value>),
 }

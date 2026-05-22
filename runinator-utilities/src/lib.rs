@@ -1,3 +1,4 @@
+pub mod app_data;
 pub mod credential_store;
 pub mod data_export;
 pub mod dirutils;

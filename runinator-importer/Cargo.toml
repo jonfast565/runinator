@@ -18,6 +18,7 @@ async-trait = "0.1"
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 runinator-api = { path = "../runinator-api" }
+runinator-utilities = { path = "../runinator-utilities" }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-provider-ai = { path = "../runinator-provider-ai" }
 runinator-provider-approval = { path = "../runinator-provider-approval" }

@@ -1,10 +1,11 @@
 use clap::Parser;
 use runinator_models::errors::SendableError;
+use runinator_utilities::app_data;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub dll_path: String,
+    pub dll_paths: Vec<String>,
     pub broker_backend: String,
     pub broker_endpoint: String,
     pub broker_consumer_id: String,
@@ -16,8 +17,8 @@ pub struct Config {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
-    #[arg(long, default_value = "/opt/runinator/plugins")]
-    dll_path: String,
+    #[arg(long = "dll-path")]
+    dll_paths: Vec<String>,
 
     #[arg(long, default_value = "tcp")]
     broker_backend: String,
@@ -52,7 +53,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         .unwrap_or_else(|| worker_id.to_string());
 
     Ok(Config {
-        dll_path: args.dll_path,
+        dll_paths: plugin_search_paths(args.dll_paths),
         broker_backend: args.broker_backend,
         broker_endpoint: args.broker_endpoint,
         broker_consumer_id: consumer_id,
@@ -60,4 +61,17 @@ pub fn parse_config() -> Result<Config, SendableError> {
         api_base_url: args.api_base_url,
         worker_id,
     })
+}
+
+fn plugin_search_paths(mut paths: Vec<String>) -> Vec<String> {
+    paths.push(default_dll_path());
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn default_dll_path() -> String {
+    app_data::app_data_path("plugins")
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "plugins".to_string())
 }

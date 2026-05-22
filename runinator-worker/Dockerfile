@@ -13,12 +13,12 @@ FROM debian:bookworm-slim
 RUN groupadd --system runinator && useradd --system --gid runinator --home /home/runinator --create-home runinator \
     && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
-    && mkdir -p /opt/runinator/plugins \
+    && mkdir -p /home/runinator/.runinator/plugins \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-worker /usr/local/bin/runinator-worker
-COPY --from=builder /workspace/target/release/libruninator_plugin_console.so /opt/runinator/plugins/
+COPY --from=builder /workspace/target/release/libruninator_plugin_console.so /home/runinator/.runinator/plugins/
 RUN chown -R runinator:runinator /usr/local/bin/runinator-worker
 RUN chmod -R 775 /usr/local/bin/runinator-worker
 

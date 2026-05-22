@@ -1,5 +1,4 @@
 {
-  "state_dir": ".runinator-supervisor",
   "shutdown_timeout_secs": 12,
   "restart_delay_ms": 2000,
   "processes": [
@@ -16,8 +15,6 @@
       "args": [
         "--database",
         "sqlite",
-        "--sqlite-path",
-        "../runinator.db",
         "--port",
         "8080",
         "--gossip-bind",

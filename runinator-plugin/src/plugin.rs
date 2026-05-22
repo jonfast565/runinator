@@ -175,13 +175,15 @@ impl Plugin {
 }
 
 fn unique_temp_file(kind: &str, extension: &str) -> PathBuf {
-    std::env::temp_dir().join("runinator-plugin").join(format!(
-        "{}-{}-{}.{}",
-        kind,
-        std::process::id(),
-        chrono_like_now(),
-        extension
-    ))
+    runinator_utilities::app_data::app_data_path("plugin/tmp")
+        .unwrap_or_else(|_| std::env::temp_dir().join("runinator-plugin"))
+        .join(format!(
+            "{}-{}-{}.{}",
+            kind,
+            std::process::id(),
+            chrono_like_now(),
+            extension
+        ))
 }
 
 fn chrono_like_now() -> u128 {

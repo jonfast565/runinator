@@ -34,7 +34,7 @@ async fn main() -> Result<(), SendableError> {
     let config = parse_config()?;
     info!("Worker ID: {}", config.worker_id);
 
-    let libraries = Arc::new(load_libraries(&config.dll_path)?);
+    let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config)?;
     let api_client = build_api_client(&config)?;
 
@@ -98,9 +98,17 @@ fn handle_worker_task_result(
     }
 }
 
-fn load_libraries(path: &str) -> Result<HashMap<String, Plugin>, SendableError> {
-    info!("Loading plugins from {}", path);
-    let libraries = load_libraries_from_path(path)?;
+fn load_libraries(paths: &[String]) -> Result<HashMap<String, Plugin>, SendableError> {
+    let mut libraries = HashMap::new();
+    for path in paths {
+        if !std::path::Path::new(path).exists() {
+            info!("Skipping missing plugin path {}", path);
+            continue;
+        }
+
+        info!("Loading plugins from {}", path);
+        libraries.extend(load_libraries_from_path(path)?);
+    }
     print_libs(&libraries);
     Ok(libraries)
 }

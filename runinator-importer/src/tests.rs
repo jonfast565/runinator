@@ -5,8 +5,10 @@ use serde_json::json;
 
 use super::{
     WorkflowBundleImporter, build_provider_bundle, config::Config, load_import_file,
+    load_secret_bundle,
     sync_workflows_if_changed, unwrap_workflow_pack,
 };
+use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
 use runinator_models::workflows::WorkflowBundle;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowTrigger, WorkflowTriggerKind};
 
@@ -22,7 +24,8 @@ async fn sync_imports_clean_workflow_bundle_round_trip() {
         .unwrap();
 
     let config = Config {
-        workflows_file: path.to_string_lossy().into_owned(),
+        workflows_file: Some(path.to_string_lossy().into_owned()),
+        secrets_file: None,
         poll_interval_seconds: 10,
         gossip_bind: "127.0.0.1".into(),
         gossip_port: 5000,
@@ -42,6 +45,32 @@ async fn sync_imports_clean_workflow_bundle_round_trip() {
         serde_json::to_value(expected).unwrap()
     );
     assert!(last_modified.is_some());
+    let _ = tokio::fs::remove_file(path).await;
+}
+
+#[tokio::test]
+async fn load_secret_bundle_reads_credentials() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-importer-secrets-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let expected = SecretBundle {
+        secrets: vec![SecretBundleEntry {
+            scope: "github".into(),
+            name: "main".into(),
+            secret: "token".into(),
+        }],
+    };
+    tokio::fs::write(&path, serde_json::to_vec(&expected).unwrap())
+        .await
+        .unwrap();
+
+    let bundle = load_secret_bundle(&path).await.unwrap();
+
+    assert_eq!(
+        serde_json::to_value(bundle).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
     let _ = tokio::fs::remove_file(path).await;
 }
 
@@ -111,7 +140,10 @@ fn sdlc_pack_unwraps_to_workflow_bundle() {
     let raw = include_str!("../../packs/sdlc/workflow-pack.json");
     let envelope: serde_json::Value = serde_json::from_str(raw).expect("pack file parses");
     let bundle = unwrap_workflow_pack(envelope).expect("pack unwraps");
-    assert!(!bundle.workflows.is_empty(), "pack has at least one workflow");
+    assert!(
+        !bundle.workflows.is_empty(),
+        "pack has at least one workflow"
+    );
     for workflow in &bundle.workflows {
         assert!(workflow.enabled);
         assert!(workflow.version >= 1);
@@ -122,11 +154,7 @@ fn sdlc_pack_unwraps_to_workflow_bundle() {
 #[test]
 fn provider_bundle_includes_every_provider() {
     let bundle = build_provider_bundle();
-    let names: Vec<_> = bundle
-        .providers
-        .iter()
-        .map(|p| p.name.as_str())
-        .collect();
+    let names: Vec<_> = bundle.providers.iter().map(|p| p.name.as_str()).collect();
     for expected in [
         "Console",
         "AWS",

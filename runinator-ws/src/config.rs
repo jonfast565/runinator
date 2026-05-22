@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, ValueEnum};
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -18,8 +20,8 @@ pub(crate) struct CliArgs {
     pub database: DatabaseKind,
 
     /// Path to the SQLite database file (used when --database=sqlite)
-    #[arg(long, default_value = "runinator.db")]
-    pub sqlite_path: String,
+    #[arg(long)]
+    pub sqlite_path: Option<PathBuf>,
 
     /// Connection string for the database (required when --database=postgres)
     #[arg(long)]

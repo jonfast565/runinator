@@ -110,7 +110,9 @@ fn default_true() -> bool {
 }
 
 fn default_state_dir() -> String {
-    ".runinator-supervisor".to_string()
+    runinator_utilities::app_data::default_supervisor_state_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".runinator/supervisor".to_string())
 }
 
 fn default_shutdown_timeout_secs() -> u64 {

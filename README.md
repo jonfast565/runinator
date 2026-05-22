@@ -66,7 +66,12 @@ The local stack uses the built-in broker over raw TCP by default. Consumers keep
 receive sockets open, so published action messages are delivered immediately
 without HTTP polling.
 
-Runtime files are written under `.runinator-supervisor/`. Child process stdout and stderr are collected under `.runinator-supervisor/logs/` with one file per process start:
+Local runtime files are written under `~/.runinator/` by default. This includes
+the SQLite database at `~/.runinator/runinator.db`, credentials at
+`~/.runinator/credentials.enc.json`, application logs under
+`~/.runinator/logs/`, and supervisor state under `~/.runinator/supervisor/`.
+Child process stdout and stderr are collected under
+`~/.runinator/supervisor/logs/` with one file per process start:
 
 ```text
 YYYY-MM-DDTHH-MM-SS.mmmZ__process-name__attempt-N.log
@@ -92,11 +97,14 @@ PowerShell can build and run a local artifact layout:
 ./build.ps1 -Mode Local -Run
 ```
 
-This publishes binaries and the workflow import file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Stop it with `Ctrl+C`.
+This publishes binaries and the workflow import file under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state still goes under `~/.runinator/` unless you pass explicit paths. Stop it with `Ctrl+C`.
 
 ## Workflow Import
 
-The importer reads `runinator-importer/workflows/workflows.json`. The bundled file intentionally contains no default workflows or triggers; add workflow definitions there, or point the importer at another file, when you want to import workflows into a local stack.
+The importer reads `~/.runinator/workflows/workflow-pack.json` by default. The
+supervisor config in this repository points it at `packs/sdlc/workflow-pack.json`
+for local development. Put a secret bundle at `~/.runinator/secrets.json` to
+load local credentials during importer startup.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 

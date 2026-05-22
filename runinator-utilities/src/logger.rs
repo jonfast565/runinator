@@ -1,6 +1,8 @@
 use log::{error, info};
 use runinator_models::errors::SendableError;
-use std::{env, path::PathBuf, time::SystemTime};
+use std::{env, fs, path::PathBuf, time::SystemTime};
+
+use crate::app_data;
 
 pub fn setup_logger() -> Result<(), SendableError> {
     let log_output = open_log_output()?;
@@ -34,6 +36,14 @@ fn open_log_output() -> std::io::Result<fern::Output> {
 
     for path in desired_log_paths() {
         let path_string = path.display().to_string();
+        if let Some(parent) = path.parent() {
+            if let Err(err) = fs::create_dir_all(parent) {
+                had_failure = true;
+                error!("Failed to create log directory at {}: {}", parent.display(), err);
+                last_error = Some(err);
+                continue;
+            }
+        }
         match fern::log_file(&path) {
             Ok(output) => {
                 if had_failure {
@@ -66,10 +76,11 @@ fn desired_log_paths() -> Vec<PathBuf> {
         }
     }
 
-    // Original behaviour: attempt to log alongside the binary/working dir.
-    paths.push(PathBuf::from("output.log"));
+    match app_data::default_log_path() {
+        Ok(path) => paths.push(path),
+        Err(err) => error!("Failed to resolve Runinator log path: {}", err),
+    }
 
-    // Portable fallback that should always be writable inside containers.
     paths.push(env::temp_dir().join("runinator-output.log"));
 
     paths

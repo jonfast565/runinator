@@ -18,7 +18,6 @@ runinator-supervisor --config runinator-supervisor.json stop
 
 ```json
 {
-  "state_dir": ".runinator-supervisor",
   "shutdown_timeout_secs": 12,
   "restart_delay_ms": 2000,
   "processes": [
@@ -39,6 +38,9 @@ runinator-supervisor --config runinator-supervisor.json stop
 ```
 
 ## Runtime files
+
+When `state_dir` is omitted, supervisor state defaults to
+`~/.runinator/supervisor`.
 
 - `<state_dir>/supervisor.pid`
 - `<state_dir>/state.json`

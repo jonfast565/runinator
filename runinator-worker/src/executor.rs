@@ -7,6 +7,7 @@ use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionR
 use runinator_models::workflows::WorkflowAction;
 use runinator_plugin::plugin::Plugin;
 use runinator_plugin::provider::ProviderEventSink;
+use runinator_utilities::app_data;
 use serde_json::Value;
 use tokio::time;
 use uuid::Uuid;
@@ -157,5 +158,7 @@ fn run_work_dir(run_id: Option<i64>) -> PathBuf {
     let suffix = run_id
         .map(|id| id.to_string())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    std::env::temp_dir().join("runinator-worker").join(suffix)
+    app_data::app_data_path("worker/runs")
+        .unwrap_or_else(|_| std::env::temp_dir().join("runinator-worker"))
+        .join(suffix)
 }

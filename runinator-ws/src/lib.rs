@@ -26,15 +26,18 @@ use models::{
 };
 use runinator_database::{initialize_database, interfaces::DatabaseImpl};
 use runinator_models::{
-    bundles::ProviderBundle,
+    bundles::{ProviderBundle, SecretBundle},
     errors::SendableError,
     providers::ProviderMetadata,
     runs::{NewRunArtifact, NewRunChunk, RunStatus},
     web::TaskResponse,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
-use runinator_utilities::credential_store::{
-    CredentialStore, LocalEncryptedCredentialStore, default_credential_store_path,
+use runinator_utilities::{
+    app_data,
+    credential_store::{
+        CredentialStore, LocalEncryptedCredentialStore, default_app_credential_store_path,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -544,8 +547,11 @@ async fn replay_workflow_run<T: DatabaseImpl>(
 }
 
 async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
-    let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH")
-        .unwrap_or_else(|_| "./.runinator-supervisor/state.json".to_string());
+    let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
+        app_data::default_supervisor_state_dir()
+            .map(|path| path.join("state.json").to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "supervisor/state.json".to_string())
+    });
     let path_buf = std::path::PathBuf::from(&path);
     if !path_buf.exists() {
         return (
@@ -1111,7 +1117,10 @@ async fn put_idempotency_key<T: DatabaseImpl>(
 fn credential_store() -> LocalEncryptedCredentialStore {
     let path = std::env::var("RUNINATOR_CREDENTIAL_STORE")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| default_credential_store_path(".runinator-supervisor"));
+        .unwrap_or_else(|_| {
+            default_app_credential_store_path()
+                .unwrap_or_else(|_| std::path::PathBuf::from("credentials.enc.json"))
+        });
     let key = std::env::var("RUNINATOR_CREDENTIAL_KEY")
         .unwrap_or_else(|_| "runinator-local-development-key".into());
     LocalEncryptedCredentialStore::new(path, key)
@@ -1171,6 +1180,28 @@ async fn put_credential(
         ),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+async fn import_secret_bundle(Json(bundle): Json<SecretBundle>) -> (StatusCode, Json<ApiResponse>) {
+    let store = credential_store();
+    let mut imported = Vec::with_capacity(bundle.secrets.len());
+    for secret in &bundle.secrets {
+        if let Err(err) = store.put(&secret.scope, &secret.name, secret.secret.as_bytes()) {
+            return api_error(err.to_string());
+        }
+        imported.push(runinator_models::bundles::SecretBundleEntry {
+            scope: secret.scope.clone(),
+            name: secret.name.clone(),
+            secret: String::new(),
+        });
+    }
+
+    (
+        StatusCode::OK,
+        Json(ApiResponse::SecretBundle(SecretBundle {
+            secrets: imported,
+        })),
+    )
 }
 
 async fn delete_credential(
@@ -1813,6 +1844,7 @@ pub fn build_router<T: DatabaseImpl>(pool: Arc<T>, events: EventSender) -> Route
                 .post(put_credential)
                 .delete(delete_credential),
         )
+        .route("/credentials/import", post(import_secret_bundle))
         .route(
             "/providers",
             get(get_providers::<T>)

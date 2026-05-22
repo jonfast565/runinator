@@ -2,8 +2,11 @@ use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
-    #[arg(long, default_value = "/opt/runinator/workflows/workflow-pack.json")]
-    pub workflows_file: String,
+    #[arg(long)]
+    pub workflows_file: Option<String>,
+
+    #[arg(long)]
+    pub secrets_file: Option<String>,
 
     #[arg(long, default_value_t = 10)]
     pub poll_interval_seconds: u64,

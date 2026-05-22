@@ -1,6 +1,6 @@
 use reqwest::{Client, Response, Url};
 use runinator_models::{
-    bundles::{Bundle, ProviderBundle},
+    bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
     web::TaskResponse,
@@ -150,6 +150,10 @@ where
     }
 
     pub async fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {
+        self.import_bundle(bundle).await
+    }
+
+    pub async fn import_secret_bundle(&self, bundle: &SecretBundle) -> Result<SecretBundle> {
         self.import_bundle(bundle).await
     }
 

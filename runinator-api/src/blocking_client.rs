@@ -3,7 +3,7 @@ use reqwest::{
     Url,
 };
 use runinator_models::{
-    bundles::{Bundle, ProviderBundle},
+    bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     workflows::{WorkflowBundle, WorkflowDefinition},
 };
@@ -71,6 +71,10 @@ where
     }
 
     pub fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {
+        self.import_bundle(bundle)
+    }
+
+    pub fn import_secret_bundle(&self, bundle: &SecretBundle) -> Result<SecretBundle> {
         self.import_bundle(bundle)
     }
 

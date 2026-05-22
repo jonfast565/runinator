@@ -19,3 +19,20 @@ pub struct ProviderBundle {
 impl Bundle for ProviderBundle {
     const RESOURCE: &'static str = "/providers/import";
 }
+
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct SecretBundle {
+    #[serde(default)]
+    pub secrets: Vec<SecretBundleEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct SecretBundleEntry {
+    pub scope: String,
+    pub name: String,
+    pub secret: String,
+}
+
+impl Bundle for SecretBundle {
+    const RESOURCE: &'static str = "/credentials/import";
+}

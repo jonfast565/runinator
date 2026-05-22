@@ -4340,6 +4340,7 @@ dependencies = [
  "runinator-provider-jira",
  "runinator-provider-slack",
  "runinator-provider-sql",
+ "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -4528,6 +4529,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "runinator-utilities",
  "serde",
  "serde_json",
 ]

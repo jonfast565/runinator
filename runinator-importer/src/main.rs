@@ -11,7 +11,7 @@ use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, ServiceLocator};
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::{
-    bundles::ProviderBundle,
+    bundles::{ProviderBundle, SecretBundle},
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_plugin::provider::Provider;
@@ -24,6 +24,7 @@ use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
 use runinator_provider_slack::SlackProvider;
 use runinator_provider_sql::SqlProvider;
+use runinator_utilities::app_data;
 use serde_json::Value;
 use tokio::time::{self, Duration};
 
@@ -44,6 +45,14 @@ trait ProviderBundleImporter: Send + Sync {
         &self,
         bundle: &ProviderBundle,
     ) -> runinator_api::Result<ProviderBundle>;
+}
+
+#[async_trait]
+trait SecretBundleImporter: Send + Sync {
+    async fn import_secret_bundle(
+        &self,
+        bundle: &SecretBundle,
+    ) -> runinator_api::Result<SecretBundle>;
 }
 
 #[async_trait]
@@ -69,6 +78,19 @@ where
         bundle: &ProviderBundle,
     ) -> runinator_api::Result<ProviderBundle> {
         AsyncApiClient::import_provider_bundle(self, bundle).await
+    }
+}
+
+#[async_trait]
+impl<L> SecretBundleImporter for AsyncApiClient<L>
+where
+    L: ServiceLocator,
+{
+    async fn import_secret_bundle(
+        &self,
+        bundle: &SecretBundle,
+    ) -> runinator_api::Result<SecretBundle> {
+        AsyncApiClient::import_secret_bundle(self, bundle).await
     }
 }
 
@@ -121,6 +143,7 @@ async fn main() -> Result<(), DynError> {
     let api = ApiClient::with_client(discovery.clone(), http_client);
 
     publish_provider_bundle(&api).await;
+    publish_secret_bundle(&config, &api).await;
 
     if config.once {
         let mut last_modified = None;
@@ -176,13 +199,56 @@ async fn publish_provider_bundle(api: &impl ProviderBundleImporter) {
     }
 }
 
+async fn publish_secret_bundle(config: &Config, api: &impl SecretBundleImporter) {
+    let path = secret_bundle_path(config);
+    if !path.exists() {
+        info!("No secret bundle found at {}", path.display());
+        return;
+    }
+
+    match load_secret_bundle(&path).await {
+        Ok(bundle) => {
+            let count = bundle.secrets.len();
+            match api.import_secret_bundle(&bundle).await {
+                Ok(imported) => info!(
+                    "Imported {} secret(s) from {}",
+                    imported.secrets.len(),
+                    path.display()
+                ),
+                Err(err) => warn!("Failed to import secret bundle ({count} secret(s)): {err}"),
+            }
+        }
+        Err(err) => warn!(
+            "Failed to load secret bundle at {}: {}",
+            path.display(),
+            err
+        ),
+    }
+}
+
+fn secret_bundle_path(config: &Config) -> std::path::PathBuf {
+    config
+        .secrets_file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            app_data::default_secret_bundle_path()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".runinator/secrets.json"))
+        })
+}
+
+async fn load_secret_bundle(path: &Path) -> Result<SecretBundle, DynError> {
+    let data = tokio::fs::read_to_string(path).await?;
+    Ok(serde_json::from_str(&data)?)
+}
+
 async fn sync_workflows_if_changed(
     config: &Config,
     api: &impl WorkflowBundleImporter,
     last_modified: &mut Option<SystemTime>,
 ) -> Result<(), DynError> {
-    let path = Path::new(&config.workflows_file);
-    let metadata = tokio::fs::metadata(path).await?;
+    let path = workflow_bundle_path(config);
+    let metadata = tokio::fs::metadata(&path).await?;
     let modified = metadata.modified()?;
 
     let should_sync = last_modified.map_or(true, |prev| modified > prev);
@@ -190,7 +256,7 @@ async fn sync_workflows_if_changed(
         return Ok(());
     }
 
-    let bundle = load_import_file(path).await?;
+    let bundle = load_import_file(&path).await?;
     info!(
         "Importing workflow bundle with {} workflow(s) and {} trigger(s) from {}",
         bundle.workflows.len(),
@@ -212,6 +278,18 @@ async fn sync_workflows_if_changed(
     Ok(())
 }
 
+fn workflow_bundle_path(config: &Config) -> std::path::PathBuf {
+    config
+        .workflows_file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            app_data::app_data_path("workflows/workflow-pack.json").unwrap_or_else(|_| {
+                std::path::PathBuf::from(".runinator/workflows/workflow-pack.json")
+            })
+        })
+}
+
 async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     let data = tokio::fs::read_to_string(path).await?;
     let raw: Value = serde_json::from_str(&data)?;
@@ -226,7 +304,11 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
 fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
     let version = envelope
         .get("version")
-        .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| v.as_i64())
+        })
         .unwrap_or(1);
 
     let document = envelope
@@ -236,7 +318,9 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
     let workflows_map = document
         .get("workflows")
         .and_then(Value::as_object)
-        .ok_or_else(|| -> DynError { "workflow pack envelope missing document.workflows map".into() })?;
+        .ok_or_else(|| -> DynError {
+            "workflow pack envelope missing document.workflows map".into()
+        })?;
 
     let mut workflows = Vec::with_capacity(workflows_map.len());
     for (name, body) in workflows_map {

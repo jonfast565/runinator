@@ -12,7 +12,7 @@ use runinator_ws::run_webserver;
 
 use crate::config::{CliArgs, DatabaseKind};
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
-use runinator_utilities::startup;
+use runinator_utilities::{app_data, startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
@@ -59,11 +59,16 @@ async fn main() -> Result<(), SendableError> {
 
     match database {
         DatabaseKind::Sqlite => {
+            let sqlite_path = sqlite_path.unwrap_or(app_data::default_sqlite_path()?);
+            if let Some(parent) = sqlite_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
             info!(
                 "Starting Runinator webservice with SQLite database at {}",
-                sqlite_path
+                sqlite_path.display()
             );
-            let db = Arc::new(SqliteDb::new(&sqlite_path).await?);
+            let sqlite_path = sqlite_path.to_string_lossy();
+            let db = Arc::new(SqliteDb::new(sqlite_path.as_ref()).await?);
             run_webserver(db, notify.clone(), port).await?;
         }
         DatabaseKind::Postgres => {

@@ -7,6 +7,8 @@ use std::{
 use runinator_models::errors::SendableError;
 use serde::{Deserialize, Serialize};
 
+use crate::app_data;
+
 pub trait CredentialStore: Send + Sync {
     fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError>;
     fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError>;
@@ -117,6 +119,10 @@ impl CredentialStore for LocalEncryptedCredentialStore {
 
 pub fn default_credential_store_path(base: impl AsRef<Path>) -> PathBuf {
     base.as_ref().join("credentials.enc.json")
+}
+
+pub fn default_app_credential_store_path() -> Result<PathBuf, SendableError> {
+    Ok(default_credential_store_path(app_data::app_data_dir()?))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

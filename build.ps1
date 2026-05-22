@@ -9,7 +9,7 @@ param(
     [switch]$SkipBuild,
 
     [ValidateNotNullOrEmpty()]
-    [string]$LocalDatabasePath = "target/artifacts/data/runinator.db",
+    [string]$LocalDatabasePath = (Join-Path -Path $HOME -ChildPath ".runinator/runinator.db"),
 
     [ValidateNotNullOrEmpty()]
     [string]$LocalWorkflowsFile = "runinator-importer/workflows/workflows.json",
@@ -560,7 +560,7 @@ function Write-LocalSupervisorConfig {
     )
 
     $supervisorConfig = [ordered]@{
-        state_dir = 'supervisor-state'
+        state_dir = (Join-Path -Path $HOME -ChildPath '.runinator/supervisor')
         shutdown_timeout_secs = 15
         restart_delay_ms = 2000
         processes = $commands

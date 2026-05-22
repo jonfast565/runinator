@@ -49,4 +49,3 @@ pub fn resolve_provider(
         format!("Cannot find plugin/provider {}", action.provider),
     )))
 }
-
