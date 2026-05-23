@@ -238,6 +238,30 @@ impl SchedulerApi {
         Ok(())
     }
 
+    pub async fn pause_workflow_run(&self, workflow_run_id: i64) -> Result<(), SendableError> {
+        self.client
+            .pause_workflow_run(workflow_run_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn resume_workflow_run(&self, workflow_run_id: i64) -> Result<(), SendableError> {
+        self.client
+            .resume_workflow_run(workflow_run_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn cancel_workflow_run(&self, workflow_run_id: i64) -> Result<(), SendableError> {
+        self.client
+            .cancel_workflow_run(workflow_run_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
     pub async fn create_workflow_node_run(
         &self,
         workflow_run_id: i64,

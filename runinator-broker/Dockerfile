@@ -21,6 +21,7 @@ RUN chmod -R 775 /usr/local/bin/runinator-broker
 
 ENV RUST_LOG=info \
     RUST_BACKTRACE=1 \
+    RUNINATOR_BROKER_TRANSPORT=tcp \
     RUNINATOR_BROKER_ADDR=0.0.0.0:7070
 EXPOSE 7070
 USER runinator

@@ -7,6 +7,7 @@ pub mod debug;
 mod iteration;
 mod nodes;
 mod worker_comm;
+pub mod worker_control;
 mod workflow;
 
 pub use worker_comm::WorkerManager;

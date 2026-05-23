@@ -1,4 +1,5 @@
 pub mod discovery;
+pub mod worker_control;
 
 use chrono::{DateTime, Utc};
 use runinator_models::workflows::WorkflowAction;
@@ -50,7 +51,7 @@ pub struct ActionCommand {
     pub parameters: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlKind {
     Cancel,
@@ -120,3 +121,6 @@ impl ControlCommand {
         serde_json::from_str(data)
     }
 }
+
+#[cfg(test)]
+mod tests;

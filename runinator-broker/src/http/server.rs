@@ -33,6 +33,13 @@ where
     B: Broker,
 {
     let listener = TcpListener::bind(addr).await?;
+    serve(listener, broker).await
+}
+
+pub async fn serve<B>(listener: TcpListener, broker: B) -> Result<(), std::io::Error>
+where
+    B: Broker,
+{
     let state = AppState {
         broker: Arc::new(broker),
     };

@@ -62,9 +62,15 @@ The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
 workflow action pickup.
 
-The local stack uses the built-in broker over raw TCP by default. Consumers keep
-receive sockets open, so published action and workflow control messages are
-delivered immediately without HTTP polling.
+The local stack uses the built-in broker over raw TCP by default. The standalone
+broker can also serve the same broker contract over HTTP by setting
+`RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
+`http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
+
+The optional direct worker-to-scheduler control-event channel is disabled by
+default. Enable it on the scheduler with `--worker-control-transport http|tcp`
+plus bind/port flags, and on workers with `--scheduler-control-transport
+http|tcp` plus the matching endpoint.
 
 Local runtime files are written under `~/.runinator/` by default. This includes
 the SQLite database at `~/.runinator/runinator.db`, credentials at

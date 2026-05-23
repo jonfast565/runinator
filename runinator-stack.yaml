@@ -40,7 +40,7 @@ spec:
   selector:
     app: runinator-broker
   ports:
-    - name: http
+    - name: broker
       port: 7070
       targetPort: 7070
       protocol: TCP
@@ -296,11 +296,11 @@ spec:
               value: info
             - name: RUNINATOR_BROKER_ADDR
               value: 0.0.0.0:7070
-            - name: RUNINATOR_BROKER_BACKEND
-              value: __BROKER_BACKEND__
+            - name: RUNINATOR_BROKER_TRANSPORT
+              value: tcp
           ports:
             - containerPort: 7070
-              name: http
+              name: broker
               protocol: TCP
           volumeMounts:
             - name: broker-data

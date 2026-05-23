@@ -55,7 +55,7 @@ Preserve the command lifecycle:
 - Worker outputs, logs, artifacts, and node-run status/results go back through `runinator-api` to `runinator-ws`, then through `runinator-database`; they do not return through the broker and workers must not write directly to the database.
 - Broker messages should remain serializable and backend-neutral.
 - Any command or control payload that crosses the broker/scheduler/worker boundary must use the shared contracts in `runinator-comm` end to end. Do not add broker-local, scheduler-local, or worker-local duplicates for the same control path; extend `ActionCommand` or `ControlCommand`/`ControlKind` and thread that type through every relevant backend and delivery wrapper.
-- Do not add direct scheduler-to-worker request/response channels. If a worker response needs to become durable or observable, put it on the existing `runinator-api` result/log/artifact path unless there is a documented reason it cannot use that path.
+- Do not add direct scheduler-to-worker request/response channels. The only direct worker-to-scheduler path is the optional protobuf control-event ingress for lightweight lifecycle/control events. If a worker response needs to become durable or observable, put it on the existing `runinator-api` result/log/artifact path unless there is a documented reason it cannot use that path.
 - Discovery/gossip types in `runinator-comm` should stay transport-friendly and serde-compatible.
 
 When adding fields to shared structs, check every boundary that serializes, persists, or maps that type:

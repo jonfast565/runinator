@@ -37,6 +37,10 @@ runinator-supervisor --config runinator-supervisor.json stop
 }
 ```
 
+The broker process selects its serving protocol with
+`RUNINATOR_BROKER_TRANSPORT=tcp|http`. Use `host:port` broker endpoints for
+TCP clients and `http://host:port/` broker endpoints for HTTP clients.
+
 ## Runtime files
 
 When `state_dir` is omitted, supervisor state defaults to

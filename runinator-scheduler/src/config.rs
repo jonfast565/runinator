@@ -24,6 +24,15 @@ pub struct Config {
 
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
+
+    #[arg(long, default_value = "disabled")]
+    pub worker_control_transport: String,
+
+    #[arg(long, default_value = "127.0.0.1")]
+    pub worker_control_bind: String,
+
+    #[arg(long, default_value_t = 7080)]
+    pub worker_control_port: u16,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

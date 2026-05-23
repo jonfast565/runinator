@@ -6,6 +6,7 @@
       "name": "broker",
       "command": "./target/debug/runinator-broker",
       "env": {
+        "RUNINATOR_BROKER_TRANSPORT": "tcp",
         "RUNINATOR_BROKER_ADDR": "127.0.0.1:7070"
       }
     },

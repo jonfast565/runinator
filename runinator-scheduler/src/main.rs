@@ -12,7 +12,7 @@ use runinator_scheduler::{
     WorkerManager,
     api::SchedulerApi,
     config::{Config, parse_config},
-    scheduler_loop,
+    scheduler_loop, worker_control,
 };
 use runinator_utilities::startup;
 
@@ -39,6 +39,8 @@ async fn main() -> Result<(), SendableError> {
     let api_timeout = Duration::from_secs(config.api_timeout_seconds);
     info!("Preparing scheduler API client");
     let api = SchedulerApi::new(worker_manager.clone(), api_timeout)?;
+    let worker_control_task =
+        worker_control::spawn_listener(&config, Arc::new(api.clone()), notify.clone()).await?;
 
     if worker_manager.current_service_url().await.is_none() {
         info!("Waiting for Runinator web service discovery via gossip...");
@@ -62,6 +64,14 @@ async fn main() -> Result<(), SendableError> {
 
     if let Err(e) = tokio::try_join!(scheduler_task) {
         error!("Error while shutting down scheduler: {:?}", e);
+    }
+    if let Some(worker_control_task) = worker_control_task {
+        match worker_control_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => error!("Worker-control listener terminated with error: {}", err),
+            Err(err) if err.is_cancelled() => {}
+            Err(err) => error!("Worker-control listener join error: {}", err),
+        }
     }
 
     info!("Scheduler shutdown complete.");
