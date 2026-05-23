@@ -173,8 +173,6 @@ spec:
           command:
             - runinator-importer
           args:
-            - '--workflows-file'
-            - '/opt/runinator/workflows/workflows.json'
             - '--poll-interval-seconds'
             - '30'
             - '--gossip-bind'

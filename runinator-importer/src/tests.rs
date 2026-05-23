@@ -162,6 +162,7 @@ fn provider_bundle_includes_every_provider() {
         "github",
         "slack",
         "git",
+        "email",
         "ai-command",
         "approval",
     ] {

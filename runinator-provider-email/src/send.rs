@@ -111,7 +111,8 @@ pub(crate) async fn send_email(
         target: Some(params.to.clone()),
         metadata: json!({ "subject": params.subject, "from": from }),
     })
-    .await;
+    .await
+    .ok();
 
     let output = json!({
         "sent": true,
@@ -149,7 +150,7 @@ pub(crate) async fn send_notification(
         target: params.target,
         metadata: params.metadata,
     })
-    .await;
+    .await?;
 
     let output = json!({
         "notification_id": notification_id,
@@ -164,8 +165,19 @@ pub(crate) async fn send_notification(
     })
 }
 
-async fn post_notification(payload: NotificationPayload) -> Option<i64> {
-    let service_url = env::var("RUNINATOR_SERVICE_URL").ok()?;
+async fn post_notification(payload: NotificationPayload) -> Result<i64, SendableError> {
+    let service_url = env::var("RUNINATOR_SERVICE_URL").map_err(|_| {
+        Box::new(RuntimeError::new(
+            "notification.service_url".into(),
+            "missing RUNINATOR_SERVICE_URL".into(),
+        )) as SendableError
+    })?;
+    if service_url.trim().is_empty() {
+        return Err(Box::new(RuntimeError::new(
+            "notification.service_url".into(),
+            "empty RUNINATOR_SERVICE_URL".into(),
+        )));
+    }
     let url = format!("{}/notifications", service_url.trim_end_matches('/'));
     let body = json!({
         "workflow_run_id": payload.workflow_run_id,
@@ -177,9 +189,31 @@ async fn post_notification(payload: NotificationPayload) -> Option<i64> {
         "metadata": payload.metadata,
     });
     let client = reqwest::Client::new();
-    let response = client.post(url).json(&body).send().await.ok()?;
-    let json: Value = response.json().await.ok()?;
-    json.get("id").and_then(Value::as_i64)
+    let response = client.post(url).json(&body).send().await.map_err(|err| {
+        Box::new(RuntimeError::new(
+            "notification.post".into(),
+            err.to_string(),
+        )) as SendableError
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(Box::new(RuntimeError::new(
+            "notification.post".into(),
+            format!("notification service returned {status}"),
+        )));
+    }
+    let json: Value = response.json().await.map_err(|err| {
+        Box::new(RuntimeError::new(
+            "notification.response".into(),
+            err.to_string(),
+        )) as SendableError
+    })?;
+    json.get("id").and_then(Value::as_i64).ok_or_else(|| {
+        Box::new(RuntimeError::new(
+            "notification.response".into(),
+            "missing notification id".into(),
+        )) as SendableError
+    })
 }
 
 fn invalid(message: &str) -> SendableError {

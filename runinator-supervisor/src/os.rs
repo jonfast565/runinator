@@ -6,6 +6,29 @@ use std::{
 use crate::types::DynError;
 
 #[cfg(unix)]
+pub fn detach_daemon(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // start the daemon in a new session so callers can exit cleanly.
+    unsafe {
+        command.pre_exec(|| {
+            if setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(windows)]
+pub fn detach_daemon(_command: &mut Command) {}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn setsid() -> i32;
+}
+
+#[cfg(unix)]
 pub fn is_process_running(pid: u32) -> bool {
     match Command::new("kill")
         .arg("-0")

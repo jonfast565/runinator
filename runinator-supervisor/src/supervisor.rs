@@ -86,6 +86,7 @@ pub fn start_daemon(paths: &Paths) -> Result<(), DynError> {
     let stderr = stdout.try_clone()?;
 
     let mut child = Command::new(exe);
+    crate::os::detach_daemon(&mut child);
     child
         .arg("--config")
         .arg(&paths.config_path)

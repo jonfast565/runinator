@@ -58,8 +58,6 @@
       "name": "worker",
       "command": "./target/debug/runinator-worker",
       "args": [
-        "--dll-path",
-        ".",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",
@@ -74,8 +72,6 @@
       "name": "importer",
       "command": "./target/debug/runinator-importer",
       "args": [
-        "--workflows-file",
-        "./packs/sdlc/workflow-pack.json",
         "--poll-interval-seconds",
         "2",
         "--gossip-bind",

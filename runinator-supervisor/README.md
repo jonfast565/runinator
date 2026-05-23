@@ -50,3 +50,7 @@ When `state_dir` is omitted, supervisor state defaults to
 - `<state_dir>/state.json`
 - `<state_dir>/supervisor.log`
 - `<state_dir>/logs/<process>.log`
+
+The repository's local supervisor config lets child processes use their normal
+app-data defaults, including the importer workflow bundle at
+`~/.runinator/workflows/workflow-pack.json`.

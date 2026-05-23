@@ -19,6 +19,7 @@ use runinator_provider_ai::AiCommandProvider;
 use runinator_provider_approval::ApprovalProvider;
 use runinator_provider_aws::AwsProvider;
 use runinator_provider_console::ConsoleProvider;
+use runinator_provider_email::EmailProvider;
 use runinator_provider_git::GitProvider;
 use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
@@ -181,6 +182,7 @@ fn build_provider_bundle() -> ProviderBundle {
             GitHubProvider {}.metadata(),
             SlackProvider {}.metadata(),
             GitProvider {}.metadata(),
+            EmailProvider {}.metadata(),
             AiCommandProvider {}.metadata(),
             ApprovalProvider {}.metadata(),
         ],

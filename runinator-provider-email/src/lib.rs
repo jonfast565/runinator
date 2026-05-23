@@ -8,10 +8,13 @@
 //!     Use this for in-app notifications visible in the Command Center.
 //!
 //! Both actions persist a `notifications` row when a service URL is reachable
-//! (via env var RUNINATOR_SERVICE_URL).
+//! (via env var RUNINATOR_SERVICE_URL, seeded by the worker from its API URL).
 
 mod params;
 mod send;
+
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 

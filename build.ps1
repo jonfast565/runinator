@@ -12,7 +12,7 @@ param(
     [string]$LocalDatabasePath = (Join-Path -Path $HOME -ChildPath ".runinator/runinator.db"),
 
     [ValidateNotNullOrEmpty()]
-    [string]$LocalWorkflowsFile = "runinator-importer/workflows/workflows.json",
+    [string]$LocalWorkflowsFile = (Join-Path -Path $HOME -ChildPath ".runinator/workflows/workflow-pack.json"),
 
     [ValidateRange(1024, 65535)]
     [int]$GossipBasePort = 5500,
@@ -466,6 +466,9 @@ function Write-LocalSupervisorConfig {
         [string]$LocalDatabasePath,
 
         [Parameter(Mandatory)]
+        [string]$WorkflowsFile,
+
+        [Parameter(Mandatory)]
         [int]$GossipBasePort
     )
 
@@ -487,9 +490,8 @@ function Write-LocalSupervisorConfig {
         Write-Warning "Plugin library not found at $pluginPath. The worker will likely fail to start."
     }
 
-    $workflowsFile = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'workflows') -ChildPath 'workflows.json'
-    if (-not (Test-Path -LiteralPath $workflowsFile)) {
-        Write-Warning "Workflows seed file missing at $workflowsFile. The importer will idle without it."
+    if (-not (Test-Path -LiteralPath $WorkflowsFile)) {
+        Write-Warning "Workflows file missing at $WorkflowsFile. The importer will idle without it."
     }
 
     $commands = @(
@@ -550,7 +552,7 @@ function Write-LocalSupervisorConfig {
             command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-importer'))
             cwd = $WorkspacePath
             args = @(
-                '--workflows-file', $workflowsFile,
+                '--workflows-file', $WorkflowsFile,
                 '--poll-interval-seconds', '2'
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
             env = @{
@@ -584,6 +586,9 @@ function Start-LocalStack {
         [string]$LocalDatabasePath,
 
         [Parameter(Mandatory)]
+        [string]$WorkflowsFile,
+
+        [Parameter(Mandatory)]
         [int]$GossipBasePort
     )
 
@@ -598,6 +603,7 @@ function Start-LocalStack {
         -ArtifactsDir $ArtifactsDir `
         -ConfigPath $supervisorConfigPath `
         -LocalDatabasePath $LocalDatabasePath `
+        -WorkflowsFile $WorkflowsFile `
         -GossipBasePort $GossipBasePort
 
     Write-Host "Starting local Runinator stack via supervisor config '$supervisorConfigPath'"
@@ -839,6 +845,11 @@ try {
             Join-Path -Path $workspacePath -ChildPath $LocalWorkflowsFile
         }
 
+        $workflowsDirectory = Split-Path -Path $workflowsFilePath -Parent
+        if ($workflowsDirectory) {
+            Ensure-Directory -Path $workflowsDirectory
+        }
+
         if (-not (Test-Path -LiteralPath $workflowsFilePath)) {
             Write-Warning "Specified workflows file not found at $workflowsFilePath"
         }
@@ -868,7 +879,7 @@ try {
             }
 
             Write-Step 'Starting local Runinator stack'
-            Start-LocalStack -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -GossipBasePort $GossipBasePort
+            Start-LocalStack -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -WorkflowsFile $workflowsFilePath -GossipBasePort $GossipBasePort
         }
         'Kubernetes' {
             $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)

@@ -6,6 +6,8 @@ mod provider_repository;
 
 use std::{
     collections::{BTreeSet, HashMap},
+    env,
+    ffi::OsString,
     sync::Arc,
 };
 
@@ -33,11 +35,24 @@ use tokio::{
 use crate::output_sink::RunOutputSink;
 use control_events::{EventDetails, SchedulerControlClient};
 
-#[tokio::main]
-async fn main() -> Result<(), SendableError> {
+#[cfg(test)]
+mod tests;
+
+fn main() -> Result<(), SendableError> {
     startup::startup("Runinator Worker")?;
 
     let config = parse_config()?;
+    configure_provider_service_url(&config);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| {
+            Box::new(RuntimeError::new("worker.runtime".into(), err.to_string())) as SendableError
+        })?;
+    runtime.block_on(run(config))
+}
+
+async fn run(config: config::Config) -> Result<(), SendableError> {
     info!("Worker ID: {}", config.worker_id);
 
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
@@ -86,6 +101,32 @@ async fn main() -> Result<(), SendableError> {
     }
 
     Ok(())
+}
+
+fn configure_provider_service_url(config: &config::Config) {
+    let Some(value) =
+        provider_service_url_fallback(env::var_os("RUNINATOR_SERVICE_URL"), &config.api_base_url)
+    else {
+        return;
+    };
+
+    // safety: this runs before the worker starts provider execution or spawns runtime work.
+    unsafe {
+        env::set_var("RUNINATOR_SERVICE_URL", value);
+    }
+}
+
+fn provider_service_url_fallback(
+    existing: Option<OsString>,
+    api_base_url: &str,
+) -> Option<OsString> {
+    if existing
+        .as_ref()
+        .is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+    {
+        return None;
+    }
+    Some(OsString::from(api_base_url))
 }
 
 fn handle_worker_task_result(

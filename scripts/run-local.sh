@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUPERVISOR_ARGS=(-p runinator-supervisor --)
 COMMAND="${1:-start}"
-WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-runinator-importer/workflows/workflows.json}"
+RUNINATOR_DATA_DIR="${RUNINATOR_HOME:-${HOME:?HOME must be set}/.runinator}"
+WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$RUNINATOR_DATA_DIR/workflows/workflow-pack.json}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 IMPORTER_GOSSIP_PORT="${RUNINATOR_IMPORTER_ONCE_GOSSIP_PORT:-5513}"
@@ -38,7 +39,12 @@ done
 
 cd "$ROOT_DIR"
 
+ensure_workflow_dir() {
+  mkdir -p "$(dirname "$WORKFLOWS_FILE")"
+}
+
 sync_import() {
+  ensure_workflow_dir
   cargo run -p runinator-importer -- \
     --once \
     --workflows-file "$WORKFLOWS_FILE" \
@@ -61,10 +67,11 @@ show_logs() {
 
 case "$COMMAND" in
   start)
+    ensure_workflow_dir
     cargo build --workspace
     cargo run "${SUPERVISOR_ARGS[@]}" start
     cargo run "${SUPERVISOR_ARGS[@]}" status
-    cat <<'MSG'
+    cat <<MSG
 
 Runinator local stack is starting.
 
@@ -81,10 +88,11 @@ Useful commands:
 
 Command-center:
   Build it with CMake/Qt from command-center/, then connect to the discovered local service.
-  The bundled importer file starts empty; add workflows before syncing if needed.
+  The importer watches $WORKFLOWS_FILE by default.
 MSG
     ;;
   foreground)
+    ensure_workflow_dir
     cargo build --workspace
     cargo run "${SUPERVISOR_ARGS[@]}" start --foreground
     ;;
@@ -108,6 +116,7 @@ MSG
     ;;
   restart)
     cargo run "${SUPERVISOR_ARGS[@]}" stop || true
+    ensure_workflow_dir
     cargo build --workspace
     cargo run "${SUPERVISOR_ARGS[@]}" start
     cargo run "${SUPERVISOR_ARGS[@]}" status

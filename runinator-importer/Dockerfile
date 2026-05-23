@@ -17,7 +17,7 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-importer /usr/local/bin/runinator-importer
-COPY runinator-importer/workflows /home/runinator/.runinator/workflows
+COPY packs/sdlc/workflow-pack.json /home/runinator/.runinator/workflows/workflow-pack.json
 RUN chown -R runinator:runinator /usr/local/bin/runinator-importer
 RUN chmod -R 775 /usr/local/bin/runinator-importer
 
