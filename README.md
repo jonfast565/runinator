@@ -31,6 +31,7 @@ bash scripts/run-local.sh logs
 bash scripts/run-local.sh logs --process web-service
 bash scripts/run-local.sh logs-watch --lines 40
 bash scripts/run-local.sh sync
+bash scripts/run-local.sh ui
 bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
