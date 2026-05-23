@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "unknown option: $1" >&2
-      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
+      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|ui|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
       exit 2
       ;;
   esac
@@ -84,10 +84,11 @@ Useful commands:
   bash scripts/run-local.sh logs
   bash scripts/run-local.sh logs --process web-service
   bash scripts/run-local.sh sync
+  bash scripts/run-local.sh ui
   bash scripts/run-local.sh stop
 
 Command-center:
-  Build it with CMake/Qt from command-center/, then connect to the discovered local service.
+  Run the Tauri UI with bash scripts/run-local.sh ui.
   The importer watches $WORKFLOWS_FILE by default.
 MSG
     ;;
@@ -111,6 +112,9 @@ MSG
   sync)
     sync_import
     ;;
+  ui)
+    pnpm --dir command-center-tauri tauri dev
+    ;;
   stop)
     cargo run "${SUPERVISOR_ARGS[@]}" stop
     ;;
@@ -122,7 +126,7 @@ MSG
     cargo run "${SUPERVISOR_ARGS[@]}" status
     ;;
   *)
-    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
+    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|ui|stop|restart] [--workflows-file PATH] [--process NAME] [--lines N]" >&2
     exit 2
     ;;
 esac
