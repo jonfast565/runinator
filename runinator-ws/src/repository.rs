@@ -1,6 +1,6 @@
 use chrono::Utc;
 use runinator_broker::{Broker, ControlCommand};
-use runinator_comm::ControlKind;
+use runinator_comm::{ControlKind, WorkflowResultEvent};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
@@ -1216,6 +1216,13 @@ pub async fn fetch_workflow_node_run_artifacts<T: DatabaseImpl>(
 ) -> Result<Vec<WorkflowNodeRunArtifact>, SendableError> {
     db.fetch_workflow_node_run_artifacts(workflow_node_run_id)
         .await
+}
+
+pub async fn apply_workflow_result_event<T: DatabaseImpl>(
+    db: &T,
+    event: &WorkflowResultEvent,
+) -> Result<bool, SendableError> {
+    db.apply_workflow_result_event(event).await
 }
 
 fn ensure_debug_object(state: &mut Value) -> &mut serde_json::Map<String, Value> {

@@ -4453,10 +4453,12 @@ dependencies = [
  "chrono",
  "futures-util",
  "log",
+ "runinator-comm",
  "runinator-models",
  "serde_json",
  "sqlx",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

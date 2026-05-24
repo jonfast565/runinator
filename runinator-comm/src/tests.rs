@@ -1,11 +1,14 @@
 use prost::Message;
 
 use crate::{
-    ControlKind,
+    ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind,
     worker_control::{
         SchedulerControlAck, WorkerControlActionKind, WorkerControlEvent, WorkerControlEventKind,
     },
 };
+use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
+use serde_json::json;
+use uuid::Uuid;
 
 #[test]
 fn worker_control_events_round_trip_with_protobuf() {
@@ -41,4 +44,44 @@ fn scheduler_control_ack_round_trips_with_protobuf() {
 
     assert!(!decoded.accepted);
     assert_eq!(decoded.message, "invalid control event");
+}
+
+#[test]
+fn workflow_result_events_round_trip_with_json() {
+    let command = ActionCommand {
+        command_id: Uuid::new_v4(),
+        workflow_run_id: 10,
+        workflow_node_run_id: 20,
+        node_id: "node-a".into(),
+        action: WorkflowAction {
+            provider: "test".into(),
+            function: "execute".into(),
+            timeout_seconds: 60,
+            configuration: json!({}),
+            mcp_enabled: false,
+            tags: Vec::new(),
+        },
+        attempt: 1,
+        parameters: json!({}),
+    };
+    let event = WorkflowResultEvent::chunk(
+        &command,
+        NewRunChunk {
+            stream: "log".into(),
+            content: "hello".into(),
+        },
+    );
+
+    let encoded = event.to_json().unwrap();
+    let decoded = WorkflowResultEvent::from_json(&encoded).unwrap();
+
+    assert_eq!(decoded.command_id, command.command_id);
+    assert_eq!(decoded.workflow_node_run_id, 20);
+    match decoded.kind {
+        WorkflowResultEventKind::Chunk { chunk } => {
+            assert_eq!(chunk.stream, "log");
+            assert_eq!(chunk.content, "hello");
+        }
+        _ => panic!("expected chunk result event"),
+    }
 }

@@ -1,4 +1,7 @@
-use crate::{Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery};
+use crate::{
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
+    ResultDelivery, ResultMessage,
+};
 use async_trait::async_trait;
 
 pub struct KafkaBroker;
@@ -41,5 +44,29 @@ impl Broker for KafkaBroker {
         _delivery_id: uuid::Uuid,
     ) -> Result<(), BrokerError> {
         Err(BrokerError::NotImplemented("kafka ack_control"))
+    }
+
+    async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("kafka publish_result"))
+    }
+
+    async fn receive_result(&self, _consumer: &str) -> Result<ResultDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("kafka receive_result"))
+    }
+
+    async fn ack_result(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("kafka ack_result"))
+    }
+
+    async fn nack_result(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("kafka nack_result"))
     }
 }

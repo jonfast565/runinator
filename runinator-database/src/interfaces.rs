@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use chrono::{DateTime, Utc};
+use runinator_comm::WorkflowResultEvent;
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -243,6 +244,12 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_node_run_id: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRunArtifact>, SendableError>> + Send;
+
+    /// Apply a workflow result event once; returns false for duplicate events.
+    fn apply_workflow_result_event(
+        &self,
+        event: &WorkflowResultEvent,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(

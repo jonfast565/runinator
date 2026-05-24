@@ -4,6 +4,7 @@ mod handlers;
 mod models;
 mod repository;
 mod responses;
+mod result_consumer;
 mod router;
 mod server;
 #[cfg(test)]

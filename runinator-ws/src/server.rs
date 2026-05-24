@@ -11,6 +11,7 @@ use tokio::{
 
 use crate::events::AppEvent;
 use crate::handlers::catalog::seed_builtin_catalog;
+use crate::result_consumer::run_result_consumer;
 use crate::router::build_router;
 
 pub async fn run_webserver<T: DatabaseImpl>(
@@ -22,6 +23,12 @@ pub async fn run_webserver<T: DatabaseImpl>(
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
     let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
+    let result_consumer = tokio::spawn(run_result_consumer(
+        pool.clone(),
+        broker.clone(),
+        events_tx.clone(),
+        notify.clone(),
+    ));
     let app = build_router(pool, events_tx, broker);
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
     let listener = TcpListener::bind(addr).await?;
@@ -30,6 +37,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
 
     tokio::select! {
         result = server => {
+            result_consumer.abort();
             if let Err(err) = result {
                 log::error!("Webserver error: {}", err);
                 return Err(Box::new(err));
@@ -38,6 +46,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         }
         _ = notify.notified() => {
             info!("Shutting down web server...");
+            result_consumer.abort();
             Ok(())
         }
     }

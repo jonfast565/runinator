@@ -49,6 +49,10 @@ where
             .publish_control(command)
             .await
             .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::PublishResult { message }) => broker
+            .publish_result(message)
+            .await
+            .map(|_| TcpResponse::Ok),
         Ok(TcpRequest::Receive { consumer }) => broker
             .receive(&consumer)
             .await
@@ -57,6 +61,10 @@ where
             .receive_control(&consumer)
             .await
             .map(|delivery| TcpResponse::ControlDelivery { delivery }),
+        Ok(TcpRequest::ReceiveResult { consumer }) => broker
+            .receive_result(&consumer)
+            .await
+            .map(|delivery| TcpResponse::ResultDelivery { delivery }),
         Ok(TcpRequest::Ack {
             consumer,
             delivery_id,
@@ -71,11 +79,25 @@ where
             .ack_control(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::AckResult {
+            consumer,
+            delivery_id,
+        }) => broker
+            .ack_result(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
         Ok(TcpRequest::Nack {
             consumer,
             delivery_id,
         }) => broker
             .nack(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::NackResult {
+            consumer,
+            delivery_id,
+        }) => broker
+            .nack_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         Err(err) => Ok(TcpResponse::Error {

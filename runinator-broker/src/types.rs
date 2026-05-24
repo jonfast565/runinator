@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::{ActionCommand, ControlCommand};
+use runinator_comm::{ActionCommand, ControlCommand, WorkflowResultEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -32,6 +32,26 @@ pub struct ControlDelivery {
     pub enqueued_at: DateTime<Utc>,
 }
 
+/// Result event queued for web-service persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultMessage {
+    pub event: WorkflowResultEvent,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// Result event delivery returned when polling the result channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultDelivery {
+    pub delivery_id: Uuid,
+    pub event: WorkflowResultEvent,
+    pub dedupe_key: String,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
 impl BrokerMessage {
     pub fn dedupe_key_or_hash(&self) -> String {
         self.dedupe_key.clone().unwrap_or_else(|| {
@@ -43,6 +63,14 @@ impl BrokerMessage {
             }
             format!("{:x}", hasher.finish())
         })
+    }
+}
+
+impl ResultMessage {
+    pub fn dedupe_key_or_hash(&self) -> String {
+        self.dedupe_key
+            .clone()
+            .unwrap_or_else(|| self.event.event_id.to_string())
     }
 }
 
@@ -64,6 +92,18 @@ impl From<ControlCommand> for ControlDelivery {
             delivery_id: Uuid::new_v4(),
             command,
             enqueued_at: utc_now(),
+        }
+    }
+}
+
+impl From<ResultMessage> for ResultDelivery {
+    fn from(message: ResultMessage) -> Self {
+        let dedupe = message.dedupe_key_or_hash();
+        Self {
+            delivery_id: Uuid::new_v4(),
+            dedupe_key: dedupe,
+            enqueued_at: message.enqueued_at,
+            event: message.event,
         }
     }
 }

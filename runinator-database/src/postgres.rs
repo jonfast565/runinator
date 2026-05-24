@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf, str::FromStr};
 use chrono::{DateTime, Duration, Utc};
 use futures_util::stream::StreamExt;
 use log::{debug, info};
+use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -130,6 +131,15 @@ CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
     created_at BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workflow_result_events (
+    event_id TEXT PRIMARY KEY,
+    workflow_run_id BIGINT NOT NULL,
+    workflow_node_run_id BIGINT NOT NULL,
+    node_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS catalog_items (
     id BIGSERIAL PRIMARY KEY,
     uri TEXT NOT NULL UNIQUE,
@@ -198,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_triggers_due ON workflow_triggers(enable
 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_workflow_run ON workflow_node_runs(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_chunks_node_sequence ON workflow_node_chunks(workflow_node_run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_artifacts_node ON workflow_node_artifacts(workflow_node_run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_result_events_node ON workflow_result_events(workflow_node_run_id);
 CREATE INDEX IF NOT EXISTS idx_catalog_items_type ON catalog_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_type ON automation_records(record_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_workflow_run ON automation_records(workflow_run_id);
@@ -271,6 +282,14 @@ fn json_metadata(value: &Value) -> String {
         .cloned()
         .unwrap_or_else(|| Value::Object(Default::default()))
         .to_string()
+}
+
+fn workflow_result_event_type(event: &WorkflowResultEvent) -> &'static str {
+    match &event.kind {
+        WorkflowResultEventKind::Status { .. } => "status",
+        WorkflowResultEventKind::Chunk { .. } => "chunk",
+        WorkflowResultEventKind::Artifact { .. } => "artifact",
+    }
 }
 
 impl DatabaseImpl for PostgresDb {
@@ -856,6 +875,95 @@ impl DatabaseImpl for PostgresDb {
             .iter()
             .map(mappers::postgres_row_to_workflow_node_run_artifact)
             .collect())
+    }
+
+    async fn apply_workflow_result_event(
+        &self,
+        event: &WorkflowResultEvent,
+    ) -> Result<bool, SendableError> {
+        let mut tx = self.pool.begin().await?;
+        let event_type = workflow_result_event_type(event);
+        let insert = sqlx::query(
+            "INSERT INTO workflow_result_events (event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(event_id) DO NOTHING",
+        )
+        .bind(event.event_id.to_string())
+        .bind(event.workflow_run_id)
+        .bind(event.workflow_node_run_id)
+        .bind(&event.node_id)
+        .bind(event_type)
+        .bind(event.timestamp.timestamp())
+        .execute(&mut *tx)
+        .await?;
+
+        if insert.rows_affected() == 0 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        match &event.kind {
+            WorkflowResultEventKind::Status {
+                status,
+                output_json,
+                message,
+            } => {
+                let now = Utc::now().timestamp();
+                let terminal = status.is_terminal();
+                sqlx::query(
+                    "UPDATE workflow_node_runs SET status = $1, output_json = COALESCE($2, output_json), message = COALESCE($3, message), started_at = CASE WHEN $4 = 'running' THEN $5 WHEN $6 = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN $7 THEN $8 WHEN $9 = 'queued' THEN NULL ELSE finished_at END WHERE id = $10 AND NOT (status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND $11 NOT IN ('succeeded', 'failed', 'timed_out', 'canceled'))",
+                )
+                .bind(status.as_str())
+                .bind(output_json.as_ref().map(|value| value.to_string()))
+                .bind(message)
+                .bind(status.as_str())
+                .bind(now)
+                .bind(status.as_str())
+                .bind(terminal)
+                .bind(now)
+                .bind(status.as_str())
+                .bind(event.workflow_node_run_id)
+                .bind(status.as_str())
+                .execute(&mut *tx)
+                .await?;
+            }
+            WorkflowResultEventKind::Chunk { chunk } => {
+                let sequence: i64 = sqlx::query("SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM workflow_node_chunks WHERE workflow_node_run_id = $1")
+                    .bind(event.workflow_node_run_id)
+                    .fetch_one(&mut *tx)
+                    .await?
+                    .get("next_sequence");
+                sqlx::query(
+                    "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at)
+                     VALUES ($1, $2, $3, $4, $5)",
+                )
+                .bind(event.workflow_node_run_id)
+                .bind(sequence)
+                .bind(&chunk.stream)
+                .bind(&chunk.content)
+                .bind(event.timestamp.timestamp())
+                .execute(&mut *tx)
+                .await?;
+            }
+            WorkflowResultEventKind::Artifact { artifact } => {
+                sqlx::query(
+                    "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                )
+                .bind(event.workflow_node_run_id)
+                .bind(&artifact.name)
+                .bind(&artifact.mime_type)
+                .bind(artifact.size_bytes)
+                .bind(&artifact.uri)
+                .bind(artifact.metadata.to_string())
+                .bind(event.timestamp.timestamp())
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        tx.commit().await?;
+        Ok(true)
     }
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {

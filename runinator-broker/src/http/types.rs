@@ -1,4 +1,6 @@
-use crate::{BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery};
+use crate::{
+    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, ResultDelivery, ResultMessage,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,6 +27,16 @@ pub struct PublishControlRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveControlResponse {
     pub delivery: ControlDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishResultRequest {
+    pub message: ResultMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveResultResponse {
+    pub delivery: ResultDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -52,7 +52,7 @@ Preserve the command lifecycle:
 - Scheduler publishes `ActionCommand` values through `runinator-broker` for `task` nodes.
 - Workflow run states (`queued`, `running`, `waiting`, etc.) are persisted separately from individual task run statuses.
 - Workers acknowledge broker deliveries only after processing and any required result logging has completed.
-- Worker outputs, logs, artifacts, and node-run status/results go back through `runinator-api` to `runinator-ws`, then through `runinator-database`; they do not return through the broker and workers must not write directly to the database.
+- Worker outputs, logs, artifacts, and node-run status/results may be delivered as broker result events consumed by `runinator-ws`, or through compatibility endpoints in `runinator-api`; only `runinator-ws` persists them through `runinator-database`, and workers must not write directly to the database.
 - Broker messages should remain serializable and backend-neutral.
 - Any command or control payload that crosses the broker/scheduler/worker boundary must use the shared contracts in `runinator-comm` end to end. Do not add broker-local, scheduler-local, or worker-local duplicates for the same control path; extend `ActionCommand` or `ControlCommand`/`ControlKind` and thread that type through every relevant backend and delivery wrapper.
 - Do not add direct scheduler-to-worker request/response channels. The only direct worker-to-scheduler path is the optional protobuf control-event ingress for lightweight lifecycle/control events. If a worker response needs to become durable or observable, put it on the existing `runinator-api` result/log/artifact path unless there is a documented reason it cannot use that path.

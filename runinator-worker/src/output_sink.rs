@@ -1,16 +1,21 @@
 use std::sync::{Arc, Mutex};
 
+use chrono::Utc;
 use log::error;
-use runinator_api::{AsyncApiClient, RunArtifactPayload, RunChunkPayload, StaticLocator};
-use runinator_models::runs::{ProviderExecutionEvent, TaskExecutionResult};
+use runinator_broker::{Broker, BrokerError, ResultMessage};
+use runinator_comm::{ActionCommand, WorkflowResultEvent};
+use runinator_models::{
+    runs::{NewRunArtifact, NewRunChunk, ProviderExecutionEvent, TaskExecutionResult},
+    workflows::WorkflowStatus,
+};
 use runinator_plugin::provider::ProviderEventSink;
 use serde_json::Value;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 #[derive(Clone)]
 pub struct RunOutputSink {
-    workflow_node_run_id: i64,
-    api_client: AsyncApiClient<StaticLocator>,
+    command: ActionCommand,
+    broker: Arc<dyn Broker>,
     handle: Handle,
     state: Arc<Mutex<RunOutputState>>,
 }
@@ -19,17 +24,14 @@ pub struct RunOutputSink {
 struct RunOutputState {
     message: Option<String>,
     pending: Vec<JoinHandle<()>>,
+    errors: Vec<String>,
 }
 
 impl RunOutputSink {
-    pub fn new(
-        workflow_node_run_id: i64,
-        api_client: AsyncApiClient<StaticLocator>,
-        handle: Handle,
-    ) -> Self {
+    pub fn new(command: ActionCommand, broker: Arc<dyn Broker>, handle: Handle) -> Self {
         Self {
-            workflow_node_run_id,
-            api_client,
+            command,
+            broker,
             handle,
             state: Arc::new(Mutex::new(RunOutputState::default())),
         }
@@ -42,36 +44,23 @@ impl RunOutputSink {
             .and_then(|state| state.message.clone())
     }
 
-    pub async fn persist_result(&self, result: &TaskExecutionResult) {
+    pub async fn persist_result(&self, result: &TaskExecutionResult) -> Result<(), BrokerError> {
         // only persist artifacts; chunks are streamed via events.jsonl and would otherwise duplicate.
         for artifact in &result.artifacts {
-            if let Err(err) = self
-                .api_client
-                .add_workflow_node_run_artifact(
-                    self.workflow_node_run_id,
-                    &RunArtifactPayload {
-                        name: artifact.name.clone(),
-                        mime_type: artifact.mime_type.clone(),
-                        size_bytes: artifact.size_bytes,
-                        uri: artifact.uri.clone(),
-                        metadata: artifact.metadata.clone(),
-                    },
-                )
-                .await
-            {
-                error!(
-                    "Failed to add workflow node run {} result artifact: {}",
-                    self.workflow_node_run_id, err
-                );
-            }
+            self.publish_event(WorkflowResultEvent::artifact(
+                &self.command,
+                artifact.clone(),
+            ))
+            .await?;
         }
+        Ok(())
     }
 
     pub fn emit_log(&self, content: String) {
         self.emit_chunk("log".into(), content);
     }
 
-    pub async fn flush(&self) {
+    pub async fn flush(&self) -> Result<(), BrokerError> {
         let pending = self
             .state
             .lock()
@@ -81,25 +70,49 @@ impl RunOutputSink {
             if let Err(err) = handle.await {
                 error!(
                     "Failed to join workflow node run {} output task: {}",
-                    self.workflow_node_run_id, err
+                    self.command.workflow_node_run_id, err
                 );
+                return Err(BrokerError::Internal(err.to_string()));
             }
         }
+
+        let errors = self
+            .state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.errors))
+            .unwrap_or_default();
+        if !errors.is_empty() {
+            return Err(BrokerError::Internal(errors.join("; ")));
+        }
+
+        Ok(())
+    }
+
+    pub async fn publish_status(
+        &self,
+        status: WorkflowStatus,
+        output_json: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), BrokerError> {
+        self.publish_event(WorkflowResultEvent::status(
+            &self.command,
+            status,
+            output_json,
+            message,
+        ))
+        .await
     }
 
     fn emit_chunk(&self, stream: String, content: String) {
-        let node_run_id = self.workflow_node_run_id;
-        let client = self.api_client.clone();
+        let event = WorkflowResultEvent::chunk(&self.command, NewRunChunk { stream, content });
+        let broker = self.broker.clone();
+        let state = self.state.clone();
         let handle = self.handle.spawn(async move {
-            let payload = RunChunkPayload { stream, content };
-            if let Err(err) = client
-                .append_workflow_node_run_chunk(node_run_id, &payload)
-                .await
-            {
-                error!(
-                    "Failed to append workflow node run {} streamed chunk: {}",
-                    node_run_id, err
-                );
+            if let Err(err) = publish_event(broker.as_ref(), event).await {
+                error!("Failed to publish workflow result chunk: {}", err);
+                if let Ok(mut state) = state.lock() {
+                    state.errors.push(err.to_string());
+                }
             }
         });
         self.track_pending(handle);
@@ -113,24 +126,24 @@ impl RunOutputSink {
         uri: String,
         metadata: Value,
     ) {
-        let node_run_id = self.workflow_node_run_id;
-        let client = self.api_client.clone();
-        let handle = self.handle.spawn(async move {
-            let payload = RunArtifactPayload {
+        let event = WorkflowResultEvent::artifact(
+            &self.command,
+            NewRunArtifact {
                 name,
                 mime_type,
                 size_bytes,
                 uri,
                 metadata,
-            };
-            if let Err(err) = client
-                .add_workflow_node_run_artifact(node_run_id, &payload)
-                .await
-            {
-                error!(
-                    "Failed to add workflow node run {} streamed artifact: {}",
-                    node_run_id, err
-                );
+            },
+        );
+        let broker = self.broker.clone();
+        let state = self.state.clone();
+        let handle = self.handle.spawn(async move {
+            if let Err(err) = publish_event(broker.as_ref(), event).await {
+                error!("Failed to publish workflow result artifact: {}", err);
+                if let Ok(mut state) = state.lock() {
+                    state.errors.push(err.to_string());
+                }
             }
         });
         self.track_pending(handle);
@@ -141,6 +154,20 @@ impl RunOutputSink {
             state.pending.push(handle);
         }
     }
+
+    async fn publish_event(&self, event: WorkflowResultEvent) -> Result<(), BrokerError> {
+        publish_event(self.broker.as_ref(), event).await
+    }
+}
+
+async fn publish_event(broker: &dyn Broker, event: WorkflowResultEvent) -> Result<(), BrokerError> {
+    broker
+        .publish_result(ResultMessage {
+            dedupe_key: Some(event.event_id.to_string()),
+            event,
+            enqueued_at: Utc::now(),
+        })
+        .await
 }
 
 impl ProviderEventSink for RunOutputSink {

@@ -1,7 +1,8 @@
 use crate::{
     http::types::{
         AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishRequest,
-        ReceiveControlResponse, ReceiveRequest, ReceiveResponse,
+        PublishResultRequest, ReceiveControlResponse, ReceiveRequest, ReceiveResponse,
+        ReceiveResultResponse,
     },
     Broker, BrokerError,
 };
@@ -49,6 +50,10 @@ where
         .route("/control/publish", post(publish_control::<B>))
         .route("/control/receive", post(receive_control::<B>))
         .route("/control/ack", post(ack_control::<B>))
+        .route("/results/publish", post(publish_result::<B>))
+        .route("/results/receive", post(receive_result::<B>))
+        .route("/results/ack", post(ack_result::<B>))
+        .route("/results/nack", post(nack_result::<B>))
         .route("/receive", post(receive::<B>))
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
@@ -95,6 +100,64 @@ where
         Ok(delivery) => json_response(StatusCode::OK, ReceiveControlResponse { delivery }),
         Err(err) => error_response(err),
     }
+}
+
+async fn publish_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishResultRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_result(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_result(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveResultResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
+async fn ack_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_result(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_result(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
 }
 
 async fn ack_control<B>(

@@ -1,9 +1,10 @@
 use crate::{
     http::types::{
         AckRequest, PublishControlRequest, PublishRequest, ReceiveControlResponse, ReceiveRequest,
-        ReceiveResponse,
+        ReceiveResponse, ReceiveResultResponse,
     },
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
+    ResultDelivery, ResultMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -24,6 +25,31 @@ impl HttpBroker {
         self.base_url
             .join(path)
             .map_err(|err| BrokerError::Internal(err.to_string()))
+    }
+
+    async fn post_ack(
+        &self,
+        path: &str,
+        consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        let url = self.endpoint(path)?;
+        let response = self
+            .client
+            .post(url)
+            .json(&AckRequest {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        match response.status() {
+            StatusCode::OK => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected {path} status: {status}"
+            ))),
+        }
     }
 }
 
@@ -160,22 +186,60 @@ impl Broker for HttpBroker {
     }
 
     async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let url = self.endpoint("control/ack")?;
+        self.post_ack("control/ack", consumer, delivery_id).await
+    }
+
+    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
+        let url = self.endpoint("results/publish")?;
+        let dedupe_key = message.dedupe_key_or_hash();
         let response = self
             .client
             .post(url)
-            .json(&AckRequest {
+            .json(&crate::http::types::PublishResultRequest { message })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            StatusCode::CONFLICT => Err(BrokerError::Duplicate(dedupe_key)),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected result publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
+        let url = self.endpoint("results/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
-                delivery_id,
             })
             .send()
             .await
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
         match response.status() {
-            StatusCode::OK => Ok(()),
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveResultResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
             status => Err(BrokerError::Internal(format!(
-                "unexpected control ack status: {status}"
+                "unexpected result receive status: {status}"
             ))),
         }
+    }
+
+    async fn ack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("results/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("results/nack", consumer, delivery_id).await
     }
 }

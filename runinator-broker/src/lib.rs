@@ -7,7 +7,7 @@ mod types;
 
 pub use errors::BrokerError;
 pub use runinator_comm::ControlCommand;
-pub use types::{BrokerDelivery, BrokerMessage, ControlDelivery};
+pub use types::{BrokerDelivery, BrokerMessage, ControlDelivery, ResultDelivery, ResultMessage};
 
 use async_trait::async_trait;
 
@@ -34,5 +34,18 @@ pub trait Broker: Send + Sync + 'static {
 
     /// Acknowledge successful processing of a control delivery.
     async fn ack_control(&self, consumer: &str, delivery_id: uuid::Uuid)
+        -> Result<(), BrokerError>;
+
+    /// Publish a workflow result event on the result channel.
+    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError>;
+
+    /// Wait for and retrieve the next workflow result delivery.
+    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError>;
+
+    /// Acknowledge successful processing of a workflow result delivery.
+    async fn ack_result(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
+
+    /// Return the workflow result delivery to the queue for another attempt.
+    async fn nack_result(&self, consumer: &str, delivery_id: uuid::Uuid)
         -> Result<(), BrokerError>;
 }

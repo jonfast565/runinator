@@ -13,7 +13,7 @@ use std::{
 
 use config::parse_config;
 use log::{error, info, warn};
-use runinator_api::{AsyncApiClient, StaticLocator, WorkflowNodeRunStatusPayload};
+use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{
     Broker, BrokerError, ControlDelivery, http::client::HttpBroker, in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
@@ -426,41 +426,47 @@ async fn process_delivery(
         ),
     )
     .await;
-    let payload = WorkflowNodeRunStatusPayload {
-        status: WorkflowStatus::Running,
-        output_json: None,
-        message: None,
-    };
-    if let Err(err) = api_client
-        .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+    let sink = RunOutputSink::new(
+        command.clone(),
+        broker.clone(),
+        tokio::runtime::Handle::current(),
+    );
+    if let Err(err) = sink
+        .publish_status(WorkflowStatus::Running, None, None)
         .await
     {
         error!(
-            "Failed to mark workflow node run {} running: {}",
+            "Failed to publish workflow node run {} running status: {}",
             command.workflow_node_run_id, err
         );
+        in_flight.lock().await.remove(&command.workflow_run_id);
+        nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+        return Err(broker_error("publish_result", err));
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
         Ok(parameters) => parameters,
         Err(err) => {
             let message = format!("Failed to resolve action secrets: {err}");
             error!("{}", message);
-            let payload = WorkflowNodeRunStatusPayload {
-                status: WorkflowStatus::Failed,
-                output_json: Some(json!({
-                    "success": false,
-                    "message": message,
-                })),
-                message: Some(message.clone()),
-            };
-            if let Err(err) = api_client
-                .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+            let output_json = json!({
+                "success": false,
+                "message": message,
+            });
+            if let Err(err) = sink
+                .publish_status(
+                    WorkflowStatus::Failed,
+                    Some(output_json),
+                    Some(message.clone()),
+                )
                 .await
             {
                 error!(
-                    "Failed to mark workflow node run {} failed: {}",
+                    "Failed to publish workflow node run {} failed status: {}",
                     command.workflow_node_run_id, err
                 );
+                in_flight.lock().await.remove(&command.workflow_run_id);
+                nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+                return Err(broker_error("publish_result", err));
             }
             broker
                 .ack(consumer_id, delivery.delivery_id)
@@ -481,11 +487,6 @@ async fn process_delivery(
             return Ok(());
         }
     };
-    let sink = RunOutputSink::new(
-        command.workflow_node_run_id,
-        api_client.clone(),
-        tokio::runtime::Handle::current(),
-    );
     let result = executor::execute_task(
         libraries,
         action.clone(),
@@ -497,7 +498,14 @@ async fn process_delivery(
     .await;
     in_flight.lock().await.remove(&command.workflow_run_id);
     if let Some(execution_result) = &result.execution_result {
-        sink.persist_result(execution_result).await;
+        if let Err(err) = sink.persist_result(execution_result).await {
+            error!(
+                "Failed to publish workflow node run {} result artifacts: {}",
+                command.workflow_node_run_id, err
+            );
+            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            return Err(broker_error("publish_result", err));
+        }
     }
     let task_result = result.task_result;
     let provider_message = task_result.message.clone().or_else(|| sink.message());
@@ -509,7 +517,10 @@ async fn process_delivery(
             action.function,
             task_result.duration_ms()
         ));
-        sink.flush().await;
+        if let Err(err) = sink.flush().await {
+            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            return Err(broker_error("publish_result", err));
+        }
 
         let output_json = result
             .execution_result
@@ -522,19 +533,20 @@ async fn process_delivery(
                     "message": provider_message,
                 })
             });
-        let payload = WorkflowNodeRunStatusPayload {
-            status: WorkflowStatus::Succeeded,
-            output_json: Some(output_json),
-            message: provider_message.clone(),
-        };
-        if let Err(err) = api_client
-            .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+        if let Err(err) = sink
+            .publish_status(
+                WorkflowStatus::Succeeded,
+                Some(output_json),
+                provider_message.clone(),
+            )
             .await
         {
             error!(
-                "Failed to mark workflow node run {} succeeded: {}",
+                "Failed to publish workflow node run {} succeeded status: {}",
                 command.workflow_node_run_id, err
             );
+            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            return Err(broker_error("publish_result", err));
         }
     } else {
         sink.emit_log(format!(
@@ -544,30 +556,31 @@ async fn process_delivery(
             task_result.duration_ms(),
             provider_message.as_deref().unwrap_or("No error message")
         ));
-        sink.flush().await;
+        if let Err(err) = sink.flush().await {
+            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            return Err(broker_error("publish_result", err));
+        }
 
         let status = match result.status {
             runinator_models::runs::RunStatus::TimedOut => WorkflowStatus::TimedOut,
             runinator_models::runs::RunStatus::Canceled => WorkflowStatus::Canceled,
             _ => WorkflowStatus::Failed,
         };
-        let payload = WorkflowNodeRunStatusPayload {
-            status,
-            output_json: Some(json!({
-                "success": false,
-                "duration_ms": task_result.duration_ms(),
-                "message": provider_message,
-            })),
-            message: provider_message.clone(),
-        };
-        if let Err(err) = api_client
-            .set_workflow_node_run_status(command.workflow_node_run_id, &payload)
+        let output_json = json!({
+            "success": false,
+            "duration_ms": task_result.duration_ms(),
+            "message": provider_message,
+        });
+        if let Err(err) = sink
+            .publish_status(status, Some(output_json), provider_message.clone())
             .await
         {
             error!(
-                "Failed to mark workflow node run {} terminal: {}",
+                "Failed to publish workflow node run {} terminal status: {}",
                 command.workflow_node_run_id, err
             );
+            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            return Err(broker_error("publish_result", err));
         }
         warn!(
             "Action {}.{} reported failure: {:?}",
@@ -601,6 +614,17 @@ async fn send_control_event(
     if let Err(err) = control_client.send(kind, details).await {
         warn!("Unable to send scheduler control event: {}", err);
     }
+}
+
+async fn nack_action_delivery(
+    broker: &Arc<dyn Broker>,
+    consumer_id: &str,
+    delivery_id: uuid::Uuid,
+) -> Result<(), SendableError> {
+    broker
+        .nack(consumer_id, delivery_id)
+        .await
+        .map_err(|err| broker_error("nack", err))
 }
 
 async fn resolve_secret_refs(

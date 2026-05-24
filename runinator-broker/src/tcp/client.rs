@@ -1,6 +1,7 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
+    ResultDelivery, ResultMessage,
 };
 use async_trait::async_trait;
 use tokio::{
@@ -58,6 +59,9 @@ impl TcpBroker {
             TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
                 "unexpected control delivery response".into(),
             )),
+            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
+                "unexpected result delivery response".into(),
+            )),
         }
     }
 }
@@ -81,6 +85,9 @@ impl Broker for TcpBroker {
             TcpResponse::Ok => Err(BrokerError::Internal("unexpected ok response".into())),
             TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
                 "unexpected control delivery response".into(),
+            )),
+            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
+                "unexpected result delivery response".into(),
             )),
         }
     }
@@ -123,12 +130,59 @@ impl Broker for TcpBroker {
             TcpResponse::Delivery { .. } => Err(BrokerError::Internal(
                 "unexpected action delivery response".into(),
             )),
+            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
+                "unexpected result delivery response".into(),
+            )),
         }
     }
 
     async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let response = self
             .request(TcpRequest::AckControl {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
+        let response = self.request(TcpRequest::PublishResult { message }).await?;
+        Self::expect_ok(response)
+    }
+
+    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
+        match self
+            .request(TcpRequest::ReceiveResult {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::ResultDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            TcpResponse::Ok => Err(BrokerError::Internal("unexpected ok response".into())),
+            TcpResponse::Delivery { .. } => Err(BrokerError::Internal(
+                "unexpected action delivery response".into(),
+            )),
+            TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
+                "unexpected control delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::AckResult {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::NackResult {
                 consumer: consumer.to_string(),
                 delivery_id,
             })
