@@ -14,6 +14,7 @@ pub(crate) struct CreatePrParams {
     pub base: GitHubBaseParams,
     pub title: String,
     pub head: String,
+    #[serde(alias = "base")]
     pub base_branch: Option<String>,
     pub body: Option<String>,
 }

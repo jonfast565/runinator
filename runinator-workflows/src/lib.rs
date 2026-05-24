@@ -9,6 +9,7 @@ mod normalize;
 mod parameters;
 mod refs;
 mod types;
+mod typing;
 mod validation;
 
 pub use conditions::{evaluate_condition, next_transition};
@@ -26,7 +27,8 @@ pub use types::{
     RaceParameters, SwitchCase, SwitchParameters, TryParameters, WorkflowExpression,
     WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
 };
-pub use validation::{parse_nodes, validate_workflow};
+pub use typing::{WorkflowType, validate_workflow_types};
+pub use validation::{parse_nodes, validate_workflow, validate_workflow_with_providers};
 
 pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> Value {
     let mut steps = Map::new();

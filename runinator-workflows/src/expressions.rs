@@ -23,6 +23,8 @@ pub(crate) fn parse_expression(
             if map.contains_key("$ref")
                 || map.contains_key("$concat")
                 || map.contains_key("$literal")
+                || map.contains_key("$to_string")
+                || map.contains_key("$to_json_string")
                 || map.contains_key("$node") =>
         {
             if map.len() != 1 {
@@ -44,6 +46,16 @@ pub(crate) fn parse_expression(
             }
             if let Some(literal) = map.get("$literal") {
                 return Ok(WorkflowExpression::Literal(literal.clone()));
+            }
+            if let Some(nested) = map.get("$to_string") {
+                return Ok(WorkflowExpression::ToString(Box::new(parse_expression(
+                    nested,
+                )?)));
+            }
+            if let Some(nested) = map.get("$to_json_string") {
+                return Ok(WorkflowExpression::ToJsonString(Box::new(
+                    parse_expression(nested)?,
+                )));
             }
             Err(WorkflowValidationError::InvalidValueRef(value.to_string()))
         }
@@ -88,6 +100,14 @@ pub(crate) fn evaluate_static_expression(
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         )]))),
+        WorkflowExpression::ToString(nested) => Ok(Value::Object(Map::from_iter([(
+            "$to_string".into(),
+            evaluate_static_expression(*nested)?,
+        )]))),
+        WorkflowExpression::ToJsonString(nested) => Ok(Value::Object(Map::from_iter([(
+            "$to_json_string".into(),
+            evaluate_static_expression(*nested)?,
+        )]))),
     }
 }
 
@@ -115,11 +135,35 @@ pub(crate) fn evaluate_expression(
         WorkflowExpression::Concat(items) => {
             let mut rendered = String::new();
             for item in items {
-                rendered.push_str(&template_value_to_string(evaluate_expression(
-                    item, context,
-                )?));
+                let Value::String(value) = evaluate_expression(item, context)? else {
+                    return Err(WorkflowValidationError::InvalidValueRef(
+                        "$concat items must resolve to strings".into(),
+                    ));
+                };
+                rendered.push_str(&value);
             }
             Ok(Value::String(rendered))
+        }
+        WorkflowExpression::ToString(nested) => match evaluate_expression(nested, context)? {
+            Value::String(value) => Ok(Value::String(value)),
+            Value::Bool(value) => Ok(Value::String(value.to_string())),
+            Value::Number(value) => Ok(Value::String(value.to_string())),
+            Value::Null | Value::Array(_) | Value::Object(_) => {
+                Err(WorkflowValidationError::InvalidValueRef(
+                    "$to_string requires a string, boolean, or number".into(),
+                ))
+            }
+        },
+        WorkflowExpression::ToJsonString(nested) => {
+            let value = evaluate_expression(nested, context)?;
+            if !matches!(value, Value::Array(_) | Value::Object(_)) {
+                return Err(WorkflowValidationError::InvalidValueRef(
+                    "$to_json_string requires an array or object".into(),
+                ));
+            }
+            serde_json::to_string(&value)
+                .map(Value::String)
+                .map_err(|err| WorkflowValidationError::InvalidValueRef(err.to_string()))
         }
     }
 }
@@ -239,13 +283,5 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
         WorkflowRefSource::NodeOutput(node) => {
             serde_json::json!({ "node": node.as_str(), "output": path })
         }
-    }
-}
-
-pub(crate) fn template_value_to_string(value: Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(value) => value,
-        other => other.to_string(),
     }
 }

@@ -51,6 +51,8 @@ pub struct WorkflowRunRequest {
     pub parameters: Value,
     #[serde(default)]
     pub debug: bool,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +67,8 @@ pub struct WorkflowTriggerRunRequest {
 pub struct WorkflowRunStatusQuery {
     pub status: Option<WorkflowStatus>,
     pub workflow_id: Option<i64>,
+    pub name: Option<String>,
+    pub open: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

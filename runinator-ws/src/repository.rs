@@ -13,6 +13,8 @@ use runinator_models::{
 };
 use serde_json::Value;
 
+use crate::handlers::providers::provider_metadata_from_items;
+
 #[cfg(test)]
 pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     match (defaults, parameters) {
@@ -147,8 +149,20 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
-    let workflow = validate_workflow_definition(workflow)?;
+    let workflow = validate_workflow_definition_with_catalog(db, workflow).await?;
     db.upsert_workflow(&workflow).await
+}
+
+pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<WorkflowDefinition, SendableError> {
+    let workflow = validate_workflow_definition(workflow)?;
+    let providers = fetch_catalog_items(db, Some("provider_metadata".into())).await?;
+    let providers = provider_metadata_from_items(providers)?;
+    runinator_workflows::validate_workflow_with_providers(&workflow, &providers)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    Ok(workflow)
 }
 
 pub fn validate_workflow_definition(
@@ -176,6 +190,16 @@ pub async fn fetch_workflow<T: DatabaseImpl>(
     workflow_id: i64,
 ) -> Result<Option<WorkflowDefinition>, SendableError> {
     let Some(workflow) = db.fetch_workflow(workflow_id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(normalize_persisted_workflow(db, workflow).await?))
+}
+
+pub async fn fetch_workflow_by_name<T: DatabaseImpl>(
+    db: &T,
+    name: String,
+) -> Result<Option<WorkflowDefinition>, SendableError> {
+    let Some(workflow) = db.fetch_workflow_by_name(name).await? else {
         return Ok(None);
     };
     Ok(Some(normalize_persisted_workflow(db, workflow).await?))
@@ -311,8 +335,14 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
             object.insert("debug".into(), debug_state);
         }
     }
-    db.create_workflow_run(trigger.workflow_id, workflow_snapshot, parameters, state)
-        .await
+    db.create_workflow_run(
+        trigger.workflow_id,
+        workflow_snapshot,
+        parameters,
+        state,
+        None,
+    )
+    .await
 }
 
 async fn fetch_workflow_snapshot<T: DatabaseImpl>(
@@ -343,6 +373,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     workflow_id: i64,
     parameters: Value,
     debug: bool,
+    name: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let workflow_snapshot = fetch_workflow_snapshot(db, workflow_id).await?;
     let state = if debug {
@@ -360,7 +391,8 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     } else {
         serde_json::json!({ "control": { "pause_requested": false } })
     };
-    db.create_workflow_run(workflow_id, workflow_snapshot, parameters, state)
+    let trimmed = normalized_run_name(name);
+    db.create_workflow_run(workflow_id, workflow_snapshot, parameters, state, trimmed)
         .await
 }
 
@@ -384,6 +416,17 @@ pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
     db.fetch_workflow_runs_for_workflow(workflow_id).await
 }
 
+pub async fn fetch_workflow_runs_by_name<T: DatabaseImpl>(
+    db: &T,
+    name: String,
+    open_only: bool,
+) -> Result<Vec<WorkflowRun>, SendableError> {
+    let Some(name) = normalized_run_name(Some(name)) else {
+        return Ok(Vec::new());
+    };
+    db.fetch_workflow_runs_by_name(name, open_only).await
+}
+
 pub async fn update_workflow_run_status<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
@@ -405,18 +448,22 @@ pub async fn set_workflow_run_name<T: DatabaseImpl>(
     workflow_run_id: i64,
     name: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
-    let trimmed = name.and_then(|value| {
+    let trimmed = normalized_run_name(name);
+    db.set_workflow_run_name(workflow_run_id, trimmed).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow run renamed".into(),
+    })
+}
+
+fn normalized_run_name(name: Option<String>) -> Option<String> {
+    name.and_then(|value| {
         let stripped = value.trim().to_string();
         if stripped.is_empty() {
             None
         } else {
             Some(stripped)
         }
-    });
-    db.set_workflow_run_name(workflow_run_id, trimmed).await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Workflow run renamed".into(),
     })
 }
 
@@ -938,6 +985,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
                 snapshot.clone(),
                 source.parameters.clone(),
                 state,
+                source.name.clone(),
             )
             .await?;
 
@@ -996,8 +1044,14 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         return Ok(refreshed);
     }
 
-    db.create_workflow_run(source.workflow_id, snapshot, source.parameters, state)
-        .await
+    db.create_workflow_run(
+        source.workflow_id,
+        snapshot,
+        source.parameters,
+        state,
+        source.name,
+    )
+    .await
 }
 
 /// BFS over reverse transitions from `target_node_id` to find all nodes that must

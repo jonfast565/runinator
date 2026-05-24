@@ -5,6 +5,10 @@ use chrono::{TimeZone, Utc};
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    providers::{
+        ActionMetadata, ParameterValueType, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata,
+    },
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
         WorkflowTrigger,
@@ -750,6 +754,185 @@ async fn canceled_run_does_not_advance() {
     assert_eq!(api.node_update_count(), 0);
 }
 
+#[tokio::test]
+async fn fire_and_forget_subflow_creates_named_child_and_advances() {
+    let run = workflow_run(
+        json!({ "ticket": { "key": "ITP-123" } }),
+        json!({}),
+        "spawn",
+    );
+    let child = workflow_definition_with_id(42, "Ticket Work");
+    let api = MockWorkflowApi {
+        state: Mutex::new(MockWorkflowState {
+            workflow_run: Some(run.clone()),
+            workflows: vec![child],
+            ..Default::default()
+        }),
+    };
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "subflow": {
+            "workflow_name": "Ticket Work",
+            "type": "fire_and_forget",
+            "run_name": {
+                "$concat": ["Ticket Work: ", { "$ref": { "input": ["ticket", "key"] } }]
+            },
+            "reuse_open_run": true
+        },
+        "parameters": {
+            "ticket": { "$ref": { "input": ["ticket"] } },
+            "parent_workflow_run_id": { "$ref": { "workflow": ["run_id"] } }
+        },
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+
+    process_subflow_node(&api, &run, &node, None, &[])
+        .await
+        .unwrap();
+
+    let created = api.created_workflow_runs();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].workflow_id, 42);
+    assert_eq!(created[0].name.as_deref(), Some("Ticket Work: ITP-123"));
+    assert_eq!(created[0].parameters["ticket"]["key"], "ITP-123");
+    assert_eq!(created[0].parameters["parent_workflow_run_id"], 10);
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Succeeded);
+    assert_eq!(
+        api.last_node_update().output_json["subflow_run_id"],
+        created[0].id
+    );
+    assert_eq!(api.last_node_update().output_json["reused"], false);
+    assert_eq!(
+        api.last_run_update().active_node_id.as_deref(),
+        Some("done")
+    );
+}
+
+#[tokio::test]
+async fn fire_and_forget_subflow_reuses_open_named_child() {
+    let run = workflow_run(
+        json!({ "ticket": { "key": "ITP-123" } }),
+        json!({}),
+        "spawn",
+    );
+    let existing = WorkflowRun {
+        id: 99,
+        workflow_id: 42,
+        workflow_snapshot: Some(workflow_definition_with_id(42, "Ticket Work")),
+        status: WorkflowStatus::Running,
+        active_node_id: Some("implement".into()),
+        parameters: json!({ "ticket": { "key": "ITP-123" } }),
+        state: json!({}),
+        created_at: Utc::now(),
+        started_at: None,
+        finished_at: None,
+        message: None,
+        name: Some("Ticket Work: ITP-123".into()),
+    };
+    let api = MockWorkflowApi {
+        state: Mutex::new(MockWorkflowState {
+            workflow_run: Some(run.clone()),
+            workflows: vec![workflow_definition_with_id(42, "Ticket Work")],
+            workflow_runs: vec![existing],
+            ..Default::default()
+        }),
+    };
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "subflow": {
+            "workflow_name": "Ticket Work",
+            "type": "fire_and_forget",
+            "run_name": "Ticket Work: ITP-123",
+            "reuse_open_run": true
+        },
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+
+    process_subflow_node(&api, &run, &node, None, &[])
+        .await
+        .unwrap();
+
+    assert!(api.created_workflow_runs().is_empty());
+    assert_eq!(api.last_node_update().output_json["subflow_run_id"], 99);
+    assert_eq!(api.last_node_update().output_json["reused"], true);
+}
+
+#[tokio::test]
+async fn fire_and_forget_subflow_ignores_terminal_named_child() {
+    let run = workflow_run(json!({}), json!({}), "spawn");
+    let terminal = WorkflowRun {
+        id: 99,
+        workflow_id: 42,
+        workflow_snapshot: Some(workflow_definition_with_id(42, "Ticket Work")),
+        status: WorkflowStatus::Succeeded,
+        active_node_id: Some("done".into()),
+        parameters: json!({}),
+        state: json!({}),
+        created_at: Utc::now(),
+        started_at: None,
+        finished_at: Some(Utc::now()),
+        message: None,
+        name: Some("Ticket Work: ITP-123".into()),
+    };
+    let api = MockWorkflowApi {
+        state: Mutex::new(MockWorkflowState {
+            workflow_run: Some(run.clone()),
+            workflows: vec![workflow_definition_with_id(42, "Ticket Work")],
+            workflow_runs: vec![terminal],
+            ..Default::default()
+        }),
+    };
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "subflow": {
+            "workflow_name": "Ticket Work",
+            "type": "fire_and_forget",
+            "run_name": "Ticket Work: ITP-123",
+            "reuse_open_run": true
+        },
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+
+    process_subflow_node(&api, &run, &node, None, &[])
+        .await
+        .unwrap();
+
+    let created = api.created_workflow_runs();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].name.as_deref(), Some("Ticket Work: ITP-123"));
+}
+
+#[tokio::test]
+async fn legacy_subflow_defaults_to_waiting_child() {
+    let run = workflow_run(json!({ "value": 7 }), json!({}), "spawn");
+    let api = MockWorkflowApi::default();
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "subflow_id": 42,
+        "parameters": { "value": { "$ref": { "input": ["value"] } } },
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+
+    process_subflow_node(&api, &run, &node, None, &[])
+        .await
+        .unwrap();
+
+    let created = api.created_workflow_runs();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].workflow_id, 42);
+    assert_eq!(created[0].parameters["value"], 7);
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Waiting);
+    assert_eq!(api.last_run_update().status, WorkflowStatus::Waiting);
+    assert_eq!(
+        api.last_run_update().active_node_id.as_deref(),
+        Some("spawn")
+    );
+}
+
 #[derive(Debug, Clone)]
 struct WorkflowRunUpdate {
     status: WorkflowStatus,
@@ -770,9 +953,13 @@ struct MockWorkflowApi {
 
 #[derive(Default)]
 struct MockWorkflowState {
+    next_workflow_run_id: i64,
     next_node_run_id: i64,
     workflow: Option<WorkflowDefinition>,
+    workflows: Vec<WorkflowDefinition>,
     workflow_run: Option<WorkflowRun>,
+    workflow_runs: Vec<WorkflowRun>,
+    created_workflow_runs: Vec<WorkflowRun>,
     node_runs: Vec<WorkflowNodeRun>,
     workflow_updates: Vec<WorkflowRunUpdate>,
     node_updates: Vec<WorkflowNodeRunUpdate>,
@@ -831,6 +1018,10 @@ impl MockWorkflowApi {
     fn node_update_count(&self) -> usize {
         self.state.lock().unwrap().node_updates.len()
     }
+
+    fn created_workflow_runs(&self) -> Vec<WorkflowRun> {
+        self.state.lock().unwrap().created_workflow_runs.clone()
+    }
 }
 
 #[async_trait]
@@ -844,12 +1035,82 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             .ok_or_else(|| test_error("unexpected workflow fetch"))
     }
 
+    async fn fetch_workflow_by_name(
+        &self,
+        name: &str,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        let state = self.state.lock().unwrap();
+        state
+            .workflows
+            .iter()
+            .find(|workflow| workflow.name == name)
+            .cloned()
+            .or_else(|| {
+                state
+                    .workflow
+                    .clone()
+                    .filter(|workflow| workflow.name == name)
+            })
+            .ok_or_else(|| test_error("unexpected workflow name fetch"))
+    }
+
+    async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, SendableError> {
+        Ok(vec![ProviderMetadata {
+            name: "console".into(),
+            actions: vec![
+                ActionMetadata::new("run", "Run test command").with_results(vec![
+                    ResultMetadata::new("success", ParameterValueType::Boolean),
+                    ResultMetadata::new("exit_code", ParameterValueType::Integer),
+                ]),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        }])
+    }
+
     async fn create_workflow_run(
         &self,
-        _workflow_id: i64,
-        _parameters: serde_json::Value,
+        workflow_id: i64,
+        parameters: serde_json::Value,
     ) -> Result<WorkflowRun, SendableError> {
-        Err(test_error("unexpected workflow run creation"))
+        self.create_named_workflow_run(workflow_id, parameters, String::new())
+            .await
+            .map(|mut run| {
+                run.name = None;
+                run
+            })
+    }
+
+    async fn create_named_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: serde_json::Value,
+        name: String,
+    ) -> Result<WorkflowRun, SendableError> {
+        let mut state = self.state.lock().unwrap();
+        state.next_workflow_run_id += 1;
+        let workflow_snapshot = state
+            .workflows
+            .iter()
+            .find(|workflow| workflow.id == Some(workflow_id))
+            .cloned()
+            .or_else(|| state.workflow.clone());
+        let run = WorkflowRun {
+            id: state.next_workflow_run_id,
+            workflow_id,
+            workflow_snapshot,
+            status: WorkflowStatus::Queued,
+            active_node_id: None,
+            parameters,
+            state: json!({ "control": { "pause_requested": false } }),
+            created_at: Utc::now(),
+            started_at: None,
+            finished_at: None,
+            message: None,
+            name: Some(name).filter(|name| !name.is_empty()),
+        };
+        state.created_workflow_runs.push(run.clone());
+        state.workflow_runs.push(run.clone());
+        Ok(run)
     }
 
     async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
@@ -869,6 +1130,23 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         _status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         Ok(Vec::new())
+    }
+
+    async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .workflow_runs
+            .iter()
+            .filter(|run| run.name.as_deref() == Some(name))
+            .filter(|run| !open_only || !run.status.is_terminal())
+            .cloned()
+            .collect())
     }
 
     async fn update_workflow_run(
@@ -1057,6 +1335,25 @@ fn workflow_with_nodes(nodes: serde_json::Value) -> WorkflowDefinition {
         enabled: true,
         input_schema: json!({}),
         definition: json!({ "start": "start", "nodes": nodes }),
+        created_at: None,
+        updated_at: None,
+    }
+}
+
+fn workflow_definition_with_id(id: i64, name: &str) -> WorkflowDefinition {
+    WorkflowDefinition {
+        id: Some(id),
+        name: name.into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
         created_at: None,
         updated_at: None,
     }

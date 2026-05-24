@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use runinator_api::AsyncApiClient;
 use runinator_models::{
     errors::SendableError,
+    providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus, WorkflowTrigger,
@@ -18,10 +19,22 @@ use crate::worker_comm::WorkerManager;
 pub trait WorkflowSchedulerApi: Send + Sync {
     async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition, SendableError>;
 
+    async fn fetch_workflow_by_name(&self, name: &str)
+    -> Result<WorkflowDefinition, SendableError>;
+
+    async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, SendableError>;
+
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
         parameters: Value,
+    ) -> Result<WorkflowRun, SendableError>;
+
+    async fn create_named_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        name: String,
     ) -> Result<WorkflowRun, SendableError>;
 
     async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError>;
@@ -35,6 +48,12 @@ pub trait WorkflowSchedulerApi: Send + Sync {
     async fn fetch_workflow_runs_by_status(
         &self,
         status: WorkflowStatus,
+    ) -> Result<Vec<WorkflowRun>, SendableError>;
+
+    async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
     ) -> Result<Vec<WorkflowRun>, SendableError>;
 
     async fn update_workflow_run(
@@ -143,6 +162,23 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    pub async fn fetch_workflow_by_name(
+        &self,
+        name: &str,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        self.client
+            .fetch_workflow_by_name(name)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, SendableError> {
+        self.client
+            .fetch_providers()
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
     pub async fn create_workflow_run(
         &self,
         workflow_id: i64,
@@ -150,6 +186,18 @@ impl SchedulerApi {
     ) -> Result<WorkflowRun, SendableError> {
         self.client
             .create_workflow_run(workflow_id, parameters)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn create_named_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        name: String,
+    ) -> Result<WorkflowRun, SendableError> {
+        self.client
+            .create_named_workflow_run(workflow_id, parameters, name)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
     }
@@ -185,6 +233,17 @@ impl SchedulerApi {
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         self.client
             .fetch_workflow_runs_by_status(status)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        self.client
+            .fetch_workflow_runs_by_name(name, open_only)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
     }
@@ -342,12 +401,32 @@ impl WorkflowSchedulerApi for SchedulerApi {
         SchedulerApi::fetch_workflow(self, workflow_id).await
     }
 
+    async fn fetch_workflow_by_name(
+        &self,
+        name: &str,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        SchedulerApi::fetch_workflow_by_name(self, name).await
+    }
+
+    async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, SendableError> {
+        SchedulerApi::fetch_providers(self).await
+    }
+
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
         parameters: Value,
     ) -> Result<WorkflowRun, SendableError> {
         SchedulerApi::create_workflow_run(self, workflow_id, parameters).await
+    }
+
+    async fn create_named_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        name: String,
+    ) -> Result<WorkflowRun, SendableError> {
+        SchedulerApi::create_named_workflow_run(self, workflow_id, parameters, name).await
     }
 
     async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
@@ -367,6 +446,14 @@ impl WorkflowSchedulerApi for SchedulerApi {
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         SchedulerApi::fetch_workflow_runs_by_status(self, status).await
+    }
+
+    async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        SchedulerApi::fetch_workflow_runs_by_name(self, name, open_only).await
     }
 
     async fn update_workflow_run(

@@ -26,6 +26,8 @@ pub enum WorkflowValidationError {
     InvalidTimeout(String),
     #[error("workflow node '{0}' max_iterations must be greater than zero")]
     InvalidLoopLimit(String),
+    #[error("workflow node '{0}' of kind subflow requires subflow_id or subflow.workflow_name")]
+    MissingSubflowTarget(String),
     #[error(
         "workflow node '{0}' reentry.max_visits must be greater than zero when reentry is enabled"
     )]
@@ -40,4 +42,6 @@ pub enum WorkflowValidationError {
     InvalidCondition(String),
     #[error("workflow node '{node}' parameters are invalid: {message}")]
     InvalidNodeParameters { node: String, message: String },
+    #[error("workflow type validation failed: {0}")]
+    TypeError(String),
 }

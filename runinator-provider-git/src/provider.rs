@@ -21,6 +21,8 @@ use crate::params::{
 struct GitResult {
     stdout: String,
     action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<String>,
 }
 
 #[derive(Clone)]
@@ -42,7 +44,7 @@ impl Provider for GitProvider {
                         ParameterMetadata::required("branch", ParameterValueType::String),
                         ParameterMetadata::required("path", ParameterValueType::String),
                     ])
-                    .with_results(git_results()),
+                    .with_results(worktree_results()),
                 ActionMetadata::new("branch", "Get current branch name")
                     .with_parameters(vec![
                         ParameterMetadata::optional("workspace", ParameterValueType::String)
@@ -96,7 +98,7 @@ impl Provider for GitProvider {
             "create_or_resume_worktree" | "worktree" => {
                 let params: WorktreeParams = parse_params(&request)?;
                 let repo = params.repo.as_deref().unwrap_or(".");
-                run_command(
+                let stdout = run_command(
                     "git",
                     &[
                         "-C",
@@ -107,7 +109,18 @@ impl Provider for GitProvider {
                         &params.branch,
                         &params.path,
                     ],
-                )?
+                )?;
+                let result = GitResult {
+                    stdout,
+                    action: function.to_string(),
+                    workspace: Some(params.path),
+                };
+                return Ok(TaskExecutionResult {
+                    message: Some(format!("Git action {function} completed")),
+                    output_json: serde_json::to_value(result).ok(),
+                    chunks: Vec::new(),
+                    artifacts: Vec::new(),
+                });
             }
             "branch" => {
                 let params: WorkspaceParams = parse_params(&request)?;
@@ -158,6 +171,7 @@ impl Provider for GitProvider {
         let result = GitResult {
             stdout,
             action: function.to_string(),
+            workspace: None,
         };
         Ok(TaskExecutionResult {
             message: Some(format!("Git action {function} completed")),
@@ -173,4 +187,10 @@ fn git_results() -> Vec<ResultMetadata> {
         ResultMetadata::new("stdout", ParameterValueType::String),
         ResultMetadata::new("action", ParameterValueType::String),
     ]
+}
+
+fn worktree_results() -> Vec<ResultMetadata> {
+    let mut results = git_results();
+    results.push(ResultMetadata::new("workspace", ParameterValueType::String));
+    results
 }

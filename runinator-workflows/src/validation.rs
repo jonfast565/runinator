@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use runinator_models::workflows::{
-    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowTransitions,
+use runinator_models::{
+    providers::ProviderMetadata,
+    workflows::{
+        WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowTransitions,
+    },
 };
 use serde_json::Value;
 
@@ -10,6 +13,7 @@ use crate::errors::WorkflowValidationError;
 use crate::parameters::{parameter_targets, validate_control_node_parameters, value_refs};
 use crate::refs::expand_workflow_refs;
 use crate::types::WorkflowRefSource;
+use crate::typing::validate_workflow_types;
 
 pub fn parse_nodes(
     workflow: &WorkflowDefinition,
@@ -69,6 +73,18 @@ pub fn validate_workflow(
     for node in &nodes {
         if node.kind == WorkflowNodeKind::Action && node.action.is_none() {
             return Err(WorkflowValidationError::MissingAction(
+                node.id.as_str().to_string(),
+            ));
+        }
+        if node.kind == WorkflowNodeKind::Subflow
+            && node.subflow_id.is_none()
+            && node
+                .subflow
+                .workflow_name
+                .as_ref()
+                .is_none_or(|name| name.trim().is_empty())
+        {
+            return Err(WorkflowValidationError::MissingSubflowTarget(
                 node.id.as_str().to_string(),
             ));
         }
@@ -132,6 +148,15 @@ pub fn validate_workflow(
 
     validate_graph_cycles(&start, &nodes)?;
 
+    Ok((start, nodes))
+}
+
+pub fn validate_workflow_with_providers(
+    workflow: &WorkflowDefinition,
+    providers: &[ProviderMetadata],
+) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
+    let (start, nodes) = validate_workflow(workflow)?;
+    validate_workflow_types(workflow, &nodes, providers)?;
     Ok((start, nodes))
 }
 

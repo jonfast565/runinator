@@ -111,6 +111,14 @@ where
         Ok(response.json::<WorkflowDefinition>().await?)
     }
 
+    pub async fn fetch_workflow_by_name(&self, name: &str) -> Result<WorkflowDefinition> {
+        let mut url = self.build_url("/workflows").await?;
+        url.query_pairs_mut().append_pair("name", name);
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
     pub async fn upsert_workflow(
         &self,
         workflow: &WorkflowDefinition,
@@ -172,7 +180,17 @@ where
         workflow_id: i64,
         parameters: Value,
     ) -> Result<WorkflowRun> {
-        self.create_workflow_run_with_debug(workflow_id, parameters, false)
+        self.create_workflow_run_with_options(workflow_id, parameters, false, None)
+            .await
+    }
+
+    pub async fn create_named_workflow_run(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        name: String,
+    ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_options(workflow_id, parameters, false, Some(name))
             .await
     }
 
@@ -260,13 +278,24 @@ where
         parameters: Value,
         debug: bool,
     ) -> Result<WorkflowRun> {
+        self.create_workflow_run_with_options(workflow_id, parameters, debug, None)
+            .await
+    }
+
+    pub async fn create_workflow_run_with_options(
+        &self,
+        workflow_id: i64,
+        parameters: Value,
+        debug: bool,
+        name: Option<String>,
+    ) -> Result<WorkflowRun> {
         let url = self
             .build_url(&format!("/workflows/{workflow_id}/runs"))
             .await?;
         let response = self
             .client
             .post(url.clone())
-            .json(&json!({ "parameters": parameters, "debug": debug }))
+            .json(&json!({ "parameters": parameters, "debug": debug, "name": name }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
@@ -286,6 +315,20 @@ where
         let url = self
             .build_url(&format!("/workflow_runs?status={}", status.as_str()))
             .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRun>>().await?)
+    }
+
+    pub async fn fetch_workflow_runs_by_name(
+        &self,
+        name: &str,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>> {
+        let mut url = self.build_url("/workflow_runs").await?;
+        url.query_pairs_mut()
+            .append_pair("name", name)
+            .append_pair("open", if open_only { "true" } else { "false" });
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRun>>().await?)

@@ -2,7 +2,7 @@ use chrono::Utc;
 use runinator_broker::Broker;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
+    workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus, WorkflowSubflowType},
 };
 use runinator_workflows::BranchPolicy;
 use serde_json::{Map, Value};
@@ -1081,18 +1081,22 @@ pub async fn process_subflow_node(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let Some(subflow_id) = node.subflow_id else {
-        return block_node(
-            api,
-            workflow_run,
-            node,
-            "Subflow node is missing subflow_id",
-        )
-        .await;
-    };
-
     if let Some(node_run) = latest {
         if let Some(subflow_run_id) = node_run.state.get("subflow_run_id").and_then(Value::as_i64) {
+            if node.subflow.subflow_type == WorkflowSubflowType::FireAndForget {
+                return transition_from_node(
+                    api,
+                    workflow_run,
+                    node,
+                    node_run,
+                    WorkflowStatus::Succeeded,
+                    Some(node_run.state.clone()),
+                    Some("subflow_linked".into()),
+                    node_runs,
+                )
+                .await;
+            }
+
             let (subflow_run, _) = api.fetch_workflow_run(subflow_run_id).await?;
             match subflow_run.status {
                 WorkflowStatus::Succeeded => {
@@ -1139,16 +1143,77 @@ pub async fn process_subflow_node(
         }
     }
 
+    let subflow_id = resolve_subflow_id(api, node).await?;
     let context = runtime_context(workflow_run, node_runs);
     let parameters = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let subflow_run = api
-        .create_workflow_run(subflow_id, parameters.clone())
-        .await?;
+    let run_name = resolve_optional_string(node.subflow.run_name.as_ref(), &context)?;
+    let (subflow_run, reused) = if node.subflow.reuse_open_run {
+        if let Some(name) = run_name.as_deref() {
+            if let Some(existing) = api
+                .fetch_workflow_runs_by_name(name, true)
+                .await?
+                .into_iter()
+                .next()
+            {
+                (existing, true)
+            } else {
+                (
+                    create_subflow_run(api, subflow_id, parameters.clone(), run_name.clone())
+                        .await?,
+                    false,
+                )
+            }
+        } else {
+            (
+                create_subflow_run(api, subflow_id, parameters.clone(), None).await?,
+                false,
+            )
+        }
+    } else {
+        (
+            create_subflow_run(api, subflow_id, parameters.clone(), run_name.clone()).await?,
+            false,
+        )
+    };
     let node_run = api
         .create_workflow_node_run(workflow_run.id, &node.id, parameters)
         .await?;
-    let state = serde_json::json!({ "subflow_run_id": subflow_run.id });
+    let state = serde_json::json!({
+        "subflow_run_id": subflow_run.id,
+        "subflow_workflow_id": subflow_run.workflow_id,
+        "run_name": run_name,
+        "reused": reused
+    });
+    if node.subflow.subflow_type == WorkflowSubflowType::FireAndForget {
+        api.update_workflow_node_run(
+            node_run.id,
+            WorkflowStatus::Succeeded,
+            Some(node_run.attempt + 1),
+            None,
+            Some(state.clone()),
+            Some(state.clone()),
+            Some(if reused {
+                "subflow_reused".into()
+            } else {
+                "subflow_started".into()
+            }),
+            None,
+        )
+        .await?;
+        return transition_from_node(
+            api,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(state.clone()),
+            Some("subflow_linked".into()),
+            node_runs,
+        )
+        .await;
+    }
+
     api.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
@@ -1168,6 +1233,66 @@ pub async fn process_subflow_node(
         None,
     )
     .await
+}
+
+async fn resolve_subflow_id(
+    api: &dyn WorkflowSchedulerApi,
+    node: &WorkflowNode,
+) -> Result<i64, SendableError> {
+    if let Some(subflow_id) = node.subflow_id {
+        return Ok(subflow_id);
+    }
+
+    if let Some(workflow_name) = node.subflow.workflow_name.as_deref() {
+        let workflow_name = workflow_name.trim();
+        if !workflow_name.is_empty() {
+            let workflow = api.fetch_workflow_by_name(workflow_name).await?;
+            if let Some(id) = workflow.id {
+                return Ok(id);
+            }
+            return Err(Box::new(RuntimeError::new(
+                "workflow.subflow.missing_id".into(),
+                format!("Subflow workflow {workflow_name} has no id"),
+            )));
+        }
+    }
+
+    Err(Box::new(RuntimeError::new(
+        "workflow.subflow.target_missing".into(),
+        format!("Subflow node {} is missing a target", node.id),
+    )))
+}
+
+async fn create_subflow_run(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_id: i64,
+    parameters: Value,
+    run_name: Option<String>,
+) -> Result<WorkflowRun, SendableError> {
+    match run_name {
+        Some(name) => {
+            api.create_named_workflow_run(workflow_id, parameters, name)
+                .await
+        }
+        None => api.create_workflow_run(workflow_id, parameters).await,
+    }
+}
+
+fn resolve_optional_string(
+    value: Option<&Value>,
+    context: &Value,
+) -> Result<Option<String>, SendableError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let resolved = runinator_workflows::resolve_value_refs(value, context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let name = match resolved {
+        Value::Null => None,
+        Value::String(value) => Some(value.trim().to_string()).filter(|value| !value.is_empty()),
+        other => Some(other.to_string()),
+    };
+    Ok(name)
 }
 
 pub async fn block_node(

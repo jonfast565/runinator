@@ -1,6 +1,10 @@
 use super::*;
-use runinator_models::workflows::{
-    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus,
+use runinator_models::{
+    providers::{
+        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
+        ProviderRuntimeMetadata, ResultMetadata,
+    },
+    workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus},
 };
 use std::collections::HashMap;
 
@@ -45,6 +49,37 @@ fn rejects_missing_transition_target() {
     assert!(matches!(
         validate_workflow(&wf),
         Err(WorkflowValidationError::MissingTransition { .. })
+    ));
+}
+
+#[test]
+fn validates_subflow_target_by_id_or_name() {
+    let named = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "spawn" } } },
+            {
+                "id": "spawn",
+                "kind": "subflow",
+                "subflow": { "workflow_name": "Ticket Work", "type": "fire_and_forget" },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    validate_workflow(&named).expect("named subflow target validates");
+
+    let missing = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "spawn" } } },
+            { "id": "spawn", "kind": "subflow", "transitions": { "on_success": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    assert!(matches!(
+        validate_workflow(&missing),
+        Err(WorkflowValidationError::MissingSubflowTarget(_))
     ));
 }
 
@@ -207,6 +242,34 @@ fn evaluates_conditions() {
         ]
     });
     assert!(evaluate_condition(&cond4, &context).unwrap());
+}
+
+#[test]
+fn evaluates_richer_conditions() {
+    let context = serde_json::json!({
+        "input": {
+            "ticket": "ITP-123",
+            "labels": ["auto-implement", "backend"],
+            "fields": { "priority": "high" },
+            "score": 7
+        }
+    });
+
+    for condition in [
+        serde_json::json!({ "value": { "$ref": { "input": ["ticket"] } }, "starts_with": "ITP-" }),
+        serde_json::json!({ "value": { "$ref": { "input": ["ticket"] } }, "ends_with": "123" }),
+        serde_json::json!({ "value": { "$ref": { "input": ["ticket"] } }, "contains": "TP-1" }),
+        serde_json::json!({ "value": { "$ref": { "input": ["labels"] } }, "contains": "auto-implement" }),
+        serde_json::json!({ "value": { "$ref": { "input": ["fields"] } }, "contains": "priority" }),
+        serde_json::json!({ "value": { "$ref": { "input": ["ticket"] } }, "in": ["OPS-1", "ITP-123"] }),
+        serde_json::json!({ "value": { "$ref": { "input": ["score"] } }, "greater_than": 5 }),
+        serde_json::json!({ "value": { "$ref": { "input": ["score"] } }, "less_than_or_equal": 7 }),
+    ] {
+        assert!(
+            evaluate_condition(&condition, &context).unwrap(),
+            "{condition}"
+        );
+    }
 }
 
 #[test]
@@ -591,4 +654,191 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
             .map(|target| target.as_str()),
         Some("end")
     );
+}
+
+fn typed_provider() -> ProviderMetadata {
+    ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![
+            ActionMetadata::new("make", "make typed output")
+                .with_parameters(vec![ParameterMetadata::required(
+                    "name",
+                    ParameterValueType::String,
+                )])
+                .with_results(vec![
+                    ResultMetadata::new("count", ParameterValueType::Integer),
+                    ResultMetadata::new("payload", ParameterValueType::Json),
+                    ResultMetadata::new("items", ParameterValueType::Json).with_schema(
+                        serde_json::json!({
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": { "type": "string" }
+                                }
+                            }
+                        }),
+                    ),
+                ]),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    }
+}
+
+fn typed_workflow(input_schema: serde_json::Value, node: serde_json::Value) -> WorkflowDefinition {
+    let mut wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "make" } } },
+            {
+                "id": "make",
+                "kind": "action",
+                "action": {
+                    "provider": "typed",
+                    "function": "make",
+                    "configuration": { "name": { "$ref": { "input": ["name"] } } }
+                },
+                "transitions": { "on_success": { "$node": "checked" } }
+            },
+            node,
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    wf.input_schema = input_schema;
+    wf
+}
+
+#[test]
+fn typed_validation_requires_known_input_paths() {
+    let wf = typed_workflow(
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        }),
+        serde_json::json!({
+            "id": "checked",
+            "kind": "config",
+            "parameters": { "name": { "$ref": { "input": ["missing"] } } },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    assert!(validate_workflow_with_providers(&wf, &[typed_provider()]).is_err());
+}
+
+#[test]
+fn typed_validation_rejects_implicit_concat_coercion() {
+    let wf = typed_workflow(
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        }),
+        serde_json::json!({
+            "id": "checked",
+            "kind": "config",
+            "parameters": {
+                "name": {
+                    "$concat": [
+                        "count:",
+                        { "$ref": { "node": "make", "output": ["count"] } }
+                    ]
+                }
+            },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    assert!(validate_workflow_with_providers(&wf, &[typed_provider()]).is_err());
+}
+
+#[test]
+fn typed_validation_accepts_explicit_string_conversions() {
+    let wf = typed_workflow(
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        }),
+        serde_json::json!({
+            "id": "checked",
+            "kind": "config",
+            "parameters": {
+                "name": {
+                    "$concat": [
+                        "count:",
+                        { "$to_string": { "$ref": { "node": "make", "output": ["count"] } } },
+                        " json:",
+                        { "$to_json_string": { "$ref": { "node": "make", "output": ["items"] } } }
+                    ]
+                }
+            },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    validate_workflow_with_providers(&wf, &[typed_provider()])
+        .expect("explicit conversions validate");
+}
+
+#[test]
+fn typed_validation_rejects_opaque_json_traversal() {
+    let wf = typed_workflow(
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        }),
+        serde_json::json!({
+            "id": "checked",
+            "kind": "config",
+            "parameters": {
+                "name": { "$ref": { "node": "make", "output": ["payload", "key"] } }
+            },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    assert!(validate_workflow_with_providers(&wf, &[typed_provider()]).is_err());
+}
+
+#[test]
+fn typed_validation_checks_action_parameter_types() {
+    let wf = typed_workflow(
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "integer" } }
+        }),
+        serde_json::json!({
+            "id": "checked",
+            "kind": "config",
+            "parameters": { "name": "done" },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    assert!(validate_workflow_with_providers(&wf, &[typed_provider()]).is_err());
+}
+
+#[test]
+fn typed_validation_requires_map_items_to_be_array() {
+    let mut wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": {
+                    "items": { "$ref": { "input": ["name"] } },
+                    "target": { "$node": "done" }
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+    wf.input_schema = serde_json::json!({
+        "type": "object",
+        "properties": { "name": { "type": "string" } }
+    });
+
+    assert!(validate_workflow_with_providers(&wf, &[]).is_err());
 }

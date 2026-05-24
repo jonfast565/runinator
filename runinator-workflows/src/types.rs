@@ -45,6 +45,8 @@ pub enum WorkflowExpression {
     Literal(Value),
     Ref(WorkflowValueRef),
     Concat(Vec<WorkflowExpression>),
+    ToString(Box<WorkflowExpression>),
+    ToJsonString(Box<WorkflowExpression>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

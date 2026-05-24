@@ -333,6 +333,8 @@ pub(crate) fn collect_value_refs(
             if map.contains_key("$ref")
                 || map.contains_key("$concat")
                 || map.contains_key("$literal")
+                || map.contains_key("$to_string")
+                || map.contains_key("$to_json_string")
                 || map.contains_key("$node") =>
         {
             if map.len() != 1 {
@@ -347,6 +349,10 @@ pub(crate) fn collect_value_refs(
                 for item in items {
                     collect_value_refs(item, refs)?;
                 }
+            } else if let Some(nested) = map.get("$to_string") {
+                collect_value_refs(nested, refs)?;
+            } else if let Some(nested) = map.get("$to_json_string") {
+                collect_value_refs(nested, refs)?;
             }
         }
         Value::Object(map) => {

@@ -2,7 +2,7 @@ use serde_json::json;
 
 use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
 use runinator_models::workflows::{
-    WorkflowBundle, WorkflowDefinition, WorkflowTrigger, WorkflowTriggerKind,
+    WorkflowBundle, WorkflowDefinition, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
 };
 
 #[test]
@@ -47,6 +47,55 @@ fn workflow_run_request_accepts_debug_flag() {
         serde_json::from_value(json!({ "parameters": {}, "debug": true })).unwrap();
 
     assert!(request.debug);
+}
+
+#[tokio::test]
+async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
+    let (db, path) = test_db().await;
+    let workflow = crate::repository::upsert_workflow(&db, &workflow(None, "Ticket Work"))
+        .await
+        .unwrap();
+    let workflow_id = workflow.id.unwrap();
+    let open = crate::repository::create_workflow_run(
+        &db,
+        workflow_id,
+        json!({}),
+        false,
+        Some("Ticket Work: ITP-123".into()),
+    )
+    .await
+    .unwrap();
+    let terminal = crate::repository::create_workflow_run(
+        &db,
+        workflow_id,
+        json!({}),
+        false,
+        Some("Ticket Work: ITP-123".into()),
+    )
+    .await
+    .unwrap();
+    crate::repository::update_workflow_run_status(
+        &db,
+        terminal.id,
+        WorkflowStatus::Succeeded,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let open_only =
+        crate::repository::fetch_workflow_runs_by_name(&db, "Ticket Work: ITP-123".into(), true)
+            .await
+            .unwrap();
+
+    assert_eq!(open.name.as_deref(), Some("Ticket Work: ITP-123"));
+    assert_eq!(
+        open_only.iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec![open.id]
+    );
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

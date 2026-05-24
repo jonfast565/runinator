@@ -136,6 +136,8 @@ pub struct ResultMetadata {
     pub name: String,
     pub value_type: ParameterValueType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -146,6 +148,7 @@ impl ResultMetadata {
         Self {
             name: name.into(),
             value_type,
+            schema: None,
             label: None,
             description: None,
         }
@@ -153,6 +156,11 @@ impl ResultMetadata {
 
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    pub fn with_schema(mut self, schema: Value) -> Self {
+        self.schema = Some(schema);
         self
     }
 }

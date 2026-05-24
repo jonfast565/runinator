@@ -36,6 +36,7 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
             first_snapshot,
             serde_json::json!({}),
             serde_json::json!({}),
+            None,
         )
         .await
         .unwrap();
@@ -45,6 +46,7 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
             second_snapshot,
             serde_json::json!({}),
             serde_json::json!({}),
+            None,
         )
         .await
         .unwrap();
@@ -65,6 +67,68 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
             .map(|workflow| workflow.name.as_str()),
         Some("second")
     );
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn workflow_runs_can_be_created_and_queried_by_open_name() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-runs-by-name-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("ticket work"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let open = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot.clone(),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            Some("Ticket Work: ITP-123".into()),
+        )
+        .await
+        .unwrap();
+    let terminal = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            Some("Ticket Work: ITP-123".into()),
+        )
+        .await
+        .unwrap();
+    db.update_workflow_run_status(terminal.id, WorkflowStatus::Succeeded, None, None, None)
+        .await
+        .unwrap();
+
+    let all = db
+        .fetch_workflow_runs_by_name("Ticket Work: ITP-123".into(), false)
+        .await
+        .unwrap();
+    let open_only = db
+        .fetch_workflow_runs_by_name("Ticket Work: ITP-123".into(), true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        all.iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec![terminal.id, open.id]
+    );
+    assert_eq!(
+        open_only.iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec![open.id]
+    );
+    assert_eq!(open.name.as_deref(), Some("Ticket Work: ITP-123"));
 
     let _ = fs::remove_file(path);
 }
@@ -183,6 +247,7 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
             snapshot,
             serde_json::json!({}),
             serde_json::json!({}),
+            None,
         )
         .await
         .unwrap();

@@ -72,7 +72,10 @@ pub fn build_router<T: DatabaseImpl>(
                 .post(upsert_workflow::<T>)
                 .layer(Extension(pool.clone())),
         )
-        .route("/workflows/validate", post(validate_workflow))
+        .route(
+            "/workflows/validate",
+            post(validate_workflow::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/workflows/import",
             post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),

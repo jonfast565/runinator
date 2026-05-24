@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     created_at INTEGER NOT NULL,
     started_at INTEGER NULL,
     finished_at INTEGER NULL,
-    message TEXT NULL
+    message TEXT NULL,
+    name TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_runs (
@@ -529,6 +530,17 @@ impl DatabaseImpl for SqliteDb {
         Ok(row.map(|row| mappers::sqlite_row_to_workflow(&row)))
     }
 
+    async fn fetch_workflow_by_name(
+        &self,
+        name: String,
+    ) -> Result<Option<WorkflowDefinition>, SendableError> {
+        let row = sqlx::query("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE name = ? ORDER BY id LIMIT 1")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::sqlite_row_to_workflow(&row)))
+    }
+
     async fn delete_workflow(&self, workflow_id: i64) -> Result<(), SendableError> {
         self.pool
             .execute(sqlx::query("DELETE FROM workflows WHERE id = ?").bind(workflow_id))
@@ -633,10 +645,11 @@ impl DatabaseImpl for SqliteDb {
         workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
+        name: Option<String>,
     ) -> Result<WorkflowRun, SendableError> {
         let row = sqlx::query(
-            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at)
-             VALUES (?, ?, ?, NULL, ?, ?, ?)
+            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
              RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name",
         )
         .bind(workflow_id)
@@ -645,6 +658,7 @@ impl DatabaseImpl for SqliteDb {
         .bind(parameters.to_string())
         .bind(state.to_string())
         .bind(Utc::now().timestamp())
+        .bind(name)
         .fetch_one(&self.pool)
         .await?;
         Ok(mappers::sqlite_row_to_workflow_run(&row))
@@ -693,6 +707,28 @@ impl DatabaseImpl for SqliteDb {
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::sqlite_row_to_workflow_run)
+            .collect())
+    }
+
+    async fn fetch_workflow_runs_by_name(
+        &self,
+        name: String,
+        open_only: bool,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        let rows = if open_only {
+            sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE name = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled') ORDER BY id DESC")
+                .bind(name)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE name = ? ORDER BY id DESC")
+                .bind(name)
+                .fetch_all(&self.pool)
+                .await?
+        };
         Ok(rows
             .iter()
             .map(mappers::sqlite_row_to_workflow_run)

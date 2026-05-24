@@ -143,10 +143,20 @@ fn sdlc_pack_unwraps_to_workflow_bundle() {
         !bundle.workflows.is_empty(),
         "pack has at least one workflow"
     );
+    let names = bundle
+        .workflows
+        .iter()
+        .map(|workflow| workflow.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"Core Team SDLC Pipeline"));
+    assert!(names.contains(&"Ticket Work"));
+    let provider_bundle = build_provider_bundle();
     for workflow in &bundle.workflows {
         assert!(workflow.enabled);
         assert!(workflow.version >= 1);
         assert!(workflow.definition.is_object());
+        runinator_workflows::validate_workflow_with_providers(workflow, &provider_bundle.providers)
+            .expect("sdlc workflow validates");
     }
 }
 

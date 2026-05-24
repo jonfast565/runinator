@@ -89,8 +89,10 @@ async fn process_workflow_run_step(
         Some(snapshot) => snapshot,
         None => api.fetch_workflow(workflow_run.workflow_id).await?,
     };
-    let (start, nodes) = runinator_workflows::validate_workflow(&workflow)
-        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let providers = api.fetch_providers().await?;
+    let (start, nodes) =
+        runinator_workflows::validate_workflow_with_providers(&workflow, &providers)
+            .map_err(|err| -> SendableError { Box::new(err) })?;
     let (_, node_runs) = api.fetch_workflow_run(workflow_run.id).await?;
     let active_node_id = workflow_run
         .active_node_id

@@ -63,6 +63,7 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
         workflow_id,
         request.parameters,
         request.debug,
+        request.name,
     )
     .await
     {
@@ -184,6 +185,19 @@ pub(crate) async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Query(query): Query<WorkflowRunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Some(name) = query.name {
+        return match repository::fetch_workflow_runs_by_name(
+            db.as_ref(),
+            name,
+            query.open.unwrap_or(false),
+        )
+        .await
+        {
+            Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
+
     if let Some(workflow_id) = query.workflow_id {
         return match repository::fetch_workflow_runs_for_workflow(db.as_ref(), workflow_id).await {
             Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),

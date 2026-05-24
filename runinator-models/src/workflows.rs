@@ -374,6 +374,31 @@ pub struct WorkflowReentry {
     pub on_exhausted: Option<WorkflowNodeRef>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowSubflowType {
+    Wait,
+    FireAndForget,
+}
+
+impl Default for WorkflowSubflowType {
+    fn default() -> Self {
+        Self::Wait
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowSubflow {
+    #[serde(default)]
+    pub workflow_name: Option<String>,
+    #[serde(default)]
+    pub run_name: Option<Value>,
+    #[serde(default)]
+    pub reuse_open_run: bool,
+    #[serde(default, rename = "type")]
+    pub subflow_type: WorkflowSubflowType,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowTransitions {
     #[serde(default)]
@@ -418,6 +443,8 @@ pub struct WorkflowNode {
     pub max_iterations: Option<i64>,
     #[serde(default)]
     pub subflow_id: Option<i64>,
+    #[serde(default)]
+    pub subflow: WorkflowSubflow,
     #[serde(default)]
     pub reentry: WorkflowReentry,
 }

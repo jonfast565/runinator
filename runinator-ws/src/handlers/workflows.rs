@@ -1,8 +1,13 @@
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query},
+    http::StatusCode,
+};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
+use serde::Deserialize;
 
 use crate::events::{AppEvent, EventSender, emit};
 use crate::models::ApiResponse;
@@ -23,18 +28,33 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
     }
 }
 
-pub(crate) async fn validate_workflow(
+pub(crate) async fn validate_workflow<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::validate_workflow_definition(&workflow) {
+    match repository::validate_workflow_definition_with_catalog(db.as_ref(), &workflow).await {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowQuery {
+    pub(crate) name: Option<String>,
+}
+
 pub(crate) async fn get_workflows<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Query(query): Query<WorkflowQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Some(name) = query.name {
+        return match repository::fetch_workflow_by_name(db.as_ref(), name).await {
+            Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
+            Ok(None) => not_found("Workflow not found"),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
+
     match repository::fetch_workflows(db.as_ref()).await {
         Ok(workflows) => (StatusCode::OK, Json(ApiResponse::WorkflowList(workflows))),
         Err(err) => api_error(err.to_string()),

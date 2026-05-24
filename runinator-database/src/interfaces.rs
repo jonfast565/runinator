@@ -92,6 +92,12 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_id: i64,
     ) -> impl Future<Output = Result<Option<WorkflowDefinition>, SendableError>> + Send;
 
+    /// Fetch a workflow definition by its unique display name.
+    fn fetch_workflow_by_name(
+        &self,
+        name: String,
+    ) -> impl Future<Output = Result<Option<WorkflowDefinition>, SendableError>> + Send;
+
     /// Delete a workflow and its associated metadata.
     fn delete_workflow(
         &self,
@@ -142,6 +148,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
+        name: Option<String>,
     ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
 
     /// Fetch workflow runs filtered by status.
@@ -159,6 +166,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn fetch_workflow_runs_for_workflow(
         &self,
         workflow_id: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
+    /// Fetch workflow runs by display name, optionally restricted to open runs.
+    fn fetch_workflow_runs_by_name(
+        &self,
+        name: String,
+        open_only: bool,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
     /// Update the top-level status of a workflow run.

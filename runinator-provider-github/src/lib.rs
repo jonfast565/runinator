@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use helpers::{
     auth_param, checks_summary_response, first_pull_number, json_response, json_results,
-    parse_params, repo_owner_param, repo_param,
+    parse_params, pull_request_results, repo_owner_param, repo_param,
 };
 use params::{
     CreatePrParams, DispatchParams, GitHubBaseParams, IssueNumberParams, MergePrParams,
@@ -50,7 +50,7 @@ impl Provider for GitHubProvider {
                             .with_default(json!("main")),
                         ParameterMetadata::optional("body", ParameterValueType::String),
                     ])
-                    .with_results(json_results()),
+                    .with_results(pull_request_results()),
                 ActionMetadata::new("reviews", "Read pull request reviews")
                     .with_parameters(vec![
                         auth_param(),
@@ -100,6 +100,7 @@ impl Provider for GitHubProvider {
                         ResultMetadata::new("passed", ParameterValueType::Integer),
                         ResultMetadata::new("pending", ParameterValueType::Integer),
                         ResultMetadata::new("failed", ParameterValueType::Integer),
+                        ResultMetadata::new("total", ParameterValueType::Integer),
                         ResultMetadata::new("raw", ParameterValueType::Json),
                     ]),
                 ActionMetadata::new("dispatch", "Dispatch a workflow run")

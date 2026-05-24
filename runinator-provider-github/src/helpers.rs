@@ -150,3 +150,23 @@ pub(crate) fn json_results() -> Vec<ResultMetadata> {
             .with_description("Raw GitHub API response body."),
     ]
 }
+
+pub(crate) fn pull_request_results() -> Vec<ResultMetadata> {
+    vec![
+        ResultMetadata::new("number", ParameterValueType::Integer)
+            .with_description("Pull request number."),
+        ResultMetadata::new("html_url", ParameterValueType::String)
+            .with_description("Pull request web URL."),
+        ResultMetadata::new("head", ParameterValueType::Object)
+            .with_schema(json!({
+                "type": "object",
+                "properties": {
+                    "sha": { "type": "string" },
+                    "ref": { "type": "string" }
+                }
+            }))
+            .with_description("Pull request head reference."),
+        ResultMetadata::new("response", ParameterValueType::Json)
+            .with_description("Raw GitHub API response body."),
+    ]
+}
