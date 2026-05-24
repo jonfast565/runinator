@@ -1,6 +1,6 @@
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    providers::{ParameterMetadata, ParameterValueType, ResultMetadata},
+    providers::{ParameterMetadata, ResultMetadata, RuninatorType},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use serde_json::{Value, json};
@@ -133,40 +133,39 @@ pub(crate) fn json_response(
 }
 
 pub(crate) fn auth_param() -> ParameterMetadata {
-    ParameterMetadata::required("token", ParameterValueType::String).secret()
+    ParameterMetadata::required("token", RuninatorType::String).secret()
 }
 
 pub(crate) fn repo_owner_param() -> ParameterMetadata {
-    ParameterMetadata::required("owner", ParameterValueType::String)
+    ParameterMetadata::required("owner", RuninatorType::String)
 }
 
 pub(crate) fn repo_param() -> ParameterMetadata {
-    ParameterMetadata::required("repo", ParameterValueType::String)
+    ParameterMetadata::required("repo", RuninatorType::String)
 }
 
 pub(crate) fn json_results() -> Vec<ResultMetadata> {
     vec![
-        ResultMetadata::new("response", ParameterValueType::Json)
+        ResultMetadata::new("response", RuninatorType::Any)
             .with_description("Raw GitHub API response body."),
     ]
 }
 
 pub(crate) fn pull_request_results() -> Vec<ResultMetadata> {
     vec![
-        ResultMetadata::new("number", ParameterValueType::Integer)
+        ResultMetadata::new("number", RuninatorType::Integer)
             .with_description("Pull request number."),
-        ResultMetadata::new("html_url", ParameterValueType::String)
+        ResultMetadata::new("html_url", RuninatorType::String)
             .with_description("Pull request web URL."),
-        ResultMetadata::new("head", ParameterValueType::Object)
-            .with_schema(json!({
-                "type": "object",
-                "properties": {
-                    "sha": { "type": "string" },
-                    "ref": { "type": "string" }
-                }
-            }))
-            .with_description("Pull request head reference."),
-        ResultMetadata::new("response", ParameterValueType::Json)
+        ResultMetadata::new(
+            "head",
+            RuninatorType::structure([
+                ("sha", RuninatorType::String),
+                ("ref", RuninatorType::String),
+            ]),
+        )
+        .with_description("Pull request head reference."),
+        ResultMetadata::new("response", RuninatorType::Any)
             .with_description("Raw GitHub API response body."),
     ]
 }

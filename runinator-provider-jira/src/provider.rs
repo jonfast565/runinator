@@ -4,8 +4,7 @@ use std::time::Duration;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -35,7 +34,7 @@ impl Provider for JiraProvider {
                         base_param(),
                         token_param(),
                         email_param(),
-                        ParameterMetadata::required("jql", ParameterValueType::String),
+                        ParameterMetadata::required("jql", RuninatorType::String),
                     ])
                     .with_results(jira_results()),
                 ActionMetadata::new("fetch", "Fetch a single Jira issue by key")
@@ -52,7 +51,7 @@ impl Provider for JiraProvider {
                         token_param(),
                         email_param(),
                         issue_key_param(),
-                        ParameterMetadata::required("body", ParameterValueType::String),
+                        ParameterMetadata::required("body", RuninatorType::String),
                     ])
                     .with_results(jira_results()),
                 ActionMetadata::new("transition", "Transition a Jira issue to a new status")
@@ -61,7 +60,7 @@ impl Provider for JiraProvider {
                         token_param(),
                         email_param(),
                         issue_key_param(),
-                        ParameterMetadata::required("transition_id", ParameterValueType::String),
+                        ParameterMetadata::required("transition_id", RuninatorType::String),
                     ])
                     .with_results(jira_results()),
                 ActionMetadata::new("poll", "Poll the status of a Jira issue")

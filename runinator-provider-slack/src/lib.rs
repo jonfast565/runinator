@@ -4,8 +4,8 @@ use std::time::Duration;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -41,16 +41,16 @@ impl Provider for SlackProvider {
                 ActionMetadata::new("send_message", "Send a Slack message")
                     .with_parameters(vec![
                         token_param(),
-                        ParameterMetadata::required("channel", ParameterValueType::String),
-                        ParameterMetadata::required("text", ParameterValueType::String),
-                        ParameterMetadata::optional("attachments", ParameterValueType::Json)
+                        ParameterMetadata::required("channel", RuninatorType::String),
+                        ParameterMetadata::required("text", RuninatorType::String),
+                        ParameterMetadata::optional("attachments", RuninatorType::Any)
                             .with_description("Slack attachment array."),
-                        ParameterMetadata::optional("blocks", ParameterValueType::Json)
+                        ParameterMetadata::optional("blocks", RuninatorType::Any)
                             .with_description("Slack block kit array."),
-                        ParameterMetadata::optional("thread_ts", ParameterValueType::String),
-                        ParameterMetadata::optional("mrkdwn", ParameterValueType::Boolean),
-                        ParameterMetadata::optional("unfurl_links", ParameterValueType::Boolean),
-                        ParameterMetadata::optional("unfurl_media", ParameterValueType::Boolean),
+                        ParameterMetadata::optional("thread_ts", RuninatorType::String),
+                        ParameterMetadata::optional("mrkdwn", RuninatorType::Boolean),
+                        ParameterMetadata::optional("unfurl_links", RuninatorType::Boolean),
+                        ParameterMetadata::optional("unfurl_media", RuninatorType::Boolean),
                     ])
                     .with_results(slack_results()),
             ],
@@ -185,12 +185,12 @@ fn slack_response(
 }
 
 fn token_param() -> ParameterMetadata {
-    ParameterMetadata::required("token", ParameterValueType::String).secret()
+    ParameterMetadata::required("token", RuninatorType::String).secret()
 }
 
 fn slack_results() -> Vec<ResultMetadata> {
     vec![
-        ResultMetadata::new("response", ParameterValueType::Json)
+        ResultMetadata::new("response", RuninatorType::Any)
             .with_description("Raw Slack chat.postMessage response body."),
     ]
 }

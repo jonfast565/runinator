@@ -88,12 +88,12 @@ async fn load_import_file_unwraps_workflow_pack_envelope() {
             "workflows": {
                 "alpha": {
                     "metadata": { "description": "first" },
-                    "input_schema": { "type": "object" },
+                    "input_type": { "type": "object" },
                     "start": "n1",
                     "nodes": [{ "id": "n1", "kind": "end" }]
                 },
                 "beta": {
-                    "input_schema": { "type": "object" },
+                    "input_type": { "type": "object" },
                     "start": "x",
                     "nodes": [{ "id": "x", "kind": "end" }]
                 }
@@ -115,7 +115,10 @@ async fn load_import_file_unwraps_workflow_pack_envelope() {
         .expect("alpha workflow present");
     assert_eq!(alpha.version, 4);
     assert!(alpha.enabled);
-    assert_eq!(alpha.input_schema, json!({ "type": "object" }));
+    assert_eq!(
+        alpha.input_type,
+        runinator_models::types::RuninatorType::from_json_schema(&json!({ "type": "object" }))
+    );
     assert_eq!(alpha.definition["start"], json!("n1"));
     assert_eq!(alpha.definition["metadata"]["description"], json!("first"));
 
@@ -206,7 +209,9 @@ fn clean_bundle() -> WorkflowBundle {
             name: "clean".into(),
             version: 1,
             enabled: true,
-            input_schema: json!({ "type": "object" }),
+            input_type: runinator_models::types::RuninatorType::from_json_schema(
+                &json!({ "type": "object" }),
+            ),
             definition: json!({
                 "start": "start",
                 "nodes": [

@@ -1591,13 +1591,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (value === undefined || value === null || value === "") {
         return `${parameter.label || parameter.name} is required`;
       }
-      if (parameter.value_type === "string_array" || parameter.value_type === "number_array") {
+      const parameterType = parameter.ty?.type ?? "any";
+      if (parameterType === "array") {
         if (!Array.isArray(value)) return `${parameter.label || parameter.name} must be a list`;
-      } else if (parameter.value_type === "object" || parameter.value_type === "json") {
+      } else if (parameterType === "map" || parameterType === "struct") {
         if (typeof value !== "object") return `${parameter.label || parameter.name} must be an object`;
-      } else if (parameter.value_type === "integer" || parameter.value_type === "number") {
+      } else if (parameterType === "integer" || parameterType === "number") {
         if (typeof value !== "number") return `${parameter.label || parameter.name} must be a number`;
-      } else if (parameter.value_type === "boolean" && typeof value !== "boolean") {
+      } else if (parameterType === "boolean" && typeof value !== "boolean") {
         return `${parameter.label || parameter.name} must be true or false`;
       }
     }
@@ -1870,7 +1871,7 @@ export function newWorkflowDraft(): WorkflowDefinition {
     name: "New Workflow",
     version: 1,
     enabled: true,
-    input_schema: { type: "object", additionalProperties: true },
+    input_type: { type: "struct", fields: {}, additional: { type: "any" } },
     definition: {
       start: "start",
       nodes: [

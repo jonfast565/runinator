@@ -51,7 +51,7 @@
         </div>
         <p v-if="selectedAction?.results?.length" class="result-metadata">
           Results:
-          <span v-for="result in selectedAction.results" :key="result.name">{{ result.name }} ({{ result.value_type }})</span>
+          <span v-for="result in selectedAction.results" :key="result.name">{{ result.name }} ({{ result.ty?.type ?? "any" }})</span>
         </p>
       </section>
 
@@ -370,7 +370,7 @@ const stepRefs = computed<StepRef[]>(() => {
       const template = node.id === prev
         ? JSON.stringify({ "$ref": { prev: [result.name] } })
         : JSON.stringify({ "$ref": { node: node.id, output: [result.name] } });
-      refs.push({ template, label: node.id === prev ? `prev (${node.id})` : node.id, field: `${result.name}: ${result.value_type}` });
+      refs.push({ template, label: node.id === prev ? `prev (${node.id})` : node.id, field: `${result.name}: ${result.ty?.type ?? "any"}` });
     }
   }
   return refs;

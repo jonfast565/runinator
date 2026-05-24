@@ -7,7 +7,7 @@ use std::ffi::{c_char, c_int};
 use crate::runner::execute_request;
 
 const NAME: &str = "Console\0";
-const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"run\",\"description\":\"Run a shell command\",\"parameters\":[{\"name\":\"command\",\"value_type\":\"string\",\"required\":true}],\"results\":[{\"name\":\"success\",\"value_type\":\"boolean\"},{\"name\":\"exit_code\",\"value_type\":\"integer\"},{\"name\":\"command\",\"value_type\":\"string\"}]}],\"metadata\":{}}\0";
+const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"run\",\"description\":\"Run a shell command\",\"parameters\":[{\"name\":\"command\",\"ty\":{\"type\":\"string\"},\"required\":true}],\"results\":[{\"name\":\"success\",\"ty\":{\"type\":\"boolean\"}},{\"name\":\"exit_code\",\"ty\":{\"type\":\"integer\"}},{\"name\":\"command\",\"ty\":{\"type\":\"string\"}}]}],\"metadata\":{}}\0";
 
 #[ctor(unsafe)]
 fn constructor() {

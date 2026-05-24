@@ -6,7 +6,7 @@
         <span class="parameter-label">
           {{ parameter.label || parameter.name }}
           <strong v-if="parameter.required">*</strong>
-          <small>{{ parameter.value_type }}</small>
+          <small>{{ typeLabel(parameter) }}</small>
         </span>
         <select
           v-if="isSecretString(parameter)"
@@ -29,20 +29,20 @@
           @input="setValue(parameter.name, ($event.target as HTMLInputElement).value)"
         />
         <input
-          v-else-if="parameter.value_type === 'integer' || parameter.value_type === 'number'"
+          v-else-if="typeKind(parameter) === 'integer' || typeKind(parameter) === 'number'"
           type="number"
-          :step="parameter.value_type === 'integer' ? 1 : 'any'"
+          :step="typeKind(parameter) === 'integer' ? 1 : 'any'"
           :value="numberValue(parameter.name)"
           @input="setNumberValue(parameter, ($event.target as HTMLInputElement).value)"
         />
         <input
-          v-else-if="parameter.value_type === 'boolean'"
+          v-else-if="typeKind(parameter) === 'boolean'"
           type="checkbox"
           :checked="Boolean(modelValue[parameter.name])"
           @change="setValue(parameter.name, ($event.target as HTMLInputElement).checked)"
         />
         <textarea
-          v-else-if="parameter.value_type === 'string_array'"
+          v-else-if="isStringArray(parameter)"
           :value="arrayText(parameter.name)"
           placeholder="one value per line"
           @input="setValue(parameter.name, splitLines(($event.target as HTMLTextAreaElement).value))"
@@ -99,13 +99,13 @@ const errors = computed(() => {
       continue;
     }
     if (value === undefined || value === null || value === "") continue;
-    if (parameter.value_type === "integer" && !Number.isInteger(Number(value))) {
+    if (typeKind(parameter) === "integer" && !Number.isInteger(Number(value))) {
       result[parameter.name] = "Must be an integer";
     }
-    if (parameter.value_type === "number" && Number.isNaN(Number(value))) {
+    if (typeKind(parameter) === "number" && Number.isNaN(Number(value))) {
       result[parameter.name] = "Must be a number";
     }
-    if (parameter.value_type === "string_array" && !Array.isArray(value)) {
+    if (isStringArray(parameter) && !Array.isArray(value)) {
       result[parameter.name] = "Must be a string array";
     }
   }
@@ -121,7 +121,7 @@ function setNumberValue(parameter: ActionParameterMetadata, raw: string) {
     setValue(parameter.name, null);
     return;
   }
-  const value = parameter.value_type === "integer" ? Number.parseInt(raw, 10) : Number(raw);
+  const value = typeKind(parameter) === "integer" ? Number.parseInt(raw, 10) : Number(raw);
   setValue(parameter.name, value);
 }
 
@@ -134,11 +134,26 @@ function setJsonValue(name: string, raw: string) {
 }
 
 function isString(parameter: ActionParameterMetadata): boolean {
-  return parameter.value_type === "string";
+  return typeKind(parameter) === "string";
 }
 
 function isSecretString(parameter: ActionParameterMetadata): boolean {
   return parameter.secret && isString(parameter);
+}
+
+function typeKind(parameter: ActionParameterMetadata): string {
+  return parameter.ty?.type ?? "any";
+}
+
+function typeLabel(parameter: ActionParameterMetadata): string {
+  const kind = typeKind(parameter);
+  if (kind === "array") return `array<${parameter.ty.type === "array" ? parameter.ty.items.type : "any"}>`;
+  if (kind === "map") return `map<${parameter.ty.type === "map" ? parameter.ty.values.type : "any"}>`;
+  return kind;
+}
+
+function isStringArray(parameter: ActionParameterMetadata): boolean {
+  return parameter.ty?.type === "array" && parameter.ty.items.type === "string";
 }
 
 function stringValue(name: string): string {

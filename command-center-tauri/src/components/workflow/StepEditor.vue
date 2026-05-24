@@ -134,7 +134,7 @@ const headline = computed(() => {
 });
 
 const resultFields = computed(() =>
-  (action.value?.results ?? []).map((result) => `${result.label || result.name}: ${result.value_type}`)
+  (action.value?.results ?? []).map((result) => `${result.label || result.name}: ${result.ty?.type ?? "any"}`)
 );
 
 const detailSections = computed<DetailSection[]>(() => {

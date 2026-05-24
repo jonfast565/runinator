@@ -46,6 +46,10 @@ impl KafkaBrokerConfig {
         self.client_id = client_id.into();
         self
     }
+
+    pub fn has_workflow_result_topic(&self) -> bool {
+        !self.result_topic.trim().is_empty()
+    }
 }
 
 pub struct KafkaBroker {
@@ -336,6 +340,10 @@ fn kafka_error(context: &'static str) -> impl FnOnce(rdkafka::error::KafkaError)
 #[async_trait]
 #[cfg(feature = "kafka")]
 impl Broker for KafkaBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        self.config.has_workflow_result_topic()
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
@@ -441,6 +449,10 @@ impl Broker for KafkaBroker {
 #[async_trait]
 #[cfg(not(feature = "kafka"))]
 impl Broker for KafkaBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        false
+    }
+
     async fn publish(&self, _message: BrokerMessage) -> Result<(), BrokerError> {
         Err(kafka_feature_error())
     }
@@ -516,5 +528,12 @@ mod tests {
         assert_eq!(config.control_topic, "c");
         assert_eq!(config.result_topic, "r");
         assert_eq!(config.client_id, "test-client");
+    }
+
+    #[test]
+    fn kafka_config_detects_missing_result_topic() {
+        let config = KafkaBrokerConfig::new("localhost:9092").with_topics("a", "c", " ");
+
+        assert!(!config.has_workflow_result_topic());
     }
 }

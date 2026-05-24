@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     notifications::Notification,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
+    types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
         WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
@@ -12,6 +13,12 @@ use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
 
 fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
+}
+
+fn parse_type(raw: String) -> RuninatorType {
+    let value = parse_json(raw);
+    serde_json::from_value(value.clone())
+        .unwrap_or_else(|_| RuninatorType::from_json_schema(&value))
 }
 
 macro_rules! run_summary_from_row {
@@ -101,7 +108,7 @@ macro_rules! workflow_from_row {
             name: $row.get("name"),
             version: $row.get("version"),
             enabled: $row.get("enabled"),
-            input_schema: parse_json($row.get::<String, _>("input_schema")),
+            input_type: parse_type($row.get::<String, _>("input_schema")),
             definition: parse_json($row.get::<String, _>("definition")),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
             updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0),

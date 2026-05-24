@@ -1,8 +1,8 @@
 use super::*;
 use runinator_models::{
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus},
 };
@@ -14,7 +14,7 @@ fn workflow(definition: serde_json::Value) -> WorkflowDefinition {
         name: "test".into(),
         version: 1,
         enabled: true,
-        input_schema: serde_json::Value::Null,
+        input_type: RuninatorType::Any,
         definition,
         created_at: None,
         updated_at: None,
@@ -131,12 +131,12 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
         name: "schema-boundary".into(),
         version: 1,
         enabled: true,
-        input_schema: serde_json::json!({
+        input_type: RuninatorType::from_json_schema(&serde_json::json!({
             "type": "object",
             "properties": {
                 "known": { "type": "string" }
             }
-        }),
+        })),
         definition: serde_json::json!({
             "start": "start",
             "nodes": [
@@ -154,7 +154,7 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
                     "kind": "emit",
                     "parameters": {
                         "data": {
-                            "input": { "$ref": { "input": ["not_in_input_schema"] } },
+                            "input": { "$ref": { "input": ["not_in_input_type"] } },
                             "output": { "$ref": { "node": "produce", "output": ["not_in_result_metadata"] } }
                         }
                     },
@@ -574,7 +574,7 @@ fn test_workflow_state_machine_logic_integration() {
         name: "integration-test".into(),
         version: 1,
         enabled: true,
-        input_schema: serde_json::json!({}),
+        input_type: RuninatorType::Any,
         definition: definition.clone(),
         created_at: None,
         updated_at: None,
@@ -663,21 +663,17 @@ fn typed_provider() -> ProviderMetadata {
             ActionMetadata::new("make", "make typed output")
                 .with_parameters(vec![ParameterMetadata::required(
                     "name",
-                    ParameterValueType::String,
+                    RuninatorType::String,
                 )])
                 .with_results(vec![
-                    ResultMetadata::new("count", ParameterValueType::Integer),
-                    ResultMetadata::new("payload", ParameterValueType::Json),
-                    ResultMetadata::new("items", ParameterValueType::Json).with_schema(
-                        serde_json::json!({
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": { "type": "string" }
-                                }
-                            }
-                        }),
+                    ResultMetadata::new("count", RuninatorType::Integer),
+                    ResultMetadata::new("payload", RuninatorType::Any),
+                    ResultMetadata::new(
+                        "items",
+                        RuninatorType::array(RuninatorType::structure([(
+                            "key",
+                            RuninatorType::String,
+                        )])),
                     ),
                 ]),
         ],
@@ -685,7 +681,7 @@ fn typed_provider() -> ProviderMetadata {
     }
 }
 
-fn typed_workflow(input_schema: serde_json::Value, node: serde_json::Value) -> WorkflowDefinition {
+fn typed_workflow(input_type: RuninatorType, node: serde_json::Value) -> WorkflowDefinition {
     let mut wf = workflow(serde_json::json!({
         "start": "start",
         "nodes": [
@@ -704,17 +700,21 @@ fn typed_workflow(input_schema: serde_json::Value, node: serde_json::Value) -> W
             { "id": "done", "kind": "end" }
         ]
     }));
-    wf.input_schema = input_schema;
+    wf.input_type = input_type;
     wf
+}
+
+fn schema_type(schema: serde_json::Value) -> RuninatorType {
+    RuninatorType::from_json_schema(&schema)
 }
 
 #[test]
 fn typed_validation_requires_known_input_paths() {
     let wf = typed_workflow(
-        serde_json::json!({
+        schema_type(serde_json::json!({
             "type": "object",
             "properties": { "name": { "type": "string" } }
-        }),
+        })),
         serde_json::json!({
             "id": "checked",
             "kind": "config",
@@ -729,10 +729,10 @@ fn typed_validation_requires_known_input_paths() {
 #[test]
 fn typed_validation_rejects_implicit_concat_coercion() {
     let wf = typed_workflow(
-        serde_json::json!({
+        schema_type(serde_json::json!({
             "type": "object",
             "properties": { "name": { "type": "string" } }
-        }),
+        })),
         serde_json::json!({
             "id": "checked",
             "kind": "config",
@@ -754,10 +754,10 @@ fn typed_validation_rejects_implicit_concat_coercion() {
 #[test]
 fn typed_validation_accepts_explicit_string_conversions() {
     let wf = typed_workflow(
-        serde_json::json!({
+        schema_type(serde_json::json!({
             "type": "object",
             "properties": { "name": { "type": "string" } }
-        }),
+        })),
         serde_json::json!({
             "id": "checked",
             "kind": "config",
@@ -782,10 +782,10 @@ fn typed_validation_accepts_explicit_string_conversions() {
 #[test]
 fn typed_validation_rejects_opaque_json_traversal() {
     let wf = typed_workflow(
-        serde_json::json!({
+        schema_type(serde_json::json!({
             "type": "object",
             "properties": { "name": { "type": "string" } }
-        }),
+        })),
         serde_json::json!({
             "id": "checked",
             "kind": "config",
@@ -802,10 +802,10 @@ fn typed_validation_rejects_opaque_json_traversal() {
 #[test]
 fn typed_validation_checks_action_parameter_types() {
     let wf = typed_workflow(
-        serde_json::json!({
+        schema_type(serde_json::json!({
             "type": "object",
             "properties": { "name": { "type": "integer" } }
-        }),
+        })),
         serde_json::json!({
             "id": "checked",
             "kind": "config",
@@ -835,10 +835,10 @@ fn typed_validation_requires_map_items_to_be_array() {
             { "id": "done", "kind": "end" }
         ]
     }));
-    wf.input_schema = serde_json::json!({
+    wf.input_type = RuninatorType::from_json_schema(&serde_json::json!({
         "type": "object",
         "properties": { "name": { "type": "string" } }
-    });
+    }));
 
     assert!(validate_workflow_with_providers(&wf, &[]).is_err());
 }

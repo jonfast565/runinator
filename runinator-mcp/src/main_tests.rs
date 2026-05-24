@@ -6,7 +6,9 @@ fn mock_workflow(id: i64, name: &str, enabled: bool) -> WorkflowDefinition {
         name: name.into(),
         version: 1,
         enabled,
-        input_schema: json!({ "type": "object" }),
+        input_type: runinator_models::types::RuninatorType::from_json_schema(
+            &json!({ "type": "object" }),
+        ),
         definition: json!({}),
         created_at: None,
         updated_at: None,

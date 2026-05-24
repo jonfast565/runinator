@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use runinator_models::{
-    providers::{ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata},
+    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata},
+    types::RuninatorType,
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind},
 };
 use serde_json::Value;
@@ -14,62 +15,7 @@ use crate::{
     types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkflowType {
-    Null,
-    Boolean,
-    Integer,
-    Number,
-    String,
-    Array(Box<WorkflowType>),
-    Object(BTreeMap<String, WorkflowType>),
-    Json,
-}
-
-impl WorkflowType {
-    fn object(fields: impl IntoIterator<Item = (impl Into<String>, WorkflowType)>) -> Self {
-        Self::Object(
-            fields
-                .into_iter()
-                .map(|(key, value)| (key.into(), value))
-                .collect(),
-        )
-    }
-
-    fn field(&self, key: &str) -> Option<&WorkflowType> {
-        match self {
-            WorkflowType::Object(fields) => fields.get(key),
-            _ => None,
-        }
-    }
-
-    fn is_numeric(&self) -> bool {
-        matches!(self, WorkflowType::Integer | WorkflowType::Number)
-    }
-
-    fn is_primitive(&self) -> bool {
-        matches!(
-            self,
-            WorkflowType::Boolean
-                | WorkflowType::Integer
-                | WorkflowType::Number
-                | WorkflowType::String
-        )
-    }
-
-    fn describe(&self) -> &'static str {
-        match self {
-            WorkflowType::Null => "null",
-            WorkflowType::Boolean => "boolean",
-            WorkflowType::Integer => "integer",
-            WorkflowType::Number => "number",
-            WorkflowType::String => "string",
-            WorkflowType::Array(_) => "array",
-            WorkflowType::Object(_) => "object",
-            WorkflowType::Json => "json",
-        }
-    }
-}
+pub type WorkflowType = RuninatorType;
 
 #[derive(Debug)]
 struct TypeContext {
@@ -85,7 +31,7 @@ pub fn validate_workflow_types(
 ) -> Result<(), WorkflowValidationError> {
     let provider_actions = provider_actions(providers);
     let mut context = TypeContext {
-        input: type_from_json_schema(&workflow.input_schema),
+        input: workflow.input_type.clone(),
         workflow: workflow_context_type(),
         node_outputs: HashMap::new(),
     };
@@ -151,33 +97,25 @@ fn static_node_output_type(
                         node.id, action.provider, action.function
                     ))
                 })?;
-            Ok(Some(WorkflowType::Object(
+            Ok(Some(WorkflowType::structure(
                 metadata
                     .results
                     .iter()
-                    .map(|result| {
-                        let ty = result
-                            .schema
-                            .as_ref()
-                            .map(type_from_json_schema)
-                            .unwrap_or_else(|| type_from_parameter_value_type(result.value_type));
-                        (result.name.clone(), ty)
-                    })
-                    .collect(),
+                    .map(|result| (result.name.clone(), result.ty.clone())),
             )))
         }
-        WorkflowNodeKind::Subflow => Ok(Some(WorkflowType::object([
+        WorkflowNodeKind::Subflow => Ok(Some(WorkflowType::structure([
             ("subflow_run_id", WorkflowType::Integer),
             ("subflow_workflow_id", WorkflowType::Integer),
             ("run_name", WorkflowType::String),
             ("reused", WorkflowType::Boolean),
             ("status", WorkflowType::String),
-            ("state", WorkflowType::Json),
-            ("parameters", WorkflowType::Json),
+            ("state", WorkflowType::Any),
+            ("parameters", WorkflowType::Any),
         ]))),
-        WorkflowNodeKind::Config => Ok(Some(WorkflowType::object([
+        WorkflowNodeKind::Config => Ok(Some(WorkflowType::structure([
             ("name", WorkflowType::String),
-            ("metadata", WorkflowType::Json),
+            ("metadata", WorkflowType::Any),
         ]))),
         _ => Ok(None),
     }
@@ -203,7 +141,7 @@ fn collection_node_output_type(
             items_type.describe()
         )));
     };
-    Ok(Some(WorkflowType::object([
+    Ok(Some(WorkflowType::structure([
         ("item", *item_type),
         ("index", WorkflowType::Integer),
     ])))
@@ -354,11 +292,10 @@ fn validate_action_configuration(
                 node.id, name
             )));
         };
-        let expected = parameter_type(param);
         expect_value_type(
             value,
             context,
-            &expected,
+            &parameter_type(param),
             &format!("action parameter '{name}'"),
         )?;
     }
@@ -366,7 +303,7 @@ fn validate_action_configuration(
 }
 
 fn parameter_type(param: &ParameterMetadata) -> WorkflowType {
-    type_from_parameter_value_type(param.value_type)
+    param.ty.clone()
 }
 
 fn infer_value_type(
@@ -410,12 +347,15 @@ fn infer_expression_type(
             let ty = infer_expression_type(nested, context)?;
             if matches!(
                 ty,
-                WorkflowType::Array(_) | WorkflowType::Object(_) | WorkflowType::Json
+                WorkflowType::Array(_)
+                    | WorkflowType::Map(_)
+                    | WorkflowType::Struct { .. }
+                    | WorkflowType::Any
             ) {
                 Ok(WorkflowType::String)
             } else {
                 Err(WorkflowValidationError::TypeError(format!(
-                    "$to_json_string requires an array, object, or json value, got {}",
+                    "$to_json_string requires an array, map, struct, or any value, got {}",
                     ty.describe()
                 )))
             }
@@ -447,14 +387,14 @@ fn literal_type(
                 });
             }
             Ok(WorkflowType::Array(Box::new(
-                item_type.unwrap_or(WorkflowType::Json),
+                item_type.unwrap_or(WorkflowType::Any),
             )))
         }
-        Value::Object(fields) => Ok(WorkflowType::Object(
+        Value::Object(fields) => Ok(WorkflowType::structure(
             fields
                 .iter()
                 .map(|(key, value)| infer_value_type(value, context).map(|ty| (key.clone(), ty)))
-                .collect::<Result<BTreeMap<_, _>, _>>()?,
+                .collect::<Result<Vec<_>, _>>()?,
         )),
     }
 }
@@ -466,7 +406,7 @@ fn resolve_ref_type(
     let base = match &reference.source {
         WorkflowRefSource::Input => &context.input,
         WorkflowRefSource::Workflow => &context.workflow,
-        WorkflowRefSource::Prev => &WorkflowType::Json,
+        WorkflowRefSource::Prev => &WorkflowType::Any,
         WorkflowRefSource::NodeOutput(node) => {
             context.node_outputs.get(node.as_str()).ok_or_else(|| {
                 WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
@@ -487,7 +427,9 @@ fn resolve_path_type<'a>(
     let mut current = base;
     for segment in path {
         current = match (segment, current) {
-            (WorkflowPathSegment::Key(key), WorkflowType::Object(_)) => current.field(key)?,
+            (WorkflowPathSegment::Key(key), WorkflowType::Struct { .. } | WorkflowType::Map(_)) => {
+                current.field(key)?
+            }
             (WorkflowPathSegment::Index(_), WorkflowType::Array(item)) => item,
             _ => return None,
         };
@@ -602,9 +544,11 @@ fn validate_contains_type(
     match left {
         WorkflowType::String => expect_type(expected, &WorkflowType::String, "contains operand"),
         WorkflowType::Array(item_type) => assignable(expected, item_type),
-        WorkflowType::Object(_) => expect_type(expected, &WorkflowType::String, "object key"),
+        WorkflowType::Map(_) | WorkflowType::Struct { .. } => {
+            expect_type(expected, &WorkflowType::String, "object key")
+        }
         _ => Err(WorkflowValidationError::TypeError(
-            "contains requires a string, array, or object value".into(),
+            "contains requires a string, array, map, or struct value".into(),
         )),
     }
 }
@@ -637,7 +581,7 @@ fn assignable(
     actual: &WorkflowType,
     expected: &WorkflowType,
 ) -> Result<(), WorkflowValidationError> {
-    if actual == expected || matches!(expected, WorkflowType::Json) {
+    if actual == expected || matches!(expected, WorkflowType::Any) {
         return Ok(());
     }
     if matches!(
@@ -650,16 +594,64 @@ fn assignable(
         (WorkflowType::Array(actual), WorkflowType::Array(expected)) => {
             assignable(actual, expected)
         }
-        (WorkflowType::Object(actual), WorkflowType::Object(expected)) => {
-            for (key, expected_type) in expected {
-                let Some(actual_type) = actual.get(key) else {
-                    return Err(WorkflowValidationError::TypeError(format!(
-                        "object is missing field '{key}'"
-                    )));
-                };
+        (WorkflowType::Map(actual), WorkflowType::Map(expected)) => assignable(actual, expected),
+        (
+            WorkflowType::Struct {
+                fields: actual_fields,
+                additional: actual_additional,
+            },
+            WorkflowType::Struct {
+                fields: expected_fields,
+                ..
+            },
+        ) => {
+            for (key, expected_type) in expected_fields {
+                let actual_type = actual_fields
+                    .get(key)
+                    .or_else(|| actual_additional.as_ref().map(|ty| ty.as_ref()))
+                    .ok_or_else(|| {
+                        WorkflowValidationError::TypeError(format!(
+                            "object is missing field '{key}'"
+                        ))
+                    })?;
                 assignable(actual_type, expected_type)?;
             }
             Ok(())
+        }
+        (WorkflowType::Struct { fields, additional }, WorkflowType::Map(expected)) => {
+            for actual_type in fields.values() {
+                assignable(actual_type, expected)?;
+            }
+            if let Some(additional) = additional {
+                assignable(additional, expected)?;
+            }
+            Ok(())
+        }
+        (WorkflowType::Map(actual), WorkflowType::Struct { fields, .. }) => {
+            for expected_type in fields.values() {
+                assignable(actual, expected_type)?;
+            }
+            Ok(())
+        }
+        (WorkflowType::Union(variants), expected) => {
+            for variant in variants {
+                assignable(variant, expected)?;
+            }
+            Ok(())
+        }
+        (actual, WorkflowType::Union(variants)) => {
+            if variants
+                .iter()
+                .any(|variant| assignable(actual, variant).is_ok())
+            {
+                Ok(())
+            } else {
+                Err(WorkflowValidationError::TypeError(format!(
+                    "expected {}, got {}",
+                    expected.describe(),
+                    actual.describe()
+                )))
+            }
         }
         _ => Err(WorkflowValidationError::TypeError(format!(
             "expected {}, got {}",
@@ -694,62 +686,10 @@ fn common_type(left: WorkflowType, right: WorkflowType) -> Option<WorkflowType> 
 }
 
 fn workflow_context_type() -> WorkflowType {
-    WorkflowType::object([
+    WorkflowType::structure([
         ("run_id", WorkflowType::Integer),
         ("workflow_id", WorkflowType::Integer),
         ("name", WorkflowType::String),
-        ("state", WorkflowType::Json),
+        ("state", WorkflowType::Any),
     ])
-}
-
-fn type_from_parameter_value_type(value_type: ParameterValueType) -> WorkflowType {
-    match value_type {
-        ParameterValueType::String => WorkflowType::String,
-        ParameterValueType::Integer => WorkflowType::Integer,
-        ParameterValueType::Number => WorkflowType::Number,
-        ParameterValueType::Boolean => WorkflowType::Boolean,
-        ParameterValueType::StringArray => WorkflowType::Array(Box::new(WorkflowType::String)),
-        ParameterValueType::NumberArray => WorkflowType::Array(Box::new(WorkflowType::Number)),
-        ParameterValueType::Object => WorkflowType::Object(BTreeMap::new()),
-        ParameterValueType::Json => WorkflowType::Json,
-    }
-}
-
-fn type_from_json_schema(schema: &Value) -> WorkflowType {
-    let Some(object) = schema.as_object() else {
-        return WorkflowType::Json;
-    };
-    let schema_type = object.get("type").and_then(Value::as_str);
-    if schema_type.is_none() && object.contains_key("properties") {
-        return object_schema_type(object);
-    }
-    match schema_type {
-        Some("null") => WorkflowType::Null,
-        Some("boolean") => WorkflowType::Boolean,
-        Some("integer") => WorkflowType::Integer,
-        Some("number") => WorkflowType::Number,
-        Some("string") => WorkflowType::String,
-        Some("array") => WorkflowType::Array(Box::new(
-            object
-                .get("items")
-                .map(type_from_json_schema)
-                .unwrap_or(WorkflowType::Json),
-        )),
-        Some("object") => object_schema_type(object),
-        _ => WorkflowType::Json,
-    }
-}
-
-fn object_schema_type(object: &serde_json::Map<String, Value>) -> WorkflowType {
-    let fields = object
-        .get("properties")
-        .and_then(Value::as_object)
-        .map(|properties| {
-            properties
-                .iter()
-                .map(|(key, value)| (key.clone(), type_from_json_schema(value)))
-                .collect()
-        })
-        .unwrap_or_default();
-    WorkflowType::Object(fields)
 }

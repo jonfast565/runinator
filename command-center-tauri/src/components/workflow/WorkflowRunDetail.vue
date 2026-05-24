@@ -123,7 +123,7 @@
         <div v-for="field in resultFields" :key="field.name" class="result-field-row">
           <div class="result-field-key">
             <span class="result-field-name">{{ field.label || field.name }}</span>
-            <span class="result-field-type">{{ field.value_type }}</span>
+            <span class="result-field-type">{{ field.ty?.type ?? "any" }}</span>
           </div>
           <div class="result-field-value" :class="{ empty: selectedNodeOutput[field.name] == null }">
             {{ formatResultValue(selectedNodeOutput[field.name]) }}

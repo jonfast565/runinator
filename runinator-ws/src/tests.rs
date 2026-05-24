@@ -1,9 +1,25 @@
-use serde_json::json;
-
-use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
-use runinator_models::workflows::{
-    WorkflowBundle, WorkflowDefinition, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
+
+use runinator_broker::{
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
+    ResultDelivery, ResultMessage, in_memory::InMemoryBroker,
+};
+use runinator_comm::{ActionCommand, WorkflowResultEvent};
+use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
+use runinator_models::{
+    runs::{NewRunArtifact, NewRunChunk},
+    workflows::{
+        WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowStatus,
+        WorkflowTrigger, WorkflowTriggerKind,
+    },
+};
+use serde_json::json;
+use tokio::sync::Notify;
+use uuid::Uuid;
 
 #[test]
 fn workflow_run_stream_terminal_status_stays_snapshot_message() {
@@ -265,6 +281,89 @@ async fn import_reuses_existing_workflow_by_name_when_id_is_missing() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn result_consumer_acks_duplicate_deliveries_and_persists_results_once() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let node_run = create_node_run(&db).await;
+    let command = action_command(node_run.workflow_run_id, node_run.id, &node_run.node_id);
+    let chunk = WorkflowResultEvent::chunk(
+        &command,
+        NewRunChunk {
+            stream: "log".into(),
+            content: "hello".into(),
+        },
+    );
+    let status = WorkflowResultEvent::status(
+        &command,
+        WorkflowStatus::Succeeded,
+        Some(json!({ "ok": true })),
+        Some("done".into()),
+    );
+    let artifact = WorkflowResultEvent::artifact(
+        &command,
+        NewRunArtifact {
+            name: "report.json".into(),
+            mime_type: "application/json".into(),
+            size_bytes: 17,
+            uri: "memory://report.json".into(),
+            metadata: json!({ "source": "test" }),
+        },
+    );
+    let broker = Arc::new(RecordingBroker::new());
+    let broker_for_consumer: Arc<dyn Broker> = broker.clone();
+    let (events, _rx) = tokio::sync::broadcast::channel(16);
+    let shutdown = Arc::new(Notify::new());
+    let consumer = tokio::spawn(crate::result_consumer::run_result_consumer(
+        db.clone(),
+        broker_for_consumer,
+        events,
+        shutdown.clone(),
+    ));
+
+    publish_duplicate_results(&broker, &[chunk.clone(), status.clone(), artifact.clone()]).await;
+    wait_until(|| broker.result_acks().len() == 6).await;
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(Duration::from_secs(1), consumer)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let chunks = db
+        .fetch_workflow_node_run_chunks(node_run.id, None, 100)
+        .await
+        .unwrap();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].stream, "log");
+    assert_eq!(chunks[0].content, "hello");
+
+    let node_run = db
+        .fetch_workflow_node_run(node_run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(node_run.status, WorkflowStatus::Succeeded);
+    assert_eq!(node_run.output_json, Some(json!({ "ok": true })));
+    assert_eq!(node_run.message.as_deref(), Some("done"));
+
+    let artifacts = db
+        .fetch_workflow_node_run_artifacts(node_run.id)
+        .await
+        .unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].name, "report.json");
+    assert_eq!(artifacts[0].uri, "memory://report.json");
+
+    let received = broker.result_receives();
+    let acked = broker.result_acks();
+    assert_eq!(received.len(), 6);
+    assert_eq!(acked.len(), 6);
+    assert_eq!(received, acked);
+    assert!(broker.result_nacks().is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
 async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!(
         "runinator-ws-workflows-{}.db",
@@ -275,13 +374,165 @@ async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     (db, path)
 }
 
+async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
+    let workflow = crate::repository::upsert_workflow(db, &workflow(None, "result-consumer"))
+        .await
+        .unwrap();
+    let workflow_id = workflow.id.unwrap();
+    let run = crate::repository::create_workflow_run(db, workflow_id, json!({}), false, None)
+        .await
+        .unwrap();
+    crate::repository::update_workflow_run_status(
+        db,
+        run.id,
+        WorkflowStatus::Running,
+        Some("start".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    crate::repository::create_workflow_node_run(db, run.id, "node-a".into(), json!({}))
+        .await
+        .unwrap()
+}
+
+fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str) -> ActionCommand {
+    ActionCommand {
+        command_id: Uuid::new_v4(),
+        workflow_run_id,
+        workflow_node_run_id,
+        node_id: node_id.into(),
+        action: WorkflowAction {
+            provider: "test".into(),
+            function: "execute".into(),
+            timeout_seconds: 60,
+            configuration: json!({}),
+            mcp_enabled: false,
+            tags: Vec::new(),
+        },
+        attempt: 1,
+        parameters: json!({}),
+    }
+}
+
+async fn publish_duplicate_results(broker: &RecordingBroker, events: &[WorkflowResultEvent]) {
+    for event in events {
+        for duplicate in 0..2 {
+            broker
+                .publish_result(ResultMessage {
+                    event: event.clone(),
+                    dedupe_key: Some(format!("{}-{duplicate}", event.event_id)),
+                    enqueued_at: chrono::Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+    }
+}
+
+async fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(condition(), "condition was not met before timeout");
+}
+
+#[derive(Clone, Default)]
+struct RecordingBroker {
+    inner: InMemoryBroker,
+    result_receives: Arc<Mutex<HashSet<Uuid>>>,
+    result_acks: Arc<Mutex<HashSet<Uuid>>>,
+    result_nacks: Arc<Mutex<HashSet<Uuid>>>,
+}
+
+impl RecordingBroker {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn result_receives(&self) -> HashSet<Uuid> {
+        self.result_receives.lock().unwrap().clone()
+    }
+
+    fn result_acks(&self) -> HashSet<Uuid> {
+        self.result_acks.lock().unwrap().clone()
+    }
+
+    fn result_nacks(&self) -> HashSet<Uuid> {
+        self.result_nacks.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Broker for RecordingBroker {
+    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
+        self.inner.publish(message).await
+    }
+
+    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        self.inner.receive(consumer).await
+    }
+
+    async fn ack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.ack(consumer, delivery_id).await
+    }
+
+    async fn nack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.nack(consumer, delivery_id).await
+    }
+
+    async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
+        self.inner.publish_control(command).await
+    }
+
+    async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
+        self.inner.receive_control(consumer).await
+    }
+
+    async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.ack_control(consumer, delivery_id).await
+    }
+
+    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
+        self.inner.publish_result(message).await
+    }
+
+    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
+        let delivery = self.inner.receive_result(consumer).await?;
+        self.result_receives
+            .lock()
+            .unwrap()
+            .insert(delivery.delivery_id);
+        Ok(delivery)
+    }
+
+    async fn ack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.ack_result(consumer, delivery_id).await?;
+        self.result_acks.lock().unwrap().insert(delivery_id);
+        Ok(())
+    }
+
+    async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.nack_result(consumer, delivery_id).await?;
+        self.result_nacks.lock().unwrap().insert(delivery_id);
+        Ok(())
+    }
+}
+
 fn workflow(id: Option<i64>, name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id,
         name: name.into(),
         version: 1,
         enabled: true,
-        input_schema: json!({ "type": "object" }),
+        input_type: runinator_models::types::RuninatorType::from_json_schema(
+            &json!({ "type": "object" }),
+        ),
         definition: json!({
             "start": "start",
             "nodes": [
@@ -301,7 +552,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
         name: "ancestors".into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({
             "start": "start",
             "nodes": [
@@ -335,7 +586,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
         name: "loop_ancestor".into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({
             "start": "start",
             "nodes": [
@@ -367,7 +618,7 @@ fn ancestors_in_snapshot_rejects_missing_step() {
         name: "missing".into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({
             "start": "start",
             "nodes": [

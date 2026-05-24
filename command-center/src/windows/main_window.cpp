@@ -1001,7 +1001,11 @@ void MainWindow::addWorkflow() {
   workflow.name = "New Workflow";
   workflow.version = 1;
   workflow.enabled = true;
-  workflow.inputSchema = QJsonObject{{"type", "object"}, {"additionalProperties", true}};
+  workflow.inputType = QJsonObject{
+      {"type", "struct"},
+      {"fields", QJsonObject()},
+      {"additional", QJsonObject{{"type", "any"}}},
+  };
   workflow.definition = QJsonObject{{"start", "node_1"}, {"nodes", QJsonArray()}};
   workflows.push_back(workflow);
   updateWorkflowsTable();
@@ -1063,7 +1067,11 @@ WorkflowDefinition MainWindow::currentWorkflowDraft() const {
   workflow.name = workflowNameEdit->text().trimmed().isEmpty() ? "Untitled Workflow" : workflowNameEdit->text().trimmed();
   workflow.version = workflowVersionSpin->value();
   workflow.enabled = true;
-  workflow.inputSchema = QJsonObject{{"type", "object"}, {"additionalProperties", true}};
+  workflow.inputType = QJsonObject{
+      {"type", "struct"},
+      {"fields", QJsonObject()},
+      {"additional", QJsonObject{{"type", "any"}}},
+  };
   QJsonParseError parseError;
   QJsonDocument doc = QJsonDocument::fromJson(ui->workflowDefinitionEdit->toPlainText().toUtf8(), &parseError);
   workflow.definition = parseError.error == QJsonParseError::NoError && doc.isObject()

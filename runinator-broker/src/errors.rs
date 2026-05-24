@@ -8,6 +8,8 @@ pub enum BrokerError {
     UnknownDelivery(uuid::Uuid),
     #[error("operation not implemented: {0}")]
     NotImplemented(&'static str),
+    #[error("workflow result channels unsupported: {0}")]
+    WorkflowResultsUnsupported(String),
     #[error("internal broker error: {0}")]
     Internal(String),
 }

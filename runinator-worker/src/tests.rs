@@ -6,7 +6,9 @@ use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{output_sink::RunOutputSink, provider_service_url_fallback};
+use crate::{
+    build_broker, config::Config, output_sink::RunOutputSink, provider_service_url_fallback,
+};
 
 #[test]
 fn provider_service_url_uses_api_base_url_when_env_is_missing() {
@@ -33,6 +35,36 @@ fn provider_service_url_replaces_empty_env() {
         provider_service_url_fallback(Some(OsString::from("  ")), "http://127.0.0.1:8080/"),
         Some(OsString::from("http://127.0.0.1:8080/"))
     );
+}
+
+#[tokio::test]
+async fn build_broker_rejects_kafka_without_result_topic() {
+    let mut config = test_config();
+    config.broker_backend = "kafka".into();
+    config.broker_result_topic = " ".into();
+
+    let err = match build_broker(&config).await {
+        Ok(_) => panic!("expected kafka result channel startup guard to fail"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("Broker backend 'kafka'"));
+    assert!(err.to_string().contains("non-empty workflow result topic"));
+}
+
+#[tokio::test]
+async fn build_broker_rejects_rabbitmq_without_result_queue() {
+    let mut config = test_config();
+    config.broker_backend = "rabbitmq".into();
+    config.broker_result_topic = "".into();
+
+    let err = match build_broker(&config).await {
+        Ok(_) => panic!("expected rabbitmq result channel startup guard to fail"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("Broker backend 'rabbitmq'"));
+    assert!(err.to_string().contains("non-empty workflow result queue"));
 }
 
 #[tokio::test]
@@ -93,5 +125,23 @@ fn action_command() -> ActionCommand {
         },
         attempt: 1,
         parameters: json!({}),
+    }
+}
+
+fn test_config() -> Config {
+    Config {
+        dll_paths: Vec::new(),
+        broker_backend: "in-memory".into(),
+        broker_endpoint: "127.0.0.1:7070".into(),
+        broker_action_topic: "runinator.actions".into(),
+        broker_control_topic: "runinator.control".into(),
+        broker_result_topic: "runinator.results".into(),
+        broker_client_id: "test-worker".into(),
+        broker_consumer_id: "test-consumer".into(),
+        scheduler_control_transport: "disabled".into(),
+        scheduler_control_endpoint: "127.0.0.1:7080".into(),
+        max_concurrent_actions: 1,
+        api_base_url: "http://127.0.0.1:8080/".into(),
+        worker_id: Uuid::new_v4(),
     }
 }

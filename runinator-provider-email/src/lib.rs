@@ -21,8 +21,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -44,35 +44,35 @@ impl Provider for EmailProvider {
             actions: vec![
                 ActionMetadata::new("send", "Send an email via SMTP")
                     .with_parameters(vec![
-                        ParameterMetadata::required("to", ParameterValueType::String),
-                        ParameterMetadata::optional("from", ParameterValueType::String),
-                        ParameterMetadata::required("subject", ParameterValueType::String),
-                        ParameterMetadata::optional("body", ParameterValueType::String),
-                        ParameterMetadata::optional("html_body", ParameterValueType::String),
-                        ParameterMetadata::optional("smtp_host", ParameterValueType::String),
-                        ParameterMetadata::optional("smtp_port", ParameterValueType::Integer),
-                        ParameterMetadata::optional("smtp_user", ParameterValueType::String),
-                        ParameterMetadata::optional("smtp_password", ParameterValueType::String),
+                        ParameterMetadata::required("to", RuninatorType::String),
+                        ParameterMetadata::optional("from", RuninatorType::String),
+                        ParameterMetadata::required("subject", RuninatorType::String),
+                        ParameterMetadata::optional("body", RuninatorType::String),
+                        ParameterMetadata::optional("html_body", RuninatorType::String),
+                        ParameterMetadata::optional("smtp_host", RuninatorType::String),
+                        ParameterMetadata::optional("smtp_port", RuninatorType::Integer),
+                        ParameterMetadata::optional("smtp_user", RuninatorType::String),
+                        ParameterMetadata::optional("smtp_password", RuninatorType::String),
                     ])
                     .with_results(vec![
-                        ResultMetadata::new("sent", ParameterValueType::Boolean),
-                        ResultMetadata::new("notification_id", ParameterValueType::Integer),
-                        ResultMetadata::new("recipient", ParameterValueType::String),
+                        ResultMetadata::new("sent", RuninatorType::Boolean),
+                        ResultMetadata::new("notification_id", RuninatorType::Integer),
+                        ResultMetadata::new("recipient", RuninatorType::String),
                     ]),
                 ActionMetadata::new(
                     "notify",
                     "Post an in-app notification visible in Command Center",
                 )
                 .with_parameters(vec![
-                    ParameterMetadata::required("title", ParameterValueType::String),
-                    ParameterMetadata::optional("body", ParameterValueType::String),
-                    ParameterMetadata::optional("severity", ParameterValueType::String),
-                    ParameterMetadata::optional("target", ParameterValueType::String),
-                    ParameterMetadata::optional("metadata", ParameterValueType::Object),
+                    ParameterMetadata::required("title", RuninatorType::String),
+                    ParameterMetadata::optional("body", RuninatorType::String),
+                    ParameterMetadata::optional("severity", RuninatorType::String),
+                    ParameterMetadata::optional("target", RuninatorType::String),
+                    ParameterMetadata::optional("metadata", RuninatorType::map(RuninatorType::Any)),
                 ])
                 .with_results(vec![
-                    ResultMetadata::new("notification_id", ParameterValueType::Integer),
-                    ResultMetadata::new("title", ParameterValueType::String),
+                    ResultMetadata::new("notification_id", RuninatorType::Integer),
+                    ResultMetadata::new("title", RuninatorType::String),
                 ]),
             ],
             metadata: ProviderRuntimeMetadata::default(),

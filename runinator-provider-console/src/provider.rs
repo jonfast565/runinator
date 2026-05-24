@@ -3,8 +3,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -27,13 +27,13 @@ impl Provider for ConsoleProvider {
                 ActionMetadata::new("run", "Run a shell command")
                     .with_parameters(vec![ParameterMetadata::required(
                         "command",
-                        ParameterValueType::String,
+                        RuninatorType::String,
                     )])
                     .with_results(vec![
-                        ResultMetadata::new("success", ParameterValueType::Boolean),
-                        ResultMetadata::new("exit_code", ParameterValueType::Integer),
-                        ResultMetadata::new("duration_ms", ParameterValueType::Integer),
-                        ResultMetadata::new("command", ParameterValueType::String),
+                        ResultMetadata::new("success", RuninatorType::Boolean),
+                        ResultMetadata::new("exit_code", RuninatorType::Integer),
+                        ResultMetadata::new("duration_ms", RuninatorType::Integer),
+                        ResultMetadata::new("command", RuninatorType::String),
                     ]),
             ],
             metadata: ProviderRuntimeMetadata::default(),

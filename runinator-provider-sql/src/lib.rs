@@ -8,8 +8,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -33,18 +33,18 @@ impl Provider for SqlProvider {
                     "Execute SQL queries and export results to Excel/CSV",
                 )
                 .with_parameters(vec![
-                    ParameterMetadata::required("database", ParameterValueType::String),
-                    ParameterMetadata::required("connection_string", ParameterValueType::String)
+                    ParameterMetadata::required("database", RuninatorType::String),
+                    ParameterMetadata::required("connection_string", RuninatorType::String)
                         .secret(),
-                    ParameterMetadata::required("dump_folder", ParameterValueType::String),
-                    ParameterMetadata::required("queries", ParameterValueType::Object),
-                    ParameterMetadata::optional("file_prefix", ParameterValueType::String),
-                    ParameterMetadata::optional("format", ParameterValueType::String)
+                    ParameterMetadata::required("dump_folder", RuninatorType::String),
+                    ParameterMetadata::required("queries", RuninatorType::map(RuninatorType::Any)),
+                    ParameterMetadata::optional("file_prefix", RuninatorType::String),
+                    ParameterMetadata::optional("format", RuninatorType::String)
                         .with_default(json!("excel")),
                 ])
                 .with_results(vec![
-                    ResultMetadata::new("provider", ParameterValueType::String),
-                    ResultMetadata::new("exports", ParameterValueType::Object),
+                    ResultMetadata::new("provider", RuninatorType::String),
+                    ResultMetadata::new("exports", RuninatorType::map(RuninatorType::Any)),
                 ]),
             ],
             metadata: ProviderRuntimeMetadata {

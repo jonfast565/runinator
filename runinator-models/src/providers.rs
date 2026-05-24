@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use crate::types::RuninatorType;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProviderMetadata {
     #[serde(alias = "provider_name")]
@@ -54,17 +56,14 @@ impl ActionMetadata {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
         for param in &self.parameters {
-            let type_str = match param.value_type {
-                ParameterValueType::String => "string",
-                ParameterValueType::Integer => "integer",
-                ParameterValueType::Number => "number",
-                ParameterValueType::Boolean => "boolean",
-                ParameterValueType::StringArray | ParameterValueType::NumberArray => "array",
-                ParameterValueType::Object | ParameterValueType::Json => "object",
-            };
-            let mut prop = serde_json::json!({ "type": type_str });
+            let mut prop = param.ty.to_json_schema();
             if let Some(desc) = &param.description {
-                prop["description"] = serde_json::Value::String(desc.clone());
+                if let serde_json::Value::Object(object) = &mut prop {
+                    object.insert(
+                        "description".into(),
+                        serde_json::Value::String(desc.clone()),
+                    );
+                }
             }
             properties.insert(param.name.clone(), prop);
             if param.required {
@@ -82,7 +81,8 @@ impl ActionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParameterMetadata {
     pub name: String,
-    pub value_type: ParameterValueType,
+    #[serde(alias = "value_type", deserialize_with = "deserialize_type")]
+    pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,10 +96,10 @@ pub struct ParameterMetadata {
 }
 
 impl ParameterMetadata {
-    pub fn required(name: impl Into<String>, value_type: ParameterValueType) -> Self {
+    pub fn required(name: impl Into<String>, ty: RuninatorType) -> Self {
         Self {
             name: name.into(),
-            value_type,
+            ty,
             label: None,
             description: None,
             required: true,
@@ -108,10 +108,10 @@ impl ParameterMetadata {
         }
     }
 
-    pub fn optional(name: impl Into<String>, value_type: ParameterValueType) -> Self {
+    pub fn optional(name: impl Into<String>, ty: RuninatorType) -> Self {
         Self {
             required: false,
-            ..Self::required(name, value_type)
+            ..Self::required(name, ty)
         }
     }
 
@@ -134,9 +134,8 @@ impl ParameterMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResultMetadata {
     pub name: String,
-    pub value_type: ParameterValueType,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema: Option<Value>,
+    #[serde(alias = "value_type", deserialize_with = "deserialize_type")]
+    pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,11 +143,10 @@ pub struct ResultMetadata {
 }
 
 impl ResultMetadata {
-    pub fn new(name: impl Into<String>, value_type: ParameterValueType) -> Self {
+    pub fn new(name: impl Into<String>, ty: RuninatorType) -> Self {
         Self {
             name: name.into(),
-            value_type,
-            schema: None,
+            ty,
             label: None,
             description: None,
         }
@@ -159,21 +157,33 @@ impl ResultMetadata {
         self
     }
 
-    pub fn with_schema(mut self, schema: Value) -> Self {
-        self.schema = Some(schema);
+    pub fn with_type(mut self, ty: RuninatorType) -> Self {
+        self.ty = ty;
         self
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ParameterValueType {
-    String,
-    Integer,
-    Number,
-    Boolean,
-    StringArray,
-    NumberArray,
-    Object,
-    Json,
+fn deserialize_type<'de, D>(deserializer: D) -> Result<RuninatorType, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if let Some(raw) = value.as_str() {
+        return Ok(match raw {
+            "string" => RuninatorType::String,
+            "integer" => RuninatorType::Integer,
+            "number" => RuninatorType::Number,
+            "boolean" => RuninatorType::Boolean,
+            "string_array" => RuninatorType::array(RuninatorType::String),
+            "number_array" => RuninatorType::array(RuninatorType::Number),
+            "object" => RuninatorType::map(RuninatorType::Any),
+            "json" => RuninatorType::Any,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown legacy value type '{other}'"
+                )));
+            }
+        });
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }

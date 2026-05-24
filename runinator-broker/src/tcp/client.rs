@@ -68,6 +68,10 @@ impl TcpBroker {
 
 #[async_trait]
 impl Broker for TcpBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let response = self.request(TcpRequest::Publish { message }).await?;
         Self::expect_ok(response)

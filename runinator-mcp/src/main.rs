@@ -368,7 +368,7 @@ fn tools_from_workflows(workflows: Vec<WorkflowDefinition>) -> Vec<Value> {
             Some(json!({
                 "name": tool_name(&wf, id),
                 "description": format!("Execute workflow: {}", wf.name),
-                "inputSchema": wf.input_schema,
+                "inputSchema": wf.input_type,
             }))
         })
         .collect()

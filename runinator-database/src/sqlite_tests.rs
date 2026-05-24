@@ -226,7 +226,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
         name: name.to_string(),
         version: 1,
         enabled: true,
-        input_schema: serde_json::json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: serde_json::json!({ "nodes": [] }),
         created_at: None,
         updated_at: None,

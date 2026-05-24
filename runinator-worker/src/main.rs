@@ -167,7 +167,13 @@ fn load_libraries(paths: &[String]) -> Result<HashMap<String, Plugin>, SendableE
 }
 
 async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableError> {
-    match config.broker_backend.as_str() {
+    runinator_broker::ensure_named_workflow_result_channel(
+        &config.broker_backend,
+        &config.broker_result_topic,
+    )
+    .map_err(|err| broker_error("workflow_results", err))?;
+
+    let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
         "http" => {
             let url = reqwest::Url::parse(&config.broker_endpoint).map_err(|err| {
                 Box::new(RuntimeError::new(
@@ -185,10 +191,10 @@ async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, Sendab
                     ))
                 })?;
 
-            Ok(Arc::new(HttpBroker::new(url, client)))
+            Arc::new(HttpBroker::new(url, client))
         }
-        "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
-        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
+        "in-memory" => Arc::new(InMemoryBroker::new()),
+        "tcp" => Arc::new(TcpBroker::new(config.broker_endpoint.clone())),
         "kafka" => build_kafka_broker(
             KafkaBrokerConfig::new(config.broker_endpoint.clone())
                 .with_topics(
@@ -197,7 +203,7 @@ async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, Sendab
                     config.broker_result_topic.clone(),
                 )
                 .with_client_id(config.broker_client_id.clone()),
-        ),
+        )?,
         "rabbitmq" => {
             build_rabbitmq_broker(
                 RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
@@ -208,13 +214,23 @@ async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, Sendab
                     )
                     .with_client_id(config.broker_client_id.clone()),
             )
-            .await
+            .await?
         }
-        other => Err(Box::new(RuntimeError::new(
-            "worker.broker.unknown_backend".into(),
-            format!("Unknown broker backend '{other}'"),
-        ))),
-    }
+        other => {
+            return Err(Box::new(RuntimeError::new(
+                "worker.broker.unknown_backend".into(),
+                format!("Unknown broker backend '{other}'"),
+            )));
+        }
+    };
+
+    runinator_broker::ensure_workflow_result_channels_supported(
+        &config.broker_backend,
+        broker.as_ref(),
+    )
+    .map_err(|err| broker_error("workflow_results", err))?;
+
+    Ok(broker)
 }
 
 #[cfg(feature = "kafka")]

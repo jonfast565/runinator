@@ -3,8 +3,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::SendableError,
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -29,35 +29,29 @@ impl Provider for AiCommandProvider {
             actions: vec![
                 ActionMetadata::new("execute", "Run an AI command via shell")
                     .with_parameters(vec![
-                        ParameterMetadata::required("command", ParameterValueType::String),
-                        ParameterMetadata::optional("input", ParameterValueType::Json),
+                        ParameterMetadata::required("command", RuninatorType::String),
+                        ParameterMetadata::optional("input", RuninatorType::Any),
                     ])
-                    .with_results(vec![ResultMetadata::new(
-                        "response",
-                        ParameterValueType::Json,
-                    )]),
+                    .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
                 ActionMetadata::new(
                     "claude_code",
                     "Invoke Claude Code non-interactively with a prompt and model",
                 )
                 .with_parameters(vec![
-                    ParameterMetadata::required("prompt", ParameterValueType::String),
-                    ParameterMetadata::optional("model", ParameterValueType::String)
+                    ParameterMetadata::required("prompt", RuninatorType::String),
+                    ParameterMetadata::optional("model", RuninatorType::String)
                         .with_default(json!(default_model())),
-                    ParameterMetadata::optional("binary", ParameterValueType::String)
+                    ParameterMetadata::optional("binary", RuninatorType::String)
                         .with_default(json!(default_binary())),
-                    ParameterMetadata::optional("working_dir", ParameterValueType::String),
-                    ParameterMetadata::optional("allowed_tools", ParameterValueType::String),
-                    ParameterMetadata::optional("output_format", ParameterValueType::String)
+                    ParameterMetadata::optional("working_dir", RuninatorType::String),
+                    ParameterMetadata::optional("allowed_tools", RuninatorType::String),
+                    ParameterMetadata::optional("output_format", RuninatorType::String)
                         .with_default(json!(default_output_format())),
-                    ParameterMetadata::optional("permission_mode", ParameterValueType::String),
-                    ParameterMetadata::optional("extra_args", ParameterValueType::Json),
-                    ParameterMetadata::optional("env", ParameterValueType::Json),
+                    ParameterMetadata::optional("permission_mode", RuninatorType::String),
+                    ParameterMetadata::optional("extra_args", RuninatorType::Any),
+                    ParameterMetadata::optional("env", RuninatorType::Any),
                 ])
-                .with_results(vec![ResultMetadata::new(
-                    "response",
-                    ParameterValueType::Json,
-                )]),
+                .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
             ],
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: Vec::new(),

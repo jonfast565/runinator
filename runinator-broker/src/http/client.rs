@@ -55,6 +55,10 @@ impl HttpBroker {
 
 #[async_trait]
 impl Broker for HttpBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let url = self.endpoint("publish")?;
         let dedupe_key = message.dedupe_key_or_hash();

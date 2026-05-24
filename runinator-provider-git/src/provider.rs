@@ -3,8 +3,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -39,47 +39,47 @@ impl Provider for GitProvider {
             actions: vec![
                 ActionMetadata::new("worktree", "Manage git worktrees")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("repo", ParameterValueType::String)
+                        ParameterMetadata::optional("repo", RuninatorType::String)
                             .with_default(json!(".")),
-                        ParameterMetadata::required("branch", ParameterValueType::String),
-                        ParameterMetadata::required("path", ParameterValueType::String),
+                        ParameterMetadata::required("branch", RuninatorType::String),
+                        ParameterMetadata::required("path", RuninatorType::String),
                     ])
                     .with_results(worktree_results()),
                 ActionMetadata::new("branch", "Get current branch name")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                        ParameterMetadata::optional("workspace", RuninatorType::String)
                             .with_default(json!(".")),
                     ])
                     .with_results(git_results()),
                 ActionMetadata::new("commit", "Add and commit all changes")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                        ParameterMetadata::optional("workspace", RuninatorType::String)
                             .with_default(json!(".")),
-                        ParameterMetadata::required("message", ParameterValueType::String),
+                        ParameterMetadata::required("message", RuninatorType::String),
                     ])
                     .with_results(git_results()),
                 ActionMetadata::new("push", "Push a branch to a remote")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                        ParameterMetadata::optional("workspace", RuninatorType::String)
                             .with_default(json!(".")),
-                        ParameterMetadata::optional("remote", ParameterValueType::String)
+                        ParameterMetadata::optional("remote", RuninatorType::String)
                             .with_default(json!("origin")),
-                        ParameterMetadata::required("branch", ParameterValueType::String),
-                        ParameterMetadata::optional("set_upstream", ParameterValueType::Boolean)
+                        ParameterMetadata::required("branch", RuninatorType::String),
+                        ParameterMetadata::optional("set_upstream", RuninatorType::Boolean)
                             .with_default(json!(true)),
                     ])
                     .with_results(git_results()),
                 ActionMetadata::new("diff", "Get git diff summary")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("workspace", ParameterValueType::String)
+                        ParameterMetadata::optional("workspace", RuninatorType::String)
                             .with_default(json!(".")),
                     ])
                     .with_results(git_results()),
                 ActionMetadata::new("cleanup", "Remove git worktree")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("repo", ParameterValueType::String)
+                        ParameterMetadata::optional("repo", RuninatorType::String)
                             .with_default(json!(".")),
-                        ParameterMetadata::required("path", ParameterValueType::String),
+                        ParameterMetadata::required("path", RuninatorType::String),
                     ])
                     .with_results(git_results()),
             ],
@@ -184,13 +184,13 @@ impl Provider for GitProvider {
 
 fn git_results() -> Vec<ResultMetadata> {
     vec![
-        ResultMetadata::new("stdout", ParameterValueType::String),
-        ResultMetadata::new("action", ParameterValueType::String),
+        ResultMetadata::new("stdout", RuninatorType::String),
+        ResultMetadata::new("action", RuninatorType::String),
     ]
 }
 
 fn worktree_results() -> Vec<ResultMetadata> {
     let mut results = git_results();
-    results.push(ResultMetadata::new("workspace", ParameterValueType::String));
+    results.push(ResultMetadata::new("workspace", RuninatorType::String));
     results
 }

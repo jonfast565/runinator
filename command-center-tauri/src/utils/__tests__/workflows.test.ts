@@ -36,7 +36,7 @@ describe("workflow graph utils", () => {
     name: "Flow",
     version: 1,
     enabled: true,
-    input_schema: {},
+    input_type: { type: "any" },
     definition: {
       nodes: [
         { id: "a", kind: "task", task_id: 1, transitions: { next: { "$node": "b" } } },
@@ -93,7 +93,7 @@ describe("workflow graph utils", () => {
             {
               function_name: "run",
               parameters: [],
-              results: [{ name: "stdout", value_type: "string", label: "Standard Output" }]
+              results: [{ name: "stdout", ty: { type: "string" }, label: "Standard Output" }]
             }
           ],
           metadata: { credential_scopes: [], contract: null }
@@ -104,7 +104,7 @@ describe("workflow graph utils", () => {
             {
               function_name: "ignored",
               parameters: [],
-              results: [{ name: "legacy", value_type: "string" }]
+              results: [{ name: "legacy", ty: { type: "string" } }]
             }
           ],
           metadata: { credential_scopes: [], contract: null }
@@ -112,7 +112,7 @@ describe("workflow graph utils", () => {
       ]
     );
 
-    expect(results).toEqual([{ name: "stdout", value_type: "string", label: "Standard Output" }]);
+    expect(results).toEqual([{ name: "stdout", ty: { type: "string" }, label: "Standard Output" }]);
   });
 
   it("builds transition edges", () => {

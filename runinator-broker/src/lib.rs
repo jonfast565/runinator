@@ -1,10 +1,14 @@
 pub mod adapters;
+mod capabilities;
 mod errors;
 pub mod http;
 pub mod in_memory;
 pub mod tcp;
 mod types;
 
+pub use capabilities::{
+    ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
+};
 pub use errors::BrokerError;
 pub use runinator_comm::ControlCommand;
 pub use types::{BrokerDelivery, BrokerMessage, ControlDelivery, ResultDelivery, ResultMessage};
@@ -14,6 +18,11 @@ use async_trait::async_trait;
 /// Trait implemented by queue backends capable of delivering task commands.
 #[async_trait]
 pub trait Broker: Send + Sync + 'static {
+    /// Report whether this backend supports workflow result channels.
+    fn supports_workflow_result_channels(&self) -> bool {
+        false
+    }
+
     /// Publish a message to the broker, optionally using a deduplication key.
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError>;
 

@@ -262,6 +262,10 @@ fn error_response(err: BrokerError) -> Response {
             StatusCode::NOT_IMPLEMENTED,
             ErrorResponse::new("not_implemented", context),
         ),
+        BrokerError::WorkflowResultsUnsupported(message) => json_response(
+            StatusCode::NOT_IMPLEMENTED,
+            ErrorResponse::new("workflow_results_unsupported", message),
+        ),
         BrokerError::Internal(message) => json_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorResponse::new("internal", message),

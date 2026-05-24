@@ -81,7 +81,7 @@ WorkflowDefinition WorkflowDefinition::fromJson(const QJsonObject &obj) {
   workflow.name = obj.value("name").toString();
   workflow.version = obj.value("version").toVariant().toLongLong();
   workflow.enabled = obj.value("enabled").toBool(true);
-  workflow.inputSchema = objectOrEmpty(obj.value("input_schema"));
+  workflow.inputType = objectOrEmpty(obj.value("input_type"));
   workflow.definition = objectOrEmpty(obj.value("definition"));
   return workflow;
 }
@@ -92,7 +92,7 @@ QJsonObject WorkflowDefinition::toJson() const {
   obj.insert("name", name);
   obj.insert("version", static_cast<double>(version));
   obj.insert("enabled", enabled);
-  obj.insert("input_schema", inputSchema);
+  obj.insert("input_type", inputType);
   obj.insert("definition", definition);
   return obj;
 }

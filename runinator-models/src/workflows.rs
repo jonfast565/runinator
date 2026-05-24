@@ -3,6 +3,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 use std::fmt;
 
+use crate::types::RuninatorType;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: Option<i64>,
@@ -11,13 +13,22 @@ pub struct WorkflowDefinition {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub input_schema: Value,
+    #[serde(alias = "input_schema", deserialize_with = "deserialize_workflow_type")]
+    pub input_type: RuninatorType,
     #[serde(default)]
     pub definition: Value,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+fn deserialize_workflow_type<'de, D>(deserializer: D) -> Result<RuninatorType, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(value.clone()).or_else(|_| Ok(RuninatorType::from_json_schema(&value)))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

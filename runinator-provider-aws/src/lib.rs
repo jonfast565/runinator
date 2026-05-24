@@ -4,8 +4,8 @@ use log::info;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -27,27 +27,24 @@ impl Provider for AwsProvider {
             actions: vec![
                 ActionMetadata::new("dynamo_dump", "Export DynamoDB rows to an artifact")
                     .with_parameters(vec![
-                        ParameterMetadata::required("table_name", ParameterValueType::String),
-                        ParameterMetadata::required("dump_folder", ParameterValueType::String),
-                        ParameterMetadata::optional("region", ParameterValueType::String),
-                        ParameterMetadata::optional("query_type", ParameterValueType::String)
+                        ParameterMetadata::required("table_name", RuninatorType::String),
+                        ParameterMetadata::required("dump_folder", RuninatorType::String),
+                        ParameterMetadata::optional("region", RuninatorType::String),
+                        ParameterMetadata::optional("query_type", RuninatorType::String)
                             .with_default(json!("query")),
                         ParameterMetadata::optional(
                             "key_condition_expression",
-                            ParameterValueType::String,
+                            RuninatorType::String,
                         ),
-                        ParameterMetadata::optional(
-                            "partiql_statement",
-                            ParameterValueType::String,
-                        ),
-                        ParameterMetadata::optional("format", ParameterValueType::String)
+                        ParameterMetadata::optional("partiql_statement", RuninatorType::String),
+                        ParameterMetadata::optional("format", RuninatorType::String)
                             .with_default(json!("excel")),
                     ])
                     .with_results(vec![
-                        ResultMetadata::new("provider", ParameterValueType::String),
-                        ResultMetadata::new("service", ParameterValueType::String),
-                        ResultMetadata::new("rows", ParameterValueType::Integer),
-                        ResultMetadata::new("artifact", ParameterValueType::Object),
+                        ResultMetadata::new("provider", RuninatorType::String),
+                        ResultMetadata::new("service", RuninatorType::String),
+                        ResultMetadata::new("rows", RuninatorType::Integer),
+                        ResultMetadata::new("artifact", RuninatorType::map(RuninatorType::Any)),
                     ]),
             ],
             metadata: ProviderRuntimeMetadata {

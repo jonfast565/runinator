@@ -115,19 +115,21 @@ export interface ActionMetadata {
   results: ActionResultMetadata[];
 }
 
-export type ParameterValueType =
-  | "string"
-  | "integer"
-  | "number"
-  | "boolean"
-  | "string_array"
-  | "number_array"
-  | "object"
-  | "json";
+export type RuninatorType =
+  | { type: "null" }
+  | { type: "boolean" }
+  | { type: "integer" }
+  | { type: "number" }
+  | { type: "string" }
+  | { type: "array"; items: RuninatorType }
+  | { type: "map"; values: RuninatorType }
+  | { type: "struct"; fields: Record<string, RuninatorType>; additional?: RuninatorType }
+  | { type: "union"; variants: RuninatorType[] }
+  | { type: "any" };
 
 export interface ActionParameterMetadata {
   name: string;
-  value_type: ParameterValueType;
+  ty: RuninatorType;
   label?: string | null;
   description?: string | null;
   required: boolean;
@@ -137,7 +139,7 @@ export interface ActionParameterMetadata {
 
 export interface ActionResultMetadata {
   name: string;
-  value_type: ParameterValueType;
+  ty: RuninatorType;
   label?: string | null;
   description?: string | null;
 }
@@ -230,7 +232,7 @@ export interface WorkflowDefinition {
   name: string;
   version: number;
   enabled: boolean;
-  input_schema: JsonRecord;
+  input_type: RuninatorType;
   definition: JsonRecord;
 }
 

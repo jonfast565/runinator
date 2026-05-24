@@ -128,7 +128,21 @@ async fn build_broker(
     kafka_config: KafkaBrokerConfig,
     rabbitmq_config: RabbitMqBrokerConfig,
 ) -> Result<Arc<dyn Broker>, SendableError> {
-    match backend {
+    let result_channel = match backend {
+        "kafka" => kafka_config.result_topic.as_str(),
+        "rabbitmq" => rabbitmq_config.result_queue.as_str(),
+        _ => "",
+    };
+    runinator_broker::ensure_named_workflow_result_channel(backend, result_channel).map_err(
+        |err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "ws.broker.workflow_results".into(),
+                err.to_string(),
+            ))
+        },
+    )?;
+
+    let broker: Arc<dyn Broker> = match backend {
         "http" => {
             let url = reqwest::Url::parse(endpoint).map_err(|err| -> SendableError {
                 Box::new(RuntimeError::new(
@@ -144,17 +158,30 @@ async fn build_broker(
                         err.to_string(),
                     ))
                 })?;
-            Ok(Arc::new(HttpBroker::new(url, client)))
+            Arc::new(HttpBroker::new(url, client))
         }
-        "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
-        "tcp" => Ok(Arc::new(TcpBroker::new(endpoint.to_string()))),
-        "kafka" => build_kafka_broker(kafka_config),
-        "rabbitmq" => build_rabbitmq_broker(rabbitmq_config).await,
-        other => Err(Box::new(RuntimeError::new(
-            "ws.broker.unknown_backend".into(),
-            format!("Unknown broker backend '{other}'"),
-        ))),
-    }
+        "in-memory" => Arc::new(InMemoryBroker::new()),
+        "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
+        "kafka" => build_kafka_broker(kafka_config)?,
+        "rabbitmq" => build_rabbitmq_broker(rabbitmq_config).await?,
+        other => {
+            return Err(Box::new(RuntimeError::new(
+                "ws.broker.unknown_backend".into(),
+                format!("Unknown broker backend '{other}'"),
+            )));
+        }
+    };
+
+    runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref()).map_err(
+        |err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "ws.broker.workflow_results".into(),
+                err.to_string(),
+            ))
+        },
+    )?;
+
+    Ok(broker)
 }
 
 #[cfg(feature = "kafka")]
@@ -198,4 +225,46 @@ async fn build_rabbitmq_broker(
         "ws.broker.rabbitmq_feature_disabled".into(),
         "Broker backend 'rabbitmq' requires building runinator-ws with --features rabbitmq".into(),
     )))
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn build_broker_rejects_kafka_without_result_topic() {
+        let err = match build_broker(
+            "kafka",
+            "localhost:9092",
+            KafkaBrokerConfig::new("localhost:9092").with_topics("actions", "control", " "),
+            RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f"),
+        )
+        .await
+        {
+            Ok(_) => panic!("expected kafka result channel startup guard to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Broker backend 'kafka'"));
+        assert!(err.to_string().contains("non-empty workflow result topic"));
+    }
+
+    #[tokio::test]
+    async fn build_broker_rejects_rabbitmq_without_result_queue() {
+        let err = match build_broker(
+            "rabbitmq",
+            "amqp://127.0.0.1:5672/%2f",
+            KafkaBrokerConfig::new("localhost:9092"),
+            RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f")
+                .with_queues("actions", "control", ""),
+        )
+        .await
+        {
+            Ok(_) => panic!("expected rabbitmq result channel startup guard to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Broker backend 'rabbitmq'"));
+        assert!(err.to_string().contains("non-empty workflow result queue"));
+    }
 }

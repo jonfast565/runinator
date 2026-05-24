@@ -7,8 +7,8 @@ use std::time::Duration;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -44,11 +44,11 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("title", ParameterValueType::String),
-                        ParameterMetadata::required("head", ParameterValueType::String),
-                        ParameterMetadata::optional("base", ParameterValueType::String)
+                        ParameterMetadata::required("title", RuninatorType::String),
+                        ParameterMetadata::required("head", RuninatorType::String),
+                        ParameterMetadata::optional("base", RuninatorType::String)
                             .with_default(json!("main")),
-                        ParameterMetadata::optional("body", ParameterValueType::String),
+                        ParameterMetadata::optional("body", RuninatorType::String),
                     ])
                     .with_results(pull_request_results()),
                 ActionMetadata::new("reviews", "Read pull request reviews")
@@ -56,7 +56,7 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("pull_number", ParameterValueType::String),
+                        ParameterMetadata::required("pull_number", RuninatorType::String),
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("merge_pr", "Merge a pull request")
@@ -64,12 +64,12 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("pull_number", ParameterValueType::String),
-                        ParameterMetadata::optional("merge_method", ParameterValueType::String)
+                        ParameterMetadata::required("pull_number", RuninatorType::String),
+                        ParameterMetadata::optional("merge_method", RuninatorType::String)
                             .with_default(json!("squash")),
-                        ParameterMetadata::optional("commit_title", ParameterValueType::String),
-                        ParameterMetadata::optional("commit_message", ParameterValueType::String),
-                        ParameterMetadata::optional("sha", ParameterValueType::String),
+                        ParameterMetadata::optional("commit_title", RuninatorType::String),
+                        ParameterMetadata::optional("commit_message", RuninatorType::String),
+                        ParameterMetadata::optional("sha", RuninatorType::String),
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("comments", "Read issue or PR comments")
@@ -77,7 +77,7 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("issue_number", ParameterValueType::String),
+                        ParameterMetadata::required("issue_number", RuninatorType::String),
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("checks", "Read check runs for a reference")
@@ -85,7 +85,7 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("ref", ParameterValueType::String),
+                        ParameterMetadata::required("ref", RuninatorType::String),
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("checks_summary", "Summarize check runs for a reference")
@@ -93,24 +93,27 @@ impl Provider for GitHubProvider {
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("ref", ParameterValueType::String),
+                        ParameterMetadata::required("ref", RuninatorType::String),
                     ])
                     .with_results(vec![
-                        ResultMetadata::new("status", ParameterValueType::String),
-                        ResultMetadata::new("passed", ParameterValueType::Integer),
-                        ResultMetadata::new("pending", ParameterValueType::Integer),
-                        ResultMetadata::new("failed", ParameterValueType::Integer),
-                        ResultMetadata::new("total", ParameterValueType::Integer),
-                        ResultMetadata::new("raw", ParameterValueType::Json),
+                        ResultMetadata::new("status", RuninatorType::String),
+                        ResultMetadata::new("passed", RuninatorType::Integer),
+                        ResultMetadata::new("pending", RuninatorType::Integer),
+                        ResultMetadata::new("failed", RuninatorType::Integer),
+                        ResultMetadata::new("total", RuninatorType::Integer),
+                        ResultMetadata::new("raw", RuninatorType::Any),
                     ]),
                 ActionMetadata::new("dispatch", "Dispatch a workflow run")
                     .with_parameters(vec![
                         auth_param(),
                         repo_owner_param(),
                         repo_param(),
-                        ParameterMetadata::required("workflow_id", ParameterValueType::String),
-                        ParameterMetadata::required("ref", ParameterValueType::String),
-                        ParameterMetadata::optional("inputs", ParameterValueType::Object),
+                        ParameterMetadata::required("workflow_id", RuninatorType::String),
+                        ParameterMetadata::required("ref", RuninatorType::String),
+                        ParameterMetadata::optional(
+                            "inputs",
+                            RuninatorType::map(RuninatorType::Any),
+                        ),
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("workflow_runs", "List actions workflow runs")

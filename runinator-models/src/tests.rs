@@ -1,4 +1,4 @@
-use crate::{providers::ProviderMetadata, workflows::*};
+use crate::{providers::ProviderMetadata, types::RuninatorType, workflows::*};
 use serde_json::json;
 
 #[test]
@@ -180,6 +180,43 @@ fn provider_metadata_accepts_catalog_provider_name() {
 }
 
 #[test]
+fn runinator_type_round_trips_recursive_shapes() {
+    let ty = RuninatorType::structure([
+        ("name", RuninatorType::String),
+        (
+            "labels",
+            RuninatorType::map(RuninatorType::array(RuninatorType::String)),
+        ),
+    ]);
+
+    let value = serde_json::to_value(&ty).unwrap();
+    assert_eq!(value["type"], "struct");
+    assert_eq!(value["fields"]["labels"]["type"], "map");
+
+    let decoded: RuninatorType = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded, ty);
+}
+
+#[test]
+fn runinator_type_imports_legacy_json_schema() {
+    let ty: RuninatorType = serde_json::from_value(json!({
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": { "type": "integer" }
+            }
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        ty,
+        RuninatorType::structure([("items", RuninatorType::array(RuninatorType::Integer))])
+    );
+}
+
+#[test]
 fn workflow_bundle_uses_importer_shape() {
     let bundle: WorkflowBundle = serde_json::from_value(json!({
         "workflows": [
@@ -188,7 +225,7 @@ fn workflow_bundle_uses_importer_shape() {
                 "name": "dev workflow",
                 "version": 1,
                 "enabled": true,
-                "input_schema": {},
+                "input_type": {},
                 "definition": {}
             }
         ],

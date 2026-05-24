@@ -93,7 +93,7 @@ function workflowDefinition(id: number, name: string): WorkflowDefinition {
     name,
     version: 1,
     enabled: true,
-    input_schema: { type: "object" },
+    input_type: { type: "struct", fields: {} },
     definition: {
       start: "start",
       nodes: [

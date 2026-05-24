@@ -27,6 +27,9 @@ runinator-utilities = { path = "../runinator-utilities" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-supervisor = { path = "../runinator-supervisor" }
 
+[dev-dependencies]
+async-trait = "0.1"
+
 [features]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterMetadata, ParameterValueType, ProviderMetadata,
-        ProviderRuntimeMetadata, ResultMetadata,
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
+        ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
@@ -41,15 +41,15 @@ impl Provider for ApprovalProvider {
             actions: vec![
                 ActionMetadata::new("request", "Request manual approval to proceed")
                     .with_parameters(vec![
-                        ParameterMetadata::optional("approval_type", ParameterValueType::String)
+                        ParameterMetadata::optional("approval_type", RuninatorType::String)
                             .with_default(json!("generic")),
-                        ParameterMetadata::optional("prompt", ParameterValueType::String)
+                        ParameterMetadata::optional("prompt", RuninatorType::String)
                             .with_default(json!("Approval required")),
                     ])
                     .with_results(vec![
-                        ResultMetadata::new("approval_type", ParameterValueType::String),
-                        ResultMetadata::new("prompt", ParameterValueType::String),
-                        ResultMetadata::new("metadata", ParameterValueType::Object),
+                        ResultMetadata::new("approval_type", RuninatorType::String),
+                        ResultMetadata::new("prompt", RuninatorType::String),
+                        ResultMetadata::new("metadata", RuninatorType::map(RuninatorType::Any)),
                     ]),
             ],
             metadata: ProviderRuntimeMetadata::default(),

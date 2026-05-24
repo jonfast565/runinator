@@ -52,7 +52,7 @@ struct WorkflowDefinition {
   QString name;
   qint64 version = 1;
   bool enabled = true;
-  QJsonObject inputSchema;
+  QJsonObject inputType;
   QJsonObject definition;
 
   static WorkflowDefinition fromJson(const QJsonObject &obj);

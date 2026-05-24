@@ -37,6 +37,10 @@ impl InMemoryBroker {
 
 #[async_trait]
 impl Broker for InMemoryBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
         let dedupe = message.dedupe_key_or_hash();
@@ -180,5 +184,17 @@ impl Broker for InMemoryBroker {
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Broker;
+
+    use super::*;
+
+    #[test]
+    fn in_memory_broker_supports_workflow_result_channels() {
+        assert!(InMemoryBroker::new().supports_workflow_result_channels());
     }
 }

@@ -221,7 +221,7 @@ fn broker_smoke_workflow() -> WorkflowDefinition {
         name: "brokered result path smoke".into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({
             "start": "start",
             "nodes": [

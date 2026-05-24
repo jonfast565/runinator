@@ -37,7 +37,7 @@ fn metadata_advertises_send_message_with_attachments() {
         .expect("send_message action is advertised");
 
     assert!(send_message.parameters.iter().any(|parameter| {
-        parameter.name == "attachments" && parameter.value_type == ParameterValueType::Json
+        parameter.name == "attachments" && parameter.ty == RuninatorType::Any
     }));
     assert!(
         send_message

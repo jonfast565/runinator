@@ -503,7 +503,7 @@ impl DatabaseImpl for SqliteDb {
         .bind(&workflow.name)
         .bind(workflow.version)
         .bind(workflow.enabled)
-        .bind(workflow.input_schema.to_string())
+        .bind(serde_json::to_string(&workflow.input_type)?)
         .bind(workflow.definition.to_string())
         .bind(now)
         .bind(now)

@@ -6,8 +6,7 @@ use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
-        ActionMetadata, ParameterValueType, ProviderMetadata, ProviderRuntimeMetadata,
-        ResultMetadata,
+        ActionMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
     },
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
@@ -1059,8 +1058,8 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             name: "console".into(),
             actions: vec![
                 ActionMetadata::new("run", "Run test command").with_results(vec![
-                    ResultMetadata::new("success", ParameterValueType::Boolean),
-                    ResultMetadata::new("exit_code", ParameterValueType::Integer),
+                    ResultMetadata::new("success", RuninatorType::Boolean),
+                    ResultMetadata::new("exit_code", RuninatorType::Integer),
                 ]),
             ],
             metadata: ProviderRuntimeMetadata::default(),
@@ -1333,7 +1332,7 @@ fn workflow_with_nodes(nodes: serde_json::Value) -> WorkflowDefinition {
         name: "debug".into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({ "start": "start", "nodes": nodes }),
         created_at: None,
         updated_at: None,
@@ -1346,7 +1345,7 @@ fn workflow_definition_with_id(id: i64, name: &str) -> WorkflowDefinition {
         name: name.into(),
         version: 1,
         enabled: true,
-        input_schema: json!({}),
+        input_type: runinator_models::types::RuninatorType::Any,
         definition: json!({
             "start": "start",
             "nodes": [

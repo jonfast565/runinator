@@ -12,6 +12,7 @@ use runinator_api::{AsyncApiClient, ServiceLocator};
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
+    types::RuninatorType,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_plugin::provider::Provider;
@@ -327,16 +328,18 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
     let mut workflows = Vec::with_capacity(workflows_map.len());
     for (name, body) in workflows_map {
         let mut body = body.clone();
-        let input_schema = body
+        let input_type_value = body
             .as_object_mut()
-            .and_then(|o| o.remove("input_schema"))
+            .and_then(|o| o.remove("input_type").or_else(|| o.remove("input_schema")))
             .unwrap_or(Value::Null);
+        let input_type = serde_json::from_value(input_type_value.clone())
+            .unwrap_or_else(|_| RuninatorType::from_json_schema(&input_type_value));
         workflows.push(WorkflowDefinition {
             id: None,
             name: name.clone(),
             version,
             enabled: true,
-            input_schema,
+            input_type,
             definition: body,
             created_at: None,
             updated_at: None,

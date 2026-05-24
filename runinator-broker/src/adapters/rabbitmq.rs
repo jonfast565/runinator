@@ -46,6 +46,10 @@ impl RabbitMqBrokerConfig {
         self.client_id = client_id.into();
         self
     }
+
+    pub fn has_workflow_result_queue(&self) -> bool {
+        !self.result_queue.trim().is_empty()
+    }
 }
 
 pub struct RabbitMqBroker {
@@ -288,6 +292,10 @@ fn rabbitmq_error(context: &'static str) -> impl FnOnce(lapin::Error) -> BrokerE
 #[async_trait]
 #[cfg(feature = "rabbitmq")]
 impl Broker for RabbitMqBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        self.config.has_workflow_result_queue()
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
@@ -378,6 +386,10 @@ impl Broker for RabbitMqBroker {
 #[async_trait]
 #[cfg(not(feature = "rabbitmq"))]
 impl Broker for RabbitMqBroker {
+    fn supports_workflow_result_channels(&self) -> bool {
+        false
+    }
+
     async fn publish(&self, _message: BrokerMessage) -> Result<(), BrokerError> {
         Err(rabbitmq_feature_error())
     }
@@ -453,5 +465,13 @@ mod tests {
         assert_eq!(config.control_queue, "c");
         assert_eq!(config.result_queue, "r");
         assert_eq!(config.client_id, "test-client");
+    }
+
+    #[test]
+    fn rabbitmq_config_detects_missing_result_queue() {
+        let config =
+            RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f").with_queues("a", "c", " ");
+
+        assert!(!config.has_workflow_result_queue());
     }
 }
