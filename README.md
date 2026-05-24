@@ -67,6 +67,12 @@ The local stack uses the built-in broker over raw TCP by default. The standalone
 broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
 `http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
+Kafka and RabbitMQ are available as feature-gated direct backends for the
+scheduler, worker, and web service. Build those binaries with `--features kafka`
+or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
+`--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
+override `--broker-action-topic`, `--broker-control-topic`, or
+`--broker-result-topic` when not using the default `runinator.*` topics/queues.
 
 The optional direct worker-to-scheduler control-event channel is disabled by
 default. Enable it on the scheduler with `--worker-control-transport http|tcp`

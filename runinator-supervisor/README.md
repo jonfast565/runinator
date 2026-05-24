@@ -40,6 +40,10 @@ runinator-supervisor --config runinator-supervisor.json stop
 The broker process selects its serving protocol with
 `RUNINATOR_BROKER_TRANSPORT=tcp|http`. Use `host:port` broker endpoints for
 TCP clients and `http://host:port/` broker endpoints for HTTP clients.
+Kafka and RabbitMQ are direct service backends, not supervisor-managed broker
+transports: build the scheduler, worker, and web service with `--features kafka`
+or `--features rabbitmq` and set their `--broker-backend` plus topic/queue
+flags.
 
 ## Runtime files
 

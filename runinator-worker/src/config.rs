@@ -8,6 +8,10 @@ pub struct Config {
     pub dll_paths: Vec<String>,
     pub broker_backend: String,
     pub broker_endpoint: String,
+    pub broker_action_topic: String,
+    pub broker_control_topic: String,
+    pub broker_result_topic: String,
+    pub broker_client_id: String,
     pub broker_consumer_id: String,
     pub scheduler_control_transport: String,
     pub scheduler_control_endpoint: String,
@@ -27,6 +31,18 @@ struct CliArgs {
 
     #[arg(long, default_value = "127.0.0.1:7070")]
     broker_endpoint: String,
+
+    #[arg(long, default_value = "runinator.actions")]
+    broker_action_topic: String,
+
+    #[arg(long, default_value = "runinator.control")]
+    broker_control_topic: String,
+
+    #[arg(long, default_value = "runinator.results")]
+    broker_result_topic: String,
+
+    #[arg(long, default_value = "runinator-worker")]
+    broker_client_id: String,
 
     #[arg(long)]
     broker_consumer_id: Option<String>,
@@ -56,14 +72,22 @@ pub fn parse_config() -> Result<Config, SendableError> {
         _ => Uuid::new_v4(),
     };
 
-    let consumer_id = args
-        .broker_consumer_id
-        .unwrap_or_else(|| worker_id.to_string());
+    let consumer_id = args.broker_consumer_id.unwrap_or_else(|| {
+        if args.broker_backend == "kafka" {
+            "runinator-workers".to_string()
+        } else {
+            worker_id.to_string()
+        }
+    });
 
     Ok(Config {
         dll_paths: plugin_search_paths(args.dll_paths),
         broker_backend: args.broker_backend,
         broker_endpoint: args.broker_endpoint,
+        broker_action_topic: args.broker_action_topic,
+        broker_control_topic: args.broker_control_topic,
+        broker_result_topic: args.broker_result_topic,
+        broker_client_id: args.broker_client_id,
         broker_consumer_id: consumer_id,
         scheduler_control_transport: args.scheduler_control_transport,
         scheduler_control_endpoint: args.scheduler_control_endpoint,

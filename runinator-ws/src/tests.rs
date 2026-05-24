@@ -181,6 +181,41 @@ async fn import_upserts_workflows_before_triggers() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn import_reuses_existing_workflow_by_name_when_id_is_missing() {
+    let (db, path) = test_db().await;
+    let first = WorkflowBundle {
+        workflows: vec![workflow(None, "Core Team SDLC Pipeline")],
+        triggers: vec![],
+    };
+    crate::repository::import_workflow_bundle(&db, first)
+        .await
+        .unwrap();
+    let mut changed = workflow(None, "Core Team SDLC Pipeline");
+    changed.version = 2;
+    changed.definition = json!({
+        "start": "done",
+        "nodes": [
+            { "id": "done", "kind": "end" }
+        ]
+    });
+    let second = WorkflowBundle {
+        workflows: vec![changed.clone()],
+        triggers: vec![],
+    };
+
+    let saved = crate::repository::import_workflow_bundle(&db, second)
+        .await
+        .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(saved.workflows[0].id, workflows[0].id);
+    assert_eq!(workflows[0].name, "Core Team SDLC Pipeline");
+    assert_eq!(workflows[0].version, 2);
+    let _ = std::fs::remove_file(path);
+}
+
 async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!(
         "runinator-ws-workflows-{}.db",

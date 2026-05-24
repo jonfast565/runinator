@@ -199,6 +199,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at, cr
 
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_workflows_name ON workflows(name);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_triggers_workflow ON workflow_triggers(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_triggers_due ON workflow_triggers(enabled, kind, next_execution);
@@ -483,13 +484,21 @@ impl DatabaseImpl for SqliteDb {
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition, SendableError> {
         let now = Utc::now().timestamp();
+        let workflow_id = match workflow.id {
+            Some(id) => Some(id),
+            None => sqlx::query("SELECT id FROM workflows WHERE name = ? ORDER BY id LIMIT 1")
+                .bind(&workflow.name)
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|row| row.get::<i64, _>("id")),
+        };
         let row = sqlx::query(
             "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET name = excluded.name, version = excluded.version, enabled = excluded.enabled, input_schema = excluded.input_schema, definition = excluded.definition, updated_at = excluded.updated_at
              RETURNING id, name, version, enabled, input_schema, definition, created_at, updated_at",
         )
-        .bind(workflow.id)
+        .bind(workflow_id)
         .bind(&workflow.name)
         .bind(workflow.version)
         .bind(workflow.enabled)

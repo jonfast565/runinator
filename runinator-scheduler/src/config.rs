@@ -25,6 +25,18 @@ pub struct Config {
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
 
+    #[arg(long, default_value = "runinator.actions")]
+    pub broker_action_topic: String,
+
+    #[arg(long, default_value = "runinator.control")]
+    pub broker_control_topic: String,
+
+    #[arg(long, default_value = "runinator.results")]
+    pub broker_result_topic: String,
+
+    #[arg(long, default_value = "runinator-scheduler")]
+    pub broker_client_id: String,
+
     #[arg(long, default_value = "disabled")]
     pub worker_control_transport: String,
 

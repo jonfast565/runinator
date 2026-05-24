@@ -15,7 +15,10 @@ use config::parse_config;
 use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{
-    Broker, BrokerError, ControlDelivery, http::client::HttpBroker, in_memory::InMemoryBroker,
+    Broker, BrokerError, ControlDelivery,
+    adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
+    http::client::HttpBroker,
+    in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
 };
 use runinator_comm::ControlKind;
@@ -56,7 +59,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     info!("Worker ID: {}", config.worker_id);
 
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
-    let broker = build_broker(&config)?;
+    let broker = build_broker(&config).await?;
     let api_client = build_api_client(&config)?;
     let control_client = Arc::new(SchedulerControlClient::new(&config)?);
 
@@ -163,7 +166,7 @@ fn load_libraries(paths: &[String]) -> Result<HashMap<String, Plugin>, SendableE
     Ok(libraries)
 }
 
-fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableError> {
+async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableError> {
     match config.broker_backend.as_str() {
         "http" => {
             let url = reqwest::Url::parse(&config.broker_endpoint).map_err(|err| {
@@ -186,18 +189,79 @@ fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableErro
         }
         "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
         "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
-        "rabbitmq" | "kafka" => Err(Box::new(RuntimeError::new(
-            "worker.broker.backend_not_ready".into(),
-            format!(
-                "Broker backend '{}' is not implemented yet",
-                config.broker_backend
-            ),
-        ))),
+        "kafka" => build_kafka_broker(
+            KafkaBrokerConfig::new(config.broker_endpoint.clone())
+                .with_topics(
+                    config.broker_action_topic.clone(),
+                    config.broker_control_topic.clone(),
+                    config.broker_result_topic.clone(),
+                )
+                .with_client_id(config.broker_client_id.clone()),
+        ),
+        "rabbitmq" => {
+            build_rabbitmq_broker(
+                RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
+                    .with_queues(
+                        config.broker_action_topic.clone(),
+                        config.broker_control_topic.clone(),
+                        config.broker_result_topic.clone(),
+                    )
+                    .with_client_id(config.broker_client_id.clone()),
+            )
+            .await
+        }
         other => Err(Box::new(RuntimeError::new(
             "worker.broker.unknown_backend".into(),
             format!("Unknown broker backend '{other}'"),
         ))),
     }
+}
+
+#[cfg(feature = "kafka")]
+fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
+    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config).map_err(
+        |err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "worker.broker.kafka".into(),
+                err.to_string(),
+            ))
+        },
+    )?;
+    Ok(Arc::new(broker))
+}
+
+#[cfg(not(feature = "kafka"))]
+fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
+    Err(Box::new(RuntimeError::new(
+        "worker.broker.kafka_feature_disabled".into(),
+        "Broker backend 'kafka' requires building runinator-worker with --features kafka".into(),
+    )))
+}
+
+#[cfg(feature = "rabbitmq")]
+async fn build_rabbitmq_broker(
+    config: RabbitMqBrokerConfig,
+) -> Result<Arc<dyn Broker>, SendableError> {
+    let broker = runinator_broker::adapters::rabbitmq::RabbitMqBroker::connect(config)
+        .await
+        .map_err(|err| -> SendableError {
+            Box::new(RuntimeError::new(
+                "worker.broker.rabbitmq".into(),
+                err.to_string(),
+            ))
+        })?;
+    Ok(Arc::new(broker))
+}
+
+#[cfg(not(feature = "rabbitmq"))]
+async fn build_rabbitmq_broker(
+    _config: RabbitMqBrokerConfig,
+) -> Result<Arc<dyn Broker>, SendableError> {
+    Err(Box::new(RuntimeError::new(
+        "worker.broker.rabbitmq_feature_disabled".into(),
+        "Broker backend 'rabbitmq' requires building runinator-worker with --features rabbitmq"
+            .into(),
+    )))
 }
 
 fn build_api_client(

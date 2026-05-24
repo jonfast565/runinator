@@ -5,7 +5,7 @@
   "version": "3",
   "document": {
     "workflows": {
-      "jira_sdlc_pipeline": {
+      "Core Team SDLC Pipeline": {
         "metadata": {
           "description": "End-to-end SDLC pipeline that walks JIRA tickets from To Do through In Progress, In Review, and Done. Mirrors a standard Atlassian software workflow with automated implementation, CI gating, manual approval, and merge.",
           "deployment_dispatch": "opt_in"

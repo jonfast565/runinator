@@ -58,4 +58,20 @@ pub(crate) struct CliArgs {
     /// Broker endpoint used for workflow control messages
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
+
+    /// Kafka action topic or RabbitMQ action queue used by direct broker backends
+    #[arg(long, default_value = "runinator.actions")]
+    pub broker_action_topic: String,
+
+    /// Kafka control topic or RabbitMQ control queue used by direct broker backends
+    #[arg(long, default_value = "runinator.control")]
+    pub broker_control_topic: String,
+
+    /// Kafka result topic or RabbitMQ result queue used by direct broker backends
+    #[arg(long, default_value = "runinator.results")]
+    pub broker_result_topic: String,
+
+    /// Kafka/RabbitMQ client id used by direct broker backends
+    #[arg(long, default_value = "runinator-ws")]
+    pub broker_client_id: String,
 }

@@ -12,6 +12,7 @@ use runinator_models::workflows::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sqlx::Row;
 use tokio::time::sleep;
 
 type E2eResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -52,11 +53,66 @@ async fn rich_workflow_demo_paths_finish() -> E2eResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e brokered_result_path_smoke -- --ignored"]
+async fn brokered_result_path_smoke() -> E2eResult<()> {
+    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
+        return Ok(());
+    }
+
+    let workspace = workspace_dir();
+    build_service_binaries(&workspace)?;
+
+    let ports = Ports::allocate()?;
+    let harness = StackHarness::start(&workspace, ports).await?;
+    let api = harness.api_client()?;
+    let workflow = api.upsert_workflow(&broker_smoke_workflow()).await?;
+    let workflow_id = workflow.id.ok_or("smoke workflow did not get an id")?;
+
+    let (_run, nodes) = run_workflow_by_id(&api, workflow_id, json!({})).await?;
+    let action = latest_node(&nodes, "write_logs")?;
+    assert_eq!(action.status, WorkflowStatus::Succeeded);
+    assert_eq!(
+        action
+            .output_json
+            .as_ref()
+            .and_then(|value| value.get("success")),
+        Some(&Value::Bool(true))
+    );
+
+    let chunks = poll_node_chunks(&api, action.id).await?;
+    let log = chunks
+        .iter()
+        .map(|chunk| chunk.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        log.contains("broker-smoke-start"),
+        "missing streamed stdout chunk: {log}"
+    );
+    assert!(
+        log.contains("broker-smoke-end"),
+        "missing streamed stdout chunk: {log}"
+    );
+
+    assert_broker_result_events(&harness.sqlite_path, action.id).await?;
+    Ok(())
+}
+
 async fn run_workflow_case(
     api: &ApiClient,
     parameters: Value,
 ) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
-    let run = api.create_workflow_run(1002, parameters).await?;
+    run_workflow_by_id(api, 1002, parameters).await
+}
+
+async fn run_workflow_by_id(
+    api: &ApiClient,
+    workflow_id: i64,
+    parameters: Value,
+) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
+    let run = api.create_workflow_run(workflow_id, parameters).await?;
     poll_workflow(api, run.id).await
 }
 
@@ -90,26 +146,118 @@ async fn import_seed(api: &ApiClient, path: &Path) -> E2eResult<()> {
 }
 
 fn assert_node_status(nodes: &[WorkflowNodeRun], node_id: &str, status: WorkflowStatus) {
-    let node = nodes
-        .iter()
-        .filter(|node| node.node_id == node_id)
-        .max_by_key(|node| node.id)
-        .unwrap_or_else(|| panic!("missing node run {node_id}"));
+    let node = latest_node(nodes, node_id).unwrap_or_else(|err| panic!("{err}"));
     assert_eq!(node.status, status);
 }
 
 fn node_output(nodes: &[WorkflowNodeRun], node_id: &str) -> E2eResult<Value> {
+    latest_node(nodes, node_id)?
+        .output_json
+        .clone()
+        .ok_or_else(|| format!("missing output for node {node_id}").into())
+}
+
+fn latest_node<'a>(nodes: &'a [WorkflowNodeRun], node_id: &str) -> E2eResult<&'a WorkflowNodeRun> {
     nodes
         .iter()
         .filter(|node| node.node_id == node_id)
         .max_by_key(|node| node.id)
-        .and_then(|node| node.output_json.clone())
-        .ok_or_else(|| format!("missing output for node {node_id}").into())
+        .ok_or_else(|| format!("missing node run {node_id}").into())
+}
+
+async fn poll_node_chunks(
+    api: &ApiClient,
+    workflow_node_run_id: i64,
+) -> E2eResult<Vec<runinator_models::workflows::WorkflowNodeRunChunk>> {
+    for _ in 0..30 {
+        let chunks = api
+            .fetch_workflow_node_run_chunks(workflow_node_run_id, None, 100)
+            .await?;
+        if !chunks.is_empty() {
+            return Ok(chunks);
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    Err(format!("workflow node run {workflow_node_run_id} did not receive chunks").into())
+}
+
+async fn assert_broker_result_events(
+    sqlite_path: &Path,
+    workflow_node_run_id: i64,
+) -> E2eResult<()> {
+    let url = format!("sqlite://{}", sqlite_path.display());
+    let pool = sqlx::SqlitePool::connect(&url).await?;
+    let rows = sqlx::query(
+        "SELECT event_type, COUNT(*) AS count FROM workflow_result_events WHERE workflow_node_run_id = ? GROUP BY event_type",
+    )
+    .bind(workflow_node_run_id)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut chunk_count = 0_i64;
+    let mut status_count = 0_i64;
+    for row in rows {
+        match row.get::<String, _>("event_type").as_str() {
+            "chunk" => chunk_count = row.get("count"),
+            "status" => status_count = row.get("count"),
+            _ => {}
+        }
+    }
+
+    assert!(
+        chunk_count >= 2,
+        "expected broker result consumer to persist streamed chunks, got {chunk_count}"
+    );
+    assert!(
+        status_count >= 2,
+        "expected broker result consumer to persist running and final statuses, got {status_count}"
+    );
+    Ok(())
+}
+
+fn broker_smoke_workflow() -> WorkflowDefinition {
+    WorkflowDefinition {
+        id: None,
+        name: "brokered result path smoke".into(),
+        version: 1,
+        enabled: true,
+        input_schema: json!({}),
+        definition: json!({
+            "start": "start",
+            "nodes": [
+                {
+                    "id": "start",
+                    "kind": "start",
+                    "transitions": { "next": { "$node": "write_logs" } }
+                },
+                {
+                    "id": "write_logs",
+                    "kind": "action",
+                    "action": {
+                        "provider": "Console",
+                        "function": "run",
+                        "timeout_seconds": 10,
+                        "configuration": {
+                            "command": "printf 'broker-smoke-start\\nbroker-smoke-end\\n'"
+                        }
+                    },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                {
+                    "id": "done",
+                    "kind": "end"
+                }
+            ]
+        }),
+        created_at: None,
+        updated_at: None,
+    }
 }
 
 struct StackHarness {
     workspace: PathBuf,
     config_path: PathBuf,
+    sqlite_path: PathBuf,
     api_url: String,
 }
 
@@ -144,6 +292,8 @@ impl StackHarness {
                         "--database", "sqlite",
                         "--sqlite-path", sqlite_path,
                         "--port", ports.web.to_string(),
+                        "--broker-backend", "tcp",
+                        "--broker-endpoint", format!("127.0.0.1:{}", ports.broker),
                         "--gossip-bind", "127.0.0.1",
                         "--gossip-port", ports.web_gossip.to_string(),
                         "--gossip-targets", format!("127.0.0.1:{}", ports.scheduler_gossip),
@@ -164,6 +314,16 @@ impl StackHarness {
                         "--broker-backend", "tcp",
                         "--broker-endpoint", format!("127.0.0.1:{}", ports.broker)
                     ]
+                },
+                {
+                    "name": "worker",
+                    "command": target_debug.join(bin_name("runinator-worker")),
+                    "args": [
+                        "--broker-backend", "tcp",
+                        "--broker-endpoint", format!("127.0.0.1:{}", ports.broker),
+                        "--api-base-url", format!("http://127.0.0.1:{}/", ports.web),
+                        "--max-concurrent-actions", "1"
+                    ]
                 }
             ]
         });
@@ -172,6 +332,7 @@ impl StackHarness {
         let harness = Self {
             workspace: workspace.to_path_buf(),
             config_path,
+            sqlite_path,
             api_url: format!("http://127.0.0.1:{}/", ports.web),
         };
         harness.supervisor("start")?;
@@ -261,6 +422,8 @@ fn build_service_binaries(workspace: &Path) -> E2eResult<()> {
             "runinator-ws",
             "-p",
             "runinator-scheduler",
+            "-p",
+            "runinator-worker",
         ])
         .current_dir(workspace)
         .status()?;

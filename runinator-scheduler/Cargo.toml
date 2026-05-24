@@ -23,3 +23,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-workflows = { path = "../runinator-workflows" }
+
+[features]
+kafka = ["runinator-broker/kafka"]
+rabbitmq = ["runinator-broker/rabbitmq"]

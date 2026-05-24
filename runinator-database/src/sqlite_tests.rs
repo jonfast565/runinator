@@ -70,6 +70,30 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
 }
 
 #[tokio::test]
+async fn upsert_workflow_without_id_updates_existing_name() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-upsert-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let first = db.upsert_workflow(&workflow("pipeline")).await.unwrap();
+    let mut updated = workflow("pipeline");
+    updated.version = 2;
+    updated.definition = serde_json::json!({ "nodes": [{ "id": "done", "kind": "end" }] });
+
+    let second = db.upsert_workflow(&updated).await.unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.version, 2);
+    assert_eq!(second.definition, updated.definition);
+    assert_eq!(workflows.len(), 1);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn apply_workflow_result_event_is_idempotent_for_chunks() {
     let path = std::env::temp_dir().join(format!(
         "runinator-result-events-{}.db",
