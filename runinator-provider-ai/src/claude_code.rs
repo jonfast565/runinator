@@ -1,7 +1,8 @@
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use runinator_models::{
     errors::{RuntimeError, SendableError},
@@ -48,6 +49,7 @@ pub(crate) fn run_claude_code(
     })?;
 
     let stdout_handle = drain_stdout(&mut child, sink.as_ref());
+    let stderr_handle = drain_stderr(&mut child);
     if token.is_cancelled() {
         let _ = child.kill();
         return Err(Box::new(RuntimeError::new(
@@ -55,24 +57,18 @@ pub(crate) fn run_claude_code(
             "Claude Code command canceled".into(),
         )));
     }
-    let output = child.wait_with_output().map_err(|err| {
-        RuntimeError::new(
-            "ai_command.claude_code.wait".into(),
-            format!("failed to wait for claude: {err}"),
-        )
-    })?;
+    let status = wait_for_child(&mut child, request.timeout_secs, token)?;
     let stdout = stdout_handle
         .map(|handle| handle.join().unwrap_or_default())
-        .unwrap_or_else(|| String::from_utf8_lossy(&output.stdout).into_owned());
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
 
-    if !output.status.success() {
+    if !status.success() {
         return Err(Box::new(RuntimeError::new(
             "ai_command.claude_code.exit_code".into(),
-            format!(
-                "claude exited with {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ),
+            format!("claude exited with {status}: {stderr}"),
         )));
     }
 
@@ -83,6 +79,37 @@ pub(crate) fn run_claude_code(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
+}
+
+fn wait_for_child(
+    child: &mut Child,
+    timeout_secs: i64,
+    token: CancellationToken,
+) -> Result<ExitStatus, SendableError> {
+    let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+    let started = Instant::now();
+    loop {
+        if token.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Box::new(RuntimeError::new(
+                "ai_command.claude_code.canceled".into(),
+                "Claude Code command canceled".into(),
+            )));
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Box::new(RuntimeError::new(
+                "ai_command.claude_code.timeout".into(),
+                format!("Claude Code timed out after {} seconds", timeout.as_secs()),
+            )));
+        }
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn build_claude_argv(params: &ClaudeCodeParams) -> Vec<String> {
@@ -125,6 +152,20 @@ fn drain_stdout(
                     content: format!("{line}\n"),
                 });
             }
+            accumulator.push_str(&line);
+            accumulator.push('\n');
+        }
+        accumulator
+    });
+    Some(handle)
+}
+
+fn drain_stderr(child: &mut Child) -> Option<JoinHandle<String>> {
+    let stderr: ChildStderr = child.stderr.take()?;
+    let handle = thread::spawn(move || {
+        let mut accumulator = String::new();
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
             accumulator.push_str(&line);
             accumulator.push('\n');
         }

@@ -9,6 +9,10 @@ use runinator_database::interfaces::DatabaseImpl;
 
 use crate::events::EventSender;
 use crate::handlers::{
+    action_dispatches::{
+        enqueue_action_dispatch, mark_action_dispatch_failed, mark_action_dispatch_published,
+        pending_action_dispatches,
+    },
     artifacts::{
         add_run_artifact, download_artifact, get_run_artifacts, list_artifacts, upload_artifact,
     },
@@ -193,6 +197,22 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/scheduler/workflow_runs/{id}/claim/release",
             post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches",
+            post(enqueue_action_dispatch::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches/pending",
+            get(pending_action_dispatches::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches/{id}/published",
+            post(mark_action_dispatch_published::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches/{id}/failed",
+            post(mark_action_dispatch_failed::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/debug/step",

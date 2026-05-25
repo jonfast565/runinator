@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
-use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -199,6 +199,17 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     UNIQUE(scope, key)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
+    id BIGSERIAL PRIMARY KEY,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    command_json TEXT NOT NULL,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    published_at BIGINT NULL,
+    last_error TEXT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
     workflow_run_id BIGINT NULL,
@@ -230,6 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_items_type ON catalog_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_type ON automation_records(record_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_workflow_run ON automation_records(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_automation_records_external_item ON automation_records(external_item_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_action_dispatches_pending ON workflow_action_dispatches(published_at, updated_at);
 
 COMMIT;
 "#;
@@ -1448,6 +1460,81 @@ impl DatabaseImpl for PostgresDb {
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|row| mappers::postgres_row_to_idempotency_key(&row)))
+    }
+
+    async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: String,
+        command: ActionCommand,
+    ) -> Result<runinator_comm::ActionDispatchRecord, SendableError> {
+        let now = Utc::now().timestamp();
+        let row = sqlx::query(
+            "INSERT INTO workflow_action_dispatches (dedupe_key, command_json, attempts, created_at, updated_at)
+             VALUES ($1, $2, 0, $3, $4)
+             ON CONFLICT(dedupe_key) DO UPDATE SET command_json = workflow_action_dispatches.command_json
+             RETURNING id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error",
+        )
+        .bind(dedupe_key)
+        .bind(serde_json::to_string(&command)?)
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(mappers::postgres_row_to_action_dispatch(&row))
+    }
+
+    async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<runinator_comm::ActionDispatchRecord>, SendableError> {
+        let rows = sqlx::query(
+            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error
+             FROM workflow_action_dispatches
+             WHERE published_at IS NULL
+             ORDER BY updated_at ASC, id ASC
+             LIMIT $1",
+        )
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::postgres_row_to_action_dispatch)
+            .collect())
+    }
+
+    async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "UPDATE workflow_action_dispatches
+             SET published_at = $1, updated_at = $2, last_error = NULL
+             WHERE id = $3",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(dispatch_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: String,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "UPDATE workflow_action_dispatches
+             SET attempts = attempts + 1, updated_at = $1, last_error = $2
+             WHERE id = $3",
+        )
+        .bind(now)
+        .bind(error)
+        .bind(dispatch_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn create_notification(

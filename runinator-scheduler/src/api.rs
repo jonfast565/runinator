@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use runinator_api::AsyncApiClient;
+use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::{
     errors::SendableError,
     providers::ProviderMetadata,
@@ -140,6 +141,25 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         key: &str,
         result: Value,
     ) -> Result<Value, SendableError>;
+
+    async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: &str,
+        command: &ActionCommand,
+    ) -> Result<ActionDispatchRecord, SendableError>;
+
+    async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError>;
+
+    async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError>;
+
+    async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: &str,
+    ) -> Result<(), SendableError>;
 }
 
 #[derive(Clone)]
@@ -478,6 +498,50 @@ impl SchedulerApi {
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
     }
+
+    pub async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: &str,
+        command: &ActionCommand,
+    ) -> Result<ActionDispatchRecord, SendableError> {
+        self.client
+            .enqueue_action_dispatch(dedupe_key, command)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        self.client
+            .fetch_pending_action_dispatches(limit)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn mark_action_dispatch_published(
+        &self,
+        dispatch_id: i64,
+    ) -> Result<(), SendableError> {
+        self.client
+            .mark_action_dispatch_published(dispatch_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: &str,
+    ) -> Result<(), SendableError> {
+        self.client
+            .mark_action_dispatch_failed(dispatch_id, error)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -675,5 +739,32 @@ impl WorkflowSchedulerApi for SchedulerApi {
         result: Value,
     ) -> Result<Value, SendableError> {
         SchedulerApi::put_idempotency_key(self, scope, key, result).await
+    }
+
+    async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: &str,
+        command: &ActionCommand,
+    ) -> Result<ActionDispatchRecord, SendableError> {
+        SchedulerApi::enqueue_action_dispatch(self, dedupe_key, command).await
+    }
+
+    async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        SchedulerApi::fetch_pending_action_dispatches(self, limit).await
+    }
+
+    async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
+        SchedulerApi::mark_action_dispatch_published(self, dispatch_id).await
+    }
+
+    async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: &str,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::mark_action_dispatch_failed(self, dispatch_id, error).await
     }
 }

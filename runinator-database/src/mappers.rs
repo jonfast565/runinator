@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::{
     notifications::Notification,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
@@ -357,6 +358,35 @@ pub fn sqlite_row_to_idempotency_key(row: &SqliteRow) -> Value {
 
 pub fn postgres_row_to_idempotency_key(row: &PgRow) -> Value {
     idempotency_key_from_row!(row)
+}
+
+macro_rules! action_dispatch_from_row {
+    ($row:expr) => {{
+        let raw = $row.get::<String, _>("command_json");
+        ActionDispatchRecord {
+            id: $row.get("id"),
+            dedupe_key: $row.get("dedupe_key"),
+            command: serde_json::from_str::<ActionCommand>(&raw)
+                .expect("stored action dispatch command is valid json"),
+            attempts: $row.get("attempts"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+            published_at: $row
+                .get::<Option<i64>, _>("published_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            last_error: $row.get("last_error"),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_action_dispatch(row: &SqliteRow) -> ActionDispatchRecord {
+    action_dispatch_from_row!(row)
+}
+
+pub fn postgres_row_to_action_dispatch(row: &PgRow) -> ActionDispatchRecord {
+    action_dispatch_from_row!(row)
 }
 
 macro_rules! notification_from_row {

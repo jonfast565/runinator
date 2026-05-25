@@ -91,9 +91,10 @@ impl Provider for GitProvider {
         &self,
         request: ProviderExecutionRequest,
         _sink: Option<Arc<dyn ProviderEventSink>>,
-        _token: runinator_plugin::cancel::CancellationToken,
+        token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let function = request.action_function.as_str();
+        let timeout = request.timeout_secs;
         let stdout = match function {
             "create_or_resume_worktree" | "worktree" => {
                 let params: WorktreeParams = parse_params(&request)?;
@@ -109,6 +110,8 @@ impl Provider for GitProvider {
                         &params.branch,
                         &params.path,
                     ],
+                    timeout,
+                    &token,
                 )?;
                 let result = GitResult {
                     stdout,
@@ -129,22 +132,42 @@ impl Provider for GitProvider {
                     .as_deref()
                     .or(params.repo.as_deref())
                     .unwrap_or(".");
-                run_command("git", &["-C", ws, "branch", "--show-current"])?
+                run_command(
+                    "git",
+                    &["-C", ws, "branch", "--show-current"],
+                    timeout,
+                    &token,
+                )?
             }
             "commit" => {
                 let params: CommitParams = parse_params(&request)?;
                 let ws = params.workspace.as_deref().unwrap_or(".");
-                run_command("git", &["-C", ws, "add", "."])?;
-                run_command("git", &["-C", ws, "commit", "-m", &params.message])?
+                run_command("git", &["-C", ws, "add", "."], timeout, &token)?;
+                run_command(
+                    "git",
+                    &["-C", ws, "commit", "-m", &params.message],
+                    timeout,
+                    &token,
+                )?
             }
             "push" => {
                 let params: PushParams = parse_params(&request)?;
                 let ws = params.workspace.as_deref().unwrap_or(".");
                 let remote = params.remote.as_deref().unwrap_or("origin");
                 if params.set_upstream.unwrap_or(true) {
-                    run_command("git", &["-C", ws, "push", "-u", remote, &params.branch])?
+                    run_command(
+                        "git",
+                        &["-C", ws, "push", "-u", remote, &params.branch],
+                        timeout,
+                        &token,
+                    )?
                 } else {
-                    run_command("git", &["-C", ws, "push", remote, &params.branch])?
+                    run_command(
+                        "git",
+                        &["-C", ws, "push", remote, &params.branch],
+                        timeout,
+                        &token,
+                    )?
                 }
             }
             "diff" => {
@@ -154,12 +177,17 @@ impl Provider for GitProvider {
                     .as_deref()
                     .or(params.repo.as_deref())
                     .unwrap_or(".");
-                run_command("git", &["-C", ws, "diff", "--stat"])?
+                run_command("git", &["-C", ws, "diff", "--stat"], timeout, &token)?
             }
             "cleanup" => {
                 let params: CleanupParams = parse_params(&request)?;
                 let repo = params.repo.as_deref().unwrap_or(".");
-                run_command("git", &["-C", repo, "worktree", "remove", &params.path])?
+                run_command(
+                    "git",
+                    &["-C", repo, "worktree", "remove", &params.path],
+                    timeout,
+                    &token,
+                )?
             }
             other => {
                 return Err(Box::new(RuntimeError::new(

@@ -54,6 +54,20 @@ pub struct ActionCommand {
     pub parameters: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionDispatchRecord {
+    pub id: i64,
+    pub dedupe_key: String,
+    pub command: ActionCommand,
+    pub attempts: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlKind {

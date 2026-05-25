@@ -1,3 +1,4 @@
+pub(crate) mod action_dispatches;
 pub(crate) mod artifacts;
 pub(crate) mod automation;
 pub(crate) mod catalog;

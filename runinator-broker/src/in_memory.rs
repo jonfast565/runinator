@@ -6,32 +6,60 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
 #[derive(Default)]
 struct BrokerState {
     queue: VecDeque<BrokerDelivery>,
-    inflight: HashMap<Uuid, BrokerDelivery>,
+    inflight: HashMap<Uuid, Leased<BrokerDelivery>>,
     dedupe: HashSet<String>,
     control_queue: VecDeque<ControlDelivery>,
-    control_inflight: HashMap<Uuid, ControlDelivery>,
+    control_inflight: HashMap<Uuid, Leased<ControlDelivery>>,
     result_queue: VecDeque<ResultDelivery>,
-    result_inflight: HashMap<Uuid, ResultDelivery>,
+    result_inflight: HashMap<Uuid, Leased<ResultDelivery>>,
     result_dedupe: HashSet<String>,
 }
 
-#[derive(Clone, Default)]
+struct Leased<T> {
+    delivery: T,
+    leased_until: Instant,
+}
+
+#[derive(Clone)]
 pub struct InMemoryBroker {
     state: Arc<Mutex<BrokerState>>,
     notify: Arc<Notify>,
     control_notify: Arc<Notify>,
     result_notify: Arc<Notify>,
+    lease_duration: Duration,
 }
 
 impl InMemoryBroker {
+    const DEFAULT_LEASE_DURATION: Duration = Duration::from_secs(30);
+
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_lease_duration(lease_duration: Duration) -> Self {
+        Self {
+            lease_duration,
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for InMemoryBroker {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BrokerState::default())),
+            notify: Arc::new(Notify::new()),
+            control_notify: Arc::new(Notify::new()),
+            result_notify: Arc::new(Notify::new()),
+            lease_duration: Self::DEFAULT_LEASE_DURATION,
+        }
     }
 }
 
@@ -59,10 +87,15 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
+                reclaim_expired_actions(&mut guard, Instant::now());
                 if let Some(delivery) = guard.queue.pop_front() {
-                    guard
-                        .inflight
-                        .insert(delivery.delivery_id, delivery.clone());
+                    guard.inflight.insert(
+                        delivery.delivery_id,
+                        Leased {
+                            delivery: delivery.clone(),
+                            leased_until: Instant::now() + self.lease_duration,
+                        },
+                    );
                     Some(delivery)
                 } else {
                     None
@@ -71,14 +104,17 @@ impl Broker for InMemoryBroker {
                 return Ok(delivery);
             }
 
-            self.notify.notified().await;
+            tokio::select! {
+                _ = self.notify.notified() => {}
+                _ = tokio::time::sleep(self.lease_duration) => {}
+            }
         }
     }
 
     async fn ack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(delivery) = guard.inflight.remove(&delivery_id) {
-            guard.dedupe.remove(&delivery.dedupe_key);
+        if let Some(leased) = guard.inflight.remove(&delivery_id) {
+            guard.dedupe.remove(&leased.delivery.dedupe_key);
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -87,8 +123,8 @@ impl Broker for InMemoryBroker {
 
     async fn nack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(delivery) = guard.inflight.remove(&delivery_id) {
-            guard.queue.push_front(delivery);
+        if let Some(leased) = guard.inflight.remove(&delivery_id) {
+            guard.queue.push_front(redeliver_action(leased.delivery));
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -107,10 +143,15 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
+                reclaim_expired_control(&mut guard, Instant::now());
                 if let Some(delivery) = guard.control_queue.pop_front() {
-                    guard
-                        .control_inflight
-                        .insert(delivery.delivery_id, delivery.clone());
+                    guard.control_inflight.insert(
+                        delivery.delivery_id,
+                        Leased {
+                            delivery: delivery.clone(),
+                            leased_until: Instant::now() + self.lease_duration,
+                        },
+                    );
                     Some(delivery)
                 } else {
                     None
@@ -119,7 +160,10 @@ impl Broker for InMemoryBroker {
                 return Ok(delivery);
             }
 
-            self.control_notify.notified().await;
+            tokio::select! {
+                _ = self.control_notify.notified() => {}
+                _ = tokio::time::sleep(self.lease_duration) => {}
+            }
         }
     }
 
@@ -150,10 +194,15 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
+                reclaim_expired_results(&mut guard, Instant::now());
                 if let Some(delivery) = guard.result_queue.pop_front() {
-                    guard
-                        .result_inflight
-                        .insert(delivery.delivery_id, delivery.clone());
+                    guard.result_inflight.insert(
+                        delivery.delivery_id,
+                        Leased {
+                            delivery: delivery.clone(),
+                            leased_until: Instant::now() + self.lease_duration,
+                        },
+                    );
                     Some(delivery)
                 } else {
                     None
@@ -162,14 +211,17 @@ impl Broker for InMemoryBroker {
                 return Ok(delivery);
             }
 
-            self.result_notify.notified().await;
+            tokio::select! {
+                _ = self.result_notify.notified() => {}
+                _ = tokio::time::sleep(self.lease_duration) => {}
+            }
         }
     }
 
     async fn ack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(delivery) = guard.result_inflight.remove(&delivery_id) {
-            guard.result_dedupe.remove(&delivery.dedupe_key);
+        if let Some(leased) = guard.result_inflight.remove(&delivery_id) {
+            guard.result_dedupe.remove(&leased.delivery.dedupe_key);
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -178,8 +230,10 @@ impl Broker for InMemoryBroker {
 
     async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
-        if let Some(delivery) = guard.result_inflight.remove(&delivery_id) {
-            guard.result_queue.push_front(delivery);
+        if let Some(leased) = guard.result_inflight.remove(&delivery_id) {
+            guard
+                .result_queue
+                .push_front(redeliver_result(leased.delivery));
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -187,14 +241,154 @@ impl Broker for InMemoryBroker {
     }
 }
 
+fn reclaim_expired_actions(state: &mut BrokerState, now: Instant) {
+    let expired = expired_ids(&state.inflight, now);
+    for id in expired {
+        if let Some(leased) = state.inflight.remove(&id) {
+            state.queue.push_front(redeliver_action(leased.delivery));
+        }
+    }
+}
+
+fn reclaim_expired_control(state: &mut BrokerState, now: Instant) {
+    let expired = expired_ids(&state.control_inflight, now);
+    for id in expired {
+        if let Some(leased) = state.control_inflight.remove(&id) {
+            state
+                .control_queue
+                .push_front(redeliver_control(leased.delivery));
+        }
+    }
+}
+
+fn reclaim_expired_results(state: &mut BrokerState, now: Instant) {
+    let expired = expired_ids(&state.result_inflight, now);
+    for id in expired {
+        if let Some(leased) = state.result_inflight.remove(&id) {
+            state
+                .result_queue
+                .push_front(redeliver_result(leased.delivery));
+        }
+    }
+}
+
+fn expired_ids<T>(inflight: &HashMap<Uuid, Leased<T>>, now: Instant) -> Vec<Uuid> {
+    inflight
+        .iter()
+        .filter_map(|(id, leased)| (leased.leased_until <= now).then_some(*id))
+        .collect()
+}
+
+fn redeliver_action(delivery: BrokerDelivery) -> BrokerDelivery {
+    BrokerDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
+fn redeliver_control(delivery: ControlDelivery) -> ControlDelivery {
+    ControlDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
+fn redeliver_result(delivery: ResultDelivery) -> ResultDelivery {
+    ResultDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::Broker;
+    use chrono::Utc;
+    use runinator_comm::ActionCommand;
+    use runinator_models::workflows::WorkflowAction;
+    use serde_json::json;
+
+    use crate::{Broker, BrokerMessage, ResultMessage};
 
     use super::*;
 
     #[test]
     fn in_memory_broker_supports_workflow_result_channels() {
         assert!(InMemoryBroker::new().supports_workflow_result_channels());
+    }
+
+    #[tokio::test]
+    async fn in_memory_broker_redelivers_expired_action_delivery() {
+        let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
+        broker
+            .publish(BrokerMessage {
+                command: action_command(),
+                dedupe_key: Some("lease-action".into()),
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let first = broker.receive("consumer-a").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        let second = broker.receive("consumer-b").await.unwrap();
+
+        assert_ne!(first.delivery_id, second.delivery_id);
+        assert_eq!(first.command.command_id, second.command.command_id);
+        assert!(broker.ack("consumer-a", first.delivery_id).await.is_err());
+        broker.ack("consumer-b", second.delivery_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn in_memory_broker_redelivers_expired_result_delivery() {
+        let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
+        let command = action_command();
+        let event = runinator_comm::WorkflowResultEvent::status(
+            &command,
+            runinator_models::workflows::WorkflowStatus::Succeeded,
+            None,
+            None,
+        );
+        broker
+            .publish_result(ResultMessage {
+                event,
+                dedupe_key: Some("lease-result".into()),
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let first = broker.receive_result("consumer-a").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        let second = broker.receive_result("consumer-b").await.unwrap();
+
+        assert_ne!(first.delivery_id, second.delivery_id);
+        assert_eq!(first.event.event_id, second.event.event_id);
+        assert!(broker
+            .ack_result("consumer-a", first.delivery_id)
+            .await
+            .is_err());
+        broker
+            .ack_result("consumer-b", second.delivery_id)
+            .await
+            .unwrap();
+    }
+
+    fn action_command() -> ActionCommand {
+        ActionCommand {
+            command_id: Uuid::new_v4(),
+            workflow_run_id: 42,
+            workflow_node_run_id: 99,
+            node_id: "node-a".into(),
+            action: WorkflowAction {
+                provider: "test".into(),
+                function: "execute".into(),
+                timeout_seconds: 60,
+                configuration: json!({}),
+                mcp_enabled: false,
+                tags: Vec::new(),
+            },
+            attempt: 1,
+            parameters: json!({}),
+        }
     }
 }

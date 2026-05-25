@@ -355,6 +355,48 @@ async fn apply_workflow_result_event_does_not_regress_terminal_status() {
     let _ = fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-action-dispatches-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let command = action_command(42, 99, "node-a");
+
+    let first = db
+        .enqueue_action_dispatch("dispatch-key".into(), command.clone())
+        .await
+        .unwrap();
+    let second = db
+        .enqueue_action_dispatch("dispatch-key".into(), command.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(first.id, second.id);
+    let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].command.command_id, command.command_id);
+
+    db.mark_action_dispatch_failed(first.id, "broker unavailable".into())
+        .await
+        .unwrap();
+    let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
+    assert_eq!(pending[0].attempts, 1);
+    assert_eq!(pending[0].last_error.as_deref(), Some("broker unavailable"));
+
+    db.mark_action_dispatch_published(first.id).await.unwrap();
+    assert!(
+        db.fetch_pending_action_dispatches(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,

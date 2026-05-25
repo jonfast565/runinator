@@ -2,7 +2,8 @@ use crate::context::*;
 use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use runinator_broker::{Broker, in_memory::InMemoryBroker};
+use runinator_broker::in_memory::InMemoryBroker;
+use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -542,7 +543,7 @@ async fn queued_start_to_action_is_dispatched_in_one_pass() {
     assert_eq!(update.status, WorkflowStatus::Running);
     assert_eq!(update.active_node_id.as_deref(), Some("run"));
     assert_eq!(api.last_node_update().status, WorkflowStatus::Running);
-    broker.receive("test").await.unwrap();
+    assert_eq!(api.action_dispatches().len(), 1);
 }
 
 #[tokio::test]
@@ -962,6 +963,7 @@ struct MockWorkflowState {
     node_runs: Vec<WorkflowNodeRun>,
     workflow_updates: Vec<WorkflowRunUpdate>,
     node_updates: Vec<WorkflowNodeRunUpdate>,
+    action_dispatches: Vec<ActionDispatchRecord>,
 }
 
 impl MockWorkflowApi {
@@ -1020,6 +1022,10 @@ impl MockWorkflowApi {
 
     fn created_workflow_runs(&self) -> Vec<WorkflowRun> {
         self.state.lock().unwrap().created_workflow_runs.clone()
+    }
+
+    fn action_dispatches(&self) -> Vec<ActionDispatchRecord> {
+        self.state.lock().unwrap().action_dispatches.clone()
     }
 }
 
@@ -1325,6 +1331,83 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         result: serde_json::Value,
     ) -> Result<serde_json::Value, SendableError> {
         Ok(result)
+    }
+
+    async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: &str,
+        command: &ActionCommand,
+    ) -> Result<ActionDispatchRecord, SendableError> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(existing) = state
+            .action_dispatches
+            .iter()
+            .find(|dispatch| dispatch.dedupe_key == dedupe_key)
+            .cloned()
+        {
+            return Ok(existing);
+        }
+        let record = ActionDispatchRecord {
+            id: state.action_dispatches.len() as i64 + 1,
+            dedupe_key: dedupe_key.into(),
+            command: command.clone(),
+            attempts: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            published_at: None,
+            last_error: None,
+        };
+        state.action_dispatches.push(record.clone());
+        Ok(record)
+    }
+
+    async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .action_dispatches
+            .iter()
+            .filter(|dispatch| dispatch.published_at.is_none())
+            .take(limit.max(1) as usize)
+            .cloned()
+            .collect())
+    }
+
+    async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
+        if let Some(dispatch) = self
+            .state
+            .lock()
+            .unwrap()
+            .action_dispatches
+            .iter_mut()
+            .find(|dispatch| dispatch.id == dispatch_id)
+        {
+            dispatch.published_at = Some(Utc::now());
+        }
+        Ok(())
+    }
+
+    async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: &str,
+    ) -> Result<(), SendableError> {
+        if let Some(dispatch) = self
+            .state
+            .lock()
+            .unwrap()
+            .action_dispatches
+            .iter_mut()
+            .find(|dispatch| dispatch.id == dispatch_id)
+        {
+            dispatch.attempts += 1;
+            dispatch.last_error = Some(error.into());
+        }
+        Ok(())
     }
 }
 

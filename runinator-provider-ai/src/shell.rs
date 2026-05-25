@@ -1,5 +1,7 @@
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use runinator_models::{
     errors::{RuntimeError, SendableError},
@@ -29,7 +31,7 @@ pub(crate) fn run_shell_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(serde_json::to_string(&input)?.as_bytes())?;
     }
     if token.is_cancelled() {
@@ -39,7 +41,7 @@ pub(crate) fn run_shell_command(
             "AI command canceled".into(),
         )));
     }
-    let output = child.wait_with_output()?;
+    let output = wait_with_timeout(child, request.timeout_secs, token)?;
     if !output.status.success() {
         return Err(Box::new(RuntimeError::new(
             "ai_command.nonzero_exit".into(),
@@ -59,4 +61,37 @@ pub(crate) fn run_shell_command(
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
+}
+
+fn wait_with_timeout(
+    mut child: Child,
+    timeout_secs: i64,
+    token: CancellationToken,
+) -> Result<std::process::Output, SendableError> {
+    let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+    let started = Instant::now();
+    loop {
+        if token.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Box::new(RuntimeError::new(
+                "ai_command.canceled".into(),
+                "AI command canceled".into(),
+            )));
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Box::new(RuntimeError::new(
+                "ai_command.timeout".into(),
+                format!("AI command timed out after {} seconds", timeout.as_secs()),
+            )));
+        }
+        if child.try_wait()?.is_some() {
+            return child
+                .wait_with_output()
+                .map_err(|err| -> SendableError { Box::new(err) });
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }

@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use chrono::{DateTime, Utc};
-use runinator_comm::WorkflowResultEvent;
+use runinator_comm::{ActionCommand, ActionDispatchRecord, WorkflowResultEvent};
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -360,6 +360,32 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scope: String,
         key: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    /// Store an action dispatch intent for durable scheduler recovery.
+    fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: String,
+        command: ActionCommand,
+    ) -> impl Future<Output = Result<ActionDispatchRecord, SendableError>> + Send;
+
+    /// Fetch unpublished action dispatch intents.
+    fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ActionDispatchRecord>, SendableError>> + Send;
+
+    /// Mark an action dispatch as successfully published.
+    fn mark_action_dispatch_published(
+        &self,
+        dispatch_id: i64,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Record a failed action dispatch publish attempt.
+    fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Persist a notification record.
     fn create_notification(

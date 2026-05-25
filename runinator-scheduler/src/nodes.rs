@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use crate::{api::WorkflowSchedulerApi, context::*};
 
 pub async fn process_task_node(
-    broker: &dyn Broker,
+    _broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -85,9 +85,13 @@ pub async fn process_task_node(
             format!("Action node {} has no action configuration", node.id),
         )) as SendableError
     })?;
-    let node_run = api
-        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
-        .await?;
+    let node_run = if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Queued)
+    {
+        node_run.clone()
+    } else {
+        api.create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+            .await?
+    };
     let parameters = build_node_parameters(action, node, workflow_run, node_runs)?;
     let attempt = node_run.attempt + 1;
     let idempotency_scope = "workflow_action_node";
@@ -98,19 +102,19 @@ pub async fn process_task_node(
         .await?
         .is_none()
     {
-        api.put_idempotency_key(
-            idempotency_scope,
-            &idempotency_key,
-            serde_json::json!({ "workflow_node_run_id": node_run.id }),
-        )
-        .await?;
         crate::iteration::enqueue_action_with_dedupe(
-            broker,
+            api,
             workflow_run.id,
             &node_run,
             action,
             parameters.clone(),
             format!("workflow-node-run:{}", node_run.id),
+        )
+        .await?;
+        api.put_idempotency_key(
+            idempotency_scope,
+            &idempotency_key,
+            serde_json::json!({ "workflow_node_run_id": node_run.id }),
         )
         .await?;
     }

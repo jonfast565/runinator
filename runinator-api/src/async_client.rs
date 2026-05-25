@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
+use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::{
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
@@ -537,6 +538,70 @@ where
             .client
             .post(url.clone())
             .json(&json!({}))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn enqueue_action_dispatch(
+        &self,
+        dedupe_key: &str,
+        command: &ActionCommand,
+    ) -> Result<ActionDispatchRecord> {
+        let url = self.build_url("/scheduler/action_dispatches").await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({
+                "dedupe_key": dedupe_key,
+                "command": command,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ActionDispatchRecord>().await?)
+    }
+
+    pub async fn fetch_pending_action_dispatches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>> {
+        let mut url = self
+            .build_url("/scheduler/action_dispatches/pending")
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
+    }
+
+    pub async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!(
+                "/scheduler/action_dispatches/{dispatch_id}/published"
+            ))
+            .await?;
+        let response = self.client.post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn mark_action_dispatch_failed(
+        &self,
+        dispatch_id: i64,
+        error: &str,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!(
+                "/scheduler/action_dispatches/{dispatch_id}/failed"
+            ))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({ "error": error }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
