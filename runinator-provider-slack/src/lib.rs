@@ -43,10 +43,16 @@ impl Provider for SlackProvider {
                         token_param(),
                         ParameterMetadata::required("channel", RuninatorType::String),
                         ParameterMetadata::required("text", RuninatorType::String),
-                        ParameterMetadata::optional("attachments", RuninatorType::Any)
-                            .with_description("Slack attachment array."),
-                        ParameterMetadata::optional("blocks", RuninatorType::Any)
-                            .with_description("Slack block kit array."),
+                        ParameterMetadata::optional(
+                            "attachments",
+                            RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
+                        )
+                        .with_description("Slack attachment array."),
+                        ParameterMetadata::optional(
+                            "blocks",
+                            RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
+                        )
+                        .with_description("Slack block kit array."),
                         ParameterMetadata::optional("thread_ts", RuninatorType::String),
                         ParameterMetadata::optional("mrkdwn", RuninatorType::Boolean),
                         ParameterMetadata::optional("unfurl_links", RuninatorType::Boolean),
@@ -190,8 +196,10 @@ fn token_param() -> ParameterMetadata {
 
 fn slack_results() -> Vec<ResultMetadata> {
     vec![
-        ResultMetadata::new("response", RuninatorType::Any)
-            .with_description("Raw Slack chat.postMessage response body."),
+        ResultMetadata::new("ok", RuninatorType::Boolean),
+        ResultMetadata::new("channel", RuninatorType::String),
+        ResultMetadata::new("ts", RuninatorType::String),
+        ResultMetadata::new("message", RuninatorType::map(RuninatorType::Any)),
     ]
 }
 

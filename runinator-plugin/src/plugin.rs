@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{debug, warn};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    providers::ProviderMetadata,
+    providers::{ProviderMetadata, validate_provider_metadata},
     runs::{
         ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse,
         TaskExecutionResult,
@@ -175,6 +175,12 @@ impl Plugin {
         if metadata.name.trim().is_empty() {
             metadata.name = self.name.clone();
         }
+        validate_provider_metadata(&metadata).map_err(|err| {
+            Box::new(RuntimeError::new(
+                "plugin.metadata.invalid".into(),
+                format!("{}: {err}", self.name),
+            )) as SendableError
+        })?;
         Ok(metadata)
     }
 }

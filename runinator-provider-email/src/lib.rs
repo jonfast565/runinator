@@ -56,7 +56,10 @@ impl Provider for EmailProvider {
                     ])
                     .with_results(vec![
                         ResultMetadata::new("sent", RuninatorType::Boolean),
-                        ResultMetadata::new("notification_id", RuninatorType::Integer),
+                        ResultMetadata::new(
+                            "notification_id",
+                            RuninatorType::Union(vec![RuninatorType::Integer, RuninatorType::Null]),
+                        ),
                         ResultMetadata::new("recipient", RuninatorType::String),
                     ]),
                 ActionMetadata::new(

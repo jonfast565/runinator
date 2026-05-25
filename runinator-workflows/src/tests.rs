@@ -4,6 +4,7 @@ use runinator_models::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
     },
+    types::RuninatorField,
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus},
 };
 use std::collections::HashMap;
@@ -841,4 +842,228 @@ fn typed_validation_requires_map_items_to_be_array() {
     }));
 
     assert!(validate_workflow_with_providers(&wf, &[]).is_err());
+}
+
+fn action_workflow(configuration: serde_json::Value) -> WorkflowDefinition {
+    workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "check" } } },
+            {
+                "id": "check",
+                "kind": "action",
+                "action": {
+                    "provider": "typed",
+                    "function": "check",
+                    "configuration": configuration
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+}
+
+fn check_provider(param_type: RuninatorType) -> ProviderMetadata {
+    ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![
+            ActionMetadata::new("check", "check typed input")
+                .with_parameters(vec![ParameterMetadata::required("config", param_type)]),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    }
+}
+
+#[test]
+fn typed_validation_rejects_provider_default_value_mismatch() {
+    let provider = ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![
+            ActionMetadata::new("check", "check typed input").with_parameters(vec![
+                ParameterMetadata::optional("count", RuninatorType::Integer)
+                    .with_default(serde_json::json!("bad")),
+            ]),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    };
+    let wf = workflow(serde_json::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("provider 'typed.check' parameter 'count' expected integer, got string")
+    );
+}
+
+#[test]
+fn typed_validation_reports_missing_required_nested_literal_field() {
+    let provider = check_provider(RuninatorType::typed_structure([(
+        "env",
+        RuninatorField::required(RuninatorType::typed_structure([(
+            "API_KEY",
+            RuninatorField::required(RuninatorType::String),
+        )])),
+    )]));
+    let wf = action_workflow(serde_json::json!({
+        "config": { "env": {} }
+    }));
+
+    let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.env.API_KEY' is missing required field")
+    );
+    let diagnostic = err
+        .type_diagnostic()
+        .expect("type diagnostic is structured");
+    assert_eq!(diagnostic.path, "action parameter 'config.env.API_KEY'");
+    assert_eq!(diagnostic.expected, "string");
+    assert_eq!(diagnostic.actual, "missing");
+}
+
+#[test]
+fn typed_validation_accepts_absent_optional_literal_field() {
+    let provider = check_provider(RuninatorType::typed_structure([(
+        "env",
+        RuninatorField::optional(RuninatorType::typed_structure([(
+            "API_KEY",
+            RuninatorField::required(RuninatorType::String),
+        )])),
+    )]));
+    let wf = action_workflow(serde_json::json!({ "config": {} }));
+
+    validate_workflow_with_providers(&wf, &[provider]).expect("optional field may be absent");
+}
+
+#[test]
+fn typed_validation_rejects_closed_struct_additional_literal_fields() {
+    let provider = check_provider(RuninatorType::typed_structure([(
+        "name",
+        RuninatorField::required(RuninatorType::String),
+    )]));
+    let wf = action_workflow(serde_json::json!({
+        "config": { "name": "build", "extra": true }
+    }));
+
+    let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.extra' is not allowed")
+    );
+}
+
+#[test]
+fn typed_validation_validates_open_struct_additional_literal_fields() {
+    let provider = check_provider(RuninatorType::open_typed_structure(
+        [("name", RuninatorField::required(RuninatorType::String))],
+        RuninatorType::String,
+    ));
+    let valid = action_workflow(serde_json::json!({
+        "config": { "name": "build", "extra": "ok" }
+    }));
+    validate_workflow_with_providers(&valid, std::slice::from_ref(&provider))
+        .expect("open struct validates additional field values");
+
+    let invalid = action_workflow(serde_json::json!({
+        "config": { "name": "build", "extra": 1 }
+    }));
+    let err = validate_workflow_with_providers(&invalid, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.extra' expected string, got integer")
+    );
+}
+
+#[test]
+fn typed_validation_reports_nested_literal_errors_inside_dynamic_configs() {
+    let provider = check_provider(RuninatorType::typed_structure([(
+        "env",
+        RuninatorField::required(RuninatorType::typed_structure([
+            ("API_KEY", RuninatorField::required(RuninatorType::String)),
+            ("TOKEN", RuninatorField::required(RuninatorType::String)),
+        ])),
+    )]));
+    let mut wf = action_workflow(serde_json::json!({
+        "config": {
+            "env": {
+                "API_KEY": 1,
+                "TOKEN": { "$ref": { "input": ["token"] } }
+            }
+        }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "token",
+        RuninatorField::required(RuninatorType::String),
+    )]);
+
+    let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.env.API_KEY' expected string, got integer")
+    );
+}
+
+#[test]
+fn typed_validation_reports_nested_dynamic_expression_type_errors() {
+    let provider = check_provider(RuninatorType::typed_structure([(
+        "branch",
+        RuninatorField::required(RuninatorType::String),
+    )]));
+    let mut wf = action_workflow(serde_json::json!({
+        "config": {
+            "branch": { "$ref": { "input": ["count"] } }
+        }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "count",
+        RuninatorField::required(RuninatorType::Integer),
+    )]);
+
+    let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.branch' expected string, got integer")
+    );
+}
+
+#[test]
+fn typed_validation_keeps_optional_field_refs_presence_only() {
+    let provider = check_provider(RuninatorType::String);
+    let mut wf = action_workflow(serde_json::json!({
+        "config": { "$ref": { "input": ["maybe_name"] } }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "maybe_name",
+        RuninatorField::optional(RuninatorType::String),
+    )]);
+
+    validate_workflow_with_providers(&wf, &[provider])
+        .expect("optional refs resolve as their declared type");
+}
+
+#[test]
+fn typed_validation_accepts_explicit_coalesce_defaults() {
+    let provider = check_provider(RuninatorType::String);
+    let mut wf = action_workflow(serde_json::json!({
+        "config": {
+            "$coalesce": [
+                { "$ref": { "input": ["maybe_name"] } },
+                "fallback"
+            ]
+        }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "maybe_name",
+        RuninatorField::optional(RuninatorType::String),
+    )]);
+
+    validate_workflow_with_providers(&wf, &[provider])
+        .expect("coalesce resolves to the fallback-compatible type");
 }

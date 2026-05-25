@@ -2,11 +2,13 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use log::{error, info, warn};
+use runinator_models::providers::{ActionMetadata, RuninatorType};
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
+use runinator_models::types::RuninatorField;
 use runinator_models::workflows::WorkflowAction;
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::plugin::Plugin;
-use runinator_plugin::provider::ProviderEventSink;
+use runinator_plugin::provider::{Provider, ProviderEventSink};
 use runinator_utilities::app_data;
 use serde_json::Value;
 use tokio::time;
@@ -51,6 +53,19 @@ pub async fn execute_task(
 
     match resolve_provider(&libraries, &action) {
         Ok(provider) => {
+            let action_metadata = match provider_action_metadata(provider.as_ref(), &action) {
+                Ok(metadata) => metadata,
+                Err(message) => {
+                    error!("{}", message);
+                    return failed_outcome(started_at, message);
+                }
+            };
+            if let Err(message) =
+                validate_runtime_parameters(&action_metadata, &action, &request.parameters)
+            {
+                error!("{}", message);
+                return failed_outcome(started_at, message);
+            }
             let provider_token = token.clone();
             let mut handle = tokio::task::spawn_blocking(move || {
                 provider.execute_service(request, sink, provider_token)
@@ -60,6 +75,10 @@ pub async fn execute_task(
                 join_result = &mut handle => match join_result {
                     Ok(Ok(execution_result)) => {
                         let finished_at = Utc::now();
+                        if let Err(message) = validate_execution_result(&action_metadata, &action, &execution_result) {
+                            error!("{}", message);
+                            return failed_outcome(started_at, message);
+                        }
                         info!(
                             "Action {}.{} completed successfully",
                             action.provider, action.function
@@ -137,16 +156,7 @@ pub async fn execute_task(
                 "Failed to resolve provider for action {}.{}: {}",
                 action.provider, action.function, err
             );
-            ExecutionOutcome {
-                execution_result: None,
-                status: RunStatus::Failed,
-                task_result: ExecutionTaskResult {
-                    success: false,
-                    started_at,
-                    finished_at: Utc::now(),
-                    message: Some(err.to_string()),
-                },
-            }
+            failed_outcome(started_at, err.to_string())
         }
     }
 }
@@ -168,6 +178,91 @@ fn canceled_outcome(started_at: DateTime<Utc>) -> ExecutionOutcome {
             message: Some("Task canceled".into()),
         },
     }
+}
+
+fn failed_outcome(started_at: DateTime<Utc>, message: String) -> ExecutionOutcome {
+    ExecutionOutcome {
+        execution_result: None,
+        status: RunStatus::Failed,
+        task_result: ExecutionTaskResult {
+            success: false,
+            started_at,
+            finished_at: Utc::now(),
+            message: Some(message),
+        },
+    }
+}
+
+fn provider_action_metadata(
+    provider: &dyn Provider,
+    action: &WorkflowAction,
+) -> Result<ActionMetadata, String> {
+    let metadata = provider.metadata();
+    let Some(action_metadata) = metadata
+        .actions
+        .iter()
+        .find(|candidate| candidate.function_name == action.function)
+    else {
+        return Err(format!(
+            "Provider '{}' does not advertise action '{}'",
+            action.provider, action.function
+        ));
+    };
+    Ok(action_metadata.clone())
+}
+
+fn validate_runtime_parameters(
+    action_metadata: &ActionMetadata,
+    action: &WorkflowAction,
+    parameters: &Value,
+) -> Result<(), String> {
+    let expected = action_parameters_type(action_metadata);
+    expected.validate_value(parameters).map_err(|violation| {
+        violation.message_with_label(&format!(
+            "resolved action configuration '{}.{}'",
+            action.provider, action.function
+        ))
+    })
+}
+
+pub(crate) fn validate_execution_result(
+    action_metadata: &ActionMetadata,
+    action: &WorkflowAction,
+    result: &TaskExecutionResult,
+) -> Result<(), String> {
+    let Some(output) = result.output_json.as_ref() else {
+        return Ok(());
+    };
+    let expected = action_results_type(action_metadata);
+    expected.validate_value(output).map_err(|violation| {
+        violation.message_with_label(&format!(
+            "provider output '{}.{}'",
+            action.provider, action.function
+        ))
+    })
+}
+
+fn action_parameters_type(action: &ActionMetadata) -> RuninatorType {
+    RuninatorType::typed_structure(action.parameters.iter().map(|parameter| {
+        let field = if parameter.required {
+            RuninatorField::required(parameter.ty.clone())
+        } else {
+            RuninatorField::optional(parameter.ty.clone())
+        };
+        (parameter.name.clone(), field)
+    }))
+}
+
+fn action_results_type(action: &ActionMetadata) -> RuninatorType {
+    RuninatorType::open_typed_structure(
+        action.results.iter().map(|result| {
+            (
+                result.name.clone(),
+                RuninatorField::optional(result.ty.clone()),
+            )
+        }),
+        RuninatorType::Any,
+    )
 }
 
 fn build_provider_request(

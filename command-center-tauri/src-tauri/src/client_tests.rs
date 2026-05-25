@@ -18,6 +18,16 @@ fn extracts_json_error_message() {
 }
 
 #[test]
+fn extracts_structured_json_error_message() {
+    assert_eq!(
+        extract_error_message(
+            r#"{"message":"invalid type","path":"config.name","expected":"string","actual":"integer"}"#
+        ),
+        Some("invalid type (config.name: expected string, got integer)".to_string())
+    );
+}
+
+#[test]
 fn ignores_empty_json_error_message() {
     assert_eq!(extract_error_message(r#"{"message":""}"#), None);
 }

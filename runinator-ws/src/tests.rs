@@ -17,6 +17,7 @@ use runinator_models::{
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
+use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
 use serde_json::json;
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -174,6 +175,30 @@ fn validate_workflow_rejects_invalid_definition_without_persistence() {
     });
 
     assert!(crate::repository::validate_workflow_definition(&workflow).is_err());
+}
+
+#[test]
+fn validation_error_response_exposes_structured_type_diagnostic() {
+    let err = WorkflowValidationError::TypeDiagnostic(WorkflowTypeDiagnostic {
+        path: "action parameter 'config.name'".into(),
+        expected: "string".into(),
+        actual: "integer".into(),
+        message: "action parameter 'config.name' expected string, got integer".into(),
+    });
+
+    let (status, axum::Json(response)) = crate::responses::validation_error(&err);
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    match response {
+        crate::models::ApiResponse::ApiError(error) => {
+            assert_eq!(
+                error.path.as_deref(),
+                Some("action parameter 'config.name'")
+            );
+            assert_eq!(error.expected.as_deref(), Some("string"));
+            assert_eq!(error.actual.as_deref(), Some("integer"));
+        }
+        _ => panic!("expected api error"),
+    }
 }
 
 #[tokio::test]

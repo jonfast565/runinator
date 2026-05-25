@@ -12,6 +12,7 @@ use runinator_models::{
         ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
+    types::RuninatorField,
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde_json::json;
@@ -37,14 +38,29 @@ impl Provider for SqlProvider {
                     ParameterMetadata::required("connection_string", RuninatorType::String)
                         .secret(),
                     ParameterMetadata::required("dump_folder", RuninatorType::String),
-                    ParameterMetadata::required("queries", RuninatorType::map(RuninatorType::Any)),
+                    ParameterMetadata::required(
+                        "queries",
+                        RuninatorType::array(RuninatorType::typed_structure([
+                            ("sql", RuninatorField::required(RuninatorType::String)),
+                            ("name", RuninatorField::optional(RuninatorType::String)),
+                        ])),
+                    ),
                     ParameterMetadata::optional("file_prefix", RuninatorType::String),
                     ParameterMetadata::optional("format", RuninatorType::String)
                         .with_default(json!("excel")),
                 ])
                 .with_results(vec![
                     ResultMetadata::new("provider", RuninatorType::String),
-                    ResultMetadata::new("exports", RuninatorType::map(RuninatorType::Any)),
+                    ResultMetadata::new(
+                        "exports",
+                        RuninatorType::array(RuninatorType::structure([
+                            ("name", RuninatorType::String),
+                            ("rows", RuninatorType::Integer),
+                            ("path", RuninatorType::String),
+                            ("format", RuninatorType::String),
+                            ("size_bytes", RuninatorType::Integer),
+                        ])),
+                    ),
                 ]),
             ],
             metadata: ProviderRuntimeMetadata {

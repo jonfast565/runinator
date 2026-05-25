@@ -112,7 +112,7 @@ impl Provider for GitHubProvider {
                         ParameterMetadata::required("ref", RuninatorType::String),
                         ParameterMetadata::optional(
                             "inputs",
-                            RuninatorType::map(RuninatorType::Any),
+                            RuninatorType::map(RuninatorType::String),
                         ),
                     ])
                     .with_results(json_results()),

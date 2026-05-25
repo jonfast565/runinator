@@ -131,6 +131,55 @@ impl ParameterMetadata {
     }
 }
 
+pub fn validate_provider_metadata(metadata: &ProviderMetadata) -> Result<(), String> {
+    if metadata.name.trim().is_empty() {
+        return Err("provider name is required".into());
+    }
+    for action in &metadata.actions {
+        validate_action_metadata(metadata, action)?;
+    }
+    Ok(())
+}
+
+fn validate_action_metadata(
+    provider: &ProviderMetadata,
+    action: &ActionMetadata,
+) -> Result<(), String> {
+    if action.function_name.trim().is_empty() {
+        return Err(format!(
+            "provider '{}' has an action without a function name",
+            provider.name
+        ));
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for parameter in &action.parameters {
+        if parameter.name.trim().is_empty() {
+            return Err(format!(
+                "provider '{}.{}' has a parameter without a name",
+                provider.name, action.function_name
+            ));
+        }
+        if !names.insert(parameter.name.as_str()) {
+            return Err(format!(
+                "provider '{}.{}' has duplicate parameter '{}'",
+                provider.name, action.function_name, parameter.name
+            ));
+        }
+        if let Some(default_value) = &parameter.default_value {
+            parameter
+                .ty
+                .validate_value(default_value)
+                .map_err(|violation| {
+                    violation.message_with_label(&format!(
+                        "provider '{}.{}' parameter '{}'",
+                        provider.name, action.function_name, parameter.name
+                    ))
+                })?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResultMetadata {
     pub name: String,

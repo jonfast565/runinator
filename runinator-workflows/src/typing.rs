@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use runinator_models::{
-    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata},
-    types::RuninatorType,
+    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
+    types::{RuninatorType, TypeViolation},
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind},
 };
 use serde_json::Value;
 
 use crate::{
     conditions::validate_condition,
-    errors::WorkflowValidationError,
+    errors::{WorkflowTypeDiagnostic, WorkflowValidationError},
     expressions::{parse_expression, serialize_value_ref},
     parameters::{parse_map_parameters, parse_switch_parameters},
     types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef},
@@ -30,6 +30,7 @@ pub fn validate_workflow_types(
     providers: &[ProviderMetadata],
 ) -> Result<(), WorkflowValidationError> {
     let provider_actions = provider_actions(providers);
+    validate_provider_metadata_set(providers)?;
     let mut context = TypeContext {
         input: workflow.input_type.clone(),
         workflow: workflow_context_type(),
@@ -61,6 +62,15 @@ pub fn validate_workflow_types(
         validate_node_types(node, &context, &provider_actions)?;
     }
 
+    Ok(())
+}
+
+fn validate_provider_metadata_set(
+    providers: &[ProviderMetadata],
+) -> Result<(), WorkflowValidationError> {
+    for provider in providers {
+        validate_provider_metadata(provider).map_err(WorkflowValidationError::TypeError)?;
+    }
     Ok(())
 }
 
@@ -292,12 +302,7 @@ fn validate_action_configuration(
                 node.id, name
             )));
         };
-        expect_value_type(
-            value,
-            context,
-            &parameter_type(param),
-            &format!("action parameter '{name}'"),
-        )?;
+        expect_parameter_value_type(value, context, &parameter_type(param), name)?;
     }
     Ok(())
 }
@@ -331,6 +336,20 @@ fn infer_expression_type(
                 }
             }
             Ok(WorkflowType::String)
+        }
+        WorkflowExpression::Coalesce(items) => {
+            let mut resolved = None;
+            for item in items {
+                let ty = infer_expression_type(item, context)?;
+                if ty == WorkflowType::Null {
+                    continue;
+                }
+                resolved = Some(match resolved {
+                    None => ty,
+                    Some(existing) => common_type(existing, ty).unwrap_or(WorkflowType::Any),
+                });
+            }
+            Ok(resolved.unwrap_or(WorkflowType::Null))
         }
         WorkflowExpression::ToString(nested) => {
             let ty = infer_expression_type(nested, context)?;
@@ -499,7 +518,7 @@ fn validate_condition_types(
                 "condition 'in' requires an array operand".into(),
             ));
         };
-        assignable(&left_type, &item_type)?;
+        assignable_type(&left_type, &item_type)?;
         return Ok(());
     }
     if let Some(expected) = object
@@ -543,7 +562,7 @@ fn validate_contains_type(
 ) -> Result<(), WorkflowValidationError> {
     match left {
         WorkflowType::String => expect_type(expected, &WorkflowType::String, "contains operand"),
-        WorkflowType::Array(item_type) => assignable(expected, item_type),
+        WorkflowType::Array(item_type) => assignable_type(expected, item_type),
         WorkflowType::Map(_) | WorkflowType::Struct { .. } => {
             expect_type(expected, &WorkflowType::String, "object key")
         }
@@ -563,102 +582,123 @@ fn expect_value_type(
     expect_type(&actual, expected, label)
 }
 
+fn expect_parameter_value_type(
+    value: &Value,
+    context: &TypeContext,
+    expected: &WorkflowType,
+    name: &str,
+) -> Result<(), WorkflowValidationError> {
+    let label = format!("action parameter '{name}'");
+    expect_mixed_value_type(value, context, expected, &label)
+}
+
+fn expect_mixed_value_type(
+    value: &Value,
+    context: &TypeContext,
+    expected: &WorkflowType,
+    label: &str,
+) -> Result<(), WorkflowValidationError> {
+    if is_expression_object(value) {
+        let expression = parse_expression(value)?;
+        if let WorkflowExpression::Literal(literal) = &expression {
+            return expected
+                .validate_value(literal)
+                .map_err(|violation| type_error(label, &violation));
+        }
+        let actual = infer_expression_type(&expression, context)?;
+        return expect_type(&actual, expected, label);
+    }
+
+    match (expected, value) {
+        (WorkflowType::Array(item_type), Value::Array(items)) => {
+            for (index, item) in items.iter().enumerate() {
+                let child_label = TypeViolation::label_with_path(label, &format!("[{index}]"));
+                expect_mixed_value_type(item, context, item_type, &child_label)?;
+            }
+            Ok(())
+        }
+        (WorkflowType::Map(value_type), Value::Object(object)) => {
+            for (key, nested) in object {
+                let child_label = TypeViolation::label_with_path(label, &format!(".{key}"));
+                expect_mixed_value_type(nested, context, value_type, &child_label)?;
+            }
+            Ok(())
+        }
+        (WorkflowType::Struct { fields, additional }, Value::Object(object)) => {
+            for (key, field) in fields {
+                let child_label = TypeViolation::label_with_path(label, &format!(".{key}"));
+                let Some(nested) = object.get(key) else {
+                    if field.required {
+                        return Err(type_error(
+                            &child_label,
+                            &TypeViolation::at(&[], field.ty.describe(), "missing"),
+                        ));
+                    }
+                    continue;
+                };
+                expect_mixed_value_type(nested, context, &field.ty, &child_label)?;
+            }
+            for (key, nested) in object {
+                if fields.contains_key(key) {
+                    continue;
+                }
+                let child_label = TypeViolation::label_with_path(label, &format!(".{key}"));
+                let Some(additional) = additional else {
+                    return Err(type_error(
+                        &child_label,
+                        &TypeViolation::at(&[], "no additional fields", "unexpected"),
+                    ));
+                };
+                expect_mixed_value_type(nested, context, additional, &child_label)?;
+            }
+            Ok(())
+        }
+        _ => expected
+            .validate_value(value)
+            .map_err(|violation| type_error(label, &violation)),
+    }
+}
+
+fn is_expression_object(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.contains_key("$ref")
+        || object.contains_key("$concat")
+        || object.contains_key("$coalesce")
+        || object.contains_key("$literal")
+        || object.contains_key("$to_string")
+        || object.contains_key("$to_json_string")
+        || object.contains_key("$node")
+        || object.contains_key("$value")
+}
+
 fn expect_type(
     actual: &WorkflowType,
     expected: &WorkflowType,
     label: &str,
 ) -> Result<(), WorkflowValidationError> {
-    assignable(actual, expected).map_err(|_| {
-        WorkflowValidationError::TypeError(format!(
-            "{label} expected {}, got {}",
-            expected.describe(),
-            actual.describe()
-        ))
-    })
+    actual
+        .validate_assignable_to(expected)
+        .map_err(|violation| type_error(label, &violation))
 }
 
-fn assignable(
+fn assignable_type(
     actual: &WorkflowType,
     expected: &WorkflowType,
 ) -> Result<(), WorkflowValidationError> {
-    if actual == expected || matches!(expected, WorkflowType::Any) {
-        return Ok(());
-    }
-    if matches!(
-        (actual, expected),
-        (WorkflowType::Integer, WorkflowType::Number)
-    ) {
-        return Ok(());
-    }
-    match (actual, expected) {
-        (WorkflowType::Array(actual), WorkflowType::Array(expected)) => {
-            assignable(actual, expected)
-        }
-        (WorkflowType::Map(actual), WorkflowType::Map(expected)) => assignable(actual, expected),
-        (
-            WorkflowType::Struct {
-                fields: actual_fields,
-                additional: actual_additional,
-            },
-            WorkflowType::Struct {
-                fields: expected_fields,
-                ..
-            },
-        ) => {
-            for (key, expected_type) in expected_fields {
-                let actual_type = actual_fields
-                    .get(key)
-                    .or_else(|| actual_additional.as_ref().map(|ty| ty.as_ref()))
-                    .ok_or_else(|| {
-                        WorkflowValidationError::TypeError(format!(
-                            "object is missing field '{key}'"
-                        ))
-                    })?;
-                assignable(actual_type, expected_type)?;
-            }
-            Ok(())
-        }
-        (WorkflowType::Struct { fields, additional }, WorkflowType::Map(expected)) => {
-            for actual_type in fields.values() {
-                assignable(actual_type, expected)?;
-            }
-            if let Some(additional) = additional {
-                assignable(additional, expected)?;
-            }
-            Ok(())
-        }
-        (WorkflowType::Map(actual), WorkflowType::Struct { fields, .. }) => {
-            for expected_type in fields.values() {
-                assignable(actual, expected_type)?;
-            }
-            Ok(())
-        }
-        (WorkflowType::Union(variants), expected) => {
-            for variant in variants {
-                assignable(variant, expected)?;
-            }
-            Ok(())
-        }
-        (actual, WorkflowType::Union(variants)) => {
-            if variants
-                .iter()
-                .any(|variant| assignable(actual, variant).is_ok())
-            {
-                Ok(())
-            } else {
-                Err(WorkflowValidationError::TypeError(format!(
-                    "expected {}, got {}",
-                    expected.describe(),
-                    actual.describe()
-                )))
-            }
-        }
-        _ => Err(WorkflowValidationError::TypeError(format!(
-            "expected {}, got {}",
-            expected.describe(),
-            actual.describe()
-        ))),
-    }
+    actual
+        .validate_assignable_to(expected)
+        .map_err(|violation| WorkflowValidationError::TypeError(violation.to_string()))
+}
+
+fn type_error(label: &str, violation: &TypeViolation) -> WorkflowValidationError {
+    WorkflowValidationError::TypeDiagnostic(WorkflowTypeDiagnostic {
+        path: TypeViolation::label_with_path(label, &violation.path),
+        expected: violation.expected.clone(),
+        actual: violation.actual.clone(),
+        message: violation.message_with_label(label),
+    })
 }
 
 fn comparable_types(

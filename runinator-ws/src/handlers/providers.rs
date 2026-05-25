@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::{bundles::ProviderBundle, providers::ProviderMetadata};
+use runinator_models::{
+    bundles::ProviderBundle,
+    providers::{ProviderMetadata, validate_provider_metadata},
+};
 
 use crate::models::ApiResponse;
 use crate::repository;
-use crate::responses::api_error;
+use crate::responses::{api_error, bad_request};
 
 pub(crate) async fn get_providers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -28,6 +31,9 @@ pub(crate) async fn upsert_provider<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(err) = validate_provider_metadata(&provider) {
+        return bad_request(err);
+    }
     let item = provider_catalog_item(&provider);
     let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
         Ok(item) => item,
@@ -46,6 +52,9 @@ pub(crate) async fn import_provider_bundle<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     let mut imported = Vec::with_capacity(bundle.providers.len());
     for provider in &bundle.providers {
+        if let Err(err) = validate_provider_metadata(provider) {
+            return bad_request(err);
+        }
         let item = provider_catalog_item(provider);
         let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
             Ok(item) => item,

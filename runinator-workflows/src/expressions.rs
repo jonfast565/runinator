@@ -22,6 +22,7 @@ pub(crate) fn parse_expression(
         Value::Object(map)
             if map.contains_key("$ref")
                 || map.contains_key("$concat")
+                || map.contains_key("$coalesce")
                 || map.contains_key("$literal")
                 || map.contains_key("$to_string")
                 || map.contains_key("$to_json_string")
@@ -38,6 +39,18 @@ pub(crate) fn parse_expression(
                     .as_array()
                     .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
                 return Ok(WorkflowExpression::Concat(
+                    items
+                        .iter()
+                        .map(parse_expression)
+                        .collect::<Result<Vec<_>, _>>()?,
+                ));
+            }
+            if let Some(items) = map.get("$coalesce") {
+                let items = items
+                    .as_array()
+                    .filter(|items| !items.is_empty())
+                    .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+                return Ok(WorkflowExpression::Coalesce(
                     items
                         .iter()
                         .map(parse_expression)
@@ -100,6 +113,15 @@ pub(crate) fn evaluate_static_expression(
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         )]))),
+        WorkflowExpression::Coalesce(items) => Ok(Value::Object(Map::from_iter([(
+            "$coalesce".into(),
+            Value::Array(
+                items
+                    .into_iter()
+                    .map(evaluate_static_expression)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        )]))),
         WorkflowExpression::ToString(nested) => Ok(Value::Object(Map::from_iter([(
             "$to_string".into(),
             evaluate_static_expression(*nested)?,
@@ -143,6 +165,15 @@ pub(crate) fn evaluate_expression(
                 rendered.push_str(&value);
             }
             Ok(Value::String(rendered))
+        }
+        WorkflowExpression::Coalesce(items) => {
+            for item in items {
+                let value = evaluate_expression(item, context)?;
+                if !value.is_null() {
+                    return Ok(value);
+                }
+            }
+            Ok(Value::Null)
         }
         WorkflowExpression::ToString(nested) => match evaluate_expression(nested, context)? {
             Value::String(value) => Ok(Value::String(value)),

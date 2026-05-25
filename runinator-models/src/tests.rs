@@ -1,4 +1,8 @@
-use crate::{providers::ProviderMetadata, types::RuninatorType, workflows::*};
+use crate::{
+    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
+    types::{RuninatorField, RuninatorType},
+    workflows::*,
+};
 use serde_json::json;
 
 #[test]
@@ -180,18 +184,45 @@ fn provider_metadata_accepts_catalog_provider_name() {
 }
 
 #[test]
+fn provider_metadata_validation_rejects_bad_defaults_and_duplicates() {
+    let provider = ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![ActionMetadata::new("run", "run").with_parameters(vec![
+            ParameterMetadata::optional("count", RuninatorType::Integer).with_default(json!("bad")),
+        ])],
+        metadata: Default::default(),
+    };
+    let err = validate_provider_metadata(&provider).unwrap_err();
+    assert!(err.contains("provider 'typed.run' parameter 'count' expected integer, got string"));
+
+    let duplicate = ProviderMetadata {
+        name: "typed".into(),
+        actions: vec![ActionMetadata::new("run", "run").with_parameters(vec![
+            ParameterMetadata::required("name", RuninatorType::String),
+            ParameterMetadata::optional("name", RuninatorType::String),
+        ])],
+        metadata: Default::default(),
+    };
+    let err = validate_provider_metadata(&duplicate).unwrap_err();
+    assert!(err.contains("duplicate parameter 'name'"));
+}
+
+#[test]
 fn runinator_type_round_trips_recursive_shapes() {
-    let ty = RuninatorType::structure([
-        ("name", RuninatorType::String),
+    let ty = RuninatorType::typed_structure([
+        ("name", RuninatorField::required(RuninatorType::String)),
         (
             "labels",
-            RuninatorType::map(RuninatorType::array(RuninatorType::String)),
+            RuninatorField::optional(RuninatorType::map(RuninatorType::array(
+                RuninatorType::String,
+            ))),
         ),
     ]);
 
     let value = serde_json::to_value(&ty).unwrap();
     assert_eq!(value["type"], "struct");
-    assert_eq!(value["fields"]["labels"]["type"], "map");
+    assert_eq!(value["fields"]["labels"]["ty"]["type"], "map");
+    assert_eq!(value["fields"]["labels"]["required"], false);
 
     let decoded: RuninatorType = serde_json::from_value(value).unwrap();
     assert_eq!(decoded, ty);
@@ -201,6 +232,7 @@ fn runinator_type_round_trips_recursive_shapes() {
 fn runinator_type_imports_legacy_json_schema() {
     let ty: RuninatorType = serde_json::from_value(json!({
         "type": "object",
+        "required": ["items"],
         "properties": {
             "items": {
                 "type": "array",
@@ -212,8 +244,284 @@ fn runinator_type_imports_legacy_json_schema() {
 
     assert_eq!(
         ty,
-        RuninatorType::structure([("items", RuninatorType::array(RuninatorType::Integer))])
+        RuninatorType::typed_structure([(
+            "items",
+            RuninatorField::required(RuninatorType::array(RuninatorType::Integer))
+        )])
     );
+}
+
+#[test]
+fn runinator_type_imports_json_schema_edge_shapes() {
+    assert_eq!(
+        RuninatorType::from_json_schema(&json!({ "oneOf": [
+            { "type": "string" },
+            { "type": "integer" }
+        ] })),
+        RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Integer])
+    );
+    assert_eq!(
+        RuninatorType::from_json_schema(
+            &json!({ "type": ["array", "null"], "items": { "type": "string" } })
+        ),
+        RuninatorType::Union(vec![
+            RuninatorType::array(RuninatorType::String),
+            RuninatorType::Null
+        ])
+    );
+    assert_eq!(
+        RuninatorType::from_json_schema(&json!({ "enum": ["open", "closed"] })),
+        RuninatorType::String
+    );
+    assert_eq!(
+        RuninatorType::from_json_schema(&json!({ "const": 1 })),
+        RuninatorType::Integer
+    );
+    assert_eq!(
+        RuninatorType::from_json_schema(&json!({
+            "allOf": [
+                {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": { "name": { "type": "string" } }
+                },
+                {
+                    "type": "object",
+                    "properties": { "count": { "type": "integer" } }
+                }
+            ]
+        })),
+        RuninatorType::typed_structure([
+            ("count", RuninatorField::optional(RuninatorType::Integer)),
+            ("name", RuninatorField::required(RuninatorType::String)),
+        ])
+    );
+}
+
+#[test]
+fn runinator_type_checked_json_schema_rejects_unsupported_edges() {
+    let tuple_items = RuninatorType::from_json_schema_checked(&json!({
+        "type": "array",
+        "items": [{ "type": "string" }]
+    }))
+    .unwrap_err();
+    assert!(tuple_items.contains("$.items tuple arrays are not supported"));
+
+    let pattern_properties = RuninatorType::from_json_schema_checked(&json!({
+        "type": "object",
+        "patternProperties": {
+            "^x-": { "type": "string" }
+        }
+    }))
+    .unwrap_err();
+    assert!(pattern_properties.contains("$.patternProperties is not supported"));
+
+    RuninatorType::from_json_schema_checked(&json!({
+        "oneOf": [{ "type": "string" }, { "type": "null" }]
+    }))
+    .expect("supported oneOf schemas pass checked conversion");
+}
+
+#[test]
+fn runinator_type_accepts_legacy_schema_field_required_arrays() {
+    let ty: RuninatorType = serde_json::from_value(json!({
+        "type": "struct",
+        "fields": {
+            "config": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            }
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        ty,
+        RuninatorType::typed_structure([(
+            "config",
+            RuninatorField::required(RuninatorType::typed_structure([(
+                "name",
+                RuninatorField::required(RuninatorType::String)
+            )]))
+        )])
+    );
+}
+
+#[test]
+fn runinator_type_validates_recursive_values() {
+    let ty = RuninatorType::open_typed_structure(
+        [
+            ("name", RuninatorField::required(RuninatorType::String)),
+            (
+                "tags",
+                RuninatorField::optional(RuninatorType::array(RuninatorType::String)),
+            ),
+            (
+                "env",
+                RuninatorField::required(RuninatorType::map(RuninatorType::String)),
+            ),
+        ],
+        RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Integer]),
+    );
+
+    ty.validate_value(&json!({
+        "name": "build",
+        "env": { "RUST_LOG": "info" },
+        "attempt": 1
+    }))
+    .expect("valid recursive value passes");
+
+    let err = ty
+        .validate_value(&json!({
+            "name": "build",
+            "env": { "RUST_LOG": 1 }
+        }))
+        .expect_err("nested map type is checked");
+    assert_eq!(err.path, "$.env.RUST_LOG");
+    assert_eq!(err.expected, "string");
+    assert_eq!(err.actual, "integer");
+
+    let missing = ty
+        .validate_value(&json!({ "env": {} }))
+        .expect_err("required fields are checked");
+    assert_eq!(missing.path, "$.name");
+    assert_eq!(missing.actual, "missing");
+}
+
+#[test]
+fn runinator_type_rejects_closed_struct_additional_fields() {
+    let ty =
+        RuninatorType::typed_structure([("name", RuninatorField::required(RuninatorType::String))]);
+
+    let err = ty
+        .validate_value(&json!({ "name": "build", "extra": true }))
+        .expect_err("closed struct rejects additional fields");
+    assert_eq!(err.path, "$.extra");
+    assert_eq!(err.actual, "unexpected");
+}
+
+#[test]
+fn runinator_type_validates_assignability() {
+    RuninatorType::Integer
+        .validate_assignable_to(&RuninatorType::Number)
+        .expect("integer is assignable to number");
+    RuninatorType::array(RuninatorType::Integer)
+        .validate_assignable_to(&RuninatorType::array(RuninatorType::Number))
+        .expect("array item assignability is recursive");
+    RuninatorType::typed_structure([
+        ("name", RuninatorField::required(RuninatorType::String)),
+        ("count", RuninatorField::required(RuninatorType::Integer)),
+    ])
+    .validate_assignable_to(&RuninatorType::open_typed_structure(
+        [("name", RuninatorField::required(RuninatorType::String))],
+        RuninatorType::Number,
+    ))
+    .expect("struct extra fields are checked through additional type");
+    RuninatorType::String
+        .validate_assignable_to(&RuninatorType::Union(vec![
+            RuninatorType::Integer,
+            RuninatorType::String,
+        ]))
+        .expect("actual type may match one expected union variant");
+}
+
+#[test]
+fn runinator_type_reports_nested_assignability_paths() {
+    let actual = RuninatorType::typed_structure([(
+        "env",
+        RuninatorField::required(RuninatorType::typed_structure([(
+            "API_KEY",
+            RuninatorField::required(RuninatorType::Integer),
+        )])),
+    )]);
+    let expected = RuninatorType::typed_structure([(
+        "env",
+        RuninatorField::required(RuninatorType::typed_structure([(
+            "API_KEY",
+            RuninatorField::required(RuninatorType::String),
+        )])),
+    )]);
+
+    let err = actual
+        .validate_assignable_to(&expected)
+        .expect_err("nested mismatch reports precise path");
+    assert_eq!(err.path, "$.env.API_KEY");
+    assert_eq!(err.expected, "string");
+    assert_eq!(err.actual, "integer");
+
+    let missing =
+        RuninatorType::typed_structure([("env", RuninatorField::optional(RuninatorType::String))])
+            .validate_assignable_to(&RuninatorType::typed_structure([(
+                "env",
+                RuninatorField::required(RuninatorType::String),
+            )]))
+            .expect_err("optional actual field cannot satisfy required expected field");
+    assert_eq!(missing.path, "$.env");
+    assert_eq!(missing.actual, "missing");
+}
+
+#[test]
+fn runinator_type_rejects_malformed_field_metadata_and_empty_unions() {
+    let malformed_required = serde_json::from_value::<RuninatorType>(json!({
+        "type": "struct",
+        "fields": {
+            "name": {
+                "ty": { "type": "string" },
+                "required": "sometimes"
+            }
+        }
+    }))
+    .unwrap_err();
+    assert!(
+        malformed_required
+            .to_string()
+            .contains("field required must be a boolean")
+    );
+
+    let legacy_required_without_ty = serde_json::from_value::<RuninatorType>(json!({
+        "type": "struct",
+        "fields": {
+            "name": {
+                "type": "string",
+                "required": false
+            }
+        }
+    }))
+    .unwrap_err();
+    assert!(
+        legacy_required_without_ty
+            .to_string()
+            .contains("field required requires field ty")
+    );
+
+    let empty_union = serde_json::from_value::<RuninatorType>(json!({
+        "type": "union",
+        "variants": []
+    }))
+    .unwrap_err();
+    assert!(
+        empty_union
+            .to_string()
+            .contains("union variants must not be empty")
+    );
+}
+
+#[test]
+fn runinator_type_reports_specific_union_validation_errors() {
+    let ty = RuninatorType::Union(vec![
+        RuninatorType::String,
+        RuninatorType::typed_structure([("name", RuninatorField::required(RuninatorType::String))]),
+    ]);
+
+    let err = ty
+        .validate_value(&json!({ "name": 1 }))
+        .expect_err("union reports nested variant error");
+    assert_eq!(err.path, "$.name");
+    assert_eq!(err.expected, "string");
+    assert_eq!(err.actual, "integer");
 }
 
 #[test]

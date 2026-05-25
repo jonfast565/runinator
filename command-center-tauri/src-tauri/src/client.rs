@@ -76,13 +76,21 @@ pub async fn handle_response(
 fn extract_error_message(body: &str) -> Option<String> {
     serde_json::from_str::<Value>(body)
         .ok()
-        .and_then(|value| {
-            value
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+        .and_then(|value| error_message_from_value(&value))
         .filter(|message| !message.trim().is_empty())
+}
+
+fn error_message_from_value(value: &Value) -> Option<String> {
+    let message = value.get("message").and_then(Value::as_str)?;
+    let path = value.get("path").and_then(Value::as_str);
+    let expected = value.get("expected").and_then(Value::as_str);
+    let actual = value.get("actual").and_then(Value::as_str);
+    match (path, expected, actual) {
+        (Some(path), Some(expected), Some(actual)) => Some(format!(
+            "{message} ({path}: expected {expected}, got {actual})"
+        )),
+        _ => Some(message.to_owned()),
+    }
 }
 
 #[cfg(test)]

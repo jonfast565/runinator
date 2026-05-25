@@ -13,7 +13,7 @@ mod typing;
 mod validation;
 
 pub use conditions::{evaluate_condition, next_transition};
-pub use errors::WorkflowValidationError;
+pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::resolve_value_refs;
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{

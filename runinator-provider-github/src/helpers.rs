@@ -159,10 +159,13 @@ pub(crate) fn pull_request_results() -> Vec<ResultMetadata> {
             .with_description("Pull request web URL."),
         ResultMetadata::new(
             "head",
-            RuninatorType::structure([
-                ("sha", RuninatorType::String),
-                ("ref", RuninatorType::String),
-            ]),
+            RuninatorType::open_structure(
+                [
+                    ("sha", RuninatorType::String),
+                    ("ref", RuninatorType::String),
+                ],
+                RuninatorType::Any,
+            ),
         )
         .with_description("Pull request head reference."),
         ResultMetadata::new("response", RuninatorType::Any)

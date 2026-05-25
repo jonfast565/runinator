@@ -17,15 +17,22 @@ pub(crate) fn issue_key_param() -> ParameterMetadata {
 }
 
 pub(crate) fn jira_results() -> Vec<ResultMetadata> {
-    let status_type = RuninatorType::structure([("name", RuninatorType::String)]);
-    let fields_type = RuninatorType::structure([
-        ("summary", RuninatorType::String),
-        ("status", status_type.clone()),
-    ]);
-    let issue_type = RuninatorType::structure([
-        ("key", RuninatorType::String),
-        ("fields", fields_type.clone()),
-    ]);
+    let status_type =
+        RuninatorType::open_structure([("name", RuninatorType::String)], RuninatorType::Any);
+    let fields_type = RuninatorType::open_structure(
+        [
+            ("summary", RuninatorType::String),
+            ("status", status_type.clone()),
+        ],
+        RuninatorType::Any,
+    );
+    let issue_type = RuninatorType::open_structure(
+        [
+            ("key", RuninatorType::String),
+            ("fields", fields_type.clone()),
+        ],
+        RuninatorType::Any,
+    );
     vec![
         ResultMetadata::new("issues", RuninatorType::array(issue_type))
             .with_description("Jira issues returned by search."),

@@ -123,9 +123,14 @@ export type RuninatorType =
   | { type: "string" }
   | { type: "array"; items: RuninatorType }
   | { type: "map"; values: RuninatorType }
-  | { type: "struct"; fields: Record<string, RuninatorType>; additional?: RuninatorType }
+  | { type: "struct"; fields: Record<string, RuninatorField>; additional?: RuninatorType }
   | { type: "union"; variants: RuninatorType[] }
   | { type: "any" };
+
+export interface RuninatorField {
+  ty: RuninatorType;
+  required: boolean;
+}
 
 export interface ActionParameterMetadata {
   name: string;

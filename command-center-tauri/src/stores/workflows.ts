@@ -26,7 +26,7 @@ import {
   type WorkflowDebugPatch
 } from "../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, ScheduledTask, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, ScheduledTask, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
 import {
@@ -1591,16 +1591,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (value === undefined || value === null || value === "") {
         return `${parameter.label || parameter.name} is required`;
       }
-      const parameterType = parameter.ty?.type ?? "any";
-      if (parameterType === "array") {
-        if (!Array.isArray(value)) return `${parameter.label || parameter.name} must be a list`;
-      } else if (parameterType === "map" || parameterType === "struct") {
-        if (typeof value !== "object") return `${parameter.label || parameter.name} must be an object`;
-      } else if (parameterType === "integer" || parameterType === "number") {
-        if (typeof value !== "number") return `${parameter.label || parameter.name} must be a number`;
-      } else if (parameterType === "boolean" && typeof value !== "boolean") {
-        return `${parameter.label || parameter.name} must be true or false`;
-      }
+      const typeError = validateJsonValueType(value, parameter.ty, parameter.label || parameter.name);
+      if (typeError) return typeError;
     }
     return "";
   }
@@ -1915,6 +1907,65 @@ function normalizeNewNodeTargets(node: JsonRecord, endId: string) {
   }
   if (nodeRefId(node.parameters?.target) === "end") node.parameters.target = nodeRef(endId);
   if (nodeRefId(node.parameters?.default) === "end") node.parameters.default = nodeRef(endId);
+}
+
+function validateJsonValueType(value: unknown, ty: RuninatorType | undefined, label: string): string {
+  if (!ty || ty.type === "any" || isWorkflowExpression(value)) return "";
+  if (ty.type === "null") return value === null ? "" : `${label} must be null`;
+  if (ty.type === "string") return typeof value === "string" ? "" : `${label} must be a string`;
+  if (ty.type === "boolean") return typeof value === "boolean" ? "" : `${label} must be true or false`;
+  if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be an integer`;
+  if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value) ? "" : `${label} must be a number`;
+  if (ty.type === "array") {
+    if (!Array.isArray(value)) return `${label} must be a list`;
+    for (let index = 0; index < value.length; index++) {
+      const error = validateJsonValueType(value[index], ty.items, `${label}[${index}]`);
+      if (error) return error;
+    }
+    return "";
+  }
+  if (ty.type === "map") {
+    if (!isJsonRecord(value)) return `${label} must be an object`;
+    for (const [key, nested] of Object.entries(value)) {
+      const error = validateJsonValueType(nested, ty.values, `${label}.${key}`);
+      if (error) return error;
+    }
+    return "";
+  }
+  if (ty.type === "struct") {
+    if (!isJsonRecord(value)) return `${label} must be an object`;
+    for (const [key, field] of Object.entries(ty.fields)) {
+      const nested = value[key];
+      if (nested === undefined || nested === null || nested === "") {
+        if (field.required) return `${label}.${key} is required`;
+        continue;
+      }
+      const error = validateJsonValueType(nested, field.ty, `${label}.${key}`);
+      if (error) return error;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (ty.fields[key]) continue;
+      if (!ty.additional) return `${label}.${key} is not allowed`;
+      const error = validateJsonValueType(nested, ty.additional, `${label}.${key}`);
+      if (error) return error;
+    }
+    return "";
+  }
+  if (ty.type === "union") {
+    return ty.variants.some((variant) => !validateJsonValueType(value, variant, label))
+      ? ""
+      : `${label} must match one of ${ty.variants.map((variant) => variant.type).join(", ")}`;
+  }
+  return "";
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isWorkflowExpression(value: unknown): boolean {
+  if (!isJsonRecord(value)) return false;
+  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string"].some((key) => key in value);
 }
 
 function nextNodePosition(count: number): { x: number; y: number } {

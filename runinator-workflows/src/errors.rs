@@ -1,5 +1,13 @@
 use thiserror::Error;
 
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct WorkflowTypeDiagnostic {
+    pub path: String,
+    pub expected: String,
+    pub actual: String,
+    pub message: String,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum WorkflowValidationError {
     #[error("workflow definition.nodes must be an array")]
@@ -44,4 +52,15 @@ pub enum WorkflowValidationError {
     InvalidNodeParameters { node: String, message: String },
     #[error("workflow type validation failed: {0}")]
     TypeError(String),
+    #[error("workflow type validation failed: {}", .0.message)]
+    TypeDiagnostic(WorkflowTypeDiagnostic),
+}
+
+impl WorkflowValidationError {
+    pub fn type_diagnostic(&self) -> Option<&WorkflowTypeDiagnostic> {
+        match self {
+            Self::TypeDiagnostic(diagnostic) => Some(diagnostic),
+            _ => None,
+        }
+    }
 }

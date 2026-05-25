@@ -3,6 +3,10 @@ use std::ffi::OsString;
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_comm::{ActionCommand, WorkflowResultEventKind};
 use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
+use runinator_models::{
+    providers::{ActionMetadata, ResultMetadata, RuninatorType},
+    runs::{RunStatus, TaskExecutionResult},
+};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -107,6 +111,64 @@ async fn output_sink_publishes_result_events_to_broker() {
         }
         _ => panic!("expected status result event"),
     }
+}
+
+#[tokio::test]
+async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata() {
+    let mut command = action_command();
+    command.action.provider = "Console".into();
+    command.action.function = "run".into();
+    command.parameters = json!({ "command": 1 });
+
+    let result = crate::executor::execute_task(
+        std::sync::Arc::new(std::collections::HashMap::new()),
+        command.action,
+        command.workflow_node_run_id,
+        command.parameters,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(
+        result
+            .task_result
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains(
+                "resolved action configuration 'Console.run.command' expected string, got integer"
+            )
+    );
+    assert!(result.execution_result.is_none());
+}
+
+#[test]
+fn worker_validates_provider_output_fields_when_present() {
+    let action_metadata =
+        ActionMetadata::new("run", "run").with_results(vec![ResultMetadata::new(
+            "exit_code",
+            RuninatorType::Integer,
+        )]);
+    let action = WorkflowAction {
+        provider: "Console".into(),
+        function: "run".into(),
+        timeout_seconds: 60,
+        configuration: json!({}),
+        mcp_enabled: false,
+        tags: Vec::new(),
+    };
+    let result = TaskExecutionResult {
+        message: None,
+        output_json: Some(json!({ "exit_code": "zero" })),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    };
+
+    let err = crate::executor::validate_execution_result(&action_metadata, &action, &result)
+        .expect_err("typed result field is validated");
+    assert!(err.contains("provider output 'Console.run.exit_code' expected integer, got string"));
 }
 
 fn action_command() -> ActionCommand {

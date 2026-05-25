@@ -48,8 +48,11 @@ impl Provider for AiCommandProvider {
                     ParameterMetadata::optional("output_format", RuninatorType::String)
                         .with_default(json!(default_output_format())),
                     ParameterMetadata::optional("permission_mode", RuninatorType::String),
-                    ParameterMetadata::optional("extra_args", RuninatorType::Any),
-                    ParameterMetadata::optional("env", RuninatorType::Any),
+                    ParameterMetadata::optional(
+                        "extra_args",
+                        RuninatorType::array(RuninatorType::String),
+                    ),
+                    ParameterMetadata::optional("env", RuninatorType::map(RuninatorType::String)),
                 ])
                 .with_results(vec![ResultMetadata::new("response", RuninatorType::Any)]),
             ],

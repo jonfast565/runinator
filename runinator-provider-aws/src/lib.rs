@@ -44,7 +44,7 @@ impl Provider for AwsProvider {
                         ResultMetadata::new("provider", RuninatorType::String),
                         ResultMetadata::new("service", RuninatorType::String),
                         ResultMetadata::new("rows", RuninatorType::Integer),
-                        ResultMetadata::new("artifact", RuninatorType::map(RuninatorType::Any)),
+                        ResultMetadata::new("artifact", artifact_type()),
                     ]),
             ],
             metadata: ProviderRuntimeMetadata {
@@ -89,4 +89,14 @@ impl Provider for AwsProvider {
             ))),
         }
     }
+}
+
+fn artifact_type() -> RuninatorType {
+    RuninatorType::structure([
+        ("name", RuninatorType::String),
+        ("mime_type", RuninatorType::String),
+        ("size_bytes", RuninatorType::Integer),
+        ("uri", RuninatorType::String),
+        ("metadata", RuninatorType::map(RuninatorType::Any)),
+    ])
 }

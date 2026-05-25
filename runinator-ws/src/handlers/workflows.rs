@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::events::{AppEvent, EventSender, emit};
 use crate::models::ApiResponse;
 use crate::repository;
-use crate::responses::{api_error, not_found};
+use crate::responses::{api_error, not_found, validation_error};
 
 pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -34,7 +34,7 @@ pub(crate) async fn validate_workflow<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::validate_workflow_definition_with_catalog(db.as_ref(), &workflow).await {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
-        Err(err) => api_error(err.to_string()),
+        Err(err) => validation_error(err.as_ref()),
     }
 }
 
