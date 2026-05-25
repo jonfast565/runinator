@@ -7,6 +7,7 @@ mod responses;
 mod result_consumer;
 mod router;
 mod server;
+mod stability;
 #[cfg(test)]
 mod tests;
 mod websocket;

@@ -16,6 +16,7 @@ pub struct Config {
     pub scheduler_control_transport: String,
     pub scheduler_control_endpoint: String,
     pub max_concurrent_actions: usize,
+    pub shutdown_grace_seconds: u64,
     pub api_base_url: String,
     pub worker_id: Uuid,
 }
@@ -56,6 +57,9 @@ struct CliArgs {
     #[arg(long, default_value_t = 4)]
     max_concurrent_actions: usize,
 
+    #[arg(long, default_value_t = 30)]
+    shutdown_grace_seconds: u64,
+
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     api_base_url: String,
 
@@ -92,6 +96,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         scheduler_control_transport: args.scheduler_control_transport,
         scheduler_control_endpoint: args.scheduler_control_endpoint,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
+        shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
         api_base_url: args.api_base_url,
         worker_id,
     })

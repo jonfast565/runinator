@@ -5,7 +5,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflows::WorkflowTrigger;
 
 use crate::events::{AppEvent, EventSender, emit};
-use crate::models::ApiResponse;
+use crate::models::{ApiResponse, SchedulerTriggerClaimRequest};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -73,6 +73,22 @@ pub(crate) async fn get_due_workflow_triggers<T: DatabaseImpl>(
             StatusCode::OK,
             Json(ApiResponse::WorkflowTriggerList(triggers)),
         ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<SchedulerTriggerClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::claim_due_workflow_trigger_firings(
+        db.as_ref(),
+        request.scheduler_id,
+        request.limit.unwrap_or(50),
+    )
+    .await
+    {
+        Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
         Err(err) => api_error(err.to_string()),
     }
 }

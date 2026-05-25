@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
+use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
@@ -90,7 +91,9 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     started_at INTEGER NULL,
     finished_at INTEGER NULL,
     message TEXT NULL,
-    name TEXT NULL
+    name TEXT NULL,
+    scheduler_claimed_by TEXT NULL,
+    scheduler_claimed_until INTEGER NULL
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_runs (
@@ -136,6 +139,16 @@ CREATE TABLE IF NOT EXISTS workflow_result_events (
     node_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_trigger_firings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger_id INTEGER NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
+    fire_key TEXT NOT NULL,
+    workflow_run_id INTEGER NULL REFERENCES workflow_runs(id),
+    scheduler_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(trigger_id, fire_key)
 );
 
 CREATE TABLE IF NOT EXISTS catalog_items (
@@ -202,12 +215,14 @@ CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflows_name ON workflows(name);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_scheduler_claim ON workflow_runs(status, scheduler_claimed_until);
 CREATE INDEX IF NOT EXISTS idx_workflow_triggers_workflow ON workflow_triggers(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_triggers_due ON workflow_triggers(enabled, kind, next_execution);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_workflow_run ON workflow_node_runs(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_chunks_node_sequence ON workflow_node_chunks(workflow_node_run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_workflow_node_artifacts_node ON workflow_node_artifacts(workflow_node_run_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_result_events_node ON workflow_result_events(workflow_node_run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_trigger_firings_trigger ON workflow_trigger_firings(trigger_id);
 CREATE INDEX IF NOT EXISTS idx_catalog_items_type ON catalog_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_type ON automation_records(record_type);
 CREATE INDEX IF NOT EXISTS idx_automation_records_workflow_run ON automation_records(workflow_run_id);
@@ -299,6 +314,51 @@ fn workflow_result_event_type(event: &WorkflowResultEvent) -> &'static str {
     }
 }
 
+fn next_execution_for_cron(
+    cron_schedule: &str,
+    now: DateTime<Utc>,
+) -> Result<DateTime<Utc>, SendableError> {
+    let cron = cron_schedule
+        .parse::<Cron>()
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    cron.find_next_occurrence(&now, false)
+        .map_err(|err| -> SendableError { Box::new(err) })
+}
+
+fn trigger_parameters(trigger: &WorkflowTrigger) -> Value {
+    trigger
+        .configuration
+        .get("parameters")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()))
+}
+
+fn trigger_state(trigger: &WorkflowTrigger) -> Value {
+    serde_json::json!({
+        "control": { "pause_requested": false },
+        "trigger": {
+            "id": trigger.id,
+            "kind": trigger.kind,
+            "metadata": trigger.metadata
+        }
+    })
+}
+
+fn is_trigger_in_blackout(trigger: &WorkflowTrigger, now: DateTime<Utc>) -> bool {
+    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
+        return now >= start && now <= end;
+    }
+    false
+}
+
+fn status_list(statuses: &[WorkflowStatus]) -> String {
+    statuses
+        .iter()
+        .map(|status| format!("'{}'", status.as_str().replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl DatabaseImpl for SqliteDb {
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
         info!("Running embedded SQLite table initialization script");
@@ -323,6 +383,26 @@ impl DatabaseImpl for SqliteDb {
             self.pool
                 .execute(sqlx::query(
                     "ALTER TABLE workflow_runs ADD COLUMN name TEXT NULL",
+                ))
+                .await?;
+        }
+        let has_scheduler_claimed_by = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "scheduler_claimed_by");
+        if !has_scheduler_claimed_by {
+            self.pool
+                .execute(sqlx::query(
+                    "ALTER TABLE workflow_runs ADD COLUMN scheduler_claimed_by TEXT NULL",
+                ))
+                .await?;
+        }
+        let has_scheduler_claimed_until = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "scheduler_claimed_until");
+        if !has_scheduler_claimed_until {
+            self.pool
+                .execute(sqlx::query(
+                    "ALTER TABLE workflow_runs ADD COLUMN scheduler_claimed_until INTEGER NULL",
                 ))
                 .await?;
         }
@@ -639,6 +719,117 @@ impl DatabaseImpl for SqliteDb {
         Ok(())
     }
 
+    async fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        let mut tx = self.pool.begin().await?;
+        let rows = sqlx::query("SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE enabled = 1 AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id LIMIT ?")
+            .bind(now.timestamp())
+            .bind(limit.max(1))
+            .fetch_all(&mut *tx)
+            .await?;
+
+        let mut runs = Vec::new();
+        for row in rows {
+            let mut trigger = mappers::sqlite_row_to_workflow_trigger(&row);
+            let Some(trigger_id) = trigger.id else {
+                continue;
+            };
+            let cron_schedule = trigger
+                .configuration
+                .get("cron")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            if trigger.next_execution.is_none() {
+                trigger.next_execution = Some(next_execution_for_cron(cron_schedule, now)?);
+                sqlx::query(
+                    "UPDATE workflow_triggers SET next_execution = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(trigger.next_execution.map(|dt| dt.timestamp()))
+                .bind(now.timestamp())
+                .bind(trigger_id)
+                .execute(&mut *tx)
+                .await?;
+                continue;
+            }
+
+            if is_trigger_in_blackout(&trigger, now) {
+                if let Some(end) = trigger.blackout_end {
+                    sqlx::query("UPDATE workflow_triggers SET next_execution = ?, updated_at = ? WHERE id = ?")
+                        .bind(end.timestamp())
+                        .bind(now.timestamp())
+                        .bind(trigger_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                continue;
+            }
+
+            let fire_key = trigger
+                .next_execution
+                .map(|dt| dt.timestamp().to_string())
+                .unwrap_or_else(|| "initial".into());
+            let insert = sqlx::query(
+                "INSERT OR IGNORE INTO workflow_trigger_firings (trigger_id, fire_key, scheduler_id, created_at)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(trigger_id)
+            .bind(&fire_key)
+            .bind(&scheduler_id)
+            .bind(now.timestamp())
+            .execute(&mut *tx)
+            .await?;
+            if insert.rows_affected() == 0 {
+                continue;
+            }
+
+            let workflow_row = sqlx::query("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?")
+                .bind(trigger.workflow_id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let workflow_snapshot = mappers::sqlite_row_to_workflow(&workflow_row);
+            let run_row = sqlx::query(
+                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
+                 VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)
+                 RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name",
+            )
+            .bind(trigger.workflow_id)
+            .bind(serde_json::to_string(&workflow_snapshot)?)
+            .bind(WorkflowStatus::Queued.as_str())
+            .bind(trigger_parameters(&trigger).to_string())
+            .bind(trigger_state(&trigger).to_string())
+            .bind(now.timestamp())
+            .fetch_one(&mut *tx)
+            .await?;
+            let run = mappers::sqlite_row_to_workflow_run(&run_row);
+
+            sqlx::query("UPDATE workflow_trigger_firings SET workflow_run_id = ? WHERE trigger_id = ? AND fire_key = ?")
+                .bind(run.id)
+                .bind(trigger_id)
+                .bind(&fire_key)
+                .execute(&mut *tx)
+                .await?;
+
+            let next_execution = next_execution_for_cron(cron_schedule, now)?;
+            sqlx::query(
+                "UPDATE workflow_triggers SET next_execution = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(next_execution.timestamp())
+            .bind(now.timestamp())
+            .bind(trigger_id)
+            .execute(&mut *tx)
+            .await?;
+            runs.push(run);
+        }
+
+        tx.commit().await?;
+        Ok(runs)
+    }
+
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
@@ -687,6 +878,77 @@ impl DatabaseImpl for SqliteDb {
             .iter()
             .map(mappers::sqlite_row_to_workflow_run)
             .collect())
+    }
+
+    async fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: String,
+        statuses: Vec<WorkflowStatus>,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let statuses = status_list(&statuses);
+        let sql = format!(
+            "UPDATE workflow_runs SET scheduler_claimed_by = ?, scheduler_claimed_until = ?
+             WHERE id IN (
+                 SELECT id FROM workflow_runs
+                 WHERE status IN ({statuses})
+                   AND (scheduler_claimed_until IS NULL OR scheduler_claimed_until <= ? OR scheduler_claimed_by = ?)
+                 ORDER BY id
+                 LIMIT ?
+             )
+             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(&scheduler_id)
+            .bind(lease_until.timestamp())
+            .bind(now.timestamp())
+            .bind(&scheduler_id)
+            .bind(limit.max(1))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::sqlite_row_to_workflow_run)
+            .collect())
+    }
+
+    async fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: String,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(
+            "UPDATE workflow_runs SET scheduler_claimed_until = ? WHERE id = ? AND scheduler_claimed_by = ?",
+        )
+        .bind(lease_until.timestamp())
+        .bind(workflow_run_id)
+        .bind(scheduler_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: String,
+    ) -> Result<(), SendableError> {
+        self.pool
+            .execute(
+                sqlx::query(
+                    "UPDATE workflow_runs SET scheduler_claimed_by = NULL, scheduler_claimed_until = NULL WHERE id = ? AND scheduler_claimed_by = ?",
+                )
+                .bind(workflow_run_id)
+                .bind(scheduler_id),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {

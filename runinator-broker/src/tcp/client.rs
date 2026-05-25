@@ -4,45 +4,73 @@ use crate::{
     ResultDelivery, ResultMessage,
 };
 use async_trait::async_trait;
+use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
+    time,
 };
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct TcpBroker {
     endpoint: String,
+    request_timeout: Duration,
 }
 
 impl TcpBroker {
+    const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
     pub fn new(endpoint: impl Into<String>) -> Self {
+        Self::with_timeout(endpoint, Self::DEFAULT_REQUEST_TIMEOUT)
+    }
+
+    pub fn with_timeout(endpoint: impl Into<String>, request_timeout: Duration) -> Self {
         Self {
             endpoint: endpoint.into(),
+            request_timeout,
         }
     }
 
     async fn request(&self, request: TcpRequest) -> Result<TcpResponse, BrokerError> {
-        let mut stream = TcpStream::connect(self.endpoint.as_str())
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        self.request_inner(request, true).await
+    }
+
+    async fn receive_request(&self, request: TcpRequest) -> Result<TcpResponse, BrokerError> {
+        self.request_inner(request, false).await
+    }
+
+    async fn request_inner(
+        &self,
+        request: TcpRequest,
+        timeout_response: bool,
+    ) -> Result<TcpResponse, BrokerError> {
+        let mut stream = timeout_io(
+            self.request_timeout,
+            "connect",
+            TcpStream::connect(self.endpoint.as_str()),
+        )
+        .await?;
         let payload = serde_json::to_string(&request)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        stream
-            .write_all(payload.as_bytes())
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        timeout_io(
+            self.request_timeout,
+            "write",
+            stream.write_all(payload.as_bytes()),
+        )
+        .await?;
+        timeout_io(self.request_timeout, "write", stream.write_all(b"\n")).await?;
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        if timeout_response {
+            timeout_io(self.request_timeout, "read", reader.read_line(&mut line)).await?;
+        } else {
+            reader
+                .read_line(&mut line)
+                .await
+                .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        }
         if line.is_empty() {
             return Err(BrokerError::Internal("broker closed connection".into()));
         }
@@ -79,7 +107,7 @@ impl Broker for TcpBroker {
 
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
         match self
-            .request(TcpRequest::Receive {
+            .receive_request(TcpRequest::Receive {
                 consumer: consumer.to_string(),
             })
             .await?
@@ -123,7 +151,7 @@ impl Broker for TcpBroker {
 
     async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
         match self
-            .request(TcpRequest::ReceiveControl {
+            .receive_request(TcpRequest::ReceiveControl {
                 consumer: consumer.to_string(),
             })
             .await?
@@ -157,7 +185,7 @@ impl Broker for TcpBroker {
 
     async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
         match self
-            .request(TcpRequest::ReceiveResult {
+            .receive_request(TcpRequest::ReceiveResult {
                 consumer: consumer.to_string(),
             })
             .await?
@@ -192,5 +220,23 @@ impl Broker for TcpBroker {
             })
             .await?;
         Self::expect_ok(response)
+    }
+}
+
+async fn timeout_io<T, F>(
+    duration: Duration,
+    operation: &'static str,
+    future: F,
+) -> Result<T, BrokerError>
+where
+    F: std::future::Future<Output = std::io::Result<T>>,
+{
+    match time::timeout(duration, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(BrokerError::Internal(err.to_string())),
+        Err(_) => Err(BrokerError::Internal(format!(
+            "tcp broker {operation} timed out after {} ms",
+            duration.as_millis()
+        ))),
     }
 }

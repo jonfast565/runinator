@@ -141,6 +141,14 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         next_execution: Option<DateTime<Utc>>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
+    /// Atomically fire due cron triggers and return the workflow runs created by this claim.
+    fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
     /// Create a new instance of a workflow.
     fn create_workflow_run(
         &self,
@@ -156,6 +164,31 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         status: WorkflowStatus,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
+    /// Claim open workflow runs for scheduler processing until the supplied lease instant.
+    fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: String,
+        statuses: Vec<WorkflowStatus>,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
+    /// Renew a workflow run claim held by a scheduler.
+    fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: String,
+        lease_until: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Release a workflow run claim held by a scheduler.
+    fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch recent workflow runs across all workflow definitions.
     fn fetch_recent_workflow_runs(

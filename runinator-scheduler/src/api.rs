@@ -39,6 +39,12 @@ pub trait WorkflowSchedulerApi: Send + Sync {
 
     async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError>;
 
+    async fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: &str,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError>;
+
     async fn update_workflow_trigger_next_execution(
         &self,
         trigger_id: i64,
@@ -49,6 +55,27 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError>;
+
+    async fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: &str,
+        statuses: &[WorkflowStatus],
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError>;
+
+    async fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, SendableError>;
+
+    async fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+    ) -> Result<(), SendableError>;
 
     async fn fetch_workflow_runs_by_name(
         &self,
@@ -209,6 +236,17 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    pub async fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: &str,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        self.client
+            .claim_due_workflow_trigger_firings(scheduler_id, limit)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
     pub async fn update_workflow_trigger_next_execution(
         &self,
         trigger_id: i64,
@@ -235,6 +273,53 @@ impl SchedulerApi {
             .fetch_workflow_runs_by_status(status)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: &str,
+        statuses: &[WorkflowStatus],
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        self.client
+            .claim_workflow_runs_for_scheduler(scheduler_id, statuses, lease_until, limit)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        match self
+            .client
+            .renew_workflow_run_claim(workflow_run_id, scheduler_id, lease_until)
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                if err.to_string().contains("404") {
+                    Ok(false)
+                } else {
+                    Err(Box::new(err))
+                }
+            }
+        }
+    }
+
+    pub async fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+    ) -> Result<(), SendableError> {
+        self.client
+            .release_workflow_run_claim(workflow_run_id, scheduler_id)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
     }
 
     pub async fn fetch_workflow_runs_by_name(
@@ -433,6 +518,14 @@ impl WorkflowSchedulerApi for SchedulerApi {
         SchedulerApi::fetch_due_workflow_triggers(self).await
     }
 
+    async fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: &str,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        SchedulerApi::claim_due_workflow_trigger_firings(self, scheduler_id, limit).await
+    }
+
     async fn update_workflow_trigger_next_execution(
         &self,
         trigger_id: i64,
@@ -446,6 +539,41 @@ impl WorkflowSchedulerApi for SchedulerApi {
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         SchedulerApi::fetch_workflow_runs_by_status(self, status).await
+    }
+
+    async fn claim_workflow_runs_for_scheduler(
+        &self,
+        scheduler_id: &str,
+        statuses: &[WorkflowStatus],
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        SchedulerApi::claim_workflow_runs_for_scheduler(
+            self,
+            scheduler_id,
+            statuses,
+            lease_until,
+            limit,
+        )
+        .await
+    }
+
+    async fn renew_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        SchedulerApi::renew_workflow_run_claim(self, workflow_run_id, scheduler_id, lease_until)
+            .await
+    }
+
+    async fn release_workflow_run_claim(
+        &self,
+        workflow_run_id: i64,
+        scheduler_id: &str,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::release_workflow_run_claim(self, workflow_run_id, scheduler_id).await
     }
 
     async fn fetch_workflow_runs_by_name(

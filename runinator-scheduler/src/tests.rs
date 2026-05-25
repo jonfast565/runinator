@@ -1116,6 +1116,14 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         Ok(Vec::new())
     }
 
+    async fn claim_due_workflow_trigger_firings(
+        &self,
+        _scheduler_id: &str,
+        _limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        Ok(Vec::new())
+    }
+
     async fn update_workflow_trigger_next_execution(
         &self,
         _trigger_id: i64,
@@ -1129,6 +1137,33 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         _status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         Ok(Vec::new())
+    }
+
+    async fn claim_workflow_runs_for_scheduler(
+        &self,
+        _scheduler_id: &str,
+        _statuses: &[WorkflowStatus],
+        _lease_until: chrono::DateTime<Utc>,
+        _limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn renew_workflow_run_claim(
+        &self,
+        _workflow_run_id: i64,
+        _scheduler_id: &str,
+        _lease_until: chrono::DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        Ok(true)
+    }
+
+    async fn release_workflow_run_claim(
+        &self,
+        _workflow_run_id: i64,
+        _scheduler_id: &str,
+    ) -> Result<(), SendableError> {
+        Ok(())
     }
 
     async fn fetch_workflow_runs_by_name(

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
     notifications::Notification,
@@ -111,6 +112,34 @@ pub struct WorkflowRunStatusRequest {
     pub state: Option<Value>,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchedulerTriggerClaimRequest {
+    pub scheduler_id: String,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchedulerRunClaimRequest {
+    pub scheduler_id: String,
+    pub lease_until: DateTime<Utc>,
+    #[serde(default)]
+    pub statuses: Vec<WorkflowStatus>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchedulerRunClaimRenewRequest {
+    pub scheduler_id: String,
+    pub lease_until: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchedulerRunClaimReleaseRequest {
+    pub scheduler_id: String,
 }
 
 #[derive(Debug, Deserialize)]

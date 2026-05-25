@@ -300,6 +300,15 @@ pub async fn fetch_due_workflow_triggers<T: DatabaseImpl>(
     db.fetch_due_workflow_triggers(Utc::now()).await
 }
 
+pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
+    db: &T,
+    scheduler_id: String,
+    limit: i64,
+) -> Result<Vec<WorkflowRun>, SendableError> {
+    db.claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit)
+        .await
+}
+
 pub async fn delete_workflow_trigger<T: DatabaseImpl>(
     db: &T,
     trigger_id: i64,
@@ -401,6 +410,36 @@ pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
     status: WorkflowStatus,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
     db.fetch_workflow_runs_by_status(status).await
+}
+
+pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
+    db: &T,
+    scheduler_id: String,
+    statuses: Vec<WorkflowStatus>,
+    lease_until: chrono::DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<WorkflowRun>, SendableError> {
+    db.claim_workflow_runs_for_scheduler(scheduler_id, statuses, Utc::now(), lease_until, limit)
+        .await
+}
+
+pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    scheduler_id: String,
+    lease_until: chrono::DateTime<Utc>,
+) -> Result<bool, SendableError> {
+    db.renew_workflow_run_claim(workflow_run_id, scheduler_id, lease_until)
+        .await
+}
+
+pub async fn release_workflow_run_claim<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    scheduler_id: String,
+) -> Result<(), SendableError> {
+    db.release_workflow_run_claim(workflow_run_id, scheduler_id)
+        .await
 }
 
 pub async fn fetch_recent_workflow_runs<T: DatabaseImpl>(

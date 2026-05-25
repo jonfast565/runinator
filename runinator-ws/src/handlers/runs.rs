@@ -12,7 +12,8 @@ use serde::Deserialize;
 
 use crate::events::{AppEvent, EventSender, emit, emit_task_run, emit_workflow_run};
 use crate::models::{
-    self, ApiResponse, RunStatusQuery, RunStatusRequest, WorkflowRunRequest,
+    self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
+    SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, WorkflowRunRequest,
     WorkflowRunStatusQuery, WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use crate::repository;
@@ -77,6 +78,84 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
                 })),
             )
         }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<SchedulerRunClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let statuses = if request.statuses.is_empty() {
+        vec![
+            runinator_models::workflows::WorkflowStatus::Queued,
+            runinator_models::workflows::WorkflowStatus::Running,
+            runinator_models::workflows::WorkflowStatus::DebugPaused,
+            runinator_models::workflows::WorkflowStatus::Waiting,
+            runinator_models::workflows::WorkflowStatus::ApprovalRequired,
+            runinator_models::workflows::WorkflowStatus::Blocked,
+        ]
+    } else {
+        request.statuses
+    };
+    match repository::claim_workflow_runs_for_scheduler(
+        db.as_ref(),
+        request.scheduler_id,
+        statuses,
+        request.lease_until,
+        request.limit.unwrap_or(50),
+    )
+    .await
+    {
+        Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn renew_workflow_run_claim<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(workflow_run_id): Path<i64>,
+    Json(request): Json<SchedulerRunClaimRenewRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::renew_workflow_run_claim(
+        db.as_ref(),
+        workflow_run_id,
+        request.scheduler_id,
+        request.lease_until,
+    )
+    .await
+    {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(
+                runinator_models::web::TaskResponse {
+                    success: true,
+                    message: "Workflow run claim renewed".into(),
+                },
+            )),
+        ),
+        Ok(false) => not_found(format!("Workflow run claim {workflow_run_id} not held")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn release_workflow_run_claim<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(workflow_run_id): Path<i64>,
+    Json(request): Json<SchedulerRunClaimReleaseRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::release_workflow_run_claim(db.as_ref(), workflow_run_id, request.scheduler_id)
+        .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(
+                runinator_models::web::TaskResponse {
+                    success: true,
+                    message: "Workflow run claim released".into(),
+                },
+            )),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }

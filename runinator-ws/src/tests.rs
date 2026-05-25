@@ -389,6 +389,59 @@ async fn result_consumer_acks_duplicate_deliveries_and_persists_results_once() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn result_consumer_dead_letters_poison_result_events_after_retries() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let node_run = create_node_run(&db).await;
+    let command = action_command(
+        node_run.workflow_run_id,
+        node_run.id,
+        "__force_result_persist_failure__",
+    );
+    let poison = WorkflowResultEvent::chunk(
+        &command,
+        NewRunChunk {
+            stream: "log".into(),
+            content: "poison".into(),
+        },
+    );
+    let broker = Arc::new(RecordingBroker::new());
+    let broker_for_consumer: Arc<dyn Broker> = broker.clone();
+    let (events, _rx) = tokio::sync::broadcast::channel(16);
+    let shutdown = Arc::new(Notify::new());
+    let consumer = tokio::spawn(crate::result_consumer::run_result_consumer_with_policy(
+        db.clone(),
+        broker_for_consumer,
+        events,
+        shutdown.clone(),
+        crate::result_consumer::ResultConsumerPolicy::new(2, Duration::from_millis(1)),
+    ));
+
+    broker
+        .publish_result(ResultMessage {
+            event: poison,
+            dedupe_key: Some("poison-result".into()),
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    wait_until(|| broker.result_acks().len() == 1 && broker.result_nacks().len() == 1).await;
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(Duration::from_secs(1), consumer)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let chunks = db
+        .fetch_workflow_node_run_chunks(node_run.id, None, 100)
+        .await
+        .unwrap();
+    assert!(chunks.is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
 async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!(
         "runinator-ws-workflows-{}.db",

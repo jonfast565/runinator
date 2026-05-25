@@ -3,7 +3,9 @@ use crate::interfaces::DatabaseImpl;
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
     runs::NewRunChunk,
-    workflows::{WorkflowAction, WorkflowStatus},
+    workflows::{
+        WorkflowAction, WorkflowDefinition, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+    },
 };
 use uuid::Uuid;
 
@@ -129,6 +131,139 @@ async fn workflow_runs_can_be_created_and_queried_by_open_name() {
         vec![open.id]
     );
     assert_eq!(open.name.as_deref(), Some("Ticket Work: ITP-123"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn scheduler_claims_open_workflow_runs_once_until_lease_expires() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-claims-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("claim-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            None,
+        )
+        .await
+        .unwrap();
+    let now = Utc::now();
+
+    let first = db
+        .claim_workflow_runs_for_scheduler(
+            "scheduler-a".into(),
+            vec![WorkflowStatus::Queued],
+            now,
+            now + Duration::seconds(60),
+            10,
+        )
+        .await
+        .unwrap();
+    let second = db
+        .claim_workflow_runs_for_scheduler(
+            "scheduler-b".into(),
+            vec![WorkflowStatus::Queued],
+            now,
+            now + Duration::seconds(60),
+            10,
+        )
+        .await
+        .unwrap();
+    let expired = db
+        .claim_workflow_runs_for_scheduler(
+            "scheduler-b".into(),
+            vec![WorkflowStatus::Queued],
+            now + Duration::seconds(61),
+            now + Duration::seconds(120),
+            10,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec![run.id]
+    );
+    assert!(second.is_empty());
+    assert_eq!(
+        expired.iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec![run.id]
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-trigger-firing-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("trigger-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let due_at = Utc::now() - Duration::seconds(60);
+    let trigger = db
+        .upsert_workflow_trigger(&WorkflowTrigger {
+            id: None,
+            workflow_id,
+            kind: WorkflowTriggerKind::Cron,
+            enabled: true,
+            configuration: serde_json::json!({
+                "cron": "*/5 * * * * *",
+                "parameters": { "source": "cron" }
+            }),
+            next_execution: Some(due_at),
+            blackout_start: None,
+            blackout_end: None,
+            metadata: serde_json::json!({ "name": "test-trigger" }),
+            created_at: None,
+            updated_at: None,
+        })
+        .await
+        .unwrap();
+
+    let first = db
+        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .await
+        .unwrap();
+    db.update_workflow_trigger_next_execution(trigger.id.unwrap(), Some(due_at))
+        .await
+        .unwrap();
+    let duplicate = db
+        .claim_due_workflow_trigger_firings("scheduler-b".into(), Utc::now(), 10)
+        .await
+        .unwrap();
+    let refreshed = db
+        .fetch_workflow_trigger(trigger.id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].parameters["source"], "cron");
+    assert!(duplicate.is_empty());
+    assert!(refreshed.next_execution.is_some());
 
     let _ = fs::remove_file(path);
 }

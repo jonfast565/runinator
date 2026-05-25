@@ -63,6 +63,11 @@ The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
 workflow action pickup.
 
+The scheduler supports active/active scale-out when the web service is backed by
+Postgres. Each scheduler claims workflow runs through the web service before
+advancing them, so multiple scheduler replicas can run at the same time. SQLite
+remains intended for local development and single-process stacks.
+
 The local stack uses the built-in broker over raw TCP by default. The standalone
 broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
@@ -73,6 +78,10 @@ or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
 override `--broker-action-topic`, `--broker-control-topic`, or
 `--broker-result-topic` when not using the default `runinator.*` topics/queues.
+Do not scale the built-in `runinator-broker` process horizontally: each instance
+has its own in-memory queue. For multi-broker high availability, run Kafka or
+RabbitMQ and point every web-service, scheduler, and worker instance at the same
+shared broker topics or queues.
 
 The optional direct worker-to-scheduler control-event channel is disabled by
 default. Enable it on the scheduler with `--worker-control-transport http|tcp`

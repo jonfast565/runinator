@@ -51,7 +51,7 @@ metadata:
   name: runinator-scheduler
   namespace: runinator
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: runinator-scheduler
@@ -274,6 +274,8 @@ metadata:
   name: runinator-broker
   namespace: runinator
 spec:
+  # The built-in broker is an in-memory TCP/HTTP broker for local/simple stacks.
+  # Keep it at one replica; use Kafka or RabbitMQ backends for broker HA.
   replicas: 1
   selector:
     matchLabels:

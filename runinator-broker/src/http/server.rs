@@ -10,7 +10,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -46,6 +46,7 @@ where
     };
 
     let app = Router::new()
+        .route("/health", get(health))
         .route("/publish", post(publish::<B>))
         .route("/control/publish", post(publish_control::<B>))
         .route("/control/receive", post(receive_control::<B>))
@@ -61,6 +62,10 @@ where
         .with_state(state);
 
     axum::serve(listener, app).await
+}
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok" })
 }
 
 async fn publish<B>(
@@ -278,6 +283,11 @@ where
     T: Serialize,
 {
     (status, axum::Json(payload)).into_response()
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
 }
 
 #[derive(Serialize)]

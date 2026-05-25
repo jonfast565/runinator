@@ -3,6 +3,7 @@ pub(crate) mod automation;
 pub(crate) mod catalog;
 pub(crate) mod credentials;
 pub(crate) mod debug;
+pub(crate) mod health;
 pub(crate) mod node_runs;
 pub(crate) mod notifications;
 pub(crate) mod providers;

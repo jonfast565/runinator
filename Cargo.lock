@@ -5135,10 +5135,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-ctl"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "runinator-api",
+ "runinator-models",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "runinator-database"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "croner",
  "futures-util",
  "log",
  "runinator-comm",

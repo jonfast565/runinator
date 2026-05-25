@@ -9,6 +9,7 @@ use std::{
     env,
     ffi::OsString,
     sync::Arc,
+    time::Duration,
 };
 
 use config::parse_config;
@@ -71,6 +72,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
         let control_client = Arc::clone(&control_client);
         let consumer = config.broker_consumer_id.clone();
         let max_concurrent_actions = config.max_concurrent_actions;
+        let shutdown_grace = Duration::from_secs(config.shutdown_grace_seconds);
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
             run_worker_loop(
@@ -80,6 +82,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
                 api_client,
                 control_client,
                 max_concurrent_actions,
+                shutdown_grace,
                 shutdown,
             )
             .await
@@ -97,9 +100,21 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
         }
     }
 
-    if let Err(err) = worker_task.await {
-        if !err.is_cancelled() {
+    match tokio::time::timeout(
+        Duration::from_secs(config.shutdown_grace_seconds + 5),
+        &mut worker_task,
+    )
+    .await
+    {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(err))) => return Err(err),
+        Ok(Err(err)) if err.is_cancelled() => {}
+        Ok(Err(err)) => {
             error!("Worker task join error: {}", err);
+        }
+        Err(_) => {
+            error!("Worker shutdown grace period elapsed before the loop stopped");
+            worker_task.abort();
         }
     }
 
@@ -299,6 +314,7 @@ async fn run_worker_loop(
     api_client: AsyncApiClient<StaticLocator>,
     control_client: Arc<SchedulerControlClient>,
     max_concurrent_actions: usize,
+    shutdown_grace: Duration,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     let max_concurrent_actions = max_concurrent_actions.max(1);
@@ -378,9 +394,16 @@ async fn run_worker_loop(
         });
     }
 
-    while let Some(result) = deliveries.join_next().await {
-        if let Err(err) = result {
-            error!("Worker delivery task join error: {}", err);
+    cancel_in_flight(&in_flight).await;
+    match tokio::time::timeout(shutdown_grace, drain_deliveries(&mut deliveries)).await {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                "Worker shutdown grace period of {} second(s) elapsed; aborting unfinished action tasks",
+                shutdown_grace.as_secs()
+            );
+            deliveries.abort_all();
+            drain_deliveries(&mut deliveries).await;
         }
     }
 
@@ -399,6 +422,31 @@ async fn run_worker_loop(
     .await;
 
     Ok(())
+}
+
+async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>) {
+    let tokens = {
+        let guard = in_flight.lock().await;
+        guard.values().cloned().collect::<Vec<_>>()
+    };
+    if tokens.is_empty() {
+        return;
+    }
+    warn!(
+        "Canceling {} in-flight action(s) during worker shutdown",
+        tokens.len()
+    );
+    for token in tokens {
+        token.cancel();
+    }
+}
+
+async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
+    while let Some(result) = deliveries.join_next().await {
+        if let Err(err) = result {
+            error!("Worker delivery task join error: {}", err);
+        }
+    }
 }
 
 async fn run_control_loop(

@@ -2,6 +2,7 @@ pub mod api;
 pub mod config;
 mod context;
 mod control;
+#[cfg(test)]
 mod db_extensions;
 pub mod debug;
 mod iteration;
@@ -31,7 +32,7 @@ pub async fn scheduler_loop(
         if let Err(err) = iteration::run_scheduler_iteration(broker.as_ref(), &api, config).await {
             error!("Error during scheduler iteration: {}", err);
         }
-        if let Err(err) = workflow::run_workflow_iteration(broker.as_ref(), &api).await {
+        if let Err(err) = workflow::run_workflow_iteration(broker.as_ref(), &api, config).await {
             error!("Error during workflow iteration: {}", err);
         }
 

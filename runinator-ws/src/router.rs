@@ -25,6 +25,7 @@ use crate::handlers::{
         continue_debug_workflow_run, rerun_debug_workflow_node, run_to_cursor_workflow_run,
         skip_debug_workflow_node, step_debug_workflow_run, update_workflow_run_debug,
     },
+    health::{health, ready},
     node_runs::{
         add_workflow_node_run_artifact, append_workflow_node_run_chunk, create_workflow_node_run,
         get_workflow_node_run_artifacts, get_workflow_node_run_chunks, update_workflow_node_run,
@@ -35,15 +36,17 @@ use crate::handlers::{
     },
     providers::{get_providers, import_provider_bundle, upsert_provider},
     runs::{
-        append_run_chunk, cancel_workflow_run, create_workflow_run, create_workflow_trigger_run,
-        get_run_chunks, get_runs, get_workflow_run, get_workflow_runs, pause_workflow_run,
-        rename_workflow_run, replay_workflow_run, resume_workflow_run, update_run,
-        update_workflow_run,
+        append_run_chunk, cancel_workflow_run, claim_workflow_runs_for_scheduler,
+        create_workflow_run, create_workflow_trigger_run, get_run_chunks, get_runs,
+        get_workflow_run, get_workflow_runs, pause_workflow_run, release_workflow_run_claim,
+        rename_workflow_run, renew_workflow_run_claim, replay_workflow_run, resume_workflow_run,
+        update_run, update_workflow_run,
     },
     supervisor::get_supervisor_status,
     triggers::{
-        delete_workflow_trigger, get_due_workflow_triggers, get_workflow_trigger,
-        get_workflow_triggers, update_workflow_trigger, upsert_workflow_trigger,
+        claim_due_workflow_trigger_firings, delete_workflow_trigger, get_due_workflow_triggers,
+        get_workflow_trigger, get_workflow_triggers, update_workflow_trigger,
+        upsert_workflow_trigger,
     },
     webhook::webhook_wake,
     workflows::{
@@ -59,6 +62,8 @@ pub fn build_router<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
 ) -> Router {
     Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
         .route("/ws/events", get(ws_events))
         .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
         .route("/ws/run-stream/{id}", get(ws_run_stream::<T>))
@@ -106,6 +111,10 @@ pub fn build_router<T: DatabaseImpl>(
             get(get_due_workflow_triggers::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/scheduler/workflow_trigger_firings/claim",
+            post(claim_due_workflow_trigger_firings::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_triggers/{id}",
             get(get_workflow_trigger::<T>)
                 .patch(update_workflow_trigger::<T>)
@@ -119,6 +128,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflow_runs",
             get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/workflow_runs/claim",
+            post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
         )
         .route("/runs", get(get_runs::<T>).layer(Extension(pool.clone())))
         .route(
@@ -172,6 +185,14 @@ pub fn build_router<T: DatabaseImpl>(
             get(get_workflow_run::<T>)
                 .patch(update_workflow_run::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/workflow_runs/{id}/claim/renew",
+            post(renew_workflow_run_claim::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/workflow_runs/{id}/claim/release",
+            post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/debug/step",

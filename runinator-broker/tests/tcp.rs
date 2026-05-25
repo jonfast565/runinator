@@ -6,6 +6,7 @@ use runinator_broker::{
 use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::workflows::WorkflowAction;
 use serde_json::json;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -116,6 +117,29 @@ async fn tcp_broker_delivers_result_events() {
         .await
         .unwrap();
 
+    server.abort();
+}
+
+#[tokio::test]
+async fn tcp_broker_times_out_publish_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+    let broker = TcpBroker::with_timeout(addr.to_string(), Duration::from_millis(25));
+
+    let err = broker
+        .publish(BrokerMessage {
+            command: action_command(),
+            dedupe_key: Some("tcp-timeout-test".into()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .expect_err("publish should time out waiting for a response");
+
+    assert!(err.to_string().contains("timed out"));
     server.abort();
 }
 

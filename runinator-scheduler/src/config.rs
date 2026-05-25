@@ -1,4 +1,5 @@
 use clap::Parser;
+use uuid::Uuid;
 
 use runinator_models::errors::SendableError;
 
@@ -6,6 +7,15 @@ use runinator_models::errors::SendableError;
 pub struct Config {
     #[arg(long, default_value_t = 1)]
     pub scheduler_frequency_seconds: u64,
+
+    #[arg(long, default_value = "")]
+    pub scheduler_id: String,
+
+    #[arg(long, default_value_t = 60)]
+    pub scheduler_lease_seconds: u64,
+
+    #[arg(long, default_value_t = 50)]
+    pub scheduler_claim_limit: i64,
 
     #[arg(long, default_value = "0.0.0.0")]
     pub gossip_bind: String,
@@ -48,5 +58,11 @@ pub struct Config {
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {
-    Ok(Config::try_parse()?)
+    let mut config = Config::try_parse()?;
+    if config.scheduler_id.trim().is_empty() {
+        config.scheduler_id = format!("scheduler-{}", Uuid::new_v4());
+    }
+    config.scheduler_claim_limit = config.scheduler_claim_limit.max(1);
+    config.scheduler_lease_seconds = config.scheduler_lease_seconds.max(1);
+    Ok(config)
 }

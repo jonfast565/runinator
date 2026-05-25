@@ -8,6 +8,7 @@ members = [
     "runinator-scheduler",
     "runinator-ws",
     "runinator-worker",
+    "runinator-ctl",
     "runinator-comm",
     "runinator-importer",
     "runinator-api",
