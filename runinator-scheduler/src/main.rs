@@ -60,9 +60,12 @@ async fn main() -> Result<(), SendableError> {
         Ok(())
     });
 
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C");
+    tokio::signal::ctrl_c().await.map_err(|err| {
+        Box::new(RuntimeError::new(
+            "scheduler.signal.ctrl_c".into(),
+            format!("Failed to listen for Ctrl+C: {err}"),
+        )) as SendableError
+    })?;
     info!("Received shutdown signal. Shutting down...");
     notify.notify_waiters();
 

@@ -13,15 +13,18 @@ pub fn pause_requested(workflow_run: &WorkflowRun) -> bool {
 }
 
 pub fn ensure_control_object(state: &mut Value) -> &mut Map<String, Value> {
-    if !state.is_object() {
-        *state = Value::Object(Map::new());
+    let object = ensure_object(state);
+    let control = object
+        .entry("control")
+        .or_insert_with(|| Value::Object(Map::new()));
+    ensure_object(control)
+}
+
+fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
+    loop {
+        if let Value::Object(object) = value {
+            return object;
+        }
+        *value = Value::Object(Map::new());
     }
-    let object = state.as_object_mut().expect("state is object");
-    if !object.contains_key("control") {
-        object.insert("control".into(), Value::Object(Map::new()));
-    }
-    object
-        .get_mut("control")
-        .and_then(Value::as_object_mut)
-        .expect("control is object")
 }

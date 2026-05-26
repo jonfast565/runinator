@@ -4,6 +4,10 @@ use std::{
     time::Duration,
 };
 
+mod protocol;
+mod resources;
+mod tools;
+
 use clap::Parser;
 use reqwest::blocking::Client;
 use runinator_models::{
@@ -11,6 +15,13 @@ use runinator_models::{
     workflows::{WorkflowDefinition, WorkflowStatus},
 };
 use serde_json::{Value, json};
+
+use protocol::{json_export_response, json_tool_response, required_i64, required_value};
+use resources::{
+    resource_entries_from_runs, resource_entries_from_workflow_runs, resource_path_for_uri,
+    resource_templates,
+};
+use tools::{fixed_tools, parse_tool_workflow_id, tools_from_workflows};
 
 #[derive(Parser)]
 struct Args {
@@ -357,274 +368,6 @@ impl McpServer {
             path.trim_start_matches('/')
         )
     }
-}
-
-fn tools_from_workflows(workflows: Vec<WorkflowDefinition>) -> Vec<Value> {
-    workflows
-        .into_iter()
-        .filter(|wf| wf.enabled)
-        .filter_map(|wf| {
-            let id = wf.id?;
-            Some(json!({
-                "name": tool_name(&wf, id),
-                "description": format!("Execute workflow: {}", wf.name),
-                "inputSchema": wf.input_type,
-            }))
-        })
-        .collect()
-}
-
-fn fixed_tools() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "runinator_list_providers",
-            "description": "List provider and action metadata for workflow authoring.",
-            "inputSchema": object_schema(vec![], vec![]),
-        }),
-        json!({
-            "name": "runinator_list_workflows",
-            "description": "List saved Runinator workflow definitions.",
-            "inputSchema": object_schema(vec![], vec![]),
-        }),
-        json!({
-            "name": "runinator_get_workflow",
-            "description": "Fetch a saved Runinator workflow definition.",
-            "inputSchema": object_schema(
-                vec![("workflow_id", json!({ "type": "integer" }))],
-                vec!["workflow_id"],
-            ),
-        }),
-        json!({
-            "name": "runinator_validate_workflow",
-            "description": "Normalize and validate a Runinator workflow definition without saving it.",
-            "inputSchema": object_schema(
-                vec![("workflow", json!({ "type": "object" }))],
-                vec!["workflow"],
-            ),
-        }),
-        json!({
-            "name": "runinator_save_workflow",
-            "description": "Create or update a Runinator workflow definition.",
-            "inputSchema": object_schema(
-                vec![("workflow", json!({ "type": "object" }))],
-                vec!["workflow"],
-            ),
-        }),
-        json!({
-            "name": "runinator_import_workflow_bundle",
-            "description": "Import an importer-compatible workflow bundle.",
-            "inputSchema": object_schema(
-                vec![
-                    ("workflows", json!({ "type": "array", "items": { "type": "object" } })),
-                    ("triggers", json!({ "type": "array", "items": { "type": "object" } })),
-                ],
-                vec![],
-            ),
-        }),
-        json!({
-            "name": "runinator_export_workflow_bundle",
-            "description": "Export all workflows, or one workflow, as importer-compatible JSON.",
-            "inputSchema": object_schema(
-                vec![("workflow_id", json!({ "type": "integer" }))],
-                vec![],
-            ),
-        }),
-    ]
-}
-
-fn object_schema(properties: Vec<(&str, Value)>, required: Vec<&str>) -> Value {
-    let mut property_map = serde_json::Map::new();
-    for (name, schema) in properties {
-        property_map.insert(name.into(), schema);
-    }
-    json!({
-        "type": "object",
-        "properties": property_map,
-        "required": required,
-    })
-}
-
-fn required_i64(arguments: &Value, name: &str) -> Result<i64, String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| format!("missing integer argument '{name}'"))
-}
-
-fn required_value(arguments: &Value, name: &str) -> Result<Value, String> {
-    arguments
-        .get(name)
-        .cloned()
-        .ok_or_else(|| format!("missing argument '{name}'"))
-}
-
-fn json_tool_response(message: &str, value: Value, is_error: bool) -> Result<Value, String> {
-    Ok(json!({
-        "content": [{
-            "type": "text",
-            "text": message,
-        }],
-        "structuredContent": value,
-        "isError": is_error,
-    }))
-}
-
-fn json_export_response(bundle: Value) -> Result<Value, String> {
-    let text = serde_json::to_string_pretty(&bundle).map_err(|err| err.to_string())?;
-    Ok(json!({
-        "content": [{
-            "type": "text",
-            "text": text,
-        }],
-        "structuredContent": bundle,
-        "isError": false,
-    }))
-}
-
-fn parse_tool_workflow_id(name: &str) -> Option<i64> {
-    name.split('_').last()?.parse().ok()
-}
-
-fn tool_name(wf: &WorkflowDefinition, id: i64) -> String {
-    let slug = wf
-        .name
-        .chars()
-        .map(|ch: char| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string();
-    format!("{slug}_{id}")
-}
-
-fn resource_templates() -> Vec<Value> {
-    vec![
-        json!({
-            "uri": "runinator://workflows",
-            "name": "Workflow list",
-            "mimeType": "application/json"
-        }),
-        json!({
-            "uri": "runinator://workflows/{id}",
-            "name": "Workflow definition",
-            "mimeType": "application/json"
-        }),
-        json!({
-            "uri": "runinator://workflow_runs/{id}",
-            "name": "Workflow run",
-            "mimeType": "application/json"
-        }),
-        json!({
-            "uri": "runinator://runs/{id}",
-            "name": "Run summary",
-            "mimeType": "application/json"
-        }),
-        json!({
-            "uri": "runinator://runs/{id}/chunks",
-            "name": "Run output chunks",
-            "mimeType": "application/json"
-        }),
-        json!({
-            "uri": "runinator://runs/{id}/artifacts",
-            "name": "Run artifacts",
-            "mimeType": "application/json"
-        }),
-    ]
-}
-
-fn resource_path_for_uri(uri: &str) -> Option<String> {
-    if uri == "runinator://workflows" {
-        return Some("workflows".into());
-    }
-    if let Some(workflow_id) = uri
-        .strip_prefix("runinator://workflows/")
-        .and_then(|id| id.parse::<i64>().ok())
-    {
-        return Some(format!("workflows/{workflow_id}"));
-    }
-    if let Some(workflow_run_id) = uri
-        .strip_prefix("runinator://workflow_runs/")
-        .and_then(|id| id.parse::<i64>().ok())
-    {
-        return Some(format!("workflow_runs/{workflow_run_id}"));
-    }
-    if let Some(raw) = uri.strip_prefix("runinator://runs/") {
-        if let Some(run_id) = raw
-            .strip_suffix("/chunks")
-            .and_then(|id| id.parse::<i64>().ok())
-        {
-            return Some(format!("runs/{run_id}/chunks?limit=500"));
-        }
-        if let Some(run_id) = raw
-            .strip_suffix("/artifacts")
-            .and_then(|id| id.parse::<i64>().ok())
-        {
-            return Some(format!("runs/{run_id}/artifacts"));
-        }
-        if let Ok(run_id) = raw.parse::<i64>() {
-            return Some(format!("runs/{run_id}"));
-        }
-    }
-    if let Some(artifact_id) = uri
-        .strip_prefix("runinator://artifacts/")
-        .and_then(|id| id.parse::<i64>().ok())
-    {
-        return Some(format!("artifacts/{artifact_id}"));
-    }
-    None
-}
-
-fn resource_entries_from_workflow_runs(workflow_runs: &[Value]) -> Vec<Value> {
-    let mut resources = Vec::new();
-    for run in workflow_runs {
-        let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
-            continue;
-        };
-        let status = run
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        resources.push(json!({
-            "uri": format!("runinator://workflow_runs/{run_id}"),
-            "name": format!("Workflow run {run_id}: {status}"),
-            "mimeType": "application/json",
-        }));
-    }
-    resources
-}
-
-fn resource_entries_from_runs(runs: &[Value]) -> Vec<Value> {
-    let mut resources = Vec::new();
-    for run in runs {
-        let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
-            continue;
-        };
-        let status = run
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}"),
-            "name": format!("Run {run_id}: {status}"),
-            "mimeType": "application/json",
-        }));
-        resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}/chunks"),
-            "name": format!("Run {run_id} chunks"),
-            "mimeType": "application/json",
-        }));
-        resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}/artifacts"),
-            "name": format!("Run {run_id} artifacts"),
-            "mimeType": "application/json",
-        }));
-    }
-    resources
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

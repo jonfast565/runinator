@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use log::info;
 use runinator_broker::Broker;
@@ -30,7 +33,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         notify.clone(),
     ));
     let app = build_router(pool, events_tx, broker);
-    let addr: SocketAddr = format!("0.0.0.0:{port}").parse().unwrap();
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(listener, app);
     info!("Webserver started at {}:{}", addr.ip(), addr.port());

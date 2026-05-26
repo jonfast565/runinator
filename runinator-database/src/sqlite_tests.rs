@@ -1,5 +1,6 @@
 use super::*;
 use crate::interfaces::DatabaseImpl;
+use chrono::Duration;
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
     runs::NewRunChunk,
@@ -392,6 +393,38 @@ async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
             .await
             .unwrap()
             .is_empty()
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn malformed_action_dispatch_command_returns_error() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-action-dispatches-malformed-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let command = action_command(42, 99, "node-a");
+    let dispatch = db
+        .enqueue_action_dispatch("dispatch-key".into(), command)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE workflow_action_dispatches SET command_json = ? WHERE id = ?")
+        .bind("{")
+        .bind(dispatch.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    let err = db
+        .fetch_pending_action_dispatches(10)
+        .await
+        .expect_err("malformed action dispatch command should return an error");
+    assert!(
+        err.to_string()
+            .contains("database.action_dispatch.invalid_command_json")
     );
 
     let _ = fs::remove_file(path);

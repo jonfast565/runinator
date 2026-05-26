@@ -87,17 +87,11 @@ pub fn state_with_step_cleared(mut state: Value) -> Value {
 
 /// ensure the debug object exists and return a mutable reference to it.
 pub fn ensure_debug_object(state: &mut Value) -> &mut Map<String, Value> {
-    if !state.is_object() {
-        *state = Value::Object(Map::new());
-    }
-    let object = state.as_object_mut().expect("state is object");
-    if !object.contains_key("debug") {
-        object.insert("debug".into(), Value::Object(Map::new()));
-    }
-    object
-        .get_mut("debug")
-        .and_then(Value::as_object_mut)
-        .expect("debug is object")
+    let object = ensure_object(state);
+    let debug = object
+        .entry("debug")
+        .or_insert_with(|| Value::Object(Map::new()));
+    ensure_object(debug)
 }
 
 /// merge a user-supplied debug patch into existing state.
@@ -123,5 +117,14 @@ pub fn merge_user_debug_patch(state: &mut Value, patch: &Value) {
         } else if let Some(s) = osb.as_str() {
             debug.insert("one_shot_breakpoint".into(), Value::String(s.to_string()));
         }
+    }
+}
+
+fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
+    loop {
+        if let Value::Object(object) = value {
+            return object;
+        }
+        *value = Value::Object(Map::new());
     }
 }

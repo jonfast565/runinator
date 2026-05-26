@@ -13,7 +13,7 @@ use std::{
     ffi::{CString, c_char, c_int},
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Seek, SeekFrom},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -105,7 +105,7 @@ impl Plugin {
             unsafe { lib.get(PLUGIN_SERVICE_CALL_FN_NAME.as_bytes())? };
 
         let name = unsafe { name_symbol() };
-        let name_str_buf = ffiutils::cstr_to_rust_string(name);
+        let name_str_buf = ffiutils::try_cstr_to_rust_string(name)?;
 
         Ok(Plugin {
             name: name_str_buf,
@@ -141,8 +141,8 @@ impl Plugin {
             let lib = Library::new(self.file_name.clone())?;
             let service_call_symbol: Symbol<PluginServiceCallFn> =
                 lib.get(PLUGIN_SERVICE_CALL_FN_NAME.as_bytes())?;
-            let request_cstr = CString::new(request_path.to_string_lossy().as_bytes()).unwrap();
-            let response_cstr = CString::new(response_path.to_string_lossy().as_bytes()).unwrap();
+            let request_cstr = path_to_cstring(&request_path, "request")?;
+            let response_cstr = path_to_cstring(&response_path, "response")?;
             (service_call_symbol)(request_cstr.as_ptr(), response_cstr.as_ptr())
         };
 
@@ -170,7 +170,7 @@ impl Plugin {
         let metadata_symbol: Symbol<PluginMetadataFn> =
             unsafe { lib.get(PLUGIN_METADATA_FN_NAME.as_bytes())? };
         let metadata = unsafe { metadata_symbol() };
-        let metadata = ffiutils::cstr_to_rust_string(metadata);
+        let metadata = ffiutils::try_cstr_to_rust_string(metadata)?;
         let mut metadata: ProviderMetadata = serde_json::from_str(&metadata)?;
         if metadata.name.trim().is_empty() {
             metadata.name = self.name.clone();
@@ -183,6 +183,18 @@ impl Plugin {
         })?;
         Ok(metadata)
     }
+}
+
+fn path_to_cstring(path: &Path, kind: &str) -> Result<CString, SendableError> {
+    CString::new(path.to_string_lossy().as_bytes()).map_err(|err| {
+        Box::new(RuntimeError::new(
+            "plugin.path.invalid".into(),
+            format!(
+                "Plugin {kind} path contains an interior nul byte: {} ({err})",
+                path.display()
+            ),
+        )) as SendableError
+    })
 }
 
 fn unique_temp_file(kind: &str, extension: &str) -> PathBuf {

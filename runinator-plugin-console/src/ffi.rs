@@ -11,7 +11,9 @@ const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"
 
 #[ctor(unsafe)]
 fn constructor() {
-    logger::setup_logger().expect("logger not set up");
+    if let Err(err) = logger::setup_logger() {
+        eprintln!("logger not set up: {err}");
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -47,8 +49,20 @@ pub extern "C" fn call_service(
     request_json_path: *const c_char,
     response_json_path: *const c_char,
 ) -> c_int {
-    let request_path = ffiutils::cstr_to_rust_string(request_json_path);
-    let response_path = ffiutils::cstr_to_rust_string(response_json_path);
+    let request_path = match ffiutils::try_cstr_to_rust_string(request_json_path) {
+        Ok(path) => path,
+        Err(err) => {
+            error!("Invalid request path from host: {}", err);
+            return -1;
+        }
+    };
+    let response_path = match ffiutils::try_cstr_to_rust_string(response_json_path) {
+        Ok(path) => path,
+        Err(err) => {
+            error!("Invalid response path from host: {}", err);
+            return -1;
+        }
+    };
 
     execute_request(&request_path, &response_path).unwrap_or_else(|e| {
         error!("Error executing command: {}", e);

@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
@@ -16,8 +16,7 @@ use runinator_models::{
 };
 use serde_json::Value;
 use sqlx::{
-    ConnectOptions, Executor, Row, SqlitePool, migrate::Migrator,
-    sqlite::SqliteConnectOptions,
+    ConnectOptions, Executor, Row, SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions,
 };
 
 use crate::{interfaces::DatabaseImpl, mappers};
@@ -39,10 +38,7 @@ impl SqliteDb {
             .create_if_missing(true);
         let options_with_logs = options
             .log_statements(log::LevelFilter::Debug)
-            .log_slow_statements(
-                log::LevelFilter::Warn,
-                Duration::seconds(1).to_std().unwrap(),
-            );
+            .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
         let unmutable_options = options_with_logs.clone();
         let connection = SqlitePool::connect_with(unmutable_options).await?;
         let result = SqliteDb { pool: connection };
@@ -171,7 +167,7 @@ impl DatabaseImpl for SqliteDb {
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {
-                info!("Running {}", path_info.to_str().unwrap());
+                info!("Running {}", path_info.display());
                 let script = fs::read_to_string(path_info.as_path())?;
                 self.execute_script(&script).await?;
             }
@@ -1261,7 +1257,7 @@ impl DatabaseImpl for SqliteDb {
         .bind(now)
         .fetch_one(&self.pool)
         .await?;
-        Ok(mappers::sqlite_row_to_action_dispatch(&row))
+        mappers::sqlite_row_to_action_dispatch(&row)
     }
 
     async fn fetch_pending_action_dispatches(
@@ -1278,10 +1274,9 @@ impl DatabaseImpl for SqliteDb {
         .bind(limit.max(1))
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .iter()
+        rows.iter()
             .map(mappers::sqlite_row_to_action_dispatch)
-            .collect())
+            .collect()
     }
 
     async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
