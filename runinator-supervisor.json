@@ -72,6 +72,8 @@
       "name": "importer",
       "command": "./target/debug/runinator-importer",
       "args": [
+        "--workflows-file",
+        "./packs/sdlc/workflow-pack.json",
         "--poll-interval-seconds",
         "2",
         "--gossip-bind",

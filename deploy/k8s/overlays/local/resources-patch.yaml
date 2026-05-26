@@ -1,0 +1,54 @@
+# Trim resource requests for laptop-class local clusters.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: ws
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-scheduler
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: scheduler
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

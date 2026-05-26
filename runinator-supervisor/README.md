@@ -7,6 +7,8 @@ Small PM2-style process monitor for local Runinator development.
 ```bash
 runinator-supervisor --config runinator-supervisor.json start
 runinator-supervisor --config runinator-supervisor.json start --foreground
+runinator-supervisor --config runinator-supervisor.json restart
+runinator-supervisor --config runinator-supervisor.json restart --foreground
 runinator-supervisor --config runinator-supervisor.json status
 runinator-supervisor --config runinator-supervisor.json status --watch
 runinator-supervisor --config runinator-supervisor.json stop

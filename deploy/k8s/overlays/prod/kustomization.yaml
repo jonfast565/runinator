@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: runinator
+
+resources:
+  - ../../base
+
+# Point image names at your real registry. Override `newName` and `newTag`
+# (e.g. via `kustomize edit set image runinator-ws=registry.example.com/runinator-ws:1.2.3`).
+images:
+  - name: runinator-ws
+    newName: REPLACE_REGISTRY/runinator-ws
+    newTag: latest
+  - name: runinator-scheduler
+    newName: REPLACE_REGISTRY/runinator-scheduler
+    newTag: latest
+  - name: runinator-worker
+    newName: REPLACE_REGISTRY/runinator-worker
+    newTag: latest
+  - name: runinator-importer
+    newName: REPLACE_REGISTRY/runinator-importer
+    newTag: latest
+  - name: runinator-migration
+    newName: REPLACE_REGISTRY/runinator-migration
+    newTag: latest
+
+patches:
+  - path: resources-patch.yaml
+  - path: storage-class-patch.yaml

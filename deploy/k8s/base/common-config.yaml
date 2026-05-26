@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-common
+  namespace: runinator
+data:
+  RUST_LOG: "info"
+  RUST_BACKTRACE: "1"
+  WS_API_BASE_URL: "http://runinator-ws.runinator.svc.cluster.local:8080/"
+  POSTGRES_HOST: "runinator-postgres.runinator.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  RABBITMQ_HOST: "runinator-rabbitmq.runinator.svc.cluster.local"
+  RABBITMQ_PORT: "5672"
+  GOSSIP_TARGET_WS: "runinator-gossip.runinator.svc.cluster.local:5510"
+  GOSSIP_TARGET_SCHEDULER: "runinator-gossip.runinator.svc.cluster.local:5511"
+  GOSSIP_TARGET_IMPORTER: "runinator-gossip.runinator.svc.cluster.local:5512"

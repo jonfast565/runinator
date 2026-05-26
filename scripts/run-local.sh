@@ -89,7 +89,7 @@ Useful commands:
 
 Command-center:
   Run the Tauri UI with bash scripts/run-local.sh ui.
-  The importer watches $WORKFLOWS_FILE by default.
+  The importer watches the workflow file configured in runinator-supervisor.json.
 MSG
     ;;
   foreground)
@@ -119,10 +119,9 @@ MSG
     cargo run "${SUPERVISOR_ARGS[@]}" stop
     ;;
   restart)
-    cargo run "${SUPERVISOR_ARGS[@]}" stop || true
     ensure_workflow_dir
     cargo build --workspace
-    cargo run "${SUPERVISOR_ARGS[@]}" start
+    cargo run "${SUPERVISOR_ARGS[@]}" restart
     cargo run "${SUPERVISOR_ARGS[@]}" status
     ;;
   *)

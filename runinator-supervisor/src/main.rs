@@ -28,6 +28,14 @@ fn main() -> Result<(), DynError> {
             }
         }
         Commands::Stop => stop_supervisor(&config, &paths)?,
+        Commands::Restart { foreground } => {
+            stop_supervisor(&config, &paths)?;
+            if foreground {
+                run_supervisor(&config, &paths, true)?;
+            } else {
+                start_daemon(&paths)?;
+            }
+        }
         Commands::Status { watch } => show_status(&paths, watch)?,
         Commands::Logs {
             process,

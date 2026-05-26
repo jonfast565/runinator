@@ -36,7 +36,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor starts the importer with a short local polling interval, so edits to `~/.runinator/workflows/workflow-pack.json` are pushed into the API shortly after the web service is discovered. If the stack is already running and you want an immediate sync, run:
+The supervisor starts the importer with a short local polling interval, so edits to the workflow file configured in `runinator-supervisor.json` are pushed into the API shortly after the web service is discovered. The checked-in local config watches `packs/sdlc/workflow-pack.json`. If the stack is already running and you want an immediate sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -48,6 +48,7 @@ You can also run the supervisor directly:
 cargo build --workspace
 cargo run -p runinator-supervisor -- start
 cargo run -p runinator-supervisor -- status
+cargo run -p runinator-supervisor -- restart
 cargo run -p runinator-supervisor -- stop
 ```
 
@@ -90,9 +91,10 @@ http|tcp` plus the matching endpoint.
 
 Local runtime files are written under `~/.runinator/` by default. This includes
 the SQLite database at `~/.runinator/runinator.db`, credentials at
-`~/.runinator/credentials.enc.json`, the default workflow bundle at
-`~/.runinator/workflows/workflow-pack.json`, application logs under
+`~/.runinator/credentials.enc.json`, application logs under
 `~/.runinator/logs/`, and supervisor state under `~/.runinator/supervisor/`.
+When the importer is started without `--workflows-file`, it reads
+`~/.runinator/workflows/workflow-pack.json`.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
@@ -124,10 +126,12 @@ This publishes binaries under `target/artifacts/`, writes `target/artifacts/runi
 
 ## Workflow Import
 
-The importer reads `~/.runinator/workflows/workflow-pack.json` by default. Put a
-secret bundle at `~/.runinator/secrets.json` to load local credentials during
-importer startup. You can seed the local workflow bundle from the repository
-sample pack if needed:
+The importer binary reads `~/.runinator/workflows/workflow-pack.json` by default
+when `--workflows-file` is not set. The local supervisor config passes
+`--workflows-file ./packs/sdlc/workflow-pack.json`. Put a secret bundle at
+`~/.runinator/secrets.json` to load local credentials during importer startup.
+You can seed the app-data workflow bundle from the repository sample pack if
+needed:
 
 ```bash
 mkdir -p ~/.runinator/workflows
@@ -149,6 +153,63 @@ The v1 control-flow runtime is controller-driven and still uses one `active_node
 `parallel` and `race` advance branch roots sequentially through persisted workflow state,
 and `map.concurrency` is reserved for a future multi-active-node runtime. Branch/body/item
 nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
+
+## Kubernetes
+
+The Kubernetes manifests live under `deploy/k8s/` and are organized as a
+kustomize base with two overlays:
+
+```
+deploy/k8s/
+  base/                     # core manifests (namespace, services, postgres, rabbitmq, app deployments)
+  overlays/local/           # k3d/minikube/kind — light replicas, default StorageClass
+  overlays/prod/            # real registry + StorageClass + production resource sizing
+```
+
+The K8s stack uses **Postgres** in-cluster (StatefulSet + PVC) and **RabbitMQ**
+as the broker (via the `rabbitmq` Cargo feature, baked into the ws/scheduler/
+worker images). The standalone `runinator-broker` binary is not deployed in K8s.
+
+Schema is applied by the `runinator-migration` image, which uses sqlx's built-in
+migrator to run versioned SQL files from `runinator-database/migrations/`. The
+manifest wires it up two ways: an `initContainer` on the `runinator-ws`
+Deployment runs migrations on every pod start, and a standalone Job
+(`runinator-db-migrate`) is available for out-of-band ops use.
+
+### Quick start (local cluster)
+
+```bash
+# 1. Build images and load them into the cluster (k3d shown).
+docker build -t runinator-ws:dev        -f runinator-ws/Dockerfile        .
+docker build -t runinator-scheduler:dev -f runinator-scheduler/Dockerfile .
+docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
+docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
+docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
+k3d image import runinator-ws:dev runinator-scheduler:dev \
+                 runinator-worker:dev runinator-importer:dev \
+                 runinator-migration:dev -c runinator
+
+# 2. Create the three Secrets in the runinator namespace.
+#    Copy deploy/k8s/base/secrets.example.yaml outside the repo, fill in real
+#    values, then `kubectl apply -f path/to/my-secrets.yaml`.
+
+# 3. Apply the local overlay.
+bash scripts/deploy-k8s.sh --overlay local
+# or:
+kubectl apply -k deploy/k8s/overlays/local
+```
+
+### Production
+
+Edit `deploy/k8s/overlays/prod/kustomization.yaml` to set your registry/tags
+(or run `kustomize edit set image …`), edit `storage-class-patch.yaml` to set
+your cluster's `storageClassName`, create the Secrets, then:
+
+```bash
+bash scripts/deploy-k8s.sh --overlay prod --context my-prod-context
+```
+
+See `deploy/k8s/overlays/{local,prod}/README.md` for details.
 
 ## Build Command-Center
 

@@ -30,6 +30,12 @@ pub enum Commands {
     },
     /// Stop the supervisor and all managed child processes.
     Stop,
+    /// Stop and start the supervisor daemon.
+    Restart {
+        /// Run in the foreground instead of daemon mode after stopping.
+        #[arg(long, default_value_t = false)]
+        foreground: bool,
+    },
     /// Show a table of managed process state.
     Status {
         /// Refresh continuously.

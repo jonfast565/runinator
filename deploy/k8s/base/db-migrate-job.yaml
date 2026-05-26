@@ -1,0 +1,43 @@
+# Standalone migration Job. The runinator-ws Deployment already runs an
+# initContainer with the same image on every pod start, so this Job is for
+# out-of-band ops use (e.g. running migrations before scaling ws back up
+# during a coordinated schema change).
+#
+# Delete + re-apply to re-run:
+#   kubectl -n runinator delete job runinator-db-migrate --ignore-not-found
+#   kubectl -n runinator apply -k deploy/k8s/overlays/<env>
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runinator-db-migrate
+  namespace: runinator
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: runinator-db-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: runinator-migration:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--database"
+            - "postgres"
+            - "--database-url"
+            - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-postgres-secret
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

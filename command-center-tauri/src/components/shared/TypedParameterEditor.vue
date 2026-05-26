@@ -21,75 +21,12 @@
             {{ secret.scope }}/{{ secret.name }}
           </option>
         </select>
-        <input
-          v-else-if="isString(parameter)"
-          :type="parameter.secret ? 'password' : 'text'"
-          :value="stringValue(parameter.name)"
-          :placeholder="placeholder(parameter)"
-          @input="setValue(parameter.name, ($event.target as HTMLInputElement).value)"
-        />
-        <input
-          v-else-if="typeKind(parameter) === 'integer' || typeKind(parameter) === 'number'"
-          type="number"
-          :step="typeKind(parameter) === 'integer' ? 1 : 'any'"
-          :value="numberValue(parameter.name)"
-          @input="setNumberValue(parameter, ($event.target as HTMLInputElement).value)"
-        />
-        <input
-          v-else-if="typeKind(parameter) === 'boolean'"
-          type="checkbox"
-          :checked="Boolean(modelValue[parameter.name])"
-          @change="setValue(parameter.name, ($event.target as HTMLInputElement).checked)"
-        />
-        <textarea
-          v-else-if="isStringArray(parameter)"
-          :value="arrayText(parameter.name)"
-          placeholder="one value per line"
-          @input="setValue(parameter.name, splitLines(($event.target as HTMLTextAreaElement).value))"
-        />
-        <div v-else-if="isStruct(parameter)" class="struct-editor">
-          <label v-for="[fieldName, field] in structEntries(parameter)" :key="fieldName">
-            <span class="parameter-label">
-              {{ fieldName }}
-              <strong v-if="field.required">*</strong>
-              <small>{{ describeType(field.ty) }}</small>
-            </span>
-            <input
-              v-if="field.ty.type === 'string'"
-              type="text"
-              :value="structStringValue(parameter.name, fieldName)"
-              @input="setStructFieldValue(parameter.name, fieldName, ($event.target as HTMLInputElement).value)"
-            />
-            <input
-              v-else-if="field.ty.type === 'integer' || field.ty.type === 'number'"
-              type="number"
-              :step="field.ty.type === 'integer' ? 1 : 'any'"
-              :value="structNumberValue(parameter.name, fieldName)"
-              @input="setStructNumberValue(parameter.name, fieldName, field.ty, ($event.target as HTMLInputElement).value)"
-            />
-            <input
-              v-else-if="field.ty.type === 'boolean'"
-              type="checkbox"
-              :checked="Boolean(structValue(parameter.name)[fieldName])"
-              @change="setStructFieldValue(parameter.name, fieldName, ($event.target as HTMLInputElement).checked)"
-            />
-            <textarea
-              v-else-if="field.ty.type === 'array' && field.ty.items.type === 'string'"
-              :value="structStringArrayText(parameter.name, fieldName)"
-              placeholder="one value per line"
-              @input="setStructFieldValue(parameter.name, fieldName, splitLines(($event.target as HTMLTextAreaElement).value))"
-            />
-            <JsonEditor
-              v-else
-              :model-value="pretty(structValue(parameter.name)[fieldName] ?? defaultJsonValue(field.ty))"
-              @update:model-value="setStructJsonValue(parameter.name, fieldName, $event)"
-            />
-          </label>
-        </div>
-        <JsonEditor
+        <TypedValueEditor
           v-else
-          :model-value="jsonText(parameter.name)"
-          @update:model-value="setJsonValue(parameter.name, $event)"
+          :model-value="modelValue[parameter.name]"
+          :ty="parameter.ty"
+          :placeholder="placeholder(parameter)"
+          @update:model-value="setValue(parameter.name, $event)"
         />
       </label>
       <p v-if="parameter.description" class="description">{{ parameter.description }}</p>
@@ -113,11 +50,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import type { ActionParameterMetadata, CredentialSummary, JsonRecord, RuninatorField, RuninatorType } from "../../types/models";
-import { pretty } from "../../utils/format";
+import type { ActionParameterMetadata, CredentialSummary, JsonRecord, RuninatorType } from "../../types/models";
 import { parseSecretRef, secretRef, secretRefLabel } from "../../utils/secrets";
 import { useSecretsStore } from "../../stores/secrets";
-import JsonEditor from "./JsonEditor.vue";
+import TypedValueEditor from "./TypedValueEditor.vue";
 
 const props = defineProps<{
   modelValue: JsonRecord;
@@ -155,23 +91,6 @@ function setValue(name: string, value: unknown) {
   emit("update:modelValue", { ...props.modelValue, [name]: value });
 }
 
-function setNumberValue(parameter: ActionParameterMetadata, raw: string) {
-  if (raw.trim() === "") {
-    setValue(parameter.name, null);
-    return;
-  }
-  const value = typeKind(parameter) === "integer" ? Number.parseInt(raw, 10) : Number(raw);
-  setValue(parameter.name, value);
-}
-
-function setJsonValue(name: string, raw: string) {
-  try {
-    setValue(name, JSON.parse(raw || "null"));
-  } catch {
-    setValue(name, raw);
-  }
-}
-
 function isString(parameter: ActionParameterMetadata): boolean {
   return typeKind(parameter) === "string";
 }
@@ -186,18 +105,6 @@ function typeKind(parameter: ActionParameterMetadata): string {
 
 function typeLabel(parameter: ActionParameterMetadata): string {
   return describeType(parameter.ty);
-}
-
-function isStringArray(parameter: ActionParameterMetadata): boolean {
-  return parameter.ty?.type === "array" && parameter.ty.items.type === "string";
-}
-
-function isStruct(parameter: ActionParameterMetadata): boolean {
-  return parameter.ty?.type === "struct";
-}
-
-function structEntries(parameter: ActionParameterMetadata): Array<[string, RuninatorField]> {
-  return parameter.ty?.type === "struct" ? Object.entries(parameter.ty.fields) : [];
 }
 
 function stringValue(name: string): string {
@@ -220,73 +127,6 @@ function currentSecretLabel(name: string): string {
   const parsed = parseSecretRef(value);
   if (parsed) return `Missing secret: ${secretRefLabel(value)}`;
   return "Existing literal secret value";
-}
-
-function numberValue(name: string): string | number {
-  const value = props.modelValue[name];
-  return typeof value === "number" ? value : "";
-}
-
-function arrayText(name: string): string {
-  const value = props.modelValue[name];
-  return Array.isArray(value) ? value.join("\n") : "";
-}
-
-function splitLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function structValue(name: string): JsonRecord {
-  const value = props.modelValue[name];
-  return isPlainRecord(value) ? value : {};
-}
-
-function setStructFieldValue(parameterName: string, fieldName: string, value: unknown) {
-  setValue(parameterName, { ...structValue(parameterName), [fieldName]: value });
-}
-
-function setStructNumberValue(parameterName: string, fieldName: string, ty: RuninatorType, raw: string) {
-  if (raw.trim() === "") {
-    setStructFieldValue(parameterName, fieldName, null);
-    return;
-  }
-  setStructFieldValue(parameterName, fieldName, ty.type === "integer" ? Number.parseInt(raw, 10) : Number(raw));
-}
-
-function setStructJsonValue(parameterName: string, fieldName: string, raw: string) {
-  try {
-    setStructFieldValue(parameterName, fieldName, JSON.parse(raw || "null"));
-  } catch {
-    setStructFieldValue(parameterName, fieldName, raw);
-  }
-}
-
-function structStringValue(parameterName: string, fieldName: string): string {
-  const value = structValue(parameterName)[fieldName];
-  return typeof value === "string" ? value : "";
-}
-
-function structNumberValue(parameterName: string, fieldName: string): string | number {
-  const value = structValue(parameterName)[fieldName];
-  return typeof value === "number" ? value : "";
-}
-
-function structStringArrayText(parameterName: string, fieldName: string): string {
-  const value = structValue(parameterName)[fieldName];
-  return Array.isArray(value) ? value.join("\n") : "";
-}
-
-function defaultJsonValue(ty: RuninatorType): unknown {
-  if (ty.type === "array") return [];
-  if (ty.type === "map" || ty.type === "struct") return {};
-  return null;
-}
-
-function jsonText(name: string): string {
-  return pretty(props.modelValue[name] ?? {});
 }
 
 function placeholder(parameter: ActionParameterMetadata): string {
@@ -411,14 +251,6 @@ function isExpressionValue(value: unknown): boolean {
 .parameter-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.struct-editor {
-  display: grid;
-  gap: 8px;
-}
-.struct-editor label {
-  display: grid;
   gap: 4px;
 }
 .parameter-label {

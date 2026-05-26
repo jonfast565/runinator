@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-scheduler
+  namespace: runinator
+spec:
+  replicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  replicas: 1

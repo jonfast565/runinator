@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: runinator-worker
+  template:
+    metadata:
+      labels:
+        app: runinator-worker
+    spec:
+      initContainers:
+        - name: plugin-stage
+          image: runinator-worker:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - "cp -a /home/runinator/.runinator/plugins/. /opt/runinator/plugins/"
+          volumeMounts:
+            - name: plugins
+              mountPath: /opt/runinator/plugins
+      containers:
+        - name: worker
+          image: runinator-worker:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-worker"]
+          args:
+            - "--dll-path"
+            - "/opt/runinator/plugins"
+            - "--broker-backend"
+            - "rabbitmq"
+            - "--broker-endpoint"
+            - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
+            - "--broker-client-id"
+            - "runinator-worker-$(POD_NAME)"
+            - "--max-concurrent-actions"
+            - "4"
+            - "--api-base-url"
+            - "$(WS_API_BASE_URL)"
+            - "--worker-id"
+            - "$(POD_NAME)"
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-rabbitmq-secret
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: plugins
+              mountPath: /opt/runinator/plugins
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: plugins
+          emptyDir: {}

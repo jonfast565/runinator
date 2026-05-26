@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-gossip
+  namespace: runinator
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    runinator.gossip/member: "true"
+  ports:
+    - name: ws-gossip
+      port: 5510
+      protocol: UDP
+      targetPort: 5510
+    - name: scheduler-gossip
+      port: 5511
+      protocol: UDP
+      targetPort: 5511
+    - name: importer-gossip
+      port: 5512
+      protocol: UDP
+      targetPort: 5512

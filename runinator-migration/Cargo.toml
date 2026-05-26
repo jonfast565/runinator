@@ -1,0 +1,17 @@
+[package]
+name = "runinator-migration"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+runinator-database = { path = "../runinator-database" }
+runinator-models = { path = "../runinator-models" }
+
+[[bin]]
+name = "runinator-migration"
+path = "src/main.rs"

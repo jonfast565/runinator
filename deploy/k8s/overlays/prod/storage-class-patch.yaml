@@ -1,0 +1,33 @@
+# Set a non-default StorageClass for prod PVCs.
+# Edit `storageClassName` to match your cluster (e.g. gp3, premium-rwo, longhorn).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-postgres
+  namespace: runinator
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: REPLACE_STORAGE_CLASS
+        resources:
+          requests:
+            storage: 50Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-rabbitmq
+  namespace: runinator
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: rabbitmq-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: REPLACE_STORAGE_CLASS
+        resources:
+          requests:
+            storage: 20Gi

@@ -74,6 +74,31 @@ async fn load_secret_bundle_reads_credentials() {
 }
 
 #[tokio::test]
+async fn sync_reports_missing_workflow_bundle_path() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-importer-missing-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let config = Config {
+        workflows_file: Some(path.to_string_lossy().into_owned()),
+        secrets_file: None,
+        poll_interval_seconds: 10,
+        gossip_bind: "127.0.0.1".into(),
+        gossip_port: 5000,
+        gossip_targets: Vec::new(),
+        once: true,
+    };
+    let api = RecordingImporter::default();
+    let mut last_modified = None;
+
+    let err = sync_workflows_if_changed(&config, &api, &mut last_modified)
+        .await
+        .expect_err("missing workflow bundle should fail");
+
+    assert!(err.to_string().contains(path.to_string_lossy().as_ref()));
+}
+
+#[tokio::test]
 async fn load_import_file_unwraps_workflow_pack_envelope() {
     let path = std::env::temp_dir().join(format!(
         "runinator-importer-pack-{}.json",

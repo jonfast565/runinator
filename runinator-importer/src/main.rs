@@ -2,7 +2,7 @@ mod config;
 #[cfg(test)]
 mod tests;
 
-use std::{convert::Infallible, path::Path, time::SystemTime};
+use std::{convert::Infallible, io, path::Path, time::SystemTime};
 
 use async_trait::async_trait;
 use clap::Parser;
@@ -251,7 +251,9 @@ async fn sync_workflows_if_changed(
     last_modified: &mut Option<SystemTime>,
 ) -> Result<(), DynError> {
     let path = workflow_bundle_path(config);
-    let metadata = tokio::fs::metadata(&path).await?;
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|err| path_io_error("inspect workflow bundle at", &path, err))?;
     let modified = metadata.modified()?;
 
     let should_sync = last_modified.map_or(true, |prev| modified > prev);
@@ -294,7 +296,9 @@ fn workflow_bundle_path(config: &Config) -> std::path::PathBuf {
 }
 
 async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
-    let data = tokio::fs::read_to_string(path).await?;
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|err| path_io_error("read workflow bundle at", path, err))?;
     let raw: Value = serde_json::from_str(&data)?;
 
     if raw.get("item_type").and_then(Value::as_str) == Some("workflow_pack") {
@@ -302,6 +306,13 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     }
 
     Ok(serde_json::from_value(raw)?)
+}
+
+fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {
+    io::Error::new(
+        err.kind(),
+        format!("failed to {action} {}: {err}", path.display()),
+    )
 }
 
 fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {

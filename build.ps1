@@ -23,15 +23,11 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ImageTag = "local",
     [string]$KubeContext,
-    [string]$KubeManifest = "runinator-stack.yaml",
+    # Path to a kustomize overlay directory (e.g. deploy/k8s/overlays/local) or
+    # a raw manifest file. Defaults to the local overlay.
+    [string]$KubeManifest = "deploy/k8s/overlays/local",
     [switch]$KubeDelete,
     [string]$LocalRegistry = "",
-
-    [ValidateNotNullOrEmpty()]
-    [string]$KubeHostVolumePath = "/var/runinator",
-
-    [ValidateSet("RabbitMQ", "Kafka")]
-    [string]$KubeBrokerBackend = "RabbitMQ",
 
     [ValidateNotNullOrEmpty()]
     [string]$WindowsTargetTriple = "x86_64-pc-windows-msvc"
@@ -663,6 +659,7 @@ function Build-ContainerImages {
         @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
         @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
         @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
+        @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' },
         @{ Name = 'runinator-broker';    Dockerfile = 'runinator-broker/Dockerfile' }
     )
 
@@ -716,95 +713,74 @@ function Deploy-KubernetesStack {
 
         [hashtable]$ImageMap,
 
-        [string]$HostVolumePath = "/var/runinator",
-
-        [ValidateSet('RabbitMQ', 'Kafka')]
-        [string]$BrokerBackend = 'RabbitMQ',
-
         [switch]$Delete
     )
 
     Test-ToolAvailable -Name 'kubectl'
 
-    $resolvedManifest = if ([System.IO.Path]::IsPathRooted($ManifestPath)) {
+    $resolvedPath = if ([System.IO.Path]::IsPathRooted($ManifestPath)) {
         $ManifestPath
     } else {
         Join-Path -Path $WorkspacePath -ChildPath $ManifestPath
     }
 
-    if (-not (Test-Path -LiteralPath $resolvedManifest)) {
-        throw "Kubernetes manifest not found at $resolvedManifest"
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        throw "Kubernetes manifest or overlay not found at $resolvedPath"
     }
 
-    $tempManifest = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.yaml')
-    $content = Get-Content -Path $resolvedManifest -Raw
-    $linuxHostPath = Convert-ToLinuxPath -Path $HostVolumePath
-    $content = $content.Replace('__HOST_VOLUME_ROOT__', $linuxHostPath)
-    $content = $content.Replace('__BROKER_BACKEND__', $BrokerBackend.ToLowerInvariant())
+    # Decide between `kubectl apply -k` (overlay directory) and `-f` (raw file).
+    $isOverlay = (Get-Item -LiteralPath $resolvedPath).PSIsContainer
 
-    $brokerManifest = Get-BrokerInfraManifest -Backend $BrokerBackend -HostRoot $linuxHostPath
-    if ($content.Contains('# BROKER_INFRA_PLACEHOLDER')) {
-        $content = $content.Replace('# BROKER_INFRA_PLACEHOLDER', $brokerManifest)
-    } else {
-        $content = ($content.TrimEnd() + [Environment]::NewLine + $brokerManifest)
-    }
-
-    if ($ImageMap) {
+    if ($ImageMap -and $isOverlay) {
+        # Edit image refs in-place on the overlay using kustomize.
+        Test-ToolAvailable -Name 'kustomize'
         foreach ($entry in $ImageMap.GetEnumerator()) {
-            $pattern = [regex]::Escape("your-registry/$($entry.Key):latest")
-            $content = [regex]::Replace($content, $pattern, $entry.Value)
+            $editArgs = @('edit', 'set', 'image', "$($entry.Key)=$($entry.Value)")
+            Write-Step ("kustomize " + ($editArgs -join ' '))
+            Invoke-ExternalCommand -FilePath 'kustomize' -Arguments $editArgs -WorkingDirectory $resolvedPath
         }
     }
 
-    Set-Content -Path $tempManifest -Value $content -Encoding utf8NoBOM
+    $kubectlArgs = @()
+    if ($KubeContext) {
+        $kubectlArgs += @('--context', $KubeContext)
+    }
 
-    try {
-        $kubectlArgs = @()
+    $verb = if ($Delete) { 'delete' } else { 'apply' }
+    $flag = if ($isOverlay) { '-k' } else { '-f' }
+    $kubectlArgs += @($verb, $flag, $resolvedPath)
+
+    Write-Step ("kubectl " + ($kubectlArgs -join ' '))
+    Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $kubectlArgs -WorkingDirectory $WorkspacePath
+
+    if ($Delete) {
+        return
+    }
+
+    $deployments = @(
+        'runinator-scheduler',
+        'runinator-worker',
+        'runinator-importer',
+        'runinator-ws'
+    )
+
+    foreach ($deployment in $deployments) {
+        $rolloutArgs = @()
         if ($KubeContext) {
-            $kubectlArgs += @('--context', $KubeContext)
+            $rolloutArgs += @('--context', $KubeContext)
         }
 
-        if ($Delete) {
-            $kubectlArgs += @('delete', '-f', $tempManifest)
-        } else {
-            $kubectlArgs += @('apply', '-f', $tempManifest)
-        }
+        $rolloutArgs += @(
+            'rollout', 'status',
+            "deployment/$deployment",
+            '--namespace', 'runinator',
+            '--timeout', '120s'
+        )
 
-        Write-Step ("kubectl " + ($kubectlArgs -join ' '))
-        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $kubectlArgs -WorkingDirectory $WorkspacePath
-
-        if (-not $Delete) {
-            $deployments = @(
-                'runinator-scheduler',
-                'runinator-worker',
-                'runinator-importer',
-                'runinator-ws',
-                'runinator-broker'
-            )
-
-            foreach ($deployment in $deployments) {
-                $rolloutArgs = @()
-                if ($KubeContext) {
-                    $rolloutArgs += @('--context', $KubeContext)
-                }
-
-                $rolloutArgs += @(
-                    'rollout', 'status',
-                    "deployment/$deployment",
-                    '--namespace', 'runinator',
-                    '--timeout', '10s'
-                )
-
-                try {
-                    Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $rolloutArgs -WorkingDirectory $WorkspacePath
-                } catch {
-                    Write-Warning "Rollout status check failed for deployment '$deployment': $_"
-                }
-            }
-        }
-    } finally {
-        if (Test-Path -LiteralPath $tempManifest) {
-            Remove-Item -Path $tempManifest -ErrorAction SilentlyContinue
+        try {
+            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $rolloutArgs -WorkingDirectory $WorkspacePath
+        } catch {
+            Write-Warning "Rollout status check failed for deployment '$deployment': $_"
         }
     }
 }
@@ -901,8 +877,6 @@ try {
                 ManifestPath  = $manifestPath
                 KubeContext   = $KubeContext
                 ImageMap      = $imageMap
-                HostVolumePath = $KubeHostVolumePath
-                BrokerBackend  = $KubeBrokerBackend
             }
 
             if ($KubeDelete) {

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-scheduler
+  namespace: runinator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: runinator-scheduler
+  template:
+    metadata:
+      labels:
+        app: runinator-scheduler
+        runinator.gossip/member: "true"
+    spec:
+      containers:
+        - name: scheduler
+          image: runinator-scheduler:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-scheduler"]
+          args:
+            - "--scheduler-frequency-seconds"
+            - "1"
+            - "--scheduler-id"
+            - "$(POD_NAME)"
+            - "--scheduler-lease-seconds"
+            - "60"
+            - "--gossip-bind"
+            - "0.0.0.0"
+            - "--gossip-port"
+            - "5511"
+            - "--gossip-targets"
+            - "$(GOSSIP_TARGET_WS),$(GOSSIP_TARGET_IMPORTER)"
+            - "--api-timeout-seconds"
+            - "30"
+            - "--broker-backend"
+            - "rabbitmq"
+            - "--broker-endpoint"
+            - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
+            - "--broker-client-id"
+            - "runinator-scheduler-$(POD_NAME)"
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-rabbitmq-secret
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 5511
+              name: gossip
+              protocol: UDP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

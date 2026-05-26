@@ -1,0 +1,92 @@
+# Production resource sizing. Adjust per cluster capacity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: ws
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-scheduler
+  namespace: runinator
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: scheduler
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: worker
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-postgres
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "4000m"
+              memory: "4Gi"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-rabbitmq
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: rabbitmq
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"

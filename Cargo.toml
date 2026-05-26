@@ -5,6 +5,7 @@ members = [
     "command-center-tauri/src-tauri",
     "runinator-models",
     "runinator-database",
+    "runinator-migration",
     "runinator-scheduler",
     "runinator-ws",
     "runinator-worker",

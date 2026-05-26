@@ -15,231 +15,14 @@ use runinator_models::{
     },
 };
 use serde_json::Value;
-use sqlx::{ConnectOptions, Executor, Row, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{
+    ConnectOptions, Executor, Row, SqlitePool, migrate::Migrator,
+    sqlite::SqliteConnectOptions,
+};
 
 use crate::{interfaces::DatabaseImpl, mappers};
 
-const SQLITE_TABLE_INIT_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    status TEXT NOT NULL,
-    parameters TEXT NOT NULL,
-    output_json TEXT NULL,
-    message TEXT NULL,
-    trigger TEXT NOT NULL,
-    started_at INTEGER NULL,
-    finished_at INTEGER NULL,
-    created_at INTEGER NOT NULL,
-    workflow_run_id INTEGER NULL,
-    workflow_node_id TEXT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_chunks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL REFERENCES runs(id),
-    sequence INTEGER NOT NULL,
-    stream TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_artifacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL REFERENCES runs(id),
-    name TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    uri TEXT NOT NULL,
-    metadata TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflows (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    enabled BOOL NOT NULL,
-    input_schema TEXT NOT NULL,
-    definition TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_triggers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    enabled BOOL NOT NULL,
-    configuration TEXT NOT NULL DEFAULT '{}',
-    next_execution INTEGER NULL,
-    blackout_start INTEGER NULL,
-    blackout_end INTEGER NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_id INTEGER NOT NULL REFERENCES workflows(id),
-    workflow_snapshot TEXT NULL,
-    status TEXT NOT NULL,
-    active_node_id TEXT NULL,
-    parameters TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL,
-    started_at INTEGER NULL,
-    finished_at INTEGER NULL,
-    message TEXT NULL,
-    name TEXT NULL,
-    scheduler_claimed_by TEXT NULL,
-    scheduler_claimed_until INTEGER NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_node_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
-    node_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    attempt INTEGER NOT NULL DEFAULT 0,
-    parameters TEXT NOT NULL DEFAULT '{}',
-    output_json TEXT NULL,
-    state TEXT NOT NULL DEFAULT '{}',
-    transition_reason TEXT NULL,
-    created_at INTEGER NOT NULL,
-    started_at INTEGER NULL,
-    finished_at INTEGER NULL,
-    message TEXT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_node_chunks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_node_run_id INTEGER NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
-    sequence INTEGER NOT NULL,
-    stream TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_node_run_id INTEGER NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    uri TEXT NOT NULL,
-    metadata TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_result_events (
-    event_id TEXT PRIMARY KEY,
-    workflow_run_id INTEGER NOT NULL,
-    workflow_node_run_id INTEGER NOT NULL,
-    node_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_trigger_firings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    trigger_id INTEGER NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
-    fire_key TEXT NOT NULL,
-    workflow_run_id INTEGER NULL REFERENCES workflow_runs(id),
-    scheduler_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    UNIQUE(trigger_id, fire_key)
-);
-
-CREATE TABLE IF NOT EXISTS catalog_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uri TEXT NOT NULL UNIQUE,
-    item_type TEXT NOT NULL,
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-    document TEXT NOT NULL DEFAULT '{}',
-    metadata TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS automation_records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    record_type TEXT NOT NULL,
-    workflow_run_id INTEGER NULL,
-    external_item_id INTEGER NULL,
-    node_id TEXT NULL,
-    provider TEXT NOT NULL DEFAULT '',
-    resource_type TEXT NOT NULL DEFAULT '',
-    external_id TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT '',
-    title TEXT NULL,
-    url TEXT NULL,
-    body TEXT NULL,
-    path TEXT NULL,
-    prompt TEXT NULL,
-    approval_type TEXT NULL,
-    resolved_by TEXT NULL,
-    resolved_at INTEGER NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    data TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS idempotency_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scope TEXT NOT NULL,
-    key TEXT NOT NULL,
-    result TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL,
-    UNIQUE(scope, key)
-);
-
-CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dedupe_key TEXT NOT NULL UNIQUE,
-    command_json TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    published_at INTEGER NULL,
-    last_error TEXT NULL
-);
-
-CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_run_id INTEGER NULL,
-    workflow_node_id TEXT NULL,
-    channel TEXT NOT NULL,
-    severity TEXT NOT NULL DEFAULT 'info',
-    title TEXT NOT NULL,
-    body TEXT NULL,
-    target TEXT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    read_at INTEGER NULL,
-    created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-CREATE INDEX IF NOT EXISTS idx_run_chunks_run_sequence ON run_chunks(run_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_workflows_name ON workflows(name);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_scheduler_claim ON workflow_runs(status, scheduler_claimed_until);
-CREATE INDEX IF NOT EXISTS idx_workflow_triggers_workflow ON workflow_triggers(workflow_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_triggers_due ON workflow_triggers(enabled, kind, next_execution);
-CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_workflow_run ON workflow_node_runs(workflow_run_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_node_chunks_node_sequence ON workflow_node_chunks(workflow_node_run_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_workflow_node_artifacts_node ON workflow_node_artifacts(workflow_node_run_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_result_events_node ON workflow_result_events(workflow_node_run_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_trigger_firings_trigger ON workflow_trigger_firings(trigger_id);
-CREATE INDEX IF NOT EXISTS idx_catalog_items_type ON catalog_items(item_type);
-CREATE INDEX IF NOT EXISTS idx_automation_records_type ON automation_records(record_type);
-CREATE INDEX IF NOT EXISTS idx_automation_records_workflow_run ON automation_records(workflow_run_id);
-CREATE INDEX IF NOT EXISTS idx_automation_records_external_item ON automation_records(external_item_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_action_dispatches_pending ON workflow_action_dispatches(published_at, updated_at);
-"#;
+static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
 pub struct SqliteDb {
     pub pool: SqlitePool,
@@ -371,53 +154,20 @@ fn status_list(statuses: &[WorkflowStatus]) -> String {
         .join(", ")
 }
 
+impl SqliteDb {
+    pub async fn run_migrations(&self) -> Result<(), SendableError> {
+        info!("Running embedded SQLite migrations");
+        SQLITE_MIGRATOR
+            .run(&self.pool)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+}
+
 impl DatabaseImpl for SqliteDb {
     async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
-        info!("Running embedded SQLite table initialization script");
-        self.execute_script(SQLITE_TABLE_INIT_SQL).await?;
-        let columns = sqlx::query("PRAGMA table_info(workflow_runs)")
-            .fetch_all(&self.pool)
-            .await?;
-        let has_snapshot = columns
-            .iter()
-            .any(|row| row.get::<String, _>("name") == "workflow_snapshot");
-        if !has_snapshot {
-            self.pool
-                .execute(sqlx::query(
-                    "ALTER TABLE workflow_runs ADD COLUMN workflow_snapshot TEXT NULL",
-                ))
-                .await?;
-        }
-        let has_name = columns
-            .iter()
-            .any(|row| row.get::<String, _>("name") == "name");
-        if !has_name {
-            self.pool
-                .execute(sqlx::query(
-                    "ALTER TABLE workflow_runs ADD COLUMN name TEXT NULL",
-                ))
-                .await?;
-        }
-        let has_scheduler_claimed_by = columns
-            .iter()
-            .any(|row| row.get::<String, _>("name") == "scheduler_claimed_by");
-        if !has_scheduler_claimed_by {
-            self.pool
-                .execute(sqlx::query(
-                    "ALTER TABLE workflow_runs ADD COLUMN scheduler_claimed_by TEXT NULL",
-                ))
-                .await?;
-        }
-        let has_scheduler_claimed_until = columns
-            .iter()
-            .any(|row| row.get::<String, _>("name") == "scheduler_claimed_until");
-        if !has_scheduler_claimed_until {
-            self.pool
-                .execute(sqlx::query(
-                    "ALTER TABLE workflow_runs ADD COLUMN scheduler_claimed_until INTEGER NULL",
-                ))
-                .await?;
-        }
+        self.run_migrations().await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {

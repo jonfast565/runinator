@@ -5223,6 +5223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-migration"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger",
+ "log",
+ "runinator-database",
+ "runinator-models",
+ "tokio",
+]
+
+[[package]]
 name = "runinator-models"
 version = "0.1.0"
 dependencies = [

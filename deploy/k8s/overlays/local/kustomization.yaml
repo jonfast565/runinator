@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: runinator
+
+resources:
+  - ../../base
+
+# Single-node / local cluster (k3d, minikube, kind). PVCs use the cluster's
+# default StorageClass (e.g. local-path on k3d). If your local cluster has no
+# default storage provisioner, see overlays/local/README.md for a hostPath
+# fallback patch.
+patches:
+  - path: replicas-patch.yaml
+  - path: resources-patch.yaml
+
+# Images are expected to be loaded into the local cluster by name (e.g.
+# `k3d image import runinator-ws:dev -c runinator`). No registry prefix.
+images:
+  - name: runinator-ws
+    newName: runinator-ws
+    newTag: dev
+  - name: runinator-scheduler
+    newName: runinator-scheduler
+    newTag: dev
+  - name: runinator-worker
+    newName: runinator-worker
+    newTag: dev
+  - name: runinator-importer
+    newName: runinator-importer
+    newTag: dev
+  - name: runinator-migration
+    newName: runinator-migration
+    newTag: dev

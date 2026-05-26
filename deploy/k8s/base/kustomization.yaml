@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: runinator
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: runinator
+
+resources:
+  - namespace.yaml
+  - common-config.yaml
+  - gossip-service.yaml
+  - postgres.yaml
+  - rabbitmq.yaml
+  - db-migrate-job.yaml
+  - ws.yaml
+  - scheduler.yaml
+  - worker.yaml
+  - importer.yaml
+
+images:
+  - name: runinator-ws
+    newTag: dev
+  - name: runinator-scheduler
+    newTag: dev
+  - name: runinator-worker
+    newTag: dev
+  - name: runinator-importer
+    newTag: dev
+  - name: runinator-migration
+    newTag: dev

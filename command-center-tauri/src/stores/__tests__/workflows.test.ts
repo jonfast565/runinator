@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useWorkflowsStore } from "../workflows";
-import type { WorkflowDefinition, WorkflowRunDetail, WorkflowTrigger } from "../../types/models";
+import { useProvidersStore } from "../providers";
+import type { ProviderMetadata, WorkflowDefinition, WorkflowRunDetail, WorkflowTrigger } from "../../types/models";
 
 vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
@@ -85,6 +86,56 @@ describe("workflow run detail state", () => {
     expect(workflows.workflowDraft.name).toBe("bundle saved");
     expect(workflows.workflowTriggers).toEqual([workflowTrigger(12, 7, "30 * * * *")]);
   });
+
+  it("validates nested typed workflow input shaped step parameters", async () => {
+    const workflows = useWorkflowsStore();
+    const providers = useProvidersStore();
+    providers.providers = [nestedWorkflowInputProvider()];
+    await workflows.selectWorkflow(workflowDefinition(7, "nested input"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "prepare",
+      kind: "task",
+      action_name: "workflow-input",
+      action_function: "prepare",
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.openStepEditor("prepare");
+
+    workflows.stepEditor.parameters_json = JSON.stringify({
+      workflow_input: {
+        target: "prod",
+        environments: {
+          prod: { url: "https://example.test", retries: "twice" }
+        },
+        strategy: { manual: true }
+      }
+    });
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("Workflow Input.environments.prod.retries must be an integer");
+
+    workflows.stepEditor.parameters_json = JSON.stringify({
+      workflow_input: {
+        target: "prod",
+        environments: {
+          prod: { url: "https://example.test", retries: 2 }
+        },
+        strategy: { manual: true }
+      }
+    });
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "prepare")?.parameters).toEqual({
+      workflow_input: {
+        target: "prod",
+        environments: {
+          prod: { url: "https://example.test", retries: 2 }
+        },
+        strategy: { manual: true }
+      }
+    });
+  });
 });
 
 function workflowDefinition(id: number, name: string): WorkflowDefinition {
@@ -134,5 +185,62 @@ function workflowDetail(id: number, status: string, message: string, breakpoints
       message
     },
     nodes: []
+  };
+}
+
+function nestedWorkflowInputProvider(): ProviderMetadata {
+  return {
+    name: "workflow-input",
+    metadata: { credential_scopes: [], contract: null },
+    actions: [
+      {
+        function_name: "prepare",
+        description: null,
+        results: [],
+        parameters: [
+          {
+            name: "workflow_input",
+            label: "Workflow Input",
+            description: null,
+            required: true,
+            secret: false,
+            ty: {
+              type: "struct",
+              fields: {
+                target: { required: true, ty: { type: "string" } },
+                environments: {
+                  required: true,
+                  ty: {
+                    type: "map",
+                    values: {
+                      type: "struct",
+                      fields: {
+                        url: { required: true, ty: { type: "string" } },
+                        retries: { required: false, ty: { type: "integer" } }
+                      }
+                    }
+                  }
+                },
+                strategy: {
+                  required: true,
+                  ty: {
+                    type: "union",
+                    variants: [
+                      { type: "string" },
+                      {
+                        type: "struct",
+                        fields: {
+                          manual: { required: true, ty: { type: "boolean" } }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
   };
 }

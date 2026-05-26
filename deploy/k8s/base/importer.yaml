@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-importer
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-importer
+  template:
+    metadata:
+      labels:
+        app: runinator-importer
+        runinator.gossip/member: "true"
+    spec:
+      containers:
+        - name: importer
+          image: runinator-importer:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-importer"]
+          args:
+            - "--workflows-file"
+            - "/home/runinator/.runinator/workflows/workflow-pack.json"
+            - "--poll-interval-seconds"
+            - "30"
+            - "--gossip-bind"
+            - "0.0.0.0"
+            - "--gossip-port"
+            - "5512"
+            - "--gossip-targets"
+            - "$(GOSSIP_TARGET_WS),$(GOSSIP_TARGET_SCHEDULER)"
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+          ports:
+            - containerPort: 5512
+              name: gossip
+              protocol: UDP
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"

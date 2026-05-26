@@ -5,7 +5,7 @@ WORKDIR /workspace
 COPY . .
 RUN rustup install 1.91.0 && \
     rustup default 1.91.0 && \
-    cargo build --release --bin runinator-worker && \
+    cargo build --release --bin runinator-worker --features rabbitmq && \
     cargo build --release -p runinator-plugin-console
 
 FROM debian:bookworm-slim
