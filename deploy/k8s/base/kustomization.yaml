@@ -14,7 +14,6 @@ resources:
   - gossip-service.yaml
   - postgres.yaml
   - rabbitmq.yaml
-  - db-migrate-job.yaml
   - ws.yaml
   - scheduler.yaml
   - worker.yaml

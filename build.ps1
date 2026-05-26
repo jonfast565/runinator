@@ -7,6 +7,7 @@ param(
 
     [switch]$Run,
     [switch]$SkipBuild,
+    [switch]$DeployKube,
 
     [ValidateNotNullOrEmpty()]
     [string]$LocalDatabasePath = (Join-Path -Path $HOME -ChildPath ".runinator/runinator.db"),
@@ -647,9 +648,7 @@ function Build-ContainerImages {
         [Parameter(Mandatory)]
         [string]$Tag,
 
-        [switch]$PushImages,
-
-        [switch]$LoadIntoDocker
+        [switch]$PushImages
     )
 
     Test-ToolAvailable -Name 'docker'
@@ -659,8 +658,7 @@ function Build-ContainerImages {
         @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
         @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
         @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
-        @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' },
-        @{ Name = 'runinator-broker';    Dockerfile = 'runinator-broker/Dockerfile' }
+        @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' }
     )
 
     $builtImages = @{}
@@ -681,24 +679,102 @@ function Build-ContainerImages {
             Write-Step "Pushing image $taggedName"
             Invoke-ExternalCommand -FilePath 'docker' -Arguments @('push', $taggedName) -WorkingDirectory $WorkspacePath
         }
-
-        if ($LoadIntoDocker) {
-            $tempTar = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName() + '.tar')
-            try {
-                Write-Step "Saving image $taggedName to $tempTar"
-                Invoke-ExternalCommand -FilePath 'docker' -Arguments @('save', '-o', $tempTar, $taggedName) -WorkingDirectory $WorkspacePath
-
-                Write-Step "Loading image $taggedName into local Docker engine"
-                Invoke-ExternalCommand -FilePath 'docker' -Arguments @('load', '-i', $tempTar) -WorkingDirectory $WorkspacePath
-            } finally {
-                if (Test-Path -LiteralPath $tempTar) {
-                    Remove-Item -Path $tempTar -ErrorAction SilentlyContinue
-                }
-            }
-        }
     }
 
     return $builtImages
+}
+
+function New-KustomizeRenderOverlay {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkspacePath,
+
+        [Parameter(Mandatory)]
+        [string]$OverlayPath
+    )
+
+    $k8sRoot = [System.IO.Path]::GetFullPath((Join-Path -Path $WorkspacePath -ChildPath 'deploy/k8s'))
+    $resolvedOverlay = [System.IO.Path]::GetFullPath($OverlayPath)
+
+    if (-not $resolvedOverlay.StartsWith($k8sRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Image overrides require an overlay under $k8sRoot"
+    }
+
+    $renderRoot = Join-Path -Path $WorkspacePath -ChildPath 'target/k8s-render'
+    if (Test-Path -LiteralPath $renderRoot) {
+        Remove-Item -Path $renderRoot -Recurse -Force
+    }
+
+    Ensure-Directory -Path $renderRoot
+    Copy-Item -Path $k8sRoot -Destination $renderRoot -Recurse -Force
+
+    $relativeOverlay = [System.IO.Path]::GetRelativePath($k8sRoot, $resolvedOverlay)
+    return Join-Path -Path (Join-Path -Path $renderRoot -ChildPath 'k8s') -ChildPath $relativeOverlay
+}
+
+function Split-ImageReference {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Reference
+    )
+
+    $lastSlash = $Reference.LastIndexOf('/')
+    $lastColon = $Reference.LastIndexOf(':')
+    if ($lastColon -le $lastSlash) {
+        throw "Image reference '$Reference' must include a tag."
+    }
+
+    return [ordered]@{
+        Name = $Reference.Substring(0, $lastColon)
+        Tag  = $Reference.Substring($lastColon + 1)
+    }
+}
+
+function Set-KustomizeOverlayImages {
+    param(
+        [Parameter(Mandatory)]
+        [string]$OverlayPath,
+
+        [Parameter(Mandatory)]
+        [hashtable]$ImageMap
+    )
+
+    $kustomizationPath = Join-Path -Path $OverlayPath -ChildPath 'kustomization.yaml'
+    if (-not (Test-Path -LiteralPath $kustomizationPath)) {
+        throw "Kustomization file not found at $kustomizationPath"
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.AddRange([string[]](Get-Content -LiteralPath $kustomizationPath))
+    $updated = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($line -match '^(?<indent>\s*)-\s+name:\s+(?<name>\S+)\s*$' -and $ImageMap.ContainsKey($Matches['name'])) {
+            $imageName = $Matches['name']
+            $image = Split-ImageReference -Reference $ImageMap[$imageName]
+            $updated.Add($line)
+            $updated.Add("$($Matches['indent'])  newName: $($image.Name)")
+            $updated.Add("$($Matches['indent'])  newTag: $($image.Tag)")
+            [void]$seen.Add($imageName)
+
+            while (($i + 1) -lt $lines.Count -and $lines[$i + 1] -match '^\s+new(Name|Tag):\s+') {
+                $i++
+            }
+            continue
+        }
+
+        $updated.Add($line)
+    }
+
+    foreach ($imageName in $ImageMap.Keys) {
+        if (-not $seen.Contains($imageName)) {
+            throw "Kustomization at $kustomizationPath does not define image '$imageName'"
+        }
+    }
+
+    Set-Content -Path $kustomizationPath -Value $updated -Encoding utf8NoBOM
 }
 
 function Deploy-KubernetesStack {
@@ -731,14 +807,13 @@ function Deploy-KubernetesStack {
     # Decide between `kubectl apply -k` (overlay directory) and `-f` (raw file).
     $isOverlay = (Get-Item -LiteralPath $resolvedPath).PSIsContainer
 
+    $applyPath = $resolvedPath
+
     if ($ImageMap -and $isOverlay) {
-        # Edit image refs in-place on the overlay using kustomize.
-        Test-ToolAvailable -Name 'kustomize'
-        foreach ($entry in $ImageMap.GetEnumerator()) {
-            $editArgs = @('edit', 'set', 'image', "$($entry.Key)=$($entry.Value)")
-            Write-Step ("kustomize " + ($editArgs -join ' '))
-            Invoke-ExternalCommand -FilePath 'kustomize' -Arguments $editArgs -WorkingDirectory $resolvedPath
-        }
+        # render from a copied overlay so image edits do not dirty the repo.
+        $applyPath = New-KustomizeRenderOverlay -WorkspacePath $WorkspacePath -OverlayPath $resolvedPath
+        Write-Step "Rendering image overrides into $applyPath"
+        Set-KustomizeOverlayImages -OverlayPath $applyPath -ImageMap $ImageMap
     }
 
     $kubectlArgs = @()
@@ -748,7 +823,10 @@ function Deploy-KubernetesStack {
 
     $verb = if ($Delete) { 'delete' } else { 'apply' }
     $flag = if ($isOverlay) { '-k' } else { '-f' }
-    $kubectlArgs += @($verb, $flag, $resolvedPath)
+    $kubectlArgs += @($verb, $flag, $applyPath)
+    if ($Delete) {
+        $kubectlArgs += @('--ignore-not-found=true')
+    }
 
     Write-Step ("kubectl " + ($kubectlArgs -join ' '))
     Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $kubectlArgs -WorkingDirectory $WorkspacePath
@@ -757,14 +835,16 @@ function Deploy-KubernetesStack {
         return
     }
 
-    $deployments = @(
-        'runinator-scheduler',
-        'runinator-worker',
-        'runinator-importer',
-        'runinator-ws'
+    $rolloutTargets = @(
+        'statefulset/runinator-postgres',
+        'statefulset/runinator-rabbitmq',
+        'deployment/runinator-ws',
+        'deployment/runinator-scheduler',
+        'deployment/runinator-worker',
+        'deployment/runinator-importer'
     )
 
-    foreach ($deployment in $deployments) {
+    foreach ($target in $rolloutTargets) {
         $rolloutArgs = @()
         if ($KubeContext) {
             $rolloutArgs += @('--context', $KubeContext)
@@ -772,7 +852,7 @@ function Deploy-KubernetesStack {
 
         $rolloutArgs += @(
             'rollout', 'status',
-            "deployment/$deployment",
+            $target,
             '--namespace', 'runinator',
             '--timeout', '120s'
         )
@@ -780,7 +860,7 @@ function Deploy-KubernetesStack {
         try {
             Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $rolloutArgs -WorkingDirectory $WorkspacePath
         } catch {
-            Write-Warning "Rollout status check failed for deployment '$deployment': $_"
+            Write-Warning "Rollout status check failed for '$target': $_"
         }
     }
 }
@@ -790,6 +870,11 @@ try {
     $targetProfile = if ($BuildProfile -eq 'dev') { 'debug' } else { $BuildProfile }
     $targetDir = Join-Path -Path $workspacePath -ChildPath ("target/$targetProfile")
     $artifactsDir = Join-Path -Path $workspacePath -ChildPath 'target/artifacts'
+
+    if ($DeployKube) {
+        $Mode = 'Kubernetes'
+        $Run = $true
+    }
 
     if ($Mode -eq 'Kubernetes') {
         $ImageTag = Get-VersionedImageTag -RequestedTag $ImageTag
@@ -858,14 +943,16 @@ try {
             Start-LocalStack -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -WorkflowsFile $workflowsFilePath -GossipBasePort $GossipBasePort
         }
         'Kubernetes' {
-            $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)
-            $shouldImportImages = -not $shouldPushImages
-            $imageMap = Build-ContainerImages `
-                -WorkspacePath $workspacePath `
-                -Repository $ImageRepository `
-                -Tag $ImageTag `
-                -PushImages:$shouldPushImages `
-                -LoadIntoDocker:$shouldImportImages
+            $imageMap = $null
+            if (-not $KubeDelete) {
+                $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)
+                $imageMap = Build-ContainerImages `
+                    -WorkspacePath $workspacePath `
+                    -Repository $ImageRepository `
+                    -Tag $ImageTag `
+                    -PushImages:$shouldPushImages
+            }
+
             $manifestPath = if ([System.IO.Path]::IsPathRooted($KubeManifest)) {
                 $KubeManifest
             } else {

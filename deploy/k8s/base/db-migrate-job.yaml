@@ -1,11 +1,11 @@
-# Standalone migration Job. The runinator-ws Deployment already runs an
-# initContainer with the same image on every pod start, so this Job is for
-# out-of-band ops use (e.g. running migrations before scaling ws back up
-# during a coordinated schema change).
+# Standalone migration Job. This file is not included in the default kustomize
+# base because Job pod templates are immutable across image tag changes. The
+# runinator-ws Deployment already runs an initContainer with the same image on
+# every pod start, so this Job is for out-of-band ops use.
 #
 # Delete + re-apply to re-run:
 #   kubectl -n runinator delete job runinator-db-migrate --ignore-not-found
-#   kubectl -n runinator apply -k deploy/k8s/overlays/<env>
+#   kubectl apply -f deploy/k8s/base/db-migrate-job.yaml
 apiVersion: batch/v1
 kind: Job
 metadata:

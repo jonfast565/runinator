@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.6
 
-FROM rust:1.91-bookworm AS builder
+FROM rust:1.91.1-bookworm AS builder
 WORKDIR /workspace
 COPY . .
-RUN rustup install 1.91.0 && \
-    rustup default 1.91.0 && \
+RUN rustup install 1.91.1 && \
+    rustup default 1.91.1 && \
     cargo build --release --bin runinator-ws --features rabbitmq
 
 FROM debian:bookworm-slim
@@ -24,4 +24,3 @@ ENV RUST_LOG=info \
 EXPOSE 8080
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-ws"]
-

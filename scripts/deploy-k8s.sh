@@ -4,12 +4,16 @@
 # Usage:
 #   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--delete]
 #
-# Assumes images are already built and pushed (or loaded into the local cluster).
-# For local clusters, build images first:
+# Assumes images are already built and pushed or visible to the local cluster.
+# For an end-to-end build and deploy, prefer:
+#   pwsh ./build.ps1 -DeployKube
+#
+# Manual local images use the overlay's default dev tag:
 #   docker build -t runinator-ws:dev       -f runinator-ws/Dockerfile       .
 #   docker build -t runinator-scheduler:dev -f runinator-scheduler/Dockerfile .
 #   docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
 #   docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
+#   docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
 
 set -euo pipefail
 
@@ -32,7 +36,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,11p' "$0"
+            sed -n '2,16p' "$0"
             exit 0
             ;;
         *)
@@ -62,19 +66,24 @@ if [[ -n "$context" ]]; then
     kubectl_args+=(--context "$context")
 fi
 kubectl_args+=("$verb" -k "$overlay_dir")
+if [[ "$delete" -eq 1 ]]; then
+    kubectl_args+=(--ignore-not-found=true)
+fi
 
 echo "==> kubectl ${kubectl_args[*]}"
 kubectl "${kubectl_args[@]}"
 
 if [[ "$verb" == "apply" ]]; then
-    for dep in runinator-ws runinator-scheduler runinator-worker runinator-importer; do
+    for target in statefulset/runinator-postgres statefulset/runinator-rabbitmq \
+        deployment/runinator-ws deployment/runinator-scheduler \
+        deployment/runinator-worker deployment/runinator-importer; do
         rollout_args=()
         if [[ -n "$context" ]]; then
             rollout_args+=(--context "$context")
         fi
-        rollout_args+=(rollout status "deployment/$dep" --namespace runinator --timeout 120s)
+        rollout_args+=(rollout status "$target" --namespace runinator --timeout 120s)
         if ! kubectl "${rollout_args[@]}"; then
-            echo "warn: rollout check failed for $dep" >&2
+            echo "warn: rollout check failed for $target" >&2
         fi
     done
 fi

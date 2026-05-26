@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.19.0
 
-FROM rust:1.91-bookworm AS builder
+FROM rust:1.91.1-bookworm AS builder
 WORKDIR /workspace
 COPY . .
-RUN rustup install 1.91.0 && \
-    rustup default 1.91.0 && \
+RUN rustup install 1.91.1 && \
+    rustup default 1.91.1 && \
     cargo build --release --bin runinator-importer
 
 FROM debian:bookworm-slim

@@ -1,27 +1,28 @@
 # Local overlay
 
-Targets a single-node local cluster (k3d, minikube, kind). Expects:
+Targets a single-node local cluster (Docker Desktop, k3d, minikube, kind).
+The overlay includes development-only Secrets for Postgres, RabbitMQ, and the
+app credential store.
 
-- A default `StorageClass` (k3d ships `local-path`; kind needs the local-path provisioner installed; minikube enables it by default).
-- Locally built images loaded into the cluster by name, e.g.:
+Expects a default `StorageClass` (k3d ships `local-path`; kind needs the
+local-path provisioner installed; minikube enables it by default).
+
+The preferred end-to-end command is:
 
 ```sh
-docker build -t runinator-ws:dev        -f runinator-ws/Dockerfile        .
-docker build -t runinator-scheduler:dev -f runinator-scheduler/Dockerfile .
-docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
-docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
-docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
-
-k3d image import runinator-ws:dev runinator-scheduler:dev \
-                 runinator-worker:dev runinator-importer:dev \
-                 runinator-migration:dev \
-                 -c runinator
+pwsh ./build.ps1 -DeployKube
 ```
 
-Apply:
+For clusters that cannot see Docker Desktop's local image store, push through a
+registry reachable from the cluster:
 
 ```sh
-kubectl apply -f deploy/k8s/base/secrets.example.yaml  # edit first!
+pwsh ./build.ps1 -DeployKube -LocalRegistry localhost:5000
+```
+
+If images are already available and you only need to apply the overlay:
+
+```sh
 kubectl apply -k deploy/k8s/overlays/local
 ```
 

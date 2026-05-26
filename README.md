@@ -172,41 +172,37 @@ worker images). The standalone `runinator-broker` binary is not deployed in K8s.
 
 Schema is applied by the `runinator-migration` image, which uses sqlx's built-in
 migrator to run versioned SQL files from `runinator-database/migrations/`. The
-manifest wires it up two ways: an `initContainer` on the `runinator-ws`
-Deployment runs migrations on every pod start, and a standalone Job
-(`runinator-db-migrate`) is available for out-of-band ops use.
+`runinator-ws` Deployment runs migrations from an initContainer on every pod
+start. `deploy/k8s/base/db-migrate-job.yaml` is kept as an optional
+out-of-band ops manifest; it is not part of the default kustomize base because
+Kubernetes Job pod templates are immutable across image tag changes.
 
 ### Quick start (local cluster)
 
 ```bash
-# 1. Build images and load them into the cluster (k3d shown).
-docker build -t runinator-ws:dev        -f runinator-ws/Dockerfile        .
-docker build -t runinator-scheduler:dev -f runinator-scheduler/Dockerfile .
-docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
-docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
-docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
-k3d image import runinator-ws:dev runinator-scheduler:dev \
-                 runinator-worker:dev runinator-importer:dev \
-                 runinator-migration:dev -c runinator
-
-# 2. Create the three Secrets in the runinator namespace.
-#    Copy deploy/k8s/base/secrets.example.yaml outside the repo, fill in real
-#    values, then `kubectl apply -f path/to/my-secrets.yaml`.
-
-# 3. Apply the local overlay.
-bash scripts/deploy-k8s.sh --overlay local
-# or:
-kubectl apply -k deploy/k8s/overlays/local
+# Builds the five K8s images, renders a temporary local overlay with matching
+# image tags, applies it, and waits for Postgres, RabbitMQ, and app rollouts.
+pwsh ./build.ps1 -DeployKube
 ```
+
+The local overlay includes development-only Postgres, RabbitMQ, and app
+Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
+configure a local registry and pass it as `-LocalRegistry localhost:5000` (or
+use `-ImageRepository` for any registry reachable by the cluster).
 
 ### Production
 
-Edit `deploy/k8s/overlays/prod/kustomization.yaml` to set your registry/tags
-(or run `kustomize edit set image …`), edit `storage-class-patch.yaml` to set
-your cluster's `storageClassName`, create the Secrets, then:
+Edit `deploy/k8s/overlays/prod/storage-class-patch.yaml` to set your cluster's
+`storageClassName`, create the three Secrets from
+`deploy/k8s/base/secrets.example.yaml`, then build, push, render, and apply the
+prod overlay:
 
 ```bash
-bash scripts/deploy-k8s.sh --overlay prod --context my-prod-context
+pwsh ./build.ps1 -DeployKube \
+  -KubeManifest deploy/k8s/overlays/prod \
+  -KubeContext my-prod-context \
+  -ImageRepository registry.example.com/runinator \
+  -ImageTag 1.0.0
 ```
 
 See `deploy/k8s/overlays/{local,prod}/README.md` for details.

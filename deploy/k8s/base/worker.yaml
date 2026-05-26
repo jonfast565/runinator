@@ -20,7 +20,7 @@ spec:
           command:
             - sh
             - -c
-            - "cp -a /home/runinator/.runinator/plugins/. /opt/runinator/plugins/"
+            - "cp -R /home/runinator/.runinator/plugins/. /opt/runinator/plugins/"
           volumeMounts:
             - name: plugins
               mountPath: /opt/runinator/plugins
@@ -42,8 +42,6 @@ spec:
             - "4"
             - "--api-base-url"
             - "$(WS_API_BASE_URL)"
-            - "--worker-id"
-            - "$(POD_NAME)"
           envFrom:
             - configMapRef:
                 name: runinator-common

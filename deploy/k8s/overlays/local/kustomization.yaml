@@ -5,6 +5,7 @@ namespace: runinator
 
 resources:
   - ../../base
+  - local-secrets.yaml
 
 # Single-node / local cluster (k3d, minikube, kind). PVCs use the cluster's
 # default StorageClass (e.g. local-path on k3d). If your local cluster has no
@@ -14,8 +15,8 @@ patches:
   - path: replicas-patch.yaml
   - path: resources-patch.yaml
 
-# Images are expected to be loaded into the local cluster by name (e.g.
-# `k3d image import runinator-ws:dev -c runinator`). No registry prefix.
+# Default image refs are local dev tags. build.ps1 -DeployKube renders matching
+# tags into a copied overlay under target/k8s-render before applying.
 images:
   - name: runinator-ws
     newName: runinator-ws
