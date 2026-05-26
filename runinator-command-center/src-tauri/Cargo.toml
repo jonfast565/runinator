@@ -1,5 +1,5 @@
 [package]
-name = "command-center-tauri"
+name = "runinator-command-center"
 version = "0.1.0"
 edition = "2021"
 

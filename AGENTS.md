@@ -14,7 +14,7 @@ Primary runtime flow:
 4. `runinator-importer` imports task definitions and workflow packs into the web service.
 5. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
-There is also a C++/Qt `command-center` client. Keep it separate from the Rust workspace unless the change explicitly touches the desktop UI.
+There is also a Tauri `runinator-command-center` client. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
 
 ## Crate Boundaries
 
@@ -66,7 +66,7 @@ When adding fields to shared structs, check every boundary that serializes, pers
 - SQLite/Postgres implementations
 - `runinator-api`
 - importer task/pack JSON
-- C++ command center models, if the field is user-facing
+- command center models, if the field is user-facing
 
 ## Provider And Plugin Guidance
 
@@ -132,7 +132,7 @@ cargo test --workspace
 
 Use `cargo check -p <crate>` when a full test run is slow or when the crate has no tests. If a change touches shared contracts, prefer `cargo test --workspace`.
 
-For command-center changes, use the existing CMake/Qt build path and verify UI behavior separately.
+For command center changes, use the existing Tauri build path and verify UI behavior separately.
 
 ## Change Hygiene
 

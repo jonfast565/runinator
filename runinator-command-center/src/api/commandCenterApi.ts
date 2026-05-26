@@ -21,7 +21,7 @@ import type {
 
 function command<T>(name: string, args?: Record<string, unknown>) {
   if (!isTauriRuntime()) {
-    return Promise.reject(new Error("Tauri runtime unavailable. Open the app with `pnpm --dir command-center-tauri tauri dev` for live Runinator data."));
+    return Promise.reject(new Error("Tauri runtime unavailable. Open the app with `pnpm --dir runinator-command-center tauri dev` for live Runinator data."));
   }
   return invoke<T>(name, args);
 }

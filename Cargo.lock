@@ -1230,25 +1230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "command-center-tauri"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "mime_guess",
- "reqwest",
- "runinator-models",
- "serde",
- "serde_json",
- "socket2 0.6.3",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "thiserror 2.0.18",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5132,6 +5113,25 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "runinator-command-center"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mime_guess",
+ "reqwest",
+ "runinator-models",
+ "serde",
+ "serde_json",
+ "socket2 0.6.3",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
 ]
 
 [[package]]

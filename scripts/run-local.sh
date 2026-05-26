@@ -113,7 +113,7 @@ MSG
     sync_import
     ;;
   ui)
-    pnpm --dir command-center-tauri tauri dev
+    pnpm --dir runinator-command-center tauri dev
     ;;
   stop)
     cargo run "${SUPERVISOR_ARGS[@]}" stop

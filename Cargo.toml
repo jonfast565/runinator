@@ -2,7 +2,7 @@
 resolver = "2"
 
 members = [
-    "command-center-tauri/src-tauri",
+    "runinator-command-center/src-tauri",
     "runinator-models",
     "runinator-database",
     "runinator-migration",

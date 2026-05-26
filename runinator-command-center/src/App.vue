@@ -62,7 +62,7 @@ onMounted(async () => {
     app.initialLoading = false;
   });
   if (!isTauriRuntime()) {
-    app.setError("Tauri runtime unavailable. Use `pnpm --dir command-center-tauri tauri dev` to connect this UI to Runinator.");
+    app.setError("Tauri runtime unavailable. Use `pnpm --dir runinator-command-center tauri dev` to connect this UI to Runinator.");
     app.initialLoading = false;
     return;
   }

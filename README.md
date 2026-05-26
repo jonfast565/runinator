@@ -6,7 +6,7 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 
 - Rust toolchain with Cargo.
 - PowerShell 7+ if using `build.ps1`.
-- Qt 6 and CMake only if you want to build the C++ `command-center` app.
+- pnpm if you want to build or run the Tauri `runinator-command-center` app.
 
 ## Run Locally
 
@@ -207,16 +207,15 @@ pwsh ./build.ps1 -DeployKube \
 
 See `deploy/k8s/overlays/{local,prod}/README.md` for details.
 
-## Build Command-Center
+## Build Command Center
 
-`command-center` is a separate C++/Qt client. Build it with the existing CMake project:
+`runinator-command-center` is a Tauri client. Run it against the local stack with:
 
 ```bash
-cmake -S command-center -B command-center/build
-cmake --build command-center/build
+pnpm --dir runinator-command-center tauri dev
 ```
 
-Then launch the generated app from `command-center/build` and connect to the local service. The default local stack advertises and serves the API on `127.0.0.1:8080`.
+The default local stack advertises and serves the API on `127.0.0.1:8080`.
 
 ## Verification
 
