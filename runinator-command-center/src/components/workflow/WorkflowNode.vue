@@ -6,7 +6,7 @@
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
       <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
     </div>
-    <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @click.stop>
+    <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
       <input v-model="inlineId" aria-label="Node ID" />
       <input
         v-if="data.inlineEdit"
@@ -17,6 +17,7 @@
       <div class="node-inline-actions">
         <button type="submit" class="node-icon-btn">Apply</button>
         <button type="button" class="node-icon-btn" @click="workflows.openStepEditor(id)">Edit</button>
+        <button type="button" class="node-icon-btn" @click="cancelInlineEdit">Cancel</button>
       </div>
     </form>
     <template v-else>
@@ -148,7 +149,13 @@ function semanticHandleTop(index: number, total: number) {
 }
 
 function applyInlineEdit() {
-  workflows.applyInlineNodeEdit(props.id, inlineId.value, inlineValue.value);
+  workflows.submitInlineNodeEdit(props.id, inlineId.value, inlineValue.value);
+}
+
+function cancelInlineEdit() {
+  inlineId.value = props.id;
+  inlineValue.value = props.data.inlineEdit?.value ?? "";
+  workflows.clearWorkflowGraphSelection();
 }
 
 async function onApprove() {
@@ -277,6 +284,7 @@ async function resolveApproval(action: ApprovalAction) {
 
 .node-inline-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 4px;
 }

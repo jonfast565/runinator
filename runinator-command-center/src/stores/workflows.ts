@@ -847,6 +847,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return true;
   }
 
+  function clearWorkflowGraphSelection() {
+    selectedStepId.value = "";
+    selectedGraphEdgeId.value = "";
+  }
+
+  function submitInlineNodeEdit(nodeId: string, nextId: string, inlineValue: string): boolean {
+    if (!applyInlineNodeEdit(nodeId, nextId, inlineValue)) return false;
+    clearWorkflowGraphSelection();
+    return true;
+  }
+
   function applyStepEditor(): boolean {
     stepEditorError.value = "";
     if (!selectedStepId.value) return false;
@@ -1156,6 +1167,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function selectGraphEdge(edgeId: string) {
+    selectedStepId.value = "";
     selectedGraphEdgeId.value = edgeId;
   }
 
@@ -1239,7 +1251,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function onGraphEdgeClick(event: any) {
     const edgeId = event?.edge?.id;
-    if (edgeId) selectedGraphEdgeId.value = edgeId;
+    if (edgeId) selectGraphEdge(edgeId);
   }
 
   function onGraphEdgeUpdate(event: any) {
@@ -1743,6 +1755,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     addWorkflowNode,
     addConnectedWorkflowNode,
     applyInlineNodeEdit,
+    clearWorkflowGraphSelection,
+    submitInlineNodeEdit,
     removeWorkflowStep,
     removeWorkflowNode,
     removeWorkflowEdgeById,

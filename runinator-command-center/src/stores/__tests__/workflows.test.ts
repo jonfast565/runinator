@@ -136,6 +136,46 @@ describe("workflow run detail state", () => {
       }
     });
   });
+
+  it("exits inline node editing after a successful apply", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "task-1",
+      kind: "task",
+      action_name: "console",
+      action_function: "run",
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("task-1");
+    workflows.selectedGraphEdgeId = "edge-1";
+
+    expect(workflows.submitInlineNodeEdit("task-1", "renamed", "console.echo")).toBe(true);
+
+    const node = workflows.ensureWorkflowNodes().find((item) => item.id === "renamed");
+    expect(node).toMatchObject({ action_name: "console", action_function: "echo" });
+    expect(workflows.selectedStepId).toBe("");
+    expect(workflows.selectedGraphEdgeId).toBe("");
+  });
+
+  it("keeps inline node editing open when apply fails", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "task-1",
+      kind: "task",
+      action_name: "console",
+      action_function: "run",
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("task-1");
+
+    expect(workflows.submitInlineNodeEdit("task-1", "end", "console.echo")).toBe(false);
+
+    expect(workflows.selectedStepId).toBe("task-1");
+  });
 });
 
 function workflowDefinition(id: number, name: string): WorkflowDefinition {

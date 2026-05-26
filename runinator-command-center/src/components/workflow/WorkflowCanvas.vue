@@ -21,8 +21,8 @@
       @edge-context-menu="openEdgeMenu"
       @edge-double-click="openEdgeEditorFromEvent"
       @edges-change="workflows.onGraphEdgesChange"
-      @pane-click="closeOverlays"
-      @pane-context-menu="closeOverlays"
+      @pane-click="closeOverlaysAndSelection"
+      @pane-context-menu="closeOverlaysAndSelection"
       :edges-updatable="true"
       delete-key-code="Delete"
       :snap-to-grid="true"
@@ -229,6 +229,11 @@ function closeOverlays() {
   contextMenu.value = null;
   pendingConnect.value = null;
   edgeEditor.value = null;
+}
+
+function closeOverlaysAndSelection() {
+  closeOverlays();
+  workflows.clearWorkflowGraphSelection();
 }
 
 function trackPointer(event: PointerEvent) {
