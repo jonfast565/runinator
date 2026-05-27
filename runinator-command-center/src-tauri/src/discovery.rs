@@ -9,13 +9,32 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use socket2::{Domain, Protocol, Socket, Type};
 use tauri::{AppHandle, Emitter};
+use url::Url;
 
 use crate::{
     state::CommandCenterState,
     types::{ServiceStatus, WebServiceAnnouncement},
 };
 
+const DIRECT_SERVICE_URL_ENV: &[&str] = &[
+    "RUNINATOR_COMMAND_CENTER_SERVICE_URL",
+    "RUNINATOR_SERVICE_URL",
+    "WS_API_BASE_URL",
+];
+
 pub fn start_discovery_thread(app: AppHandle, state: CommandCenterState) {
+    match configured_service_url_from_env() {
+        Ok(Some(url)) => {
+            publish_service_url(&app, &state, url);
+            return;
+        }
+        Err(err) => {
+            let _ = app.emit("service-discovery-error", err);
+            return;
+        }
+        Ok(None) => {}
+    }
+
     if state.mark_discovery_started() {
         return;
     }
@@ -64,29 +83,75 @@ fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), S
     }
 }
 
+fn configured_service_url_from_env() -> Result<Option<String>, String> {
+    configured_service_url_from_pairs(DIRECT_SERVICE_URL_ENV.iter().filter_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| ((*name).to_string(), value))
+    }))
+}
+
+fn configured_service_url_from_pairs<I>(pairs: I) -> Result<Option<String>, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    for (name, value) in pairs {
+        if value.trim().is_empty() {
+            continue;
+        }
+        return normalize_configured_service_url(&value)
+            .map(Some)
+            .map_err(|err| format!("Invalid {name}: {err}"));
+    }
+    Ok(None)
+}
+
+fn normalize_configured_service_url(value: &str) -> Result<String, String> {
+    let mut url = Url::parse(value.trim()).map_err(|err| err.to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("service URL must use http or https".into());
+    }
+    if url.host_str().is_none() {
+        return Err("service URL must include a host".into());
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let path = url.path().trim_end_matches('/');
+    if path.is_empty() {
+        url.set_path("/");
+    } else {
+        url.set_path(&format!("{path}/"));
+    }
+    Ok(url.to_string())
+}
+
 fn publish_best_service(
     app: &AppHandle,
     state: &CommandCenterState,
     services: &HashMap<String, WebServiceAnnouncement>,
 ) {
     if let Some(best) = services.values().max_by_key(|svc| svc.last_heartbeat) {
-        let url = build_service_base_url(best);
-        let service_url = state.service_url.clone();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut current = service_url.write().await;
-            if current.as_deref() == Some(url.as_str()) {
-                return;
-            }
-            *current = Some(url.clone());
-            let _ = app.emit(
-                "service-url-changed",
-                ServiceStatus {
-                    service_url: Some(url),
-                },
-            );
-        });
+        publish_service_url(app, state, build_service_base_url(best));
     }
+}
+
+fn publish_service_url(app: &AppHandle, state: &CommandCenterState, url: String) {
+    let service_url = state.service_url.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut current = service_url.write().await;
+        if current.as_deref() == Some(url.as_str()) {
+            return;
+        }
+        *current = Some(url.clone());
+        let _ = app.emit(
+            "service-url-changed",
+            ServiceStatus {
+                service_url: Some(url),
+            },
+        );
+    });
 }
 
 fn bind_discovery_socket(address: SocketAddr) -> std::io::Result<UdpSocket> {

@@ -223,6 +223,19 @@ pnpm --dir runinator-command-center tauri dev
 ```
 
 The default local stack advertises and serves the API on `127.0.0.1:8080`.
+For Kubernetes, gossip is disabled and the web service is available through the
+`runinator-ws` Service instead. Point the command center at a concrete API URL:
+
+```bash
+# terminal 1
+kubectl -n runinator port-forward svc/runinator-ws 8080:8080
+
+# terminal 2
+RUNINATOR_COMMAND_CENTER_SERVICE_URL=http://127.0.0.1:8080/ pnpm --dir runinator-command-center tauri dev
+```
+
+The command center checks `RUNINATOR_COMMAND_CENTER_SERVICE_URL`,
+`RUNINATOR_SERVICE_URL`, then `WS_API_BASE_URL` before falling back to gossip.
 
 ## Verification
 
