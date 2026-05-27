@@ -30,6 +30,13 @@
       <sourceFolder url="file://$MODULE_DIR$/command-center-tauri/src-tauri/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-e2e/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-e2e/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-broker/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-command-center/src-tauri/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-ctl/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-migration/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-console/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-email/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/runinator-provider-slack/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

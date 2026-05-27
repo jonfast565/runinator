@@ -17,6 +17,7 @@ resources:
   - scheduler.yaml
   - worker.yaml
   - importer.yaml
+  - command-center.yaml
 
 images:
   - name: runinator-ws
@@ -28,4 +29,6 @@ images:
   - name: runinator-importer
     newTag: dev
   - name: runinator-migration
+    newTag: dev
+  - name: runinator-command-center-web
     newTag: dev

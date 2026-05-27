@@ -237,6 +237,19 @@ RUNINATOR_COMMAND_CENTER_SERVICE_URL=http://127.0.0.1:8080/ pnpm --dir runinator
 The command center checks `RUNINATOR_COMMAND_CENTER_SERVICE_URL`,
 `RUNINATOR_SERVICE_URL`, then `WS_API_BASE_URL` before falling back to gossip.
 
+## Package macOS Backend Apps
+
+The Rust backend services remain normal command-line binaries. On macOS, you can
+also package the runtime services as `.app` bundles with the Runinator icon:
+
+```bash
+cargo install cargo-packager --version 0.11.8 --locked
+scripts/package-macos-backend-apps.sh --release
+```
+
+The script creates `.app` bundles for broker, web service, scheduler, worker,
+importer, and supervisor under `target/macos-apps`.
+
 ## Verification
 
 For importer workflow import changes, run:

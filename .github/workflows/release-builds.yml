@@ -54,6 +54,14 @@ jobs:
       - name: Build Rust workspace
         run: cargo build --workspace --release
 
+      - name: Install cargo-packager (macOS)
+        if: runner.os == 'macOS'
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Bundle backend apps (macOS)
+        if: runner.os == 'macOS'
+        run: scripts/package-macos-backend-apps.sh --release --skip-build --out-dir target/backend-apps
+
       - name: Clean Command Center build dir (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -154,6 +162,20 @@ jobs:
               Copy-Item -Path $source -Destination (Join-Path $bundleDir $fileName) -Force
             } else {
               throw "Missing release binary: $source"
+            }
+          }
+
+          if ($env:RUNNER_OS -eq "macOS") {
+            $backendAppsDir = Join-Path $PWD "target/backend-apps"
+            if (Test-Path $backendAppsDir) {
+              $backendBundleDir = Join-Path $bundleDir "backend-apps"
+              New-Item -ItemType Directory -Path $backendBundleDir -Force | Out-Null
+
+              Get-ChildItem -Path $backendAppsDir -Filter "*.app" -Directory -Recurse | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination (Join-Path $backendBundleDir $_.Name) -Recurse -Force
+              }
+            } else {
+              Write-Warning "Backend app bundle directory was not found at $backendAppsDir"
             }
           }
 

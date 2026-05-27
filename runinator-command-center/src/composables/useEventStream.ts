@@ -141,7 +141,7 @@ export function useEventStream() {
     ws.onclose = () => {
       if (currentConnection !== connectionId) return;
       clearConnectTimer();
-      console.info("[command-center] event stream closed");
+      console.info("[command-center] event stream closed, starting fallback and scheduling reconnect", { url });
       ws = null;
       startFallback();
       if (app.serviceConnected) {
@@ -151,7 +151,7 @@ export function useEventStream() {
     ws.onerror = (event) => {
       if (currentConnection !== connectionId) return;
       clearConnectTimer();
-      console.info("[command-center] event stream error", event);
+      console.info("[command-center] event stream connection error", { url, event });
       ws?.close();
     };
   }

@@ -18,6 +18,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from "vue";
 import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi";
+import { wsBaseUrl } from "./api/httpRuntime";
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useEventStream } from "./composables/useEventStream";
@@ -62,12 +63,26 @@ onMounted(async () => {
     app.initialLoading = false;
   });
   if (!isTauriRuntime()) {
-    app.setError("Tauri runtime unavailable. Use `pnpm --dir runinator-command-center tauri dev` to connect this UI to Runinator.");
+    // web mode: same-origin (proxied to runinator-ws via nginx) or
+    // VITE_RUNINATOR_WS_URL override for local dev. No Tauri discovery dance.
+    const baseUrl = wsBaseUrl();
+    app.setServiceUrl(baseUrl || null);
+    if (baseUrl) {
+      try {
+        await refreshBackendState(true);
+      } catch (err) {
+        app.setError(String(err));
+      }
+    } else {
+      app.setError("No service URL configured. Set VITE_RUNINATOR_WS_URL or serve the SPA from the runinator-command-center-web pod.");
+      clearBackendState();
+    }
     app.initialLoading = false;
     return;
   }
   try {
     const [status] = await Promise.all([getServiceStatus(), startServiceDiscovery()]);
+    console.info("[command-center] Initial service status", status);
     app.setServiceUrl(status.service_url);
     if (!status.service_url) {
       await waitForConcreteServiceUrl();
@@ -75,6 +90,7 @@ onMounted(async () => {
     if (app.serviceUrl) {
       await refreshBackendState(true);
     } else {
+      app.setError("No Runinator service discovered. Ensure the web service is running and accessible.");
       clearBackendState();
     }
   } catch (err) {

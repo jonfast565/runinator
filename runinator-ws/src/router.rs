@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Router,
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
+use tower_http::cors::{Any, CorsLayer};
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 
@@ -65,7 +67,14 @@ pub fn build_router<T: DatabaseImpl>(
     events: EventSender,
     broker: Arc<dyn Broker>,
 ) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers(Any);
+
     Router::new()
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .route("/health", get(health))
         .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
         .route("/ws/events", get(ws_events))
@@ -370,4 +379,5 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .layer(Extension(events))
         .layer(Extension(broker))
+        .layer(cors)
 }

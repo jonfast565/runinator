@@ -1,10 +1,14 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {
+  downloadArtifactInBrowser,
   downloadArtifactToPath,
   fetchAllArtifacts,
+  pickFileFromBrowser,
+  uploadArtifactFromBrowser,
   uploadArtifactFromPath
 } from "../api/commandCenterApi";
+import { isTauriRuntime } from "../api/tauriRuntime";
 import type { RunArtifact } from "../types/models";
 import { useAppStore } from "./app";
 
@@ -31,7 +35,10 @@ export const useArtifactsStore = defineStore("artifacts", () => {
     const result = await app.runOperation("Uploading artifact", async () => {
       const runId = uploadRunId.value && uploadRunId.value > 0 ? uploadRunId.value : promptForRunId();
       if (!runId) return null;
-      return uploadArtifactFromPath({ run_id: runId });
+      if (isTauriRuntime()) return uploadArtifactFromPath({ run_id: runId });
+      const file = await pickFileFromBrowser();
+      if (!file) return null;
+      return uploadArtifactFromBrowser({ run_id: runId }, file);
     }).catch((error) => {
       app.setError(String(error));
       return null;
@@ -54,10 +61,13 @@ export const useArtifactsStore = defineStore("artifacts", () => {
   }
 
   async function promptDownloadArtifact(artifact: RunArtifact) {
-    await app.runOperation(`Downloading ${artifact.name}`, () =>
-      downloadArtifactToPath(artifact.id, artifact.name)
-    ).then((info) => {
+    await app.runOperation(`Downloading ${artifact.name}`, async () => {
+      if (isTauriRuntime()) return downloadArtifactToPath(artifact.id, artifact.name);
+      await downloadArtifactInBrowser(artifact.id, artifact.name);
+      return { saved_to: null };
+    }).then((info) => {
       if (info?.saved_to) app.setStatus(`Saved to ${info.saved_to}`);
+      else app.setStatus(`Downloaded ${artifact.name}`);
     }).catch((error) => {
       app.setError(String(error));
     });

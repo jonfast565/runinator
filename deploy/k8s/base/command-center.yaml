@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-command-center-web
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-command-center-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-command-center-web
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-command-center-web
+  template:
+    metadata:
+      labels:
+        app: runinator-command-center-web
+    spec:
+      containers:
+        - name: web
+          image: runinator-command-center-web:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: runinator-command-center
+  namespace: runinator
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "256m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: runinator-command-center-web
+                port:
+                  number: 80

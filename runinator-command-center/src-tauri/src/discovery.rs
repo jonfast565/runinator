@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
@@ -19,25 +19,33 @@ use crate::{
 const DIRECT_SERVICE_URL_ENV: &[&str] = &[
     "RUNINATOR_COMMAND_CENTER_SERVICE_URL",
     "RUNINATOR_SERVICE_URL",
+    "RUNINATOR_WS_SERVICE_URL",
     "WS_API_BASE_URL",
 ];
 
 pub fn start_discovery_thread(app: AppHandle, state: CommandCenterState) {
+    if state.mark_discovery_started() {
+        println!("Discovery already started, ignoring redundant request.");
+        return;
+    }
+
+    println!("Starting discovery thread...");
     match configured_service_url_from_env() {
         Ok(Some(url)) => {
+            println!("Found configured service URL: {}", url);
             publish_service_url(&app, &state, url);
             return;
         }
         Err(err) => {
+            eprintln!("Error checking configured service URL: {}", err);
             let _ = app.emit("service-discovery-error", err);
             return;
         }
-        Ok(None) => {}
+        Ok(None) => {
+            println!("No service URL configured in environment.");
+        }
     }
 
-    if state.mark_discovery_started() {
-        return;
-    }
     thread::spawn(move || {
         if let Err(err) = run_discovery_loop(app.clone(), state) {
             let _ = app.emit("service-discovery-error", err);
@@ -46,17 +54,18 @@ pub fn start_discovery_thread(app: AppHandle, state: CommandCenterState) {
 }
 
 fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), String> {
+    println!("Gossip discovery loop started...");
     let bind_address = std::env::var("RUNINATOR_GOSSIP_BIND")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .unwrap_or_else(|| "0.0.0.0".to_string());
     let port = std::env::var("RUNINATOR_GOSSIP_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(5513);
+        .unwrap_or(5000);
     let ip = bind_address
         .parse::<IpAddr>()
-        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let socket = bind_discovery_socket(SocketAddr::new(ip, port))
         .map_err(|err| format!("Failed to bind gossip socket: {err}"))?;
     socket
@@ -65,30 +74,72 @@ fn run_discovery_loop(app: AppHandle, state: CommandCenterState) -> Result<(), S
 
     let mut services = HashMap::<String, WebServiceAnnouncement>::new();
     let mut buffer = [0_u8; 8192];
+    let mut last_announced = Instant::now();
     loop {
         match socket.recv_from(&mut buffer) {
             Ok((len, sender)) => {
                 if let Some(service) = parse_announcement(&buffer[..len], sender.ip()) {
                     services.insert(service.service_id.clone(), service);
                     publish_best_service(&app, &state, &services);
+                    last_announced = Instant::now();
                 }
             }
             Err(err)
                 if matches!(
                     err.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
+                ) =>
+            {
+                if services.is_empty() && last_announced.elapsed() > Duration::from_secs(30) {
+                    println!("No gossip announcements received for 30s, still waiting...");
+                    last_announced = Instant::now();
+                }
+            }
             Err(err) => return Err(format!("Failed to read gossip datagram: {err}")),
         }
     }
 }
 
 fn configured_service_url_from_env() -> Result<Option<String>, String> {
-    configured_service_url_from_pairs(DIRECT_SERVICE_URL_ENV.iter().filter_map(|name| {
-        std::env::var(name)
-            .ok()
-            .map(|value| ((*name).to_string(), value))
-    }))
+    for name in DIRECT_SERVICE_URL_ENV {
+        if let Ok(value) = std::env::var(name) {
+            println!("Checking env var {}: {}", name, value);
+            if let Some(url) = configured_service_url_from_pairs(vec![(name.to_string(), value)])? {
+                return Ok(Some(url));
+            }
+        }
+    }
+
+    if let Ok(host) = std::env::var("RUNINATOR_WS_SERVICE_HOST") {
+        println!("Checking RUNINATOR_WS_SERVICE_HOST: {}", host);
+        let port = std::env::var("RUNINATOR_WS_SERVICE_PORT").unwrap_or_else(|_| "8080".to_string());
+        let scheme = std::env::var("RUNINATOR_WS_SERVICE_SCHEME").unwrap_or_else(|_| "http".to_string());
+        let mut url_str = format!("{scheme}://{host}");
+        if !host.contains(':') && port != "80" && port != "443" {
+            url_str.push(':');
+            url_str.push_str(&port);
+        }
+        return normalize_configured_service_url(&url_str)
+            .map(Some)
+            .map_err(|err| {
+                let err_msg = format!("Invalid RUNINATOR_WS_SERVICE_HOST: {err}");
+                eprintln!("{}", err_msg);
+                err_msg
+            });
+    }
+
+    // Default for local development if nothing else is found
+    if std::env::var("TAURI_DEV").is_ok() {
+        println!("TAURI_DEV detected, falling back to http://127.0.0.1:8080/");
+        return Ok(Some("http://127.0.0.1:8080/".to_string()));
+    }
+
+    if std::env::var("CARGO_MANIFEST_DIR").is_ok() {
+        println!("CARGO_MANIFEST_DIR detected, assuming local development and falling back to http://127.0.0.1:8080/");
+        return Ok(Some("http://127.0.0.1:8080/".to_string()));
+    }
+
+    Ok(None)
 }
 
 fn configured_service_url_from_pairs<I>(pairs: I) -> Result<Option<String>, String>
@@ -107,7 +158,12 @@ where
 }
 
 fn normalize_configured_service_url(value: &str) -> Result<String, String> {
-    let mut url = Url::parse(value.trim()).map_err(|err| err.to_string())?;
+    println!("Normalizing URL: {}", value);
+    let mut url = Url::parse(value.trim()).map_err(|err| {
+        let err_msg = format!("URL parse error for '{}': {}", value, err);
+        eprintln!("{}", err_msg);
+        err_msg
+    })?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err("service URL must use http or https".into());
     }
@@ -142,8 +198,10 @@ fn publish_service_url(app: &AppHandle, state: &CommandCenterState, url: String)
     tauri::async_runtime::spawn(async move {
         let mut current = service_url.write().await;
         if current.as_deref() == Some(url.as_str()) {
+            println!("Service URL already set to {}, skipping publish", url);
             return;
         }
+        println!("Publishing service URL: {}", url);
         *current = Some(url.clone());
         let _ = app.emit(
             "service-url-changed",
@@ -164,6 +222,26 @@ fn bind_discovery_socket(address: SocketAddr) -> std::io::Result<UdpSocket> {
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
+
+    if address.ip().is_multicast() {
+        match address.ip() {
+            IpAddr::V4(addr) => {
+                socket.join_multicast_v4(&addr, &Ipv4Addr::UNSPECIFIED).map_err(|e| {
+                    eprintln!("Failed to join multicast v4 group {}: {}", addr, e);
+                    e
+                })?;
+                println!("Joined multicast v4 group: {}", addr);
+            }
+            IpAddr::V6(addr) => {
+                socket.join_multicast_v6(&addr, 0).map_err(|e| {
+                    eprintln!("Failed to join multicast v6 group {}: {}", addr, e);
+                    e
+                })?;
+                println!("Joined multicast v6 group: {}", addr);
+            }
+        }
+    }
+
     socket.bind(&address.into())?;
     Ok(socket.into())
 }

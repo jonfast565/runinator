@@ -95,30 +95,59 @@ pub(crate) async fn ws_events(
     Extension(events): Extension<EventSender>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    log::info!("WebSocket upgrade request for /ws/events");
     let mut rx = events.subscribe();
     ws.on_upgrade(move |socket| async move {
-        let (mut tx, _rx) = socket.split();
+        log::info!("WebSocket connection established for /ws/events");
+        let (mut tx, mut rx_ws) = socket.split();
         loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if send_json(&mut tx, &event).await.is_err() {
-                        break;
+            tokio::select! {
+                event = rx.recv() => {
+                    match event {
+                        Ok(event) => {
+                            if send_json(&mut tx, &event).await.is_err() {
+                                log::warn!("Failed to send event to WebSocket, closing connection");
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(missed)) => {
+                            log::warn!("WebSocket client lagged, missed {} events", missed);
+                            if send_json(
+                                &mut tx,
+                                &serde_json::json!({ "type": "resync", "missed": missed }),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            log::info!("Event broadcast channel closed");
+                            break;
+                        }
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    if send_json(
-                        &mut tx,
-                        &serde_json::json!({ "type": "resync", "missed": missed }),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
+                msg = rx_ws.next() => {
+                    match msg {
+                        Some(Ok(Message::Close(frame))) => {
+                            log::info!("WebSocket closed by client: {:?}", frame);
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            log::error!("WebSocket error: {}", e);
+                            break;
+                        }
+                        None => {
+                            log::info!("WebSocket connection terminated by client");
+                            break;
+                        }
+                        _ => {}
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
+        log::info!("WebSocket connection closed for /ws/events");
     })
 }
 
@@ -128,7 +157,9 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
     Path(run_id): Path<i64>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
     ws.on_upgrade(move |socket| async move {
+        log::info!("WebSocket connection established for /ws/workflow-runs/{}", run_id);
         let (mut tx, mut rx_ws) = socket.split();
         let _ = send_workflow_run(db.as_ref(), &mut tx, run_id).await;
         let mut event_rx = events.subscribe();
@@ -163,6 +194,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 }
             }
         }
+        log::info!("WebSocket connection closed for /ws/workflow-runs/{}", run_id);
     })
 }
 
@@ -172,7 +204,9 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
     Path(node_run_id): Path<i64>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    log::info!("WebSocket upgrade request for /ws/workflow-node-runs/{}/stream", node_run_id);
     ws.on_upgrade(move |socket| async move {
+        log::info!("WebSocket connection established for /ws/workflow-node-runs/{}/stream", node_run_id);
         let (mut tx, mut rx_ws) = socket.split();
         let mut cursor: Option<i64> = None;
         if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500)
@@ -190,31 +224,32 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
                         Ok(event) => {
                             if matches!(&event, AppEvent::WorkflowRunChanged { .. }) {
                                 if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
-                                    return;
+                                    break;
                                 }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500).await.is_err() {
-                                return;
+                                break;
                             }
                         }
-                        Err(broadcast::error::RecvError::Closed) => return,
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = poll_interval.tick() => {
                     if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
-                        return;
+                        break;
                     }
                 }
                 msg = rx_ws.next() => {
                     match msg {
-                        Some(Ok(Message::Close(_))) | None => return,
+                        Some(Ok(Message::Close(_))) | None => break,
                         _ => {}
                     }
                 }
             }
         }
+        log::info!("WebSocket connection closed for /ws/workflow-node-runs/{}/stream", node_run_id);
     })
 }
 
@@ -224,7 +259,9 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
     Path(run_id): Path<i64>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    log::info!("WebSocket upgrade request for /ws/run-stream/{}", run_id);
     ws.on_upgrade(move |socket| async move {
+        log::info!("WebSocket connection established for /ws/run-stream/{}", run_id);
         let (mut tx, mut rx_ws) = socket.split();
         let mut cursor: Option<i64> = None;
         if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500)
@@ -244,7 +281,7 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
                             let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id, terminal: true } if *id == run_id);
                             if is_chunk || is_done {
                                 if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
-                                    return;
+                                    break;
                                 }
                                 if is_done {
                                     break;
@@ -253,24 +290,25 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500).await.is_err() {
-                                return;
+                                break;
                             }
                         }
-                        Err(broadcast::error::RecvError::Closed) => return,
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = poll_interval.tick() => {
                     if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
-                        return;
+                        break;
                     }
                 }
                 msg = rx_ws.next() => {
                     match msg {
-                        Some(Ok(Message::Close(_))) | None => return,
+                        Some(Ok(Message::Close(_))) | None => break,
                         _ => {}
                     }
                 }
             }
         }
+        log::info!("WebSocket connection closed for /ws/run-stream/{}", run_id);
     })
 }

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./tauriRuntime";
+import { apiBaseUrl, invokeViaHttp } from "./httpRuntime";
 import type {
   JsonRecord,
   CredentialSummary,
@@ -20,10 +21,8 @@ import type {
 } from "../types/models";
 
 function command<T>(name: string, args?: Record<string, unknown>) {
-  if (!isTauriRuntime()) {
-    return Promise.reject(new Error("Tauri runtime unavailable. Open the app with `pnpm --dir runinator-command-center tauri dev` for live Runinator data."));
-  }
-  return invoke<T>(name, args);
+  if (isTauriRuntime()) return invoke<T>(name, args);
+  return invokeViaHttp<T>(name, args);
 }
 
 export async function getServiceStatus() {
@@ -177,6 +176,66 @@ export async function uploadArtifactFromPath(request: ArtifactUploadRequest) {
 
 export async function downloadArtifactToPath(artifactId: number, defaultName: string) {
   return command<ArtifactDownloadResult>("download_artifact", { artifactId, defaultName });
+}
+
+export async function uploadArtifactFromBrowser(request: ArtifactUploadRequest, file: File) {
+  const form = new FormData();
+  form.set("run_id", String(request.run_id));
+  form.set("name", file.name);
+  form.set("mime_type", file.type || "application/octet-stream");
+  if (request.workflow_node_run_id != null) {
+    form.set("workflow_node_run_id", String(request.workflow_node_run_id));
+  }
+  form.set("file", file, file.name);
+  const response = await fetch(`${apiBaseUrl()}/artifacts/upload`, { method: "POST", body: form });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`POST artifacts/upload -> ${response.status}: ${text}`);
+  }
+  return (await response.json()) as RunArtifact;
+}
+
+export async function downloadArtifactInBrowser(artifactId: number, defaultName: string) {
+  const response = await fetch(`${apiBaseUrl()}/artifacts/${artifactId}/download`);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`GET artifacts/${artifactId}/download -> ${response.status}: ${text}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = defaultName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function pickFileFromBrowser(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    let settled = false;
+    input.addEventListener("change", () => {
+      settled = true;
+      const file = input.files && input.files[0] ? input.files[0] : null;
+      input.remove();
+      resolve(file);
+    });
+    // when the dialog is canceled there is no change event; clean up on focus.
+    window.addEventListener("focus", function onFocus() {
+      window.removeEventListener("focus", onFocus);
+      setTimeout(() => {
+        if (settled) return;
+        input.remove();
+        resolve(null);
+      }, 250);
+    });
+    input.click();
+  });
 }
 
 export type NotificationListOptions = { unreadOnly?: boolean; limit?: number };
