@@ -9,7 +9,6 @@ spec:
     metadata:
       labels:
         app: runinator-importer
-        runinator.gossip/member: "true"
     spec:
       restartPolicy: OnFailure
       containers:
@@ -21,19 +20,11 @@ spec:
             - "--once"
             - "--workflows-file"
             - "/home/runinator/.runinator/workflows/workflow-pack.json"
-            - "--gossip-bind"
-            - "0.0.0.0"
-            - "--gossip-port"
-            - "5512"
-            - "--gossip-targets"
-            - "$(GOSSIP_TARGET_WS),$(GOSSIP_TARGET_SCHEDULER)"
+            - "--api-base-url"
+            - "$(WS_API_BASE_URL)"
           envFrom:
             - configMapRef:
                 name: runinator-common
-          ports:
-            - containerPort: 5512
-              name: gossip
-              protocol: UDP
           resources:
             requests:
               cpu: "50m"

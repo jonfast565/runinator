@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::{
-    WorkflowBundleImporter, build_provider_bundle, config::Config, load_import_file,
-    load_secret_bundle, sync_workflows_if_changed, unwrap_workflow_pack,
+    ImporterServiceLocator, WorkflowBundleImporter, build_provider_bundle, build_service_locator,
+    config::Config, load_import_file, load_secret_bundle, sync_workflows_if_changed,
+    unwrap_workflow_pack,
 };
 use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
 use runinator_models::workflows::WorkflowBundle;
@@ -23,6 +24,7 @@ async fn sync_imports_clean_workflow_bundle_round_trip() {
         .unwrap();
 
     let config = Config {
+        api_base_url: None,
         workflows_file: Some(path.to_string_lossy().into_owned()),
         secrets_file: None,
         poll_interval_seconds: 10,
@@ -80,6 +82,7 @@ async fn sync_reports_missing_workflow_bundle_path() {
         uuid::Uuid::new_v4()
     ));
     let config = Config {
+        api_base_url: None,
         workflows_file: Some(path.to_string_lossy().into_owned()),
         secrets_file: None,
         poll_interval_seconds: 10,
@@ -96,6 +99,24 @@ async fn sync_reports_missing_workflow_bundle_path() {
         .expect_err("missing workflow bundle should fail");
 
     assert!(err.to_string().contains(path.to_string_lossy().as_ref()));
+}
+
+#[tokio::test]
+async fn configured_api_base_url_uses_static_locator_without_binding_gossip() {
+    let config = Config {
+        api_base_url: Some("http://runinator-ws.runinator.svc.cluster.local:8080/".into()),
+        workflows_file: None,
+        secrets_file: None,
+        poll_interval_seconds: 10,
+        gossip_bind: "127.0.0.1".into(),
+        gossip_port: 9,
+        gossip_targets: Vec::new(),
+        once: true,
+    };
+
+    let locator = build_service_locator(&config).await.unwrap();
+
+    assert!(matches!(locator, ImporterServiceLocator::Static(_)));
 }
 
 #[tokio::test]

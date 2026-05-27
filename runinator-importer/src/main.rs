@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use clap::Parser;
 use config::Config;
 use log::{error, info, warn};
-use runinator_api::{AsyncApiClient, ServiceLocator};
+use runinator_api::{AsyncApiClient, ServiceLocator, StaticLocator};
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
@@ -31,7 +31,7 @@ use serde_json::Value;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
-type ApiClient = AsyncApiClient<GossipServiceLocator>;
+type ApiClient = AsyncApiClient<ImporterServiceLocator>;
 
 #[async_trait]
 trait WorkflowBundleImporter: Send + Sync {
@@ -132,17 +132,35 @@ impl runinator_api::ServiceLocator for GossipServiceLocator {
     }
 }
 
+#[derive(Clone)]
+enum ImporterServiceLocator {
+    Static(StaticLocator),
+    Gossip(GossipServiceLocator),
+}
+
+#[async_trait]
+impl ServiceLocator for ImporterServiceLocator {
+    type Error = Infallible;
+
+    async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        match self {
+            Self::Static(locator) => locator.wait_for_service_url().await,
+            Self::Gossip(locator) => locator.wait_for_service_url().await,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     env_logger::init();
     let config = Config::parse();
 
     info!("Starting Runinator Importer");
-    let discovery = GossipServiceLocator::from_config(&config).await?;
+    let locator = build_service_locator(&config).await?;
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
-    let api = ApiClient::with_client(discovery.clone(), http_client);
+    let api = ApiClient::with_client(locator, http_client);
 
     publish_provider_bundle(&api).await;
     publish_secret_bundle(&config, &api).await;
@@ -171,6 +189,28 @@ async fn main() -> Result<(), DynError> {
     }
 
     Ok(())
+}
+
+async fn build_service_locator(config: &Config) -> Result<ImporterServiceLocator, std::io::Error> {
+    if let Some(base_url) = non_empty_api_base_url(config) {
+        info!("Using configured Runinator web service URL: {base_url}");
+        return Ok(ImporterServiceLocator::Static(StaticLocator::new(
+            base_url.to_string(),
+        )));
+    }
+
+    info!("Discovering Runinator web service via gossip");
+    Ok(ImporterServiceLocator::Gossip(
+        GossipServiceLocator::from_config(config).await?,
+    ))
+}
+
+fn non_empty_api_base_url(config: &Config) -> Option<&str> {
+    config
+        .api_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn build_provider_bundle() -> ProviderBundle {

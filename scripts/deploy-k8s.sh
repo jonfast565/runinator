@@ -76,7 +76,7 @@ if [[ "$delete" -eq 1 ]]; then
 fi
 
 echo "==> kubectl ${kubectl_args[*]}"
-for stale_resource in deployment/runinator-importer job/runinator-importer; do
+for stale_resource in deployment/runinator-importer job/runinator-importer service/runinator-gossip; do
     cleanup_args=()
     if [[ -n "$context" ]]; then
         cleanup_args+=(--context "$context")

@@ -26,7 +26,6 @@ spec:
     metadata:
       labels:
         app: runinator-ws
-        runinator.gossip/member: "true"
     spec:
       initContainers:
         - name: db-migrate
@@ -54,16 +53,7 @@ spec:
             - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - "--port"
             - "8080"
-            - "--gossip-bind"
-            - "0.0.0.0"
-            - "--gossip-port"
-            - "5510"
-            - "--gossip-targets"
-            - "$(GOSSIP_TARGET_SCHEDULER),$(GOSSIP_TARGET_IMPORTER)"
-            - "--announce-address"
-            - "$(POD_IP)"
-            - "--announce-base-path"
-            - "/"
+            - "--disable-gossip"
             - "--broker-backend"
             - "rabbitmq"
             - "--broker-endpoint"
@@ -77,18 +67,10 @@ spec:
                 name: runinator-rabbitmq-secret
             - secretRef:
                 name: runinator-app-secret
-          env:
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
           ports:
             - containerPort: 8080
               name: http
               protocol: TCP
-            - containerPort: 5510
-              name: gossip
-              protocol: UDP
           readinessProbe:
             httpGet:
               path: /ready

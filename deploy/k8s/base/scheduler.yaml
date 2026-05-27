@@ -12,7 +12,6 @@ spec:
     metadata:
       labels:
         app: runinator-scheduler
-        runinator.gossip/member: "true"
     spec:
       containers:
         - name: scheduler
@@ -26,12 +25,8 @@ spec:
             - "$(POD_NAME)"
             - "--scheduler-lease-seconds"
             - "60"
-            - "--gossip-bind"
-            - "0.0.0.0"
-            - "--gossip-port"
-            - "5511"
-            - "--gossip-targets"
-            - "$(GOSSIP_TARGET_WS),$(GOSSIP_TARGET_IMPORTER)"
+            - "--api-base-url"
+            - "$(WS_API_BASE_URL)"
             - "--api-timeout-seconds"
             - "30"
             - "--broker-backend"
@@ -50,10 +45,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-          ports:
-            - containerPort: 5511
-              name: gossip
-              protocol: UDP
           resources:
             requests:
               cpu: "100m"

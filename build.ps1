@@ -835,7 +835,7 @@ function Deploy-KubernetesStack {
     }
 
     Write-Step ("kubectl " + ($kubectlArgs -join ' '))
-    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer')) {
+    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'service/runinator-gossip')) {
         $deleteStaleArgs = @()
         if ($KubeContext) {
             $deleteStaleArgs += @('--context', $KubeContext)

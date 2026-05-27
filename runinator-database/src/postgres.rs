@@ -326,6 +326,25 @@ impl DatabaseImpl for PostgresDb {
                 .await?
                 .map(|row| row.get::<i64, _>("id")),
         };
+
+        if workflow_id.is_none() {
+            let row = sqlx::query(
+                "INSERT INTO workflows (name, version, enabled, input_schema, definition, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING id, name, version, enabled, input_schema, definition, created_at, updated_at",
+            )
+            .bind(&workflow.name)
+            .bind(workflow.version)
+            .bind(workflow.enabled)
+            .bind(serde_json::to_string(&workflow.input_type)?)
+            .bind(workflow.definition.to_string())
+            .bind(now)
+            .bind(now)
+            .fetch_one(&self.pool)
+            .await?;
+            return Ok(mappers::postgres_row_to_workflow(&row));
+        }
+
         let row = sqlx::query(
             "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -386,6 +405,27 @@ impl DatabaseImpl for PostgresDb {
         trigger: &WorkflowTrigger,
     ) -> Result<WorkflowTrigger, SendableError> {
         let now = Utc::now().timestamp();
+        if trigger.id.is_none() {
+            let row = sqlx::query(
+                "INSERT INTO workflow_triggers (workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 RETURNING id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at",
+            )
+            .bind(trigger.workflow_id)
+            .bind(trigger.kind.as_str())
+            .bind(trigger.enabled)
+            .bind(trigger.configuration.to_string())
+            .bind(trigger.next_execution.map(|dt| dt.timestamp()))
+            .bind(trigger.blackout_start.map(|dt| dt.timestamp()))
+            .bind(trigger.blackout_end.map(|dt| dt.timestamp()))
+            .bind(trigger.metadata.to_string())
+            .bind(trigger.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
+            .bind(now)
+            .fetch_one(&self.pool)
+            .await?;
+            return Ok(mappers::postgres_row_to_workflow_trigger(&row));
+        }
+
         let row = sqlx::query(
             "INSERT INTO workflow_triggers (id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)

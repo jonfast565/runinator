@@ -11,6 +11,3 @@ data:
   POSTGRES_PORT: "5432"
   RABBITMQ_HOST: "runinator-rabbitmq.runinator.svc.cluster.local"
   RABBITMQ_PORT: "5672"
-  GOSSIP_TARGET_WS: "runinator-gossip.runinator.svc.cluster.local:5510"
-  GOSSIP_TARGET_SCHEDULER: "runinator-gossip.runinator.svc.cluster.local:5511"
-  GOSSIP_TARGET_IMPORTER: "runinator-gossip.runinator.svc.cluster.local:5512"

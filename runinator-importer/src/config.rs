@@ -3,6 +3,9 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
     #[arg(long)]
+    pub api_base_url: Option<String>,
+
+    #[arg(long)]
     pub workflows_file: Option<String>,
 
     #[arg(long)]

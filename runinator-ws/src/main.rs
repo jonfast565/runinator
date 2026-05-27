@@ -46,6 +46,7 @@ async fn main() -> Result<(), SendableError> {
         gossip_bind,
         gossip_port,
         gossip_targets,
+        disable_gossip,
         announce_address,
         announce_base_path,
         gossip_interval_seconds,
@@ -77,17 +78,21 @@ async fn main() -> Result<(), SendableError> {
     .await?;
 
     let service_id = Uuid::new_v4();
-    spawn_web_service_advertiser(WebServiceAdvertiserConfig {
-        service_id,
-        bind_addr: gossip_bind,
-        gossip_port,
-        extra_targets: gossip_targets,
-        announce_address: announce_address.clone(),
-        announce_base_path: announce_base_path.clone(),
-        interval_seconds: gossip_interval_seconds,
-        shutdown: notify.clone(),
-        service_port: port,
-    });
+    if !should_spawn_gossip_advertiser(disable_gossip) {
+        info!("Web service gossip advertisements disabled");
+    } else {
+        spawn_web_service_advertiser(WebServiceAdvertiserConfig {
+            service_id,
+            bind_addr: gossip_bind,
+            gossip_port,
+            extra_targets: gossip_targets,
+            announce_address: announce_address.clone(),
+            announce_base_path: announce_base_path.clone(),
+            interval_seconds: gossip_interval_seconds,
+            shutdown: notify.clone(),
+            service_port: port,
+        });
+    }
 
     match database {
         DatabaseKind::Sqlite => {
@@ -120,6 +125,10 @@ async fn main() -> Result<(), SendableError> {
     }
 
     Ok(())
+}
+
+fn should_spawn_gossip_advertiser(disable_gossip: bool) -> bool {
+    !disable_gossip
 }
 
 async fn build_broker(
@@ -230,6 +239,12 @@ async fn build_rabbitmq_broker(
 #[cfg(test)]
 mod startup_tests {
     use super::*;
+
+    #[test]
+    fn disable_gossip_skips_advertiser_startup() {
+        assert!(!should_spawn_gossip_advertiser(true));
+        assert!(should_spawn_gossip_advertiser(false));
+    }
 
     #[tokio::test]
     async fn build_broker_rejects_kafka_without_result_topic() {

@@ -26,6 +26,9 @@ pub struct Config {
     #[arg(long, value_delimiter = ',', default_value = "")]
     pub gossip_targets: Vec<String>,
 
+    #[arg(long)]
+    pub api_base_url: Option<String>,
+
     #[arg(long, default_value_t = 30)]
     pub api_timeout_seconds: u64,
 

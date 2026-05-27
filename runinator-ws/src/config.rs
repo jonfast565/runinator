@@ -39,6 +39,10 @@ pub(crate) struct CliArgs {
     #[arg(long, value_delimiter = ',', default_value = "")]
     pub gossip_targets: Vec<String>,
 
+    /// Disable gossip advertisements for environments with deterministic service DNS
+    #[arg(long)]
+    pub disable_gossip: bool,
+
     /// Address advertised to other services (e.g. public IP or pod IP)
     #[arg(long, default_value = "127.0.0.1")]
     pub announce_address: String,

@@ -1,8 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use runinator_api::AsyncApiClient;
+use runinator_api::{AsyncApiClient, ServiceLocator, StaticLocator};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::{
     errors::SendableError,
@@ -164,21 +164,36 @@ pub trait WorkflowSchedulerApi: Send + Sync {
 
 #[derive(Clone)]
 pub struct SchedulerApi {
-    client: AsyncApiClient<WorkerManager>,
+    client: AsyncApiClient<SchedulerServiceLocator>,
+}
+
+#[derive(Clone)]
+pub enum SchedulerServiceLocator {
+    Static(StaticLocator),
+    Gossip(WorkerManager),
+}
+
+#[async_trait]
+impl ServiceLocator for SchedulerServiceLocator {
+    type Error = std::convert::Infallible;
+
+    async fn wait_for_service_url(&self) -> Result<String, Self::Error> {
+        match self {
+            Self::Static(locator) => locator.wait_for_service_url().await,
+            Self::Gossip(locator) => Ok(locator.service_registry().wait_for_service_url().await),
+        }
+    }
 }
 
 impl SchedulerApi {
-    pub fn new(
-        worker_manager: Arc<WorkerManager>,
-        timeout: Duration,
-    ) -> Result<Self, SendableError> {
+    pub fn new(locator: SchedulerServiceLocator, timeout: Duration) -> Result<Self, SendableError> {
         let http_client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .map_err(|err| -> SendableError { Box::new(err) })?;
 
         Ok(Self {
-            client: AsyncApiClient::with_client(worker_manager.as_ref().clone(), http_client),
+            client: AsyncApiClient::with_client(locator, http_client),
         })
     }
 
