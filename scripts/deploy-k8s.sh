@@ -2,7 +2,7 @@
 # Deploy the runinator stack to a Kubernetes cluster using kustomize.
 #
 # Usage:
-#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--delete]
+#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--importer-timeout 600s] [--delete]
 #
 # Assumes images are already built and pushed or visible to the local cluster.
 # For an end-to-end build and deploy, prefer:
@@ -20,6 +20,7 @@ set -euo pipefail
 overlay="local"
 context=""
 delete=0
+importer_timeout="600s"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --context)
             context="$2"
+            shift 2
+            ;;
+        --importer-timeout)
+            importer_timeout="$2"
             shift 2
             ;;
         --delete)
@@ -99,7 +104,7 @@ if [[ "$verb" == "apply" ]]; then
     if [[ -n "$context" ]]; then
         wait_args+=(--context "$context")
     fi
-    wait_args+=(wait --for=condition=complete job/runinator-importer --namespace runinator --timeout 120s)
+    wait_args+=(wait --for=condition=complete job/runinator-importer --namespace runinator --timeout "$importer_timeout")
     if ! kubectl "${wait_args[@]}"; then
         echo "warn: importer job did not complete within timeout" >&2
     fi

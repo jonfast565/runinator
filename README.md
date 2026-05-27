@@ -185,6 +185,13 @@ Kubernetes Job pod templates are immutable across image tag changes.
 pwsh ./build.ps1 -DeployKube
 ```
 
+The deploy waits up to 10 minutes for the importer Job to complete. Override
+that when importing larger workflow packs:
+
+```bash
+pwsh ./build.ps1 -DeployKube -KubeImporterTimeoutSeconds 900
+```
+
 The local overlay includes development-only Postgres, RabbitMQ, and app
 Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
 configure a local registry and pass it as `-LocalRegistry localhost:5000` (or

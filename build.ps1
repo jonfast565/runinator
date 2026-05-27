@@ -27,6 +27,8 @@ param(
     # Path to a kustomize overlay directory (e.g. deploy/k8s/overlays/local) or
     # a raw manifest file. Defaults to the local overlay.
     [string]$KubeManifest = "deploy/k8s/overlays/local",
+    [ValidateRange(1, 86400)]
+    [int]$KubeImporterTimeoutSeconds = 600,
     [switch]$KubeDelete,
     [string]$LocalRegistry = "",
 
@@ -788,6 +790,9 @@ function Deploy-KubernetesStack {
 
         [string]$KubeContext,
 
+        [ValidateRange(1, 86400)]
+        [int]$ImporterTimeoutSeconds = 600,
+
         [hashtable]$ImageMap,
 
         [switch]$Delete
@@ -891,7 +896,7 @@ function Deploy-KubernetesStack {
         '--for=condition=complete',
         'job/runinator-importer',
         '--namespace', 'runinator',
-        '--timeout', '120s'
+        '--timeout', "$($ImporterTimeoutSeconds)s"
     )
 
     try {
@@ -999,6 +1004,7 @@ try {
                 WorkspacePath = $workspacePath
                 ManifestPath  = $manifestPath
                 KubeContext   = $KubeContext
+                ImporterTimeoutSeconds = $KubeImporterTimeoutSeconds
                 ImageMap      = $imageMap
             }
 
