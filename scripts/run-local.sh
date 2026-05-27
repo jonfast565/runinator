@@ -89,7 +89,7 @@ Useful commands:
 
 Command-center:
   Run the Tauri UI with bash scripts/run-local.sh ui.
-  The importer watches the workflow file configured in runinator-supervisor.json.
+  The importer imports the workflow file configured in runinator-supervisor.json once on startup.
 MSG
     ;;
   foreground)

@@ -72,17 +72,17 @@
       "name": "importer",
       "command": "./target/debug/runinator-importer",
       "args": [
+        "--once",
         "--workflows-file",
         "./packs/sdlc/workflow-pack.json",
-        "--poll-interval-seconds",
-        "2",
         "--gossip-bind",
         "127.0.0.1",
         "--gossip-port",
         "5512",
         "--gossip-targets",
         "127.0.0.1:5510,127.0.0.1:5511"
-      ]
+      ],
+      "restart_on_failure": false
     }
   ]
 }

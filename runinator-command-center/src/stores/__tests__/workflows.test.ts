@@ -176,6 +176,103 @@ describe("workflow run detail state", () => {
 
     expect(workflows.selectedStepId).toBe("task-1");
   });
+
+  it("does not remove protected terminal and entry nodes", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "protected nodes"));
+
+    workflows.populateStepEditor("start");
+
+    expect(workflows.selectedStepKindLocked).toBe(true);
+    expect(workflows.canRemoveSelectedStep).toBe(false);
+
+    workflows.removeWorkflowNode("start");
+    workflows.removeWorkflowNode("end");
+    workflows.removeWorkflowNode("fail");
+
+    expect(workflows.ensureWorkflowNodes().map((node) => node.id)).toEqual(["start", "end", "fail"]);
+  });
+
+  it("does not allow protected node kinds to be changed", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "protected nodes"));
+    workflows.populateStepEditor("start");
+
+    workflows.stepEditor.kind = "task";
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("start node kind cannot be changed");
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "start")?.kind).toBe("start");
+  });
+
+  it("allows non-protected nodes to be locked", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "locked nodes"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "wait-1",
+      kind: "wait",
+      wait: { seconds: 5 },
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("wait-1");
+
+    workflows.stepEditor.locked = true;
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "wait-1")?.locked).toBe(true);
+    expect(workflows.selectedStepKindLocked).toBe(true);
+    expect(workflows.canRemoveSelectedStep).toBe(false);
+  });
+
+  it("marks and unmarks nodes as skipped", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "skipped nodes"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "wait-1",
+      kind: "wait",
+      wait: { seconds: 5 },
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("wait-1");
+
+    workflows.stepEditor.skipped = true;
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "wait-1")?.skipped).toBe(true);
+
+    workflows.populateStepEditor("wait-1");
+    workflows.stepEditor.skipped = false;
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "wait-1")?.skipped).toBeUndefined();
+  });
+
+  it("does not remove or change the kind of manually locked nodes", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(7, "locked nodes"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "task-1",
+      kind: "task",
+      locked: true,
+      action_name: "console",
+      action_function: "run",
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("task-1");
+
+    workflows.removeWorkflowNode("task-1");
+
+    expect(workflows.ensureWorkflowNodes().some((node) => node.id === "task-1")).toBe(true);
+
+    workflows.stepEditor.kind = "wait";
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("task node kind cannot be changed");
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "task-1")?.kind).toBe("task");
+  });
 });
 
 function workflowDefinition(id: number, name: string): WorkflowDefinition {

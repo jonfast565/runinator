@@ -171,6 +171,10 @@
       <line x1="17" y1="7" x2="20" y2="10" />
       <line x1="14" y1="10" x2="17" y2="13" />
     </template>
+    <template v-else-if="name === 'lock'">
+      <rect x="5" y="10" width="14" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </template>
     <template v-else-if="name === 'box'">
       <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
       <polyline points="3.27,6.96 12,12.01 20.73,6.96" />

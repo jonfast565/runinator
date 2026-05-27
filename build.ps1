@@ -488,7 +488,7 @@ function Write-LocalSupervisorConfig {
     }
 
     if (-not (Test-Path -LiteralPath $WorkflowsFile)) {
-        Write-Warning "Workflows file missing at $WorkflowsFile. The importer will idle without it."
+        Write-Warning "Workflows file missing at $WorkflowsFile. The importer will fail its one-shot import without it."
     }
 
     $commands = @(
@@ -549,12 +549,13 @@ function Write-LocalSupervisorConfig {
             command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-importer'))
             cwd = $WorkspacePath
             args = @(
-                '--workflows-file', $WorkflowsFile,
-                '--poll-interval-seconds', '2'
+                '--once',
+                '--workflows-file', $WorkflowsFile
             ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
             env = @{
                 RUST_LOG = 'info'
             }
+            restart_on_failure = $false
         }
     )
 
@@ -829,6 +830,23 @@ function Deploy-KubernetesStack {
     }
 
     Write-Step ("kubectl " + ($kubectlArgs -join ' '))
+    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer')) {
+        $deleteStaleArgs = @()
+        if ($KubeContext) {
+            $deleteStaleArgs += @('--context', $KubeContext)
+        }
+        $deleteStaleArgs += @(
+            'delete', $staleResource,
+            '--namespace', 'runinator',
+            '--ignore-not-found=true'
+        )
+
+        try {
+            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $deleteStaleArgs -WorkingDirectory $WorkspacePath
+        } catch {
+            Write-Warning "Importer cleanup skipped or failed for '$staleResource': $_"
+        }
+    }
     Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $kubectlArgs -WorkingDirectory $WorkspacePath
 
     if ($Delete) {
@@ -840,8 +858,7 @@ function Deploy-KubernetesStack {
         'statefulset/runinator-rabbitmq',
         'deployment/runinator-ws',
         'deployment/runinator-scheduler',
-        'deployment/runinator-worker',
-        'deployment/runinator-importer'
+        'deployment/runinator-worker'
     )
 
     foreach ($target in $rolloutTargets) {
@@ -862,6 +879,25 @@ function Deploy-KubernetesStack {
         } catch {
             Write-Warning "Rollout status check failed for '$target': $_"
         }
+    }
+
+    $jobWaitArgs = @()
+    if ($KubeContext) {
+        $jobWaitArgs += @('--context', $KubeContext)
+    }
+
+    $jobWaitArgs += @(
+        'wait',
+        '--for=condition=complete',
+        'job/runinator-importer',
+        '--namespace', 'runinator',
+        '--timeout', '120s'
+    )
+
+    try {
+        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $jobWaitArgs -WorkingDirectory $WorkspacePath
+    } catch {
+        Write-Warning "Importer Job did not complete within timeout: $_"
     }
 }
 

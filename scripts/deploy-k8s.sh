@@ -71,12 +71,20 @@ if [[ "$delete" -eq 1 ]]; then
 fi
 
 echo "==> kubectl ${kubectl_args[*]}"
+for stale_resource in deployment/runinator-importer job/runinator-importer; do
+    cleanup_args=()
+    if [[ -n "$context" ]]; then
+        cleanup_args+=(--context "$context")
+    fi
+    cleanup_args+=(delete "$stale_resource" --namespace runinator --ignore-not-found=true)
+    kubectl "${cleanup_args[@]}" >/dev/null 2>&1 || true
+done
 kubectl "${kubectl_args[@]}"
 
 if [[ "$verb" == "apply" ]]; then
     for target in statefulset/runinator-postgres statefulset/runinator-rabbitmq \
         deployment/runinator-ws deployment/runinator-scheduler \
-        deployment/runinator-worker deployment/runinator-importer; do
+        deployment/runinator-worker; do
         rollout_args=()
         if [[ -n "$context" ]]; then
             rollout_args+=(--context "$context")
@@ -86,4 +94,13 @@ if [[ "$verb" == "apply" ]]; then
             echo "warn: rollout check failed for $target" >&2
         fi
     done
+
+    wait_args=()
+    if [[ -n "$context" ]]; then
+        wait_args+=(--context "$context")
+    fi
+    wait_args+=(wait --for=condition=complete job/runinator-importer --namespace runinator --timeout 120s)
+    if ! kubectl "${wait_args[@]}"; then
+        echo "warn: importer job did not complete within timeout" >&2
+    fi
 fi

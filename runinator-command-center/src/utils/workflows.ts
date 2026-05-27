@@ -83,6 +83,8 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         running: status === "running" || status === "queued",
         status,
         protected: kind === "start" || kind === "end" || kind === "fail",
+        locked: kind === "start" || kind === "end" || kind === "fail" || node.locked === true,
+        skipped: node.skipped === true,
         debugBreakpoint: breakpointSet.has(id)
       },
       class: statusClassForNode(status)

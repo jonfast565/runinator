@@ -68,6 +68,7 @@ import { useResourcesStore } from "./resources";
 
 type BranchPolicyName = "all" | "any" | "first_success";
 type SwitchCaseEditor = { match_kind: "equals" | "not_equals" | "exists" | "when"; match_json: string; target: string };
+const protectedWorkflowNodeKinds = new Set(["start", "end", "fail"]);
 
 export const useWorkflowsStore = defineStore("workflows", () => {
   const workflows = ref<WorkflowDefinition[]>([]);
@@ -157,6 +158,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     emit_data_json: "{}",
     subflow_id: 0,
     subflow_parameters_json: "{}",
+    locked: false,
+    skipped: false,
     max_attempts: 1,
     task_id: 1,
     timeout_seconds: 0,
@@ -206,9 +209,13 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function isBreakpointed(nodeId: string): boolean {
     return currentBreakpoints.value.includes(nodeId);
   }
+  const selectedStepKindLocked = computed(() => {
+    const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
+    return isLockedWorkflowNode(node);
+  });
   const canRemoveSelectedStep = computed(() => {
     const node = workflowDraft.definition?.nodes?.find((item: JsonRecord) => item.id === selectedStepId.value);
-    return Boolean(node && node.kind !== "start" && node.kind !== "end" && node.kind !== "fail");
+    return Boolean(node && !isLockedWorkflowNode(node));
   });
   const filteredWorkflows = computed(() => {
     const query = app.normalizedSearch;
@@ -817,7 +824,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function removeWorkflowNode(nodeId: string) {
     const node = ensureWorkflowNodes().find((item: JsonRecord) => item.id === nodeId);
-    if (!node || node.kind === "start" || node.kind === "end" || node.kind === "fail") return;
+    if (!node || isLockedWorkflowNode(node)) return;
     workflowDraft.definition.nodes = ensureWorkflowNodes().filter((item: JsonRecord) => item.id !== nodeId);
     removeWorkflowNodeReferences(workflowDraft.definition, nodeId);
     delete workflowDraft.definition.ui?.layout?.nodes?.[nodeId];
@@ -864,6 +871,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const nodes = ensureWorkflowNodes();
     const index = nodes.findIndex((node: JsonRecord) => node.id === selectedStepId.value);
     if (index < 0) return false;
+    if (isLockedWorkflowNode(nodes[index]) && stepEditor.kind !== nodes[index].kind) {
+      const message = `${nodes[index].kind} node kind cannot be changed`;
+      stepEditorError.value = message;
+      app.setError(message);
+      return false;
+    }
     const parameters = parseRequiredObject(stepEditor.parameters_json);
     const transitions = parseRequiredObject(stepEditor.transitions_json);
     if (!parameters || !transitions) {
@@ -908,6 +921,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     next.retry = { max_attempts: stepEditor.max_attempts };
     if (stepEditor.timeout_seconds > 0) next.timeout_seconds = stepEditor.timeout_seconds;
     else delete next.timeout_seconds;
+    if (isProtectedWorkflowNode(next)) {
+      delete next.locked;
+    } else if (stepEditor.locked) {
+      next.locked = true;
+    } else {
+      delete next.locked;
+    }
+    if (stepEditor.skipped) {
+      next.skipped = true;
+    } else {
+      delete next.skipped;
+    }
     next.parameters = parameters;
     next.transitions = transitions;
     if (next.kind === "approval") {
@@ -1090,6 +1115,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.emit_data_json = pretty(node.parameters?.data ?? {});
     stepEditor.subflow_id = Number(node.subflow_id ?? 0);
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
+    stepEditor.locked = isLockedWorkflowNode(node);
+    stepEditor.skipped = node.skipped === true;
     stepEditor.max_attempts = Number(node.retry?.max_attempts ?? 1);
     stepEditor.timeout_seconds = Number(node.timeout_seconds ?? 0);
     const actionConfig = workflowNodeActionConfig(node);
@@ -1700,6 +1727,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runGraphNodes,
     runGraphEdges,
     selectedNode,
+    selectedStepKindLocked,
     selectedGraphEdgeId,
     selectedGraphEdge,
     selectedNodeIssues,
@@ -1975,6 +2003,14 @@ function validateJsonValueType(value: unknown, ty: RuninatorType | undefined, la
 
 function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isProtectedWorkflowNode(node: JsonRecord | null | undefined): boolean {
+  return protectedWorkflowNodeKinds.has(String(node?.kind ?? ""));
+}
+
+function isLockedWorkflowNode(node: JsonRecord | null | undefined): boolean {
+  return isProtectedWorkflowNode(node) || node?.locked === true;
 }
 
 function isWorkflowExpression(value: unknown): boolean {

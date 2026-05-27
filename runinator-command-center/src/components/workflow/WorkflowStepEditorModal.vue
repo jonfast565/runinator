@@ -15,12 +15,20 @@
           <label>Step ID <input v-model="workflows.stepEditor.id" /></label>
           <label>
             Node Kind
-            <select v-model="workflows.stepEditor.kind" :disabled="isProtectedNode">
+            <select v-model="workflows.stepEditor.kind" :disabled="workflows.selectedStepKindLocked">
               <option value="start">start</option>
               <option v-for="kind in workflows.workflowNodeKinds" :key="kind" :value="kind">{{ kind }}</option>
               <option value="end">end</option>
               <option value="fail">fail</option>
             </select>
+          </label>
+          <label class="checkbox">
+            <input v-model="workflows.stepEditor.locked" type="checkbox" :disabled="isProtectedNode" />
+            Locked
+          </label>
+          <label class="checkbox">
+            <input v-model="workflows.stepEditor.skipped" type="checkbox" />
+            Skipped
           </label>
           <label>Max Attempts <input v-model.number="workflows.stepEditor.max_attempts" type="number" min="1" /></label>
           <label>Timeout Seconds <input v-model.number="workflows.stepEditor.timeout_seconds" type="number" min="0" /></label>

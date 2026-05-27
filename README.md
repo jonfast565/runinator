@@ -36,7 +36,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor starts the importer with a short local polling interval, so edits to the workflow file configured in `runinator-supervisor.json` are pushed into the API shortly after the web service is discovered. The checked-in local config watches `packs/sdlc/workflow-pack.json`. If the stack is already running and you want an immediate sync, run:
+The supervisor starts the importer in one-shot mode, so the workflow file configured in `runinator-supervisor.json` is pushed into the API once after the web service is discovered. The checked-in local config imports `packs/sdlc/workflow-pack.json`. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -127,8 +127,8 @@ This publishes binaries under `target/artifacts/`, writes `target/artifacts/runi
 ## Workflow Import
 
 The importer binary reads `~/.runinator/workflows/workflow-pack.json` by default
-when `--workflows-file` is not set. The local supervisor config passes
-`--workflows-file ./packs/sdlc/workflow-pack.json`. Put a secret bundle at
+when `--workflows-file` is not set. The local supervisor config passes `--once`
+and `--workflows-file ./packs/sdlc/workflow-pack.json`. Put a secret bundle at
 `~/.runinator/secrets.json` to load local credentials during importer startup.
 You can seed the app-data workflow bundle from the repository sample pack if
 needed:

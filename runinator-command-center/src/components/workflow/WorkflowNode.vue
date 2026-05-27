@@ -1,6 +1,8 @@
 <template>
-  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint }]">
+  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint, 'node-skipped': data.skipped }]">
     <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
+    <span v-if="data.locked" class="lock-dot" title="Locked node"><Icon name="lock" :size="11" /></span>
+    <span v-if="data.skipped" class="skip-dot" :class="{ shifted: data.locked }" title="Skipped node"><Icon name="skip" :size="11" /></span>
     <div class="node-topline">
       <span class="node-kind">{{ data.kind }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
@@ -72,6 +74,7 @@ import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { statusClassForNode } from "../../utils/status";
 import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
+import Icon from "../shared/Icon.vue";
 
 const props = defineProps<{
   id: string;
@@ -90,6 +93,8 @@ const props = defineProps<{
     running?: boolean;
     status?: string;
     protected?: boolean;
+    locked?: boolean;
+    skipped?: boolean;
     readOnly?: boolean;
     debugBreakpoint?: boolean;
   };
@@ -380,8 +385,49 @@ async function resolveApproval(action: ApprovalAction) {
   z-index: 2;
 }
 
+.lock-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #94a3b8;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #475569;
+  z-index: 2;
+}
+
+.skip-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #38bdf8;
+  border-radius: 50%;
+  background: #ecfeff;
+  color: #0369a1;
+  z-index: 2;
+}
+
+.skip-dot.shifted {
+  right: 24px;
+}
+
 .node-breakpointed {
   border-color: #dc2626 !important;
+}
+
+.node-skipped {
+  border-style: dashed;
+  opacity: 0.78;
 }
 
 .node-debug-active {

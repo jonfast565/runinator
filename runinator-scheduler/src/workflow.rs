@@ -168,6 +168,10 @@ async fn process_workflow_run_step(
         } else {
             workflow_run
         };
+    if node.skipped {
+        process_skipped_node(api, &workflow_run, node, latest, &node_runs).await?;
+        return Ok(());
+    }
     if let Some(decision) = reentry_exhaustion(node, latest, &node_runs) {
         match decision {
             ReentryExhaustion::Route(target) => {

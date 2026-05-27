@@ -153,6 +153,38 @@ pub(crate) fn workflow_task_idempotency_key(
     format!("{workflow_run_id}:{node_id}:{workflow_node_run_id}:{attempt}")
 }
 
+pub async fn process_skipped_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let created;
+    let node_run = if let Some(latest) = latest {
+        latest
+    } else {
+        created = api
+            .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+            .await?;
+        &created
+    };
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        node_run,
+        WorkflowStatus::Succeeded,
+        Some(serde_json::json!({
+            "skipped": true,
+            "node_id": node.id
+        })),
+        Some(format!("Node {} skipped", node.id)),
+        node_runs,
+    )
+    .await
+}
+
 pub async fn process_wait_node(
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,

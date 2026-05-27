@@ -17,7 +17,7 @@
       @nodes-change="workflows.onGraphNodesChange"
       @connect="openConnectMenu"
       @edge-update="workflows.onGraphEdgeUpdate"
-      @edge-click="workflows.onGraphEdgeClick"
+      @edge-click="openEdgeEditorFromEvent"
       @edge-context-menu="openEdgeMenu"
       @edge-double-click="openEdgeEditorFromEvent"
       @edges-change="workflows.onGraphEdgesChange"
@@ -147,11 +147,16 @@ import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 
 const workflows = useWorkflowsStore();
-const { fitView, onPaneReady } = useVueFlow();
+const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
 const contextMenu = ref<null | { kind: "node"; id: string; x: number; y: number; deletable: boolean } | { kind: "edge"; id: string; x: number; y: number }>(null);
 const lastPointer = ref({ x: 0, y: 0 });
 const pendingConnect = ref<null | { connection: any; x: number; y: number; options: WorkflowEdgeSemanticOption[] }>(null);
 const edgeEditor = ref<null | (WorkflowEdgeEditorDraft & { x: number; y: number })>(null);
+const nodeWidth = 180;
+const nodeHeight = 64;
+const popoverMargin = 12;
+const edgeEditorWidth = 340;
+const edgeEditorMinVisibleHeight = 260;
 const workflowNodeIds = computed(() => {
   const nodes = workflows.workflowDraft.definition?.nodes;
   return Array.isArray(nodes) ? nodes.map((node: any) => String(node.id ?? "")).filter(Boolean) : [];
@@ -201,7 +206,7 @@ function openNodeMenu(event: any) {
     id: node.id,
     x: mouse.clientX,
     y: mouse.clientY,
-    deletable: node.data?.protected !== true
+    deletable: node.data?.locked !== true
   };
 }
 
@@ -218,7 +223,8 @@ function openEdgeEditorFromEvent(event: any) {
   const edge = event?.edge;
   if (!edge?.id) return;
   mouse?.preventDefault();
-  openEdgeEditorAt(edge.id, mouse?.clientX ?? lastPointer.value.x, mouse?.clientY ?? lastPointer.value.y);
+  workflows.selectGraphEdge(edge.id);
+  openEdgeEditorForEdge(edge.id, mouse ? { x: mouse.clientX, y: mouse.clientY } : undefined);
 }
 
 function closeContextMenu() {
@@ -264,7 +270,7 @@ function openConnectMenu(connection: any) {
 
 function editSelectedEdge() {
   if (!workflows.selectedGraphEdge) return;
-  openEdgeEditorAt(workflows.selectedGraphEdge.id, lastPointer.value.x || window.innerWidth / 2, lastPointer.value.y || window.innerHeight / 2);
+  openEdgeEditorForEdge(workflows.selectedGraphEdge.id);
 }
 
 function applyPendingConnect(optionId: string) {
@@ -288,18 +294,47 @@ function deleteContextEdge() {
 function editContextEdge() {
   if (contextMenu.value?.kind !== "edge") return;
   const menu = contextMenu.value;
-  openEdgeEditorAt(menu.id, menu.x, menu.y);
+  workflows.selectGraphEdge(menu.id);
+  openEdgeEditorForEdge(menu.id, { x: menu.x, y: menu.y });
 }
 
 function openEdgeEditorAt(edgeId: string, x: number, y: number) {
   const draft = workflows.openEdgeEditorDraft(edgeId);
   if (!draft) return;
+  const position = clampEdgeEditorPosition(x, y);
   edgeEditor.value = {
     ...draft,
-    x,
-    y
+    x: position.x,
+    y: position.y
   };
   closeContextMenu();
+}
+
+function openEdgeEditorForEdge(edgeId: string, fallback = lastPointer.value) {
+  const position = edgeEditorPosition(edgeId, fallback);
+  openEdgeEditorAt(edgeId, position.x, position.y);
+}
+
+function edgeEditorPosition(edgeId: string, fallback: { x: number; y: number }) {
+  const edge = workflows.graphEdges.find((item: any) => item.id === edgeId);
+  const source = edge ? workflows.graphNodes.find((item: any) => item.id === edge.source) : null;
+  const target = edge ? workflows.graphNodes.find((item: any) => item.id === edge.target) : null;
+  if (!edge || !source || !target) return clampEdgeEditorPosition(fallback.x, fallback.y);
+  const midpoint = {
+    x: (Number(source.position?.x ?? 0) + Number(target.position?.x ?? 0)) / 2 + nodeWidth / 2,
+    y: (Number(source.position?.y ?? 0) + Number(target.position?.y ?? 0)) / 2 + nodeHeight / 2
+  };
+  const screenPoint = flowToScreenCoordinate(midpoint);
+  return clampEdgeEditorPosition(screenPoint.x + 16, screenPoint.y - 16);
+}
+
+function clampEdgeEditorPosition(x: number, y: number) {
+  const maxX = Math.max(popoverMargin, window.innerWidth - edgeEditorWidth - popoverMargin);
+  const maxY = Math.max(popoverMargin, window.innerHeight - edgeEditorMinVisibleHeight);
+  return {
+    x: Math.min(Math.max(popoverMargin, x), maxX),
+    y: Math.min(Math.max(popoverMargin, y), maxY)
+  };
 }
 
 function applyEdgeEditor() {

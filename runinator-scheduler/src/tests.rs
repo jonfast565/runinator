@@ -93,6 +93,41 @@ async fn scheduler_uses_workflow_run_snapshot() {
 }
 
 #[tokio::test]
+async fn scheduler_marks_skipped_node_succeeded_without_dispatching() {
+    let workflow = workflow_with_nodes(json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+        {
+            "id": "build",
+            "kind": "action",
+            "skipped": true,
+            "action": {
+                "provider": "console",
+                "function": "run",
+                "timeout_seconds": 60,
+                "configuration": {}
+            },
+            "transitions": { "next": { "$node": "end" } }
+        },
+        { "id": "end", "kind": "end" },
+        { "id": "fail", "kind": "fail" }
+    ]));
+    let run = workflow_run(json!({}), json!({}), "build");
+    let api = MockWorkflowApi::with_workflow_run(workflow, run.clone());
+    let broker = InMemoryBroker::new();
+
+    process_workflow_run(&broker, &api, run).await.unwrap();
+
+    assert!(api.action_dispatches().is_empty());
+    let skipped_update = api
+        .node_updates()
+        .into_iter()
+        .find(|update| update.output_json["skipped"] == true)
+        .expect("skipped node update");
+    assert_eq!(skipped_update.status, WorkflowStatus::Succeeded);
+    assert_eq!(api.last_run_update().active_node_id.as_deref(), Some("end"));
+}
+
+#[tokio::test]
 async fn switch_routes_matching_default_and_unmatched_cases() {
     let run = workflow_run(json!({ "mode": "fast" }), json!({}), "route");
     let api = MockWorkflowApi::default();
@@ -1010,6 +1045,10 @@ impl MockWorkflowApi {
             .last()
             .cloned()
             .expect("workflow node run update")
+    }
+
+    fn node_updates(&self) -> Vec<WorkflowNodeRunUpdate> {
+        self.state.lock().unwrap().node_updates.clone()
     }
 
     fn run_updates(&self) -> Vec<WorkflowRunUpdate> {

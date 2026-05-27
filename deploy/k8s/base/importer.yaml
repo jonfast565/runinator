@@ -1,29 +1,26 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: runinator-importer
   namespace: runinator
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: runinator-importer
+  backoffLimit: 3
   template:
     metadata:
       labels:
         app: runinator-importer
         runinator.gossip/member: "true"
     spec:
+      restartPolicy: OnFailure
       containers:
         - name: importer
           image: runinator-importer:dev
           imagePullPolicy: IfNotPresent
           command: ["runinator-importer"]
           args:
+            - "--once"
             - "--workflows-file"
             - "/home/runinator/.runinator/workflows/workflow-pack.json"
-            - "--poll-interval-seconds"
-            - "30"
             - "--gossip-bind"
             - "0.0.0.0"
             - "--gossip-port"

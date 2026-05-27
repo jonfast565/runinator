@@ -437,6 +437,8 @@ pub struct WorkflowNode {
     pub id: String,
     pub kind: WorkflowNodeKind,
     #[serde(default)]
+    pub skipped: bool,
+    #[serde(default)]
     pub action: Option<WorkflowAction>,
     #[serde(default)]
     pub parameters: Value,
