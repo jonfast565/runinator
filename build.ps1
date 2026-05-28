@@ -30,6 +30,10 @@ param(
     [ValidateRange(1, 86400)]
     [int]$KubeImporterTimeoutSeconds = 600,
     [switch]$KubeDelete,
+    # By default the postgres and rabbitmq StatefulSets are preserved if they
+    # already exist in the cluster, so app rollouts do not touch the database
+    # or broker. Pass this switch to apply (and potentially recreate) them.
+    [switch]$KubeRecreateInfra,
     [string]$LocalRegistry = "",
 
     [ValidateNotNullOrEmpty()]
@@ -97,6 +101,90 @@ function Test-ToolAvailable {
 
     if (-not (Get-Command -Name $Name -ErrorAction SilentlyContinue)) {
         throw "Required tool '$Name' was not found on PATH."
+    }
+}
+
+function Test-K8sResourceExists {
+    param(
+        [string[]]$KubeContextArgs = @(),
+        [Parameter(Mandatory)] [string]$Kind,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Namespace
+    )
+
+    $getArgs = $KubeContextArgs + @('get', $Kind, $Name, '--namespace', $Namespace, '--ignore-not-found', '-o', 'name')
+    $output = & kubectl @getArgs 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return [bool]($output | Where-Object { $_ -match '\S' })
+}
+
+function Invoke-Kubectl {
+    param(
+        [string[]]$KubeContextArgs = @(),
+        [Parameter(Mandatory)] [string[]]$Arguments
+    )
+
+    $all = $KubeContextArgs + $Arguments
+    $output = & kubectl @all 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "kubectl $($all -join ' ') failed: $output"
+    }
+    return ($output -join "`n")
+}
+
+function Remove-K8sStatefulSetDocs {
+    param(
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [switch]$SkipPostgres,
+        [switch]$SkipRabbitmq
+    )
+
+    # split on lines that are exactly `---`. emit docs we want to keep.
+    $docs = [System.Collections.Generic.List[string]]::new()
+    $current = New-Object System.Text.StringBuilder
+    foreach ($line in ($RenderedYaml -split "`r?`n")) {
+        if ($line -eq '---') {
+            $docs.Add($current.ToString()) | Out-Null
+            $current = New-Object System.Text.StringBuilder
+        } else {
+            [void]$current.AppendLine($line)
+        }
+    }
+    $docs.Add($current.ToString()) | Out-Null
+
+    $result = New-Object System.Text.StringBuilder
+    foreach ($doc in $docs) {
+        if ([string]::IsNullOrWhiteSpace($doc)) { continue }
+        $isSts = $doc -match '(?m)^kind:\s*StatefulSet\s*$'
+        if ($SkipPostgres -and $isSts -and ($doc -match '(?m)^\s\sname:\s*runinator-postgres\s*$')) { continue }
+        if ($SkipRabbitmq -and $isSts -and ($doc -match '(?m)^\s\sname:\s*runinator-rabbitmq\s*$')) { continue }
+        [void]$result.AppendLine('---')
+        [void]$result.Append($doc)
+    }
+    return $result.ToString()
+}
+
+function Invoke-KubectlApplyStdin {
+    param(
+        [string[]]$KubeContextArgs = @(),
+        [Parameter(Mandatory)] [string]$Stdin,
+        [string]$WorkingDirectory
+    )
+
+    $applyArgs = $KubeContextArgs + @('apply', '-f', '-')
+    Write-Host ">> kubectl $($applyArgs -join ' ')  (filtered manifest via stdin)"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'kubectl'
+    foreach ($a in $applyArgs) { [void]$psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardInput = $true
+    $psi.UseShellExecute = $false
+    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc.StandardInput.Write($Stdin)
+    $proc.StandardInput.Close()
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) {
+        throw "kubectl apply -f - failed with exit code $($proc.ExitCode)."
     }
 }
 
@@ -798,7 +886,9 @@ function Deploy-KubernetesStack {
 
         [hashtable]$ImageMap,
 
-        [switch]$Delete
+        [switch]$Delete,
+
+        [switch]$RecreateInfra
     )
 
     Test-ToolAvailable -Name 'kubectl'
@@ -825,25 +915,17 @@ function Deploy-KubernetesStack {
         Set-KustomizeOverlayImages -OverlayPath $applyPath -ImageMap $ImageMap
     }
 
-    $kubectlArgs = @()
+    $ctxArgs = @()
     if ($KubeContext) {
-        $kubectlArgs += @('--context', $KubeContext)
+        $ctxArgs += @('--context', $KubeContext)
     }
 
     $verb = if ($Delete) { 'delete' } else { 'apply' }
     $flag = if ($isOverlay) { '-k' } else { '-f' }
-    $kubectlArgs += @($verb, $flag, $applyPath)
-    if ($Delete) {
-        $kubectlArgs += @('--ignore-not-found=true')
-    }
 
-    Write-Step ("kubectl " + ($kubectlArgs -join ' '))
+    Write-Step ("kubectl " + (($ctxArgs + @($verb, $flag, $applyPath)) -join ' '))
     foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'service/runinator-gossip')) {
-        $deleteStaleArgs = @()
-        if ($KubeContext) {
-            $deleteStaleArgs += @('--context', $KubeContext)
-        }
-        $deleteStaleArgs += @(
+        $deleteStaleArgs = $ctxArgs + @(
             'delete', $staleResource,
             '--namespace', 'runinator',
             '--ignore-not-found=true'
@@ -855,28 +937,44 @@ function Deploy-KubernetesStack {
             Write-Warning "Importer cleanup skipped or failed for '$staleResource': $_"
         }
     }
-    Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $kubectlArgs -WorkingDirectory $WorkspacePath
+
+    # decide which infra StatefulSets to preserve. on apply we skip whichever
+    # ones already exist (unless -RecreateInfra was set), so re-deploys never
+    # disturb the running database or broker.
+    $skipPg = $false
+    $skipMq = $false
+    if (-not $Delete -and -not $RecreateInfra -and $isOverlay) {
+        $skipPg = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-postgres' -Namespace 'runinator'
+        $skipMq = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-rabbitmq' -Namespace 'runinator'
+        if ($skipPg) { Write-Step 'Preserving existing statefulset/runinator-postgres (pass -KubeRecreateInfra to override)' }
+        if ($skipMq) { Write-Step 'Preserving existing statefulset/runinator-rabbitmq (pass -KubeRecreateInfra to override)' }
+    }
+
+    if ($Delete) {
+        $applyArgs = $ctxArgs + @($verb, $flag, $applyPath, '--ignore-not-found=true')
+        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
+    } elseif (-not $skipPg -and -not $skipMq) {
+        $applyArgs = $ctxArgs + @($verb, $flag, $applyPath)
+        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
+    } else {
+        $rendered = Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
+        $filtered = Remove-K8sStatefulSetDocs -RenderedYaml $rendered -SkipPostgres:$skipPg -SkipRabbitmq:$skipMq
+        Invoke-KubectlApplyStdin -KubeContextArgs $ctxArgs -Stdin $filtered -WorkingDirectory $WorkspacePath
+    }
 
     if ($Delete) {
         return
     }
 
-    $rolloutTargets = @(
-        'statefulset/runinator-postgres',
-        'statefulset/runinator-rabbitmq',
-        'deployment/runinator-ws',
-        'deployment/runinator-scheduler',
-        'deployment/runinator-worker',
-        'deployment/runinator-command-center-web'
-    )
+    $rolloutTargets = [System.Collections.Generic.List[string]]::new()
+    if (-not $skipPg) { [void]$rolloutTargets.Add('statefulset/runinator-postgres') }
+    if (-not $skipMq) { [void]$rolloutTargets.Add('statefulset/runinator-rabbitmq') }
+    foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-scheduler', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
+        [void]$rolloutTargets.Add($t)
+    }
 
     foreach ($target in $rolloutTargets) {
-        $rolloutArgs = @()
-        if ($KubeContext) {
-            $rolloutArgs += @('--context', $KubeContext)
-        }
-
-        $rolloutArgs += @(
+        $rolloutArgs = $ctxArgs + @(
             'rollout', 'status',
             $target,
             '--namespace', 'runinator',
@@ -890,12 +988,7 @@ function Deploy-KubernetesStack {
         }
     }
 
-    $jobWaitArgs = @()
-    if ($KubeContext) {
-        $jobWaitArgs += @('--context', $KubeContext)
-    }
-
-    $jobWaitArgs += @(
+    $jobWaitArgs = $ctxArgs + @(
         'wait',
         '--for=condition=complete',
         'job/runinator-importer',
@@ -1017,6 +1110,10 @@ try {
                 Write-Step 'Tearing down Runinator Kubernetes stack'
             } else {
                 Write-Step 'Deploying Runinator to the local Kubernetes cluster'
+            }
+
+            if ($KubeRecreateInfra) {
+                $deployArgs['RecreateInfra'] = $true
             }
 
             Deploy-KubernetesStack @deployArgs

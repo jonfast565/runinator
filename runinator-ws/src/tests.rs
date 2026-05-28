@@ -272,15 +272,17 @@ async fn import_upserts_workflows_before_triggers() {
 }
 
 #[tokio::test]
-async fn import_reuses_existing_workflow_by_name_when_id_is_missing() {
+async fn import_skips_workflow_when_name_already_exists() {
     let (db, path) = test_db().await;
     let first = WorkflowBundle {
         workflows: vec![workflow(None, "Core Team SDLC Pipeline")],
         triggers: vec![],
     };
-    crate::repository::import_workflow_bundle(&db, first)
+    let initial = crate::repository::import_workflow_bundle(&db, first)
         .await
         .unwrap();
+    let initial_version = initial.workflows[0].version;
+    let initial_definition = initial.workflows[0].definition.clone();
     let mut changed = workflow(None, "Core Team SDLC Pipeline");
     changed.version = 2;
     changed.definition = json!({
@@ -299,10 +301,51 @@ async fn import_reuses_existing_workflow_by_name_when_id_is_missing() {
         .unwrap();
     let workflows = db.fetch_workflows().await.unwrap();
 
+    // re-importing the same workflow name leaves the existing row untouched.
     assert_eq!(workflows.len(), 1);
     assert_eq!(saved.workflows[0].id, workflows[0].id);
     assert_eq!(workflows[0].name, "Core Team SDLC Pipeline");
+    assert_eq!(workflows[0].version, initial_version);
+    assert_eq!(workflows[0].definition, initial_definition);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn import_upserts_existing_workflow_when_id_is_present() {
+    let (db, path) = test_db().await;
+    let first = WorkflowBundle {
+        workflows: vec![workflow(None, "Core Team SDLC Pipeline")],
+        triggers: vec![],
+    };
+    let initial = crate::repository::import_workflow_bundle(&db, first)
+        .await
+        .unwrap();
+    let existing_id = initial.workflows[0].id;
+
+    // a save from the command center carries the existing id and must overwrite.
+    let mut changed = initial.workflows[0].clone();
+    changed.version = 2;
+    changed.definition = json!({
+        "start": "done",
+        "nodes": [
+            { "id": "done", "kind": "end" }
+        ]
+    });
+    let second = WorkflowBundle {
+        workflows: vec![changed.clone()],
+        triggers: vec![],
+    };
+
+    let saved = crate::repository::import_workflow_bundle(&db, second)
+        .await
+        .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(saved.workflows[0].id, existing_id);
+    // an upsert bumps the version to 2; a skip would have left it at 1.
     assert_eq!(workflows[0].version, 2);
+    assert_eq!(saved.workflows[0].version, 2);
     let _ = std::fs::remove_file(path);
 }
 

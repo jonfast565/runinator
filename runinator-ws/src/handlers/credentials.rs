@@ -83,6 +83,24 @@ pub(crate) async fn import_secret_bundle(
     let store = credential_store();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for secret in &bundle.secrets {
+        // skip secrets that already exist in the credential store to avoid overwriting them.
+        match store.get(&secret.scope, &secret.name) {
+            Ok(Some(_)) => {
+                log::info!(
+                    "Skipping import of secret {}/{}: already exists in credential store",
+                    secret.scope,
+                    secret.name
+                );
+                imported.push(runinator_models::bundles::SecretBundleEntry {
+                    scope: secret.scope.clone(),
+                    name: secret.name.clone(),
+                    secret: String::new(),
+                });
+                continue;
+            }
+            Ok(None) => {}
+            Err(err) => return api_error(err.to_string()),
+        }
         if let Err(err) = store.put(&secret.scope, &secret.name, secret.secret.as_bytes()) {
             return api_error(err.to_string());
         }

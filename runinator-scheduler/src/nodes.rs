@@ -571,12 +571,14 @@ pub async fn process_loop_node(
     let max_iterations = node.max_iterations.unwrap_or(i64::MAX).max(0);
     let index = prior_iterations;
     let exhausted = index >= items.len() as i64 || index >= max_iterations;
-    let node_run = if let Some(latest) = latest.filter(|run| run.status == WorkflowStatus::Running)
-    {
-        latest.clone()
-    } else {
-        api.create_workflow_node_run(workflow_run.id, &node.id, parameters.clone())
-            .await?
+    // each iteration gets its own node_run so prior_iterations advances. reuse the
+    // latest only if it was left running from a prior interrupted visit.
+    let node_run = match latest.filter(|run| run.status == WorkflowStatus::Running) {
+        Some(latest) => latest.clone(),
+        None => {
+            api.create_workflow_node_run(workflow_run.id, &node.id, parameters.clone())
+                .await?
+        }
     };
     let output = if exhausted {
         serde_json::json!({
@@ -592,19 +594,41 @@ pub async fn process_loop_node(
             "count": items.len()
         })
     };
+    let reason = if exhausted {
+        "loop_exhausted"
+    } else {
+        "loop_iteration"
+    };
+    // mark the iteration succeeded so prior_iterations advances on re-entry from
+    // the loop body. without this the loop would re-process index 0 forever.
     api.update_workflow_node_run(
         node_run.id,
-        WorkflowStatus::Running,
+        WorkflowStatus::Succeeded,
         Some(node_run.attempt + 1),
         None,
         Some(output.clone()),
         None,
-        Some("loop_iteration".into()),
+        Some(reason.into()),
         None,
     )
     .await?;
 
     if exhausted {
+        // clear loop bookkeeping before exiting. otherwise the last iteration's
+        // /loop/return_to survives into the exit path, and the first end node
+        // we hit downstream would route back into the loop.
+        let mut next_state = workflow_run.state.clone();
+        if let Some(map) = next_state.as_object_mut() {
+            map.remove("loop");
+        }
+        api.update_workflow_run(
+            workflow_run.id,
+            workflow_run.status,
+            workflow_run.active_node_id.clone(),
+            Some(next_state),
+            None,
+        )
+        .await?;
         transition_from_node(
             api,
             workflow_run,

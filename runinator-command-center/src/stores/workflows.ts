@@ -1562,6 +1562,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       stepEditorOpen.value = false;
       stepEditorCreating.value = false;
       stepEditorCreatedNodeId.value = "";
+      selectedStepId.value = "";
     }
   }
 
@@ -1570,9 +1571,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       const nodeId = stepEditorCreatedNodeId.value;
       workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== nodeId);
       delete workflowTaskDrafts.value[nodeId];
-      selectedStepId.value = "";
       syncWorkflowDraftToJson();
     }
+    selectedStepId.value = "";
     stepEditorOpen.value = false;
     stepEditorCreating.value = false;
     stepEditorCreatedNodeId.value = "";

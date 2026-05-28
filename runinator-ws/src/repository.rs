@@ -101,6 +101,19 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
 ) -> Result<WorkflowBundle, SendableError> {
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
+        // an incoming id means an explicit save (e.g. the command center) that should
+        // upsert. a missing id is a pack import: skip if the name already exists so we
+        // do not clobber a workflow the user has since modified.
+        if workflow.id.is_none() {
+            if let Some(existing) = db.fetch_workflow_by_name(workflow.name.clone()).await? {
+                log::info!(
+                    "Skipping import of workflow '{}': already exists in database",
+                    workflow.name
+                );
+                workflows.push(existing);
+                continue;
+            }
+        }
         workflows.push(upsert_workflow(db, &workflow).await?);
     }
 
