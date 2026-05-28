@@ -1143,6 +1143,34 @@ pub async fn process_subflow_node(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
+    // fail fast: a subflow error would otherwise bubble up to the scheduler loop, be
+    // logged, and retried on every tick while the run stays non-terminal, leaving the
+    // node stuck running. surface it as a failed node so the workflow can follow its
+    // on_failure transition or fail the run instead of looping forever.
+    let Err(err) = run_subflow_node(api, workflow_run, node, latest, node_runs).await else {
+        return Ok(());
+    };
+    let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    transition_from_node(
+        api,
+        workflow_run,
+        node,
+        &node_run,
+        WorkflowStatus::Failed,
+        None,
+        Some(format!("Subflow node {} failed: {err}", node.id)),
+        node_runs,
+    )
+    .await
+}
+
+async fn run_subflow_node(
+    api: &dyn WorkflowSchedulerApi,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
     if let Some(node_run) = latest {
         if let Some(subflow_run_id) = node_run.state.get("subflow_run_id").and_then(Value::as_i64) {
             if node.subflow.subflow_type == WorkflowSubflowType::FireAndForget {
@@ -1200,7 +1228,33 @@ pub async fn process_subflow_node(
                     )
                     .await;
                 }
-                _ => return Ok(()),
+                other => {
+                    // wait-type subflow is still in flight; fail fast once it overruns the node timeout.
+                    if let Some(timeout) = node.timeout_seconds {
+                        if Utc::now() - node_run.created_at
+                            > chrono::Duration::seconds(timeout)
+                        {
+                            return transition_from_node(
+                                api,
+                                workflow_run,
+                                node,
+                                node_run,
+                                WorkflowStatus::TimedOut,
+                                Some(serde_json::json!({
+                                    "subflow_run_id": subflow_run_id,
+                                    "status": other.as_str()
+                                })),
+                                Some(format!(
+                                    "Subflow run {subflow_run_id} timed out after {timeout}s while {}",
+                                    other.as_str()
+                                )),
+                                node_runs,
+                            )
+                            .await;
+                        }
+                    }
+                    return Ok(());
+                }
             }
         }
     }
