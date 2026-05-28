@@ -2,6 +2,7 @@ mod metadata;
 mod params;
 mod provider;
 mod response;
+mod search;
 
 pub use provider::JiraProvider;
 

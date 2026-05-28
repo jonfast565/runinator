@@ -16,6 +16,7 @@ use crate::params::{
     JiraCommentParams, JiraIssueKeyParams, JiraSearchParams, JiraTransitionParams, parse_params,
 };
 use crate::response::json_response;
+use crate::search::jira_search_all;
 
 #[derive(Clone)]
 pub struct JiraProvider;
@@ -92,14 +93,7 @@ impl Provider for JiraProvider {
         let response = match function {
             "search_external_items" | "search" => {
                 let p: JiraSearchParams = parse_params(&request)?;
-                client
-                    .get(format!("{}/rest/api/3/search", p.base.base_url))
-                    .query(&[("jql", &p.jql)])
-                    .basic_auth(
-                        p.base.email.as_deref().unwrap_or_default(),
-                        Some(&p.base.token),
-                    )
-                    .send()?
+                return jira_search_all(&client, &p);
             }
             "fetch_item" | "fetch" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;

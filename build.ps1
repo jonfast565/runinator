@@ -662,7 +662,7 @@ function Build-ContainerImages {
         @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
         @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
         @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' },
-        @{ Name = 'runinator-command-center-web'; Dockerfile = 'Dockerfile'; Context = 'runinator-command-center' }
+        @{ Name = 'runinator-command-center-web'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
     )
 
     $builtImages = @{}
@@ -866,7 +866,8 @@ function Deploy-KubernetesStack {
         'statefulset/runinator-rabbitmq',
         'deployment/runinator-ws',
         'deployment/runinator-scheduler',
-        'deployment/runinator-worker'
+        'deployment/runinator-worker',
+        'deployment/runinator-command-center-web'
     )
 
     foreach ($target in $rolloutTargets) {

@@ -24,6 +24,9 @@ images:
   - name: runinator-migration
     newName: REPLACE_REGISTRY/runinator-migration
     newTag: latest
+  - name: runinator-command-center-web
+    newName: REPLACE_REGISTRY/runinator-command-center-web
+    newTag: latest
 
 patches:
   - path: resources-patch.yaml
