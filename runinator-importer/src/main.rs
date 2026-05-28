@@ -355,6 +355,13 @@ fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {
     )
 }
 
+// remove a timestamp field from a pack body and parse it as a UTC datetime.
+fn take_pack_timestamp(body: &mut Value, key: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    body.as_object_mut()
+        .and_then(|object| object.remove(key))
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
 fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
     let version = envelope
         .get("version")
@@ -385,6 +392,10 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
             .unwrap_or(Value::Null);
         let input_type = serde_json::from_value(input_type_value.clone())
             .unwrap_or_else(|_| RuninatorType::from_json_schema(&input_type_value));
+        // lift timestamps out of the definition body so import reconciliation can
+        // compare them; their absence keeps the existing copy untouched on import.
+        let created_at = take_pack_timestamp(&mut body, "created_at");
+        let updated_at = take_pack_timestamp(&mut body, "updated_at");
         workflows.push(WorkflowDefinition {
             id: None,
             name: name.clone(),
@@ -392,8 +403,8 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
             enabled: true,
             input_type,
             definition: body,
-            created_at: None,
-            updated_at: None,
+            created_at,
+            updated_at,
         });
     }
 

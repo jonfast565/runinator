@@ -1,5 +1,8 @@
 use axum::{Json, extract::Query, http::StatusCode};
-use runinator_models::{bundles::SecretBundle, web::TaskResponse};
+use runinator_models::{
+    bundles::{SecretBundle, SecretBundleEntry},
+    web::TaskResponse,
+};
 use runinator_utilities::credential_store::{
     CredentialStore, LocalEncryptedCredentialStore, default_app_credential_store_path,
 };
@@ -83,32 +86,33 @@ pub(crate) async fn import_secret_bundle(
     let store = credential_store();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for secret in &bundle.secrets {
-        // skip secrets that already exist in the credential store to avoid overwriting them.
-        match store.get(&secret.scope, &secret.name) {
-            Ok(Some(_)) => {
-                log::info!(
-                    "Skipping import of secret {}/{}: already exists in credential store",
-                    secret.scope,
-                    secret.name
-                );
-                imported.push(runinator_models::bundles::SecretBundleEntry {
-                    scope: secret.scope.clone(),
-                    name: secret.name.clone(),
-                    secret: String::new(),
-                });
-                continue;
+        let incoming_ts = secret.updated_at.map(|updated_at| updated_at.timestamp());
+        // overwrite an existing secret only when the incoming entry is strictly newer.
+        match store.entry_updated_at(&secret.scope, &secret.name) {
+            Ok(Some(stored_ts)) => {
+                let is_newer = incoming_ts.map(|ts| ts > stored_ts).unwrap_or(false);
+                if !is_newer {
+                    log::info!(
+                        "Skipping import of secret {}/{}: stored copy is up to date",
+                        secret.scope,
+                        secret.name
+                    );
+                    imported.push(redacted_entry(secret));
+                    continue;
+                }
             }
             Ok(None) => {}
             Err(err) => return api_error(err.to_string()),
         }
-        if let Err(err) = store.put(&secret.scope, &secret.name, secret.secret.as_bytes()) {
+        // persist the incoming modification time so later imports reconcile against it.
+        let result = match incoming_ts {
+            Some(ts) => store.put_at(&secret.scope, &secret.name, secret.secret.as_bytes(), ts),
+            None => store.put(&secret.scope, &secret.name, secret.secret.as_bytes()),
+        };
+        if let Err(err) = result {
             return api_error(err.to_string());
         }
-        imported.push(runinator_models::bundles::SecretBundleEntry {
-            scope: secret.scope.clone(),
-            name: secret.name.clone(),
-            secret: String::new(),
-        });
+        imported.push(redacted_entry(secret));
     }
 
     (
@@ -117,6 +121,16 @@ pub(crate) async fn import_secret_bundle(
             secrets: imported,
         })),
     )
+}
+
+// echo an imported entry without its secret value, preserving the modification time.
+fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
+    SecretBundleEntry {
+        scope: secret.scope.clone(),
+        name: secret.name.clone(),
+        secret: String::new(),
+        updated_at: secret.updated_at,
+    }
 }
 
 pub(crate) async fn delete_credential(

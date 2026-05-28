@@ -66,7 +66,11 @@ pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
     Extension(events): Extension<EventSender>,
     Json(bundle): Json<WorkflowBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    log::info!("Importing workflow bundle: {} workflows, {} triggers", bundle.workflows.len(), bundle.triggers.len());
+    log::info!(
+        "Importing workflow bundle: {} workflows, {} triggers",
+        bundle.workflows.len(),
+        bundle.triggers.len()
+    );
     match repository::import_workflow_bundle(db.as_ref(), bundle).await {
         Ok(bundle) => {
             log::info!("Imported workflow bundle successfully");

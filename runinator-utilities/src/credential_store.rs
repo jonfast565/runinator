@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use runinator_models::errors::SendableError;
@@ -10,10 +11,30 @@ use serde::{Deserialize, Serialize};
 use crate::app_data;
 
 pub trait CredentialStore: Send + Sync {
-    fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError>;
+    /// store a secret, stamping it with the current time.
+    fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError> {
+        self.put_at(scope, name, secret, now_unix())
+    }
+    /// store a secret with an explicit modification time (unix seconds).
+    fn put_at(
+        &self,
+        scope: &str,
+        name: &str,
+        secret: &[u8],
+        updated_at: i64,
+    ) -> Result<(), SendableError>;
     fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError>;
+    /// modification time (unix seconds) of a stored secret, or None when it does not exist.
+    fn entry_updated_at(&self, scope: &str, name: &str) -> Result<Option<i64>, SendableError>;
     fn delete(&self, scope: &str, name: &str) -> Result<(), SendableError>;
     fn list(&self) -> Result<Vec<CredentialEntry>, SendableError>;
+}
+
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,7 +51,38 @@ pub struct LocalEncryptedCredentialStore {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CredentialFile {
-    entries: BTreeMap<String, String>,
+    entries: BTreeMap<String, StoredSecret>,
+}
+
+// stored entry format. legacy files hold a bare hex string with no timestamp;
+// new writes are objects carrying the modification time. untagged deserialization
+// accepts both so existing credential files keep working.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StoredSecret {
+    Legacy(String),
+    Versioned {
+        secret: String,
+        #[serde(default)]
+        updated_at: i64,
+    },
+}
+
+impl StoredSecret {
+    fn secret_hex(&self) -> &str {
+        match self {
+            StoredSecret::Legacy(secret) => secret,
+            StoredSecret::Versioned { secret, .. } => secret,
+        }
+    }
+
+    // legacy entries predate timestamps, so treat them as the epoch (oldest).
+    fn updated_at(&self) -> i64 {
+        match self {
+            StoredSecret::Legacy(_) => 0,
+            StoredSecret::Versioned { updated_at, .. } => *updated_at,
+        }
+    }
 }
 
 impl LocalEncryptedCredentialStore {
@@ -78,21 +130,38 @@ impl LocalEncryptedCredentialStore {
 }
 
 impl CredentialStore for LocalEncryptedCredentialStore {
-    fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError> {
+    fn put_at(
+        &self,
+        scope: &str,
+        name: &str,
+        secret: &[u8],
+        updated_at: i64,
+    ) -> Result<(), SendableError> {
         let mut file = self.load()?;
         file.entries.insert(
             Self::entry_key(scope, name),
-            hex_encode(&self.crypt(secret)),
+            StoredSecret::Versioned {
+                secret: hex_encode(&self.crypt(secret)),
+                updated_at,
+            },
         );
         self.save(&file)
     }
 
     fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError> {
         let file = self.load()?;
-        let Some(raw) = file.entries.get(&Self::entry_key(scope, name)) else {
+        let Some(stored) = file.entries.get(&Self::entry_key(scope, name)) else {
             return Ok(None);
         };
-        Ok(Some(self.crypt(&hex_decode(raw)?)))
+        Ok(Some(self.crypt(&hex_decode(stored.secret_hex())?)))
+    }
+
+    fn entry_updated_at(&self, scope: &str, name: &str) -> Result<Option<i64>, SendableError> {
+        let file = self.load()?;
+        Ok(file
+            .entries
+            .get(&Self::entry_key(scope, name))
+            .map(StoredSecret::updated_at))
     }
 
     fn delete(&self, scope: &str, name: &str) -> Result<(), SendableError> {
@@ -128,6 +197,10 @@ pub fn default_app_credential_store_path() -> Result<PathBuf, SendableError> {
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+#[cfg(test)]
+#[path = "credential_store_tests.rs"]
+mod tests;
 
 fn hex_decode(raw: &str) -> Result<Vec<u8>, SendableError> {
     if raw.len() % 2 != 0 {

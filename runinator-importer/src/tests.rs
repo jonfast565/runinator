@@ -60,6 +60,7 @@ async fn load_secret_bundle_reads_credentials() {
             scope: "github".into(),
             name: "main".into(),
             secret: "token".into(),
+            updated_at: None,
         }],
     };
     tokio::fs::write(&path, serde_json::to_vec(&expected).unwrap())

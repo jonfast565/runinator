@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use runinator_broker::{Broker, ControlCommand};
 use runinator_comm::{ControlKind, WorkflowResultEvent};
 use runinator_database::interfaces::DatabaseImpl;
@@ -95,23 +95,37 @@ pub async fn fetch_workflow_by_name<T: DatabaseImpl>(
     Ok(Some(normalize_persisted_workflow(db, workflow).await?))
 }
 
+// true when an incoming record should overwrite the stored one: it must carry a
+// timestamp that is strictly newer than the stored copy. a missing incoming timestamp
+// never overwrites; a missing stored timestamp is treated as oldest.
+fn incoming_is_newer(incoming: Option<DateTime<Utc>>, stored: Option<DateTime<Utc>>) -> bool {
+    match (incoming, stored) {
+        (Some(incoming), Some(stored)) => incoming > stored,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
 pub async fn import_workflow_bundle<T: DatabaseImpl>(
     db: &T,
     bundle: WorkflowBundle,
 ) -> Result<WorkflowBundle, SendableError> {
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
-        // an incoming id means an explicit save (e.g. the command center) that should
-        // upsert. a missing id is a pack import: skip if the name already exists so we
-        // do not clobber a workflow the user has since modified.
+        // an incoming id is an explicit save (e.g. the command center) and always wins.
+        // an id-less workflow is a pack import: overwrite an existing workflow only when
+        // the incoming copy carries a strictly newer updated_at, so we do not clobber a
+        // workflow the user has since modified.
         if workflow.id.is_none() {
             if let Some(existing) = db.fetch_workflow_by_name(workflow.name.clone()).await? {
-                log::info!(
-                    "Skipping import of workflow '{}': already exists in database",
-                    workflow.name
-                );
-                workflows.push(existing);
-                continue;
+                if !incoming_is_newer(workflow.updated_at, existing.updated_at) {
+                    log::info!(
+                        "Skipping import of workflow '{}': stored copy is up to date",
+                        workflow.name
+                    );
+                    workflows.push(existing);
+                    continue;
+                }
             }
         }
         workflows.push(upsert_workflow(db, &workflow).await?);

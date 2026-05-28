@@ -5,9 +5,9 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
-use tower_http::cors::{Any, CorsLayer};
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::events::EventSender;
 use crate::handlers::{

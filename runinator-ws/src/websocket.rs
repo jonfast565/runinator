@@ -159,7 +159,10 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
 ) -> Response {
     log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
     ws.on_upgrade(move |socket| async move {
-        log::info!("WebSocket connection established for /ws/workflow-runs/{}", run_id);
+        log::info!(
+            "WebSocket connection established for /ws/workflow-runs/{}",
+            run_id
+        );
         let (mut tx, mut rx_ws) = socket.split();
         let _ = send_workflow_run(db.as_ref(), &mut tx, run_id).await;
         let mut event_rx = events.subscribe();
@@ -194,7 +197,10 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 }
             }
         }
-        log::info!("WebSocket connection closed for /ws/workflow-runs/{}", run_id);
+        log::info!(
+            "WebSocket connection closed for /ws/workflow-runs/{}",
+            run_id
+        );
     })
 }
 
@@ -204,7 +210,10 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
     Path(node_run_id): Path<i64>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    log::info!("WebSocket upgrade request for /ws/workflow-node-runs/{}/stream", node_run_id);
+    log::info!(
+        "WebSocket upgrade request for /ws/workflow-node-runs/{}/stream",
+        node_run_id
+    );
     ws.on_upgrade(move |socket| async move {
         log::info!("WebSocket connection established for /ws/workflow-node-runs/{}/stream", node_run_id);
         let (mut tx, mut rx_ws) = socket.split();

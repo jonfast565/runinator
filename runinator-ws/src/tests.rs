@@ -350,6 +350,70 @@ async fn import_upserts_existing_workflow_when_id_is_present() {
 }
 
 #[tokio::test]
+async fn import_overwrites_id_less_workflow_when_incoming_is_newer() {
+    let (db, path) = test_db().await;
+    let first = WorkflowBundle {
+        workflows: vec![workflow(None, "pack")],
+        triggers: vec![],
+    };
+    crate::repository::import_workflow_bundle(&db, first)
+        .await
+        .unwrap();
+
+    // a pack import carrying a future updated_at is newer than the stored copy.
+    let mut newer = workflow(None, "pack");
+    newer.version = 5;
+    newer.updated_at = chrono::DateTime::from_timestamp(4_102_444_800, 0);
+    let saved = crate::repository::import_workflow_bundle(
+        &db,
+        WorkflowBundle {
+            workflows: vec![newer],
+            triggers: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0].version, 5);
+    assert_eq!(saved.workflows[0].version, 5);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn import_skips_id_less_workflow_when_incoming_is_older() {
+    let (db, path) = test_db().await;
+    let first = WorkflowBundle {
+        workflows: vec![workflow(None, "pack")],
+        triggers: vec![],
+    };
+    let initial = crate::repository::import_workflow_bundle(&db, first)
+        .await
+        .unwrap();
+    let initial_version = initial.workflows[0].version;
+
+    // a pack import carrying a past updated_at is older than the stored copy.
+    let mut older = workflow(None, "pack");
+    older.version = 5;
+    older.updated_at = chrono::DateTime::from_timestamp(1, 0);
+    crate::repository::import_workflow_bundle(
+        &db,
+        WorkflowBundle {
+            workflows: vec![older],
+            triggers: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0].version, initial_version);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn result_consumer_acks_duplicate_deliveries_and_persists_results_once() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);

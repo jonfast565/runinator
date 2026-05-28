@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::providers::ProviderMetadata;
@@ -31,6 +32,10 @@ pub struct SecretBundleEntry {
     pub scope: String,
     pub name: String,
     pub secret: String,
+    // modification time used to reconcile imports: an existing secret is only
+    // overwritten when an incoming entry is strictly newer.
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 impl Bundle for SecretBundle {
