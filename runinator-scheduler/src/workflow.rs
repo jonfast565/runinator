@@ -112,7 +112,7 @@ pub async fn process_workflow_run(
     Ok(())
 }
 
-async fn process_workflow_run_step(
+pub async fn process_workflow_run_step(
     broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
     workflow_run: WorkflowRun,
@@ -220,7 +220,7 @@ async fn process_workflow_run_step(
             process_loop_node(api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::Parallel => {
-            process_parallel_node(api, &workflow_run, node, latest).await?
+            process_parallel_node(api, &workflow_run, node, latest, &node_runs).await?
         }
         WorkflowNodeKind::Join => {
             process_join_node(api, &workflow_run, node, latest, &node_runs).await?

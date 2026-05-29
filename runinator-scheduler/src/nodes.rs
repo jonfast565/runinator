@@ -12,7 +12,7 @@ use crate::{api::WorkflowSchedulerApi, context::*};
 use state::*;
 
 pub async fn process_task_node(
-    _broker: &dyn Broker,
+    broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -55,6 +55,14 @@ pub async fn process_task_node(
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Running) {
         if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
             if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                // actively cancel the task on the worker
+                let _ = broker
+                    .publish_control(runinator_broker::ControlCommand::new(
+                        workflow_run.id,
+                        runinator_comm::ControlKind::Cancel,
+                    ))
+                    .await;
+
                 retry_or_transition(
                     api,
                     workflow_run,
@@ -194,6 +202,22 @@ pub async fn process_wait_node(
 ) -> Result<(), SendableError> {
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Waiting {
+            if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+                if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                    retry_or_transition(
+                        api,
+                        workflow_run,
+                        node,
+                        node_run,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some("Wait node timed out".into()),
+                        node_runs,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
             if let Some(expected) = node.wait.get("until_status").and_then(Value::as_str) {
                 let current = node_run
                     .state
@@ -491,6 +515,24 @@ pub async fn process_approval_node(
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
     if let Some(node_run) = latest {
+        if node_run.status == WorkflowStatus::ApprovalRequired {
+            if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+                if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                    retry_or_transition(
+                        api,
+                        workflow_run,
+                        node,
+                        node_run,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some("Approval timed out".into()),
+                        node_runs,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
         if node_run.status == WorkflowStatus::Succeeded {
             transition_from_node(
                 api,
@@ -574,7 +616,25 @@ pub async fn process_loop_node(
     // each iteration gets its own node_run so prior_iterations advances. reuse the
     // latest only if it was left running from a prior interrupted visit.
     let node_run = match latest.filter(|run| run.status == WorkflowStatus::Running) {
-        Some(latest) => latest.clone(),
+        Some(latest) => {
+            if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, latest.started_at) {
+                if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                    retry_or_transition(
+                        api,
+                        workflow_run,
+                        node,
+                        latest,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some("Loop node timed out".into()),
+                        node_runs,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+            latest.clone()
+        }
         None => {
             api.create_workflow_node_run(workflow_run.id, &node.id, parameters.clone())
                 .await?
@@ -670,8 +730,27 @@ pub async fn process_parallel_node(
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    if latest.is_some() {
+    if let Some(node_run) = latest {
+        if node_run.status == WorkflowStatus::Running {
+            if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+                if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                    retry_or_transition(
+                        api,
+                        workflow_run,
+                        node,
+                        node_run,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some("Parallel node timed out".into()),
+                        node_runs,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
         return Ok(());
     }
     let params = runinator_workflows::parse_parallel_parameters(node)
@@ -754,6 +833,26 @@ pub async fn process_join_node(
             node_runs,
         )
         .await;
+    }
+    if let Some(node_run) = latest {
+        if node_run.status == WorkflowStatus::Waiting {
+            if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+                if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                    retry_or_transition(
+                        api,
+                        workflow_run,
+                        node,
+                        node_run,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some("Join node timed out".into()),
+                        node_runs,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
     }
     if let Some(next_branch) = pop_state_queue(&workflow_run.state, "parallel", "remaining") {
         api.update_workflow_run(
@@ -905,6 +1004,24 @@ pub async fn process_race_node(
     let params = runinator_workflows::parse_race_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    if node_run.status == WorkflowStatus::Running {
+        if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+            if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                retry_or_transition(
+                    api,
+                    workflow_run,
+                    node,
+                    &node_run,
+                    WorkflowStatus::TimedOut,
+                    None,
+                    Some("Race node timed out".into()),
+                    node_runs,
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
     let branches = params
         .branches
         .iter()
@@ -991,6 +1108,24 @@ pub async fn process_try_node(
     let params = runinator_workflows::parse_try_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let node_run = ensure_node_run(api, workflow_run, node, latest).await?;
+    if node_run.status == WorkflowStatus::Running {
+        if let (Some(timeout), Some(started_at)) = (node.timeout_seconds, node_run.started_at) {
+            if Utc::now() - started_at > chrono::Duration::seconds(timeout) {
+                retry_or_transition(
+                    api,
+                    workflow_run,
+                    node,
+                    &node_run,
+                    WorkflowStatus::TimedOut,
+                    None,
+                    Some("Try node timed out".into()),
+                    node_runs,
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
     let frame = workflow_run.state.get("try").cloned().unwrap_or_else(|| {
         serde_json::json!({
             "node_id": node.id,

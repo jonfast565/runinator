@@ -278,7 +278,17 @@
 
       <section v-if="workflows.stepEditor.kind === 'subflow'" class="form-section">
         <h3>Subflow</h3>
-        <label>Workflow ID <input v-model.number="workflows.stepEditor.subflow_id" type="number" min="0" /></label>
+        <div class="form-grid">
+          <label>
+            Workflow
+            <select :value="selectedSubflowName || ''" @change="onSubflowNameChange">
+              <option value="">Select a workflow</option>
+             <option v-if="selectedSubflowMissing" :value="String(workflows.stepEditor.subflow_id ?? '')">{{ selectedSubflowName }} (unavailable)</option>
+             <option v-for="workflow in availableSubflows" :key="String(workflow.id)" :value="workflow.name">{{ workflow.name }} (ID: {{ workflow.id }})</option>
+            </select>
+          </label>
+          <label>Workflow ID <input v-model.number="workflows.stepEditor.subflow_id" type="number" min="0" /></label>
+        </div>
         <label>Parameters <JsonEditor v-model="workflows.stepEditor.subflow_parameters_json" /></label>
       </section>
 
@@ -345,6 +355,21 @@ const targetNodes = computed(() => {
   return nodes.filter((node) => node.id !== workflows.selectedStepId);
 });
 
+const availableSubflows = computed(() => {
+  const currentId = workflows.selectedWorkflowId;
+  return workflows.workflows.filter((w) => w.id !== currentId);
+});
+
+const selectedSubflowName = computed(() => {
+  if (!workflows.stepEditor.subflow_id) return "";
+  const workflow = workflows.workflows.find((w) => w.id === workflows.stepEditor.subflow_id);
+  return workflow?.name ?? "";
+});
+
+const selectedSubflowMissing = computed(() => {
+  return Boolean(workflows.stepEditor.subflow_id && !selectedSubflowName.value);
+});
+
 interface StepRef {
   template: string;
   label: string;
@@ -407,6 +432,14 @@ function applyParameterDefaults() {
 
 function copyRef(template: string) {
   navigator.clipboard.writeText(template).catch(() => {});
+}
+
+function onSubflowNameChange(event: Event) {
+  const name = (event.target as HTMLSelectElement).value;
+  const workflow = workflows.workflows.find(w => w.name === name);
+  if (workflow?.id) {
+    workflows.stepEditor.subflow_id = workflow.id;
+  }
 }
 </script>
 

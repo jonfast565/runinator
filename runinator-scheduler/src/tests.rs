@@ -1,9 +1,10 @@
 use crate::context::*;
-use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run};
+use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run, workflow::process_workflow_run_step};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use runinator_broker::Broker;
 use runinator_broker::in_memory::InMemoryBroker;
-use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_comm::{ActionCommand, ActionDispatchRecord, ControlKind};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -15,7 +16,7 @@ use runinator_models::{
     },
 };
 use serde_json::json;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn merges_parameters() {
@@ -210,7 +211,7 @@ async fn parallel_progresses_branches_into_join_all() {
     let api = MockWorkflowApi::default();
     let run = workflow_run(json!({}), json!({}), "fanout");
 
-    process_parallel_node(&api, &run, &parallel, None)
+    process_parallel_node(&api, &run, &parallel, None, &[])
         .await
         .unwrap();
     let update = api.last_run_update();
@@ -999,6 +1000,7 @@ struct MockWorkflowState {
     workflow_updates: Vec<WorkflowRunUpdate>,
     node_updates: Vec<WorkflowNodeRunUpdate>,
     action_dispatches: Vec<ActionDispatchRecord>,
+    providers: Vec<ProviderMetadata>,
 }
 
 impl MockWorkflowApi {
@@ -1099,16 +1101,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     }
 
     async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>, SendableError> {
-        Ok(vec![ProviderMetadata {
-            name: "console".into(),
-            actions: vec![
-                ActionMetadata::new("run", "Run test command").with_results(vec![
-                    ResultMetadata::new("success", RuninatorType::Boolean),
-                    ResultMetadata::new("exit_code", RuninatorType::Integer),
-                ]),
-            ],
-            metadata: ProviderRuntimeMetadata::default(),
-        }])
+        Ok(self.state.lock().unwrap().providers.clone())
     }
 
     async fn create_workflow_run(
@@ -1563,6 +1556,109 @@ fn node_run_with_id(
         finished_at: None,
         message: None,
     }
+}
+
+#[tokio::test]
+async fn wait_node_times_out() {
+    let node_id = "wait_node";
+    let workflow = workflow_with_nodes(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
+        {
+            "id": node_id,
+            "kind": "wait",
+            "wait": { "seconds": 100 },
+            "timeout_seconds": 1
+        },
+        { "id": "end", "kind": "end" }
+    ]));
+    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    run.workflow_id = workflow.id.unwrap();
+
+    let started_at = Utc::now() - chrono::Duration::seconds(2);
+    let mut node_run = node_run(node_id, WorkflowStatus::Waiting);
+    node_run.started_at = Some(started_at);
+
+    let api = MockWorkflowApi::with_workflow_run_and_nodes(workflow, run.clone(), vec![node_run]);
+    let broker = runinator_broker::in_memory::InMemoryBroker::new();
+
+    process_workflow_run_step(&broker, &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().status, WorkflowStatus::TimedOut);
+    assert_eq!(api.last_node_update().status, WorkflowStatus::TimedOut);
+}
+
+#[tokio::test]
+async fn approval_node_times_out() {
+    let node_id = "approval_node";
+    let workflow = workflow_with_nodes(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
+        {
+            "id": node_id,
+            "kind": "approval",
+            "timeout_seconds": 1
+        },
+        { "id": "end", "kind": "end" }
+    ]));
+    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    run.workflow_id = workflow.id.unwrap();
+
+    let started_at = Utc::now() - chrono::Duration::seconds(2);
+    let mut node_run = node_run(node_id, WorkflowStatus::ApprovalRequired);
+    node_run.started_at = Some(started_at);
+
+    let api = MockWorkflowApi::with_workflow_run_and_nodes(workflow, run.clone(), vec![node_run]);
+    let broker = runinator_broker::in_memory::InMemoryBroker::new();
+
+    process_workflow_run_step(&broker, &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().status, WorkflowStatus::TimedOut);
+    assert_eq!(api.last_node_update().status, WorkflowStatus::TimedOut);
+}
+
+#[tokio::test]
+async fn action_node_timeout_publishes_cancel_to_broker() {
+    let node_id = "action_node";
+    let workflow = workflow_with_nodes(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
+        {
+            "id": node_id,
+            "kind": "action",
+            "action": {
+                "provider": "test",
+                "function": "test",
+                "configuration": {}
+            },
+            "timeout_seconds": 1
+        },
+        { "id": "end", "kind": "end" }
+    ]));
+    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    run.id = 123;
+    run.workflow_id = workflow.id.unwrap();
+
+    let started_at = Utc::now() - chrono::Duration::seconds(2);
+    let mut node_run = node_run(node_id, WorkflowStatus::Running);
+    node_run.started_at = Some(started_at);
+
+    let api = MockWorkflowApi::with_workflow_run_and_nodes(workflow, run.clone(), vec![node_run]);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.providers = vec![ProviderMetadata {
+            name: "test".into(),
+            actions: vec![ActionMetadata::new("test", "test")],
+            metadata: ProviderRuntimeMetadata::default(),
+        }];
+    }
+    let broker = Arc::new(runinator_broker::in_memory::InMemoryBroker::new());
+
+    process_workflow_run_step(broker.as_ref(), &api, run).await.unwrap();
+
+    assert_eq!(api.last_run_update().status, WorkflowStatus::TimedOut);
+
+    // check if control message was published
+    let control: runinator_broker::ControlDelivery = broker.receive_control("test-consumer").await.unwrap();
+    assert_eq!(control.command.workflow_run_id, 123);
+    assert_eq!(control.command.kind, ControlKind::Cancel);
 }
 
 fn test_error(message: &str) -> SendableError {
