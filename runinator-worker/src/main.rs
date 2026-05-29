@@ -191,6 +191,7 @@ fn build_api_client(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_worker_loop(
     broker: Arc<dyn Broker>,
     consumer_id: String,
@@ -362,8 +363,8 @@ async fn handle_control_delivery(
     in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>,
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
-    let control_kind = delivery.command.kind.clone();
-    match control_kind.clone() {
+    let control_kind = delivery.command.kind;
+    match control_kind {
         ControlKind::Cancel => {
             let token = {
                 let guard = in_flight.lock().await;
@@ -511,15 +512,15 @@ async fn process_delivery(
     )
     .await;
     in_flight.lock().await.remove(&command.workflow_run_id);
-    if let Some(execution_result) = &result.execution_result {
-        if let Err(err) = sink.persist_result(execution_result).await {
-            error!(
-                "Failed to publish workflow node run {} result artifacts: {}",
-                command.workflow_node_run_id, err
-            );
-            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
-            return Err(broker_error("publish_result", err));
-        }
+    if let Some(execution_result) = &result.execution_result
+        && let Err(err) = sink.persist_result(execution_result).await
+    {
+        error!(
+            "Failed to publish workflow node run {} result artifacts: {}",
+            command.workflow_node_run_id, err
+        );
+        nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+        return Err(broker_error("publish_result", err));
     }
     let task_result = result.task_result;
     let provider_message = task_result.message.clone().or_else(|| sink.message());

@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 use log::debug;
-use serde_json::Value;
+use runinator_models::value::Value;
 
 use crate::nodes::context::NodeContext;
 

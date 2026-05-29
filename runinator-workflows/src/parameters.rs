@@ -1,5 +1,5 @@
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRef};
-use serde_json::{Map, Value};
 
 use crate::conditions::{evaluate_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
@@ -281,9 +281,7 @@ pub(crate) fn parameter_targets(
     Ok(targets)
 }
 
-pub(crate) fn parameter_object(
-    node: &WorkflowNode,
-) -> Result<&Map<String, Value>, WorkflowValidationError> {
+pub(crate) fn parameter_object(node: &WorkflowNode) -> Result<&Map, WorkflowValidationError> {
     node.parameters
         .as_object()
         .ok_or_else(|| invalid_parameters(node, "parameters must be an object"))

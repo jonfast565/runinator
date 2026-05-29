@@ -6,7 +6,8 @@
 // mirror the keys it reads and writes. unmodeled keys round-trip through `#[serde(flatten)]` bags.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+
+use crate::value::{Map, Value};
 
 use crate::workflows::WorkflowNodeKind;
 
@@ -32,7 +33,21 @@ pub struct WorkflowRunState {
     pub run_metadata: Option<Value>,
     /// preserves any keys not modeled above (e.g. wait/subflow node snapshots mirrored into state).
     #[serde(flatten)]
-    pub extra: Map<String, Value>,
+    pub extra: Map,
+}
+
+impl WorkflowRunState {
+    /// parse a run's `state` blob into the typed container. malformed state collapses to empty.
+    pub fn from_state(value: &Value) -> Self {
+        serde_json::from_value(value.clone().into()).unwrap_or_default()
+    }
+
+    /// serialize back into a `state` blob for persistence.
+    pub fn to_state(&self) -> Value {
+        serde_json::to_value(self)
+            .map(Value::from)
+            .unwrap_or(Value::Null)
+    }
 }
 
 /// `state.control` bookkeeping.
@@ -41,23 +56,54 @@ pub struct ControlFrame {
     #[serde(default)]
     pub pause_requested: bool,
     #[serde(flatten)]
-    pub extra: Map<String, Value>,
+    pub extra: Map,
 }
 
-/// `state.debug` bookkeeping pushed to the debugger UI. user-owned fields (mode, breakpoints)
-/// survive alongside the runtime-populated fields.
+/// debug step granularity: pause before every node, or only at breakpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugMode {
+    /// pause before every node.
+    #[default]
+    StepAll,
+    /// pause only at configured breakpoints (or a one-shot cursor).
+    Breakpoints,
+}
+
+/// `state.debug` bookkeeping pushed to the debugger UI. the frame is split into user-owned
+/// configuration ([`DebugConfig`]) and scheduler-owned runtime state ([`DebugRuntime`]); both are
+/// flattened so the persisted/wire json stays a single flat `debug` object.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DebugFrame {
+    /// user-owned settings that survive across pauses and steps.
+    #[serde(flatten)]
+    pub config: DebugConfig,
+    /// scheduler-owned state rewritten on each pause/step.
+    #[serde(flatten)]
+    pub runtime: DebugRuntime,
+    /// preserves any debug keys not modeled above.
+    #[serde(flatten)]
+    pub extra: Map,
+}
+
+/// user-owned debug configuration. only the debugger UI writes these.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DebugConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<DebugMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub breakpoints: Vec<String>,
+}
+
+/// scheduler-owned debug runtime state. the scheduler overwrites these as a run pauses and steps.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DebugRuntime {
     #[serde(default)]
     pub paused: bool,
     #[serde(default)]
     pub step_requested: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub breakpoints: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub one_shot_breakpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,8 +116,6 @@ pub struct DebugFrame {
     pub context_json: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output_json: Option<Value>,
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
 }
 
 /// `state.loop` iteration bookkeeping for a loop body. fields default so a transient `{}` marker

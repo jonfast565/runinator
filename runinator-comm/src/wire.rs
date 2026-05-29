@@ -4,9 +4,9 @@
 
 use std::fmt;
 
+use runinator_models::value::Value;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 /// error raised when a wire conversion fails.
 #[derive(Debug)]
@@ -48,12 +48,14 @@ pub trait WireCodec: Serialize + DeserializeOwned + Sized {
 
     /// serialize into a `Value` carrier (for embedding in a dynamic field).
     fn to_wire_value(&self) -> Result<Value, WireError> {
-        serde_json::to_value(self).map_err(WireError::from)
+        serde_json::to_value(self)
+            .map(Value::from)
+            .map_err(WireError::from)
     }
 
     /// deserialize out of a `Value` carrier.
     fn from_wire_value(value: &Value) -> Result<Self, WireError> {
-        serde_json::from_value(value.clone()).map_err(WireError::from)
+        serde_json::from_value(value.clone().into()).map_err(WireError::from)
     }
 }
 

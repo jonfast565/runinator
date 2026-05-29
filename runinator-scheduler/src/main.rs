@@ -111,7 +111,7 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
             let url = Url::parse(&config.broker_endpoint).map_err(|err| -> SendableError {
                 Box::new(RuntimeError::new(
                     "scheduler.broker.invalid_endpoint".into(),
-                    err.to_string().into(),
+                    err.to_string(),
                 ))
             })?;
             let client = reqwest::Client::builder()
@@ -119,7 +119,7 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
                 .map_err(|err| -> SendableError {
                     Box::new(RuntimeError::new(
                         "scheduler.broker.client".into(),
-                        err.to_string().into(),
+                        err.to_string(),
                     ))
                 })?;
 
@@ -150,7 +150,7 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
         }
         other => Err(Box::new(RuntimeError::new(
             "scheduler.broker.unknown_backend".into(),
-            format!("Unknown broker backend '{other}'").into(),
+            format!("Unknown broker backend '{other}'"),
         ))),
     }
 }

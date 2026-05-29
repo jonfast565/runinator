@@ -1,5 +1,5 @@
+use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowNode, WorkflowStatus};
-use serde_json::Value;
 
 use crate::errors::WorkflowValidationError;
 use crate::expressions::resolve_value_refs;
@@ -100,7 +100,7 @@ pub fn evaluate_condition(
         });
     }
     if let Some(expected) = object.get("exists") {
-        return Ok(expected.as_bool().unwrap_or(true) == !left.is_null());
+        return Ok(expected.as_bool().unwrap_or(true) != left.is_null());
     }
     Err(WorkflowValidationError::InvalidCondition(
         "expected equals, not_equals, contains, in, starts_with, ends_with, greater_than, greater_than_or_equal, less_than, less_than_or_equal, exists, all, any, or not".into(),

@@ -1,5 +1,5 @@
+use runinator_models::value::Value;
 use serde::Deserialize;
-use serde_json::Value;
 
 #[derive(Deserialize, Default)]
 pub(crate) struct EmailSendParams {

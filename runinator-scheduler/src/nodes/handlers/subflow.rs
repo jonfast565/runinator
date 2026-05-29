@@ -3,12 +3,12 @@
 
 use async_trait::async_trait;
 use runinator_comm::WireCodec;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     workflow_state::{SubflowOutcome, SubflowState},
     workflows::{WorkflowNode, WorkflowNodeKind, WorkflowRun, WorkflowStatus, WorkflowSubflowType},
 };
-use serde_json::Value;
 
 use crate::api::WorkflowSchedulerApi;
 use crate::context::runtime_context;
@@ -45,83 +45,83 @@ impl NodeHandler for SubflowHandler {
 }
 
 async fn run_subflow_node(ctx: &NodeContext<'_>) -> Result<NodeOutcome, SendableError> {
-    if let Some(node_run) = ctx.latest {
-        if let Ok(subflow_state) = SubflowState::from_wire_value(&node_run.state) {
-            let subflow_run_id = subflow_state.subflow_run_id;
-            if ctx.node.subflow.subflow_type == WorkflowSubflowType::FireAndForget {
+    if let Some(node_run) = ctx.latest
+        && let Ok(subflow_state) = SubflowState::from_wire_value(&node_run.state)
+    {
+        let subflow_run_id = subflow_state.subflow_run_id;
+        if ctx.node.subflow.subflow_type == WorkflowSubflowType::FireAndForget {
+            return ctx
+                .transition(
+                    node_run,
+                    WorkflowStatus::Succeeded,
+                    Some(node_run.state.clone()),
+                    Some("subflow_linked".into()),
+                )
+                .await;
+        }
+
+        let (subflow_run, _) = ctx.api.fetch_workflow_run(subflow_run_id).await?;
+        match subflow_run.status {
+            WorkflowStatus::Succeeded => {
+                let output = SubflowOutcome {
+                    subflow_run_id,
+                    status: subflow_run.status.as_str().to_string(),
+                    state: Some(subflow_run.state),
+                    parameters: Some(subflow_run.parameters),
+                };
                 return ctx
                     .transition(
                         node_run,
                         WorkflowStatus::Succeeded,
-                        Some(node_run.state.clone()),
-                        Some("subflow_linked".into()),
+                        Some(output.to_wire_value()?),
+                        Some("subflow_succeeded".into()),
                     )
                     .await;
             }
-
-            let (subflow_run, _) = ctx.api.fetch_workflow_run(subflow_run_id).await?;
-            match subflow_run.status {
-                WorkflowStatus::Succeeded => {
+            WorkflowStatus::Failed
+            | WorkflowStatus::TimedOut
+            | WorkflowStatus::Canceled
+            | WorkflowStatus::Blocked => {
+                let output = SubflowOutcome {
+                    subflow_run_id,
+                    status: subflow_run.status.as_str().to_string(),
+                    state: None,
+                    parameters: None,
+                };
+                return ctx
+                    .transition(
+                        node_run,
+                        WorkflowStatus::Failed,
+                        Some(output.to_wire_value()?),
+                        subflow_run
+                            .message
+                            .or(Some("Subflow did not succeed".into())),
+                    )
+                    .await;
+            }
+            other => {
+                // wait-type subflow is still in flight; fail fast once it overruns the timeout.
+                if ctx.timed_out_since_created(node_run) {
+                    let timeout = ctx.node.timeout_seconds.unwrap_or_default();
                     let output = SubflowOutcome {
                         subflow_run_id,
-                        status: subflow_run.status.as_str().to_string(),
-                        state: Some(subflow_run.state),
-                        parameters: Some(subflow_run.parameters),
-                    };
-                    return ctx
-                        .transition(
-                            node_run,
-                            WorkflowStatus::Succeeded,
-                            Some(output.to_wire_value()?),
-                            Some("subflow_succeeded".into()),
-                        )
-                        .await;
-                }
-                WorkflowStatus::Failed
-                | WorkflowStatus::TimedOut
-                | WorkflowStatus::Canceled
-                | WorkflowStatus::Blocked => {
-                    let output = SubflowOutcome {
-                        subflow_run_id,
-                        status: subflow_run.status.as_str().to_string(),
+                        status: other.as_str().to_string(),
                         state: None,
                         parameters: None,
                     };
                     return ctx
                         .transition(
                             node_run,
-                            WorkflowStatus::Failed,
+                            WorkflowStatus::TimedOut,
                             Some(output.to_wire_value()?),
-                            subflow_run
-                                .message
-                                .or(Some("Subflow did not succeed".into())),
+                            Some(format!(
+                                "Subflow run {subflow_run_id} timed out after {timeout}s while {}",
+                                other.as_str()
+                            )),
                         )
                         .await;
                 }
-                other => {
-                    // wait-type subflow is still in flight; fail fast once it overruns the timeout.
-                    if ctx.timed_out_since_created(node_run) {
-                        let timeout = ctx.node.timeout_seconds.unwrap_or_default();
-                        let output = SubflowOutcome {
-                            subflow_run_id,
-                            status: other.as_str().to_string(),
-                            state: None,
-                            parameters: None,
-                        };
-                        return ctx
-                            .transition(
-                                node_run,
-                                WorkflowStatus::TimedOut,
-                                Some(output.to_wire_value()?),
-                                Some(format!(
-                                    "Subflow run {subflow_run_id} timed out after {timeout}s while {}",
-                                    other.as_str()
-                                )),
-                            )
-                            .await;
-                    }
-                    return Ok(NodeOutcome::Pending);
-                }
+                return Ok(NodeOutcome::Pending);
             }
         }
     }

@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
@@ -11,7 +13,6 @@ use runinator_models::{
         WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
-use serde_json::{json, Value};
 
 use crate::{
     error::{ApiError, Result},
@@ -294,7 +295,8 @@ where
         serde_json::from_value(
             body.get("run")
                 .cloned()
-                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?,
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
         )
         .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
     }
@@ -330,7 +332,8 @@ where
         serde_json::from_value(
             body.get("run")
                 .cloned()
-                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?,
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
         )
         .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
     }
@@ -521,7 +524,8 @@ where
         serde_json::from_value(
             body.get("run")
                 .cloned()
-                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?,
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
         )
         .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))
     }
@@ -621,12 +625,17 @@ where
         let run = serde_json::from_value(
             body.get("run")
                 .cloned()
-                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?,
+                .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
+                .into(),
         )
         .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
-        let nodes =
-            serde_json::from_value(body.get("nodes").cloned().unwrap_or(Value::Array(vec![])))
-                .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
+        let nodes = serde_json::from_value(
+            body.get("nodes")
+                .cloned()
+                .unwrap_or(Value::Array(vec![]))
+                .into(),
+        )
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
         Ok((run, nodes))
     }
 
@@ -649,6 +658,7 @@ where
         Ok(response.json::<WorkflowNodeRun>().await?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_workflow_node_run(
         &self,
         node_run_id: i64,

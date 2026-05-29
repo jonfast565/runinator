@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 pub(crate) fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
         Box::new(RuntimeError::new(
             "github.invalid_params".into(),
             e.to_string(),
@@ -49,7 +49,7 @@ pub(crate) fn checks_summary_response(
     let summary = summarize_check_runs(raw);
     Ok(TaskExecutionResult {
         message: Some("github checks summary completed".into()),
-        output_json: Some(summary),
+        output_json: Some(summary.into()),
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })
@@ -126,7 +126,7 @@ pub(crate) fn json_response(
     };
     Ok(TaskExecutionResult {
         message: Some(format!("{provider} action completed")),
-        output_json: Some(output),
+        output_json: Some(output.into()),
         chunks: Vec::new(),
         artifacts: Vec::new(),
     })

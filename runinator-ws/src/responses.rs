@@ -11,18 +11,18 @@ pub(crate) fn api_error(message: impl Into<String>) -> (StatusCode, Json<ApiResp
 pub(crate) fn validation_error(
     err: &(dyn std::error::Error + 'static),
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Some(workflow_err) = err.downcast_ref::<WorkflowValidationError>() {
-        if let Some(diagnostic) = workflow_err.type_diagnostic() {
-            return api_error_status(
-                StatusCode::BAD_REQUEST,
-                ApiError {
-                    message: diagnostic.message.clone(),
-                    path: Some(diagnostic.path.clone()),
-                    expected: Some(diagnostic.expected.clone()),
-                    actual: Some(diagnostic.actual.clone()),
-                },
-            );
-        }
+    if let Some(workflow_err) = err.downcast_ref::<WorkflowValidationError>()
+        && let Some(diagnostic) = workflow_err.type_diagnostic()
+    {
+        return api_error_status(
+            StatusCode::BAD_REQUEST,
+            ApiError {
+                message: diagnostic.message.clone(),
+                path: Some(diagnostic.path.clone()),
+                expected: Some(diagnostic.expected.clone()),
+                actual: Some(diagnostic.actual.clone()),
+            },
+        );
     }
     api_error_status(StatusCode::BAD_REQUEST, ApiError::new(err.to_string()))
 }

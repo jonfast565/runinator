@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use runinator_models::json;
 use runinator_models::{
     errors::SendableError,
     providers::{
@@ -9,7 +10,6 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use serde_json::json;
 
 use crate::claude_code::run_claude_code;
 use crate::params::{default_binary, default_model, default_output_format};

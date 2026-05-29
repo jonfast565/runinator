@@ -7,7 +7,7 @@ fn test_github_provider_missing_token() {
         run_id: Some(1),
         action_name: "github".into(),
         action_function: "create_pr".into(),
-        parameters: json!({
+        parameters: runinator_models::json!({
             "owner": "test",
             "repo": "test"
         }),

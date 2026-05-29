@@ -6,12 +6,12 @@
 // lifecycle hooks without re-deriving it.
 
 use runinator_comm::WireCodec;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     workflow_state::TryFrame,
     workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
-use serde_json::Value;
 
 use crate::nodes::run_state::RunState;
 use crate::{
@@ -67,6 +67,7 @@ pub async fn ensure_completed_node_run(
 
 /// settle a node run and advance the workflow along the node's transitions. returns the target the
 /// workflow moved to, or none when the workflow run reached a terminal state.
+#[allow(clippy::too_many_arguments)]
 pub async fn transition_from_node(
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,
@@ -132,6 +133,7 @@ pub async fn transition_from_node(
 }
 
 /// requeue the run for another attempt when retries remain, otherwise settle and transition.
+#[allow(clippy::too_many_arguments)]
 pub async fn retry_or_transition(
     api: &dyn WorkflowSchedulerApi,
     workflow_run: &WorkflowRun,

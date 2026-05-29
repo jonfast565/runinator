@@ -125,14 +125,14 @@ pub fn run_supervisor(
     fs::create_dir_all(&paths.logs_dir)?;
     remove_file_if_exists(&paths.stop_file)?;
 
-    if let Some(pid) = read_pid(&paths.pid_file)? {
-        if is_process_running(pid) {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("Supervisor already running with PID {}", pid),
-            )
-            .into());
-        }
+    if let Some(pid) = read_pid(&paths.pid_file)?
+        && is_process_running(pid)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("Supervisor already running with PID {}", pid),
+        )
+        .into());
     }
 
     fs::write(&paths.pid_file, format!("{}\n", std::process::id()))?;
@@ -369,13 +369,13 @@ fn poll_process(
         }
     }
 
-    if process.child.is_none() {
-        if let Some(next_at) = process.next_restart_at {
-            if now >= next_at {
-                attempt_start(process, restart_delay)?;
-            } else {
-                process.status = ProcStatus::Backoff;
-            }
+    if process.child.is_none()
+        && let Some(next_at) = process.next_restart_at
+    {
+        if now >= next_at {
+            attempt_start(process, restart_delay)?;
+        } else {
+            process.status = ProcStatus::Backoff;
         }
     }
 
@@ -537,21 +537,18 @@ fn process_log_path(
 
 fn append_process_log_event(process: &ManagedProcess, message: &str) {
     let now = Utc::now();
-    match fs::OpenOptions::new()
+    if let Ok(mut file) = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&process.log_path)
     {
-        Ok(mut file) => {
-            let _ = writeln!(
-                file,
-                "----- {} process={} {} -----",
-                now.to_rfc3339(),
-                process.config.name,
-                message
-            );
-        }
-        Err(_) => {}
+        let _ = writeln!(
+            file,
+            "----- {} process={} {} -----",
+            now.to_rfc3339(),
+            process.config.name,
+            message
+        );
     }
 }
 

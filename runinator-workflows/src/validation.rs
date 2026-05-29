@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
+use runinator_models::value::Value;
 use runinator_models::{
     providers::ProviderMetadata,
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowTransitions,
     },
 };
-use serde_json::Value;
 
 use crate::conditions::validate_condition;
 use crate::errors::WorkflowValidationError;
@@ -32,7 +32,7 @@ pub fn parse_nodes(
     let nodes = nodes
         .iter()
         .map(|value| {
-            serde_json::from_value(value.clone())
+            serde_json::from_value(value.clone().into())
                 .map_err(|err| WorkflowValidationError::InvalidNode(err.to_string()))
         })
         .collect::<Result<Vec<WorkflowNode>, _>>()?;
@@ -127,22 +127,22 @@ pub fn validate_workflow(
             }
         }
         for reference in value_refs(node)? {
-            if let WorkflowRefSource::NodeOutput(target) = reference.source {
-                if !ids.contains(target.as_str()) {
-                    return Err(WorkflowValidationError::MissingTransition {
-                        node: node.id.as_str().to_string(),
-                        target: target.into_string(),
-                    });
-                }
-            }
-        }
-        if let Some(target) = node.reentry.on_exhausted.as_ref() {
-            if !ids.contains(target.as_str()) {
+            if let WorkflowRefSource::NodeOutput(target) = reference.source
+                && !ids.contains(target.as_str())
+            {
                 return Err(WorkflowValidationError::MissingTransition {
                     node: node.id.as_str().to_string(),
-                    target: target.clone().into_string(),
+                    target: target.into_string(),
                 });
             }
+        }
+        if let Some(target) = node.reentry.on_exhausted.as_ref()
+            && !ids.contains(target.as_str())
+        {
+            return Err(WorkflowValidationError::MissingTransition {
+                node: node.id.as_str().to_string(),
+                target: target.clone().into_string(),
+            });
         }
     }
 
@@ -186,8 +186,8 @@ pub(crate) fn validate_graph_cycles(
 
         if let Some(node) = node_map.get(id) {
             for target in transition_targets(&node.transitions) {
-                if stack.contains(target.as_str()) {
-                    if node_map.get(target.as_str()).is_some_and(|target_node| {
+                if stack.contains(target.as_str())
+                    && node_map.get(target.as_str()).is_some_and(|target_node| {
                         matches!(
                             target_node.kind,
                             WorkflowNodeKind::Loop
@@ -195,9 +195,9 @@ pub(crate) fn validate_graph_cycles(
                                 | WorkflowNodeKind::Map
                                 | WorkflowNodeKind::Race
                         ) || target_node.reentry.enabled
-                    }) {
-                        continue;
-                    }
+                    })
+                {
+                    continue;
                 }
                 visit(target.as_str(), node_map, visited, stack)?;
             }

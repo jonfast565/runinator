@@ -266,7 +266,8 @@ fn export_results(
             "query_type": request.query_type.as_str(),
             "rows": rows,
             "format": request.format.as_str(),
-        }),
+        })
+        .into(),
     };
 
     Ok(DynamoDumpResult { rows, artifact })
@@ -354,10 +355,10 @@ fn object_to_attribute_value(
         normalized.insert(key.to_ascii_uppercase(), value);
     }
 
-    if let Some(raw) = normalized.get("S") {
-        if let Some(value) = raw.as_str() {
-            return Ok(attr_string(value));
-        }
+    if let Some(raw) = normalized.get("S")
+        && let Some(value) = raw.as_str()
+    {
+        return Ok(attr_string(value));
     }
 
     if let Some(raw) = normalized.get("N") {
@@ -369,94 +370,94 @@ fn object_to_attribute_value(
         }
     }
 
-    if let Some(raw) = normalized.get("BOOL") {
-        if let Some(value) = raw.as_bool() {
-            return Ok(attr_bool(value));
-        }
+    if let Some(raw) = normalized.get("BOOL")
+        && let Some(value) = raw.as_bool()
+    {
+        return Ok(attr_bool(value));
     }
 
-    if let Some(raw) = normalized.get("NULL") {
-        if let Some(value) = raw.as_bool() {
-            return Ok(attr_null(value));
-        }
+    if let Some(raw) = normalized.get("NULL")
+        && let Some(value) = raw.as_bool()
+    {
+        return Ok(attr_null(value));
     }
 
-    if let Some(raw) = normalized.get("B") {
-        if let Some(value) = raw.as_str() {
-            let bytes = BASE64_STANDARD.decode(value).map_err(to_sendable)?;
-            return Ok(AttributeValue::B(Blob::new(bytes)));
-        }
+    if let Some(raw) = normalized.get("B")
+        && let Some(value) = raw.as_str()
+    {
+        let bytes = BASE64_STANDARD.decode(value).map_err(to_sendable)?;
+        return Ok(AttributeValue::B(Blob::new(bytes)));
     }
 
-    if let Some(raw) = normalized.get("SS") {
-        if let Some(values) = raw.as_array() {
-            let strings = values
-                .iter()
-                .map(|value| {
-                    value
-                        .as_str()
-                        .map(|s| s.to_string())
-                        .ok_or_else(|| invalid_attribute_value("SS entries must be strings"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(AttributeValue::Ss(strings));
-        }
+    if let Some(raw) = normalized.get("SS")
+        && let Some(values) = raw.as_array()
+    {
+        let strings = values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| invalid_attribute_value("SS entries must be strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AttributeValue::Ss(strings));
     }
 
-    if let Some(raw) = normalized.get("NS") {
-        if let Some(values) = raw.as_array() {
-            let numbers = values
-                .iter()
-                .map(|value| match value {
-                    JsonValue::String(s) => Ok(s.to_string()),
-                    JsonValue::Number(n) => Ok(n.to_string()),
-                    _ => Err(invalid_attribute_value(
-                        "NS entries must be numeric strings",
-                    )),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(AttributeValue::Ns(numbers));
-        }
+    if let Some(raw) = normalized.get("NS")
+        && let Some(values) = raw.as_array()
+    {
+        let numbers = values
+            .iter()
+            .map(|value| match value {
+                JsonValue::String(s) => Ok(s.to_string()),
+                JsonValue::Number(n) => Ok(n.to_string()),
+                _ => Err(invalid_attribute_value(
+                    "NS entries must be numeric strings",
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AttributeValue::Ns(numbers));
     }
 
-    if let Some(raw) = normalized.get("BS") {
-        if let Some(values) = raw.as_array() {
-            let blobs = values
-                .iter()
-                .map(|value| {
-                    value
-                        .as_str()
-                        .ok_or_else(|| invalid_attribute_value("BS entries must be base64 strings"))
-                        .and_then(|s| {
-                            BASE64_STANDARD
-                                .decode(s)
-                                .map_err(to_sendable)
-                                .map(|bytes| Blob::new(bytes))
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(AttributeValue::Bs(blobs));
-        }
+    if let Some(raw) = normalized.get("BS")
+        && let Some(values) = raw.as_array()
+    {
+        let blobs = values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .ok_or_else(|| invalid_attribute_value("BS entries must be base64 strings"))
+                    .and_then(|s| {
+                        BASE64_STANDARD
+                            .decode(s)
+                            .map_err(to_sendable)
+                            .map(Blob::new)
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AttributeValue::Bs(blobs));
     }
 
-    if let Some(raw) = normalized.get("L") {
-        if let Some(values) = raw.as_array() {
-            let converted = values
-                .iter()
-                .map(json_to_attribute_value)
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(AttributeValue::L(converted));
-        }
+    if let Some(raw) = normalized.get("L")
+        && let Some(values) = raw.as_array()
+    {
+        let converted = values
+            .iter()
+            .map(json_to_attribute_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AttributeValue::L(converted));
     }
 
-    if let Some(raw) = normalized.get("M") {
-        if let Some(object) = raw.as_object() {
-            let mut converted = HashMap::new();
-            for (key, value) in object {
-                converted.insert(key.clone(), json_to_attribute_value(value)?);
-            }
-            return Ok(AttributeValue::M(converted));
+    if let Some(raw) = normalized.get("M")
+        && let Some(object) = raw.as_object()
+    {
+        let mut converted = HashMap::new();
+        for (key, value) in object {
+            converted.insert(key.clone(), json_to_attribute_value(value)?);
         }
+        return Ok(AttributeValue::M(converted));
     }
 
     let mut converted = HashMap::new();
@@ -484,7 +485,7 @@ fn attribute_value_to_json(value: &AttributeValue) -> JsonValue {
     if let Ok(flag) = value.as_bool() {
         return JsonValue::Bool(*flag);
     }
-    if value.as_null().map(|flag| *flag).unwrap_or(false) {
+    if value.as_null().copied().unwrap_or(false) {
         return JsonValue::Null;
     }
     if let Ok(blob) = value.as_b() {
@@ -600,15 +601,11 @@ where
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 enum DumpFormat {
+    #[default]
     Excel,
     Csv,
-}
-
-impl Default for DumpFormat {
-    fn default() -> Self {
-        DumpFormat::Excel
-    }
 }
 
 impl DumpFormat {
@@ -642,15 +639,11 @@ impl DumpFormat {
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 enum DynamoQueryType {
+    #[default]
     Query,
     Partiql,
-}
-
-impl Default for DynamoQueryType {
-    fn default() -> Self {
-        DynamoQueryType::Query
-    }
 }
 
 impl DynamoQueryType {

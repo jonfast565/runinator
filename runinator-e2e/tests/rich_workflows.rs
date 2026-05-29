@@ -7,11 +7,12 @@ use std::{
 };
 
 use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::workflows::{
     WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 use sqlx::Row;
 use tokio::time::sleep;
 

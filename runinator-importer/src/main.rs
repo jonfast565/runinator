@@ -10,6 +10,7 @@ use config::Config;
 use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, ServiceLocator, StaticLocator};
 use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener};
+use runinator_models::value::Value;
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
     types::RuninatorType,
@@ -27,7 +28,6 @@ use runinator_provider_jira::JiraProvider;
 use runinator_provider_slack::SlackProvider;
 use runinator_provider_sql::SqlProvider;
 use runinator_utilities::app_data;
-use serde_json::Value;
 use tokio::time::{self, Duration};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -296,7 +296,7 @@ async fn sync_workflows_if_changed(
         .map_err(|err| path_io_error("inspect workflow bundle at", &path, err))?;
     let modified = metadata.modified()?;
 
-    let should_sync = last_modified.map_or(true, |prev| modified > prev);
+    let should_sync = last_modified.is_none_or(|prev| modified > prev);
     if !should_sync {
         return Ok(());
     }
@@ -345,7 +345,7 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
         return unwrap_workflow_pack(raw);
     }
 
-    Ok(serde_json::from_value(raw)?)
+    Ok(serde_json::from_value(raw.into())?)
 }
 
 fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {
@@ -359,7 +359,7 @@ fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {
 fn take_pack_timestamp(body: &mut Value, key: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     body.as_object_mut()
         .and_then(|object| object.remove(key))
-        .and_then(|value| serde_json::from_value(value).ok())
+        .and_then(|value| serde_json::from_value(value.into()).ok())
 }
 
 fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
@@ -390,7 +390,7 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
             .as_object_mut()
             .and_then(|o| o.remove("input_type").or_else(|| o.remove("input_schema")))
             .unwrap_or(Value::Null);
-        let input_type = serde_json::from_value(input_type_value.clone())
+        let input_type = serde_json::from_value(input_type_value.clone().into())
             .unwrap_or_else(|_| RuninatorType::from_json_schema(&input_type_value));
         // lift timestamps out of the definition body so import reconciliation can
         // compare them; their absence keeps the existing copy untouched on import.
@@ -409,7 +409,9 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
     }
 
     let triggers = match document.get("triggers").cloned() {
-        Some(value) if !value.is_null() => serde_json::from_value::<Vec<WorkflowTrigger>>(value)?,
+        Some(value) if !value.is_null() => {
+            serde_json::from_value::<Vec<WorkflowTrigger>>(value.into())?
+        }
         _ => Vec::new(),
     };
 

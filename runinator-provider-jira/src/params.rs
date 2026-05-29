@@ -44,7 +44,7 @@ pub(crate) struct JiraTransitionParams {
 pub(crate) fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
         Box::new(RuntimeError::new(
             "jira.invalid_params".into(),
             e.to_string(),

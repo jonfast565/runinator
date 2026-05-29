@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
+use runinator_models::value::Value;
 
 use crate::models::{ApiResponse, CatalogQuery};
 use crate::repository;
@@ -27,7 +28,7 @@ pub(crate) async fn get_catalog_items<T: DatabaseImpl>(
 
 pub(crate) async fn upsert_catalog_item<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Json(item): Json<serde_json::Value>,
+    Json(item): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::upsert_catalog_item(db.as_ref(), item).await {
         Ok(item) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
@@ -37,7 +38,7 @@ pub(crate) async fn upsert_catalog_item<T: DatabaseImpl>(
 
 pub(crate) async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
     for raw in [include_str!("../../../packs/sdlc/workflow-pack.json")] {
-        let item: serde_json::Value = serde_json::from_str(raw)?;
+        let item: Value = serde_json::from_str(raw)?;
         db.upsert_catalog_item(item).await?;
     }
     Ok(())

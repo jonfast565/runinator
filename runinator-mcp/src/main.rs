@@ -10,11 +10,12 @@ mod tools;
 
 use clap::Parser;
 use reqwest::blocking::Client;
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     runs::RunStatus,
     workflows::{WorkflowDefinition, WorkflowStatus},
 };
-use serde_json::{Value, json};
 
 use protocol::{json_export_response, json_tool_response, required_i64, required_value};
 use resources::{
@@ -119,11 +120,11 @@ impl McpServer {
             .get("id")
             .and_then(Value::as_i64)
             .unwrap_or_default();
-        if workflow_run_id > 0 {
-            if let Some(completed) = self.wait_for_quick_completion(workflow_run_id)? {
-                workflow_run = completed;
-                response = json!({ "run": workflow_run, "nodes": [] });
-            }
+        if workflow_run_id > 0
+            && let Some(completed) = self.wait_for_quick_completion(workflow_run_id)?
+        {
+            workflow_run = completed;
+            response = json!({ "run": workflow_run, "nodes": [] });
         }
 
         let status = workflow_run

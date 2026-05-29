@@ -5,6 +5,7 @@ use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -14,7 +15,6 @@ use runinator_models::{
         WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
-use serde_json::Value;
 use sqlx::{
     ConnectOptions, Executor, Row, SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions,
 };
@@ -125,7 +125,7 @@ fn trigger_parameters(trigger: &WorkflowTrigger) -> Value {
 }
 
 fn trigger_state(trigger: &WorkflowTrigger) -> Value {
-    serde_json::json!({
+    runinator_models::json!({
         "control": { "pause_requested": false },
         "trigger": {
             "id": trigger.id,
@@ -162,7 +162,7 @@ impl SqliteDb {
 }
 
 impl DatabaseImpl for SqliteDb {
-    async fn run_init_scripts(&self, paths: &Vec<String>) -> Result<(), SendableError> {
+    async fn run_init_scripts(&self, paths: &[String]) -> Result<(), SendableError> {
         self.run_migrations().await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);

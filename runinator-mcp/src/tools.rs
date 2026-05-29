@@ -1,5 +1,6 @@
+use runinator_models::json;
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
-use serde_json::{Value, json};
 
 pub(crate) fn tools_from_workflows(workflows: Vec<WorkflowDefinition>) -> Vec<Value> {
     workflows
@@ -75,7 +76,7 @@ pub(crate) fn fixed_tools() -> Vec<Value> {
 }
 
 fn object_schema(properties: Vec<(&str, Value)>, required: Vec<&str>) -> Value {
-    let mut property_map = serde_json::Map::new();
+    let mut property_map = Map::new();
     for (name, schema) in properties {
         property_map.insert(name.into(), schema);
     }
@@ -87,7 +88,7 @@ fn object_schema(properties: Vec<(&str, Value)>, required: Vec<&str>) -> Value {
 }
 
 pub(crate) fn parse_tool_workflow_id(name: &str) -> Option<i64> {
-    name.split('_').last()?.parse().ok()
+    name.split('_').next_back()?.parse().ok()
 }
 
 fn tool_name(wf: &WorkflowDefinition, id: i64) -> String {

@@ -1,5 +1,5 @@
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
-use serde_json::{Map, Value};
 
 use crate::errors::WorkflowValidationError;
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
@@ -308,11 +308,11 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
             .collect(),
     );
     match &reference.source {
-        WorkflowRefSource::Input => serde_json::json!({ "input": path }),
-        WorkflowRefSource::Prev => serde_json::json!({ "prev": path }),
-        WorkflowRefSource::Workflow => serde_json::json!({ "workflow": path }),
+        WorkflowRefSource::Input => runinator_models::json!({ "input": path }),
+        WorkflowRefSource::Prev => runinator_models::json!({ "prev": path }),
+        WorkflowRefSource::Workflow => runinator_models::json!({ "workflow": path }),
         WorkflowRefSource::NodeOutput(node) => {
-            serde_json::json!({ "node": node.as_str(), "output": path })
+            runinator_models::json!({ "node": node.as_str(), "output": path })
         }
     }
 }

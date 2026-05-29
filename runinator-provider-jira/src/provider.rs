@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use runinator_models::json;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -9,7 +10,6 @@ use runinator_models::{
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use serde_json::json;
 
 use crate::metadata::{base_param, email_param, issue_key_param, jira_results, token_param};
 use crate::params::{

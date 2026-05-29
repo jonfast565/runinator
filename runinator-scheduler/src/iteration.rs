@@ -2,11 +2,11 @@ use chrono::Utc;
 use log::{debug, error};
 use runinator_broker::{Broker, BrokerError, BrokerMessage};
 use runinator_comm::ActionCommand;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     workflows::{WorkflowAction, WorkflowNodeRun},
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{

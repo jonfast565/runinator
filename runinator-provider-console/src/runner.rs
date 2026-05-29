@@ -79,7 +79,7 @@ pub(crate) fn execute_command(
     if result.success {
         Ok(TaskExecutionResult {
             message: Some(format!("Console command exited with code {exit_code}")),
-            output_json: serde_json::to_value(result).ok(),
+            output_json: serde_json::to_value(result).ok().map(Into::into),
             chunks: Vec::new(),
             artifacts: Vec::new(),
         })

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use runinator_api::{AsyncApiClient, ServiceLocator, StaticLocator};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     providers::ProviderMetadata,
@@ -12,7 +13,6 @@ use runinator_models::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
-use serde_json::Value;
 
 use crate::nodes::RunState;
 use crate::worker_comm::WorkerManager;
@@ -112,6 +112,7 @@ pub trait WorkflowSchedulerApi: Send + Sync {
         parameters: Value,
     ) -> Result<WorkflowNodeRun, SendableError>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_workflow_node_run(
         &self,
         node_run_id: i64,
@@ -377,16 +378,16 @@ impl SchedulerApi {
         mut state: Option<Value>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
-        if let Some(next_state) = state.as_mut() {
-            if let Ok((run, _)) = self.client.fetch_workflow_run(workflow_run_id).await {
-                let existing = RunState::from_value(&run.state);
-                if let Some(debug) = existing.debug() {
-                    let mut next = RunState::from_value(next_state);
-                    // carry the prior debug frame forward only when the new state omits one.
-                    if next.debug().is_none() {
-                        next.set_debug(debug.clone());
-                        *next_state = next.into_value()?;
-                    }
+        if let Some(next_state) = state.as_mut()
+            && let Ok((run, _)) = self.client.fetch_workflow_run(workflow_run_id).await
+        {
+            let existing = RunState::from_value(&run.state);
+            if let Some(debug) = existing.debug() {
+                let mut next = RunState::from_value(next_state);
+                // carry the prior debug frame forward only when the new state omits one.
+                if next.debug().is_none() {
+                    next.set_debug(debug.clone());
+                    *next_state = next.into_value()?;
                 }
             }
         }
@@ -455,6 +456,7 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_workflow_node_run(
         &self,
         node_run_id: i64,

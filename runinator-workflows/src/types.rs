@@ -1,5 +1,5 @@
+use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowNodeRef;
-use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchPolicy {

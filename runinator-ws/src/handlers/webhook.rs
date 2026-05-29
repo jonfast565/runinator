@@ -41,10 +41,10 @@ pub(crate) async fn webhook_wake<T: DatabaseImpl>(
 
     let mut state = node_run.state.clone();
     merge_json(&mut state, request.state);
-    if let Some(status) = request.status {
-        if let Some(object) = state.as_object_mut() {
-            object.insert("status".into(), status.into());
-        }
+    if let Some(status) = request.status
+        && let Some(object) = state.as_object_mut()
+    {
+        object.insert("status".into(), status.into());
     }
     if let Err(err) = repository::update_workflow_node_run(
         db.as_ref(),

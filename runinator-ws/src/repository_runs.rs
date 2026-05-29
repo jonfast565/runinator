@@ -1,10 +1,10 @@
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
 };
-use serde_json::Value;
 
 pub async fn fetch_run_chunks<T: DatabaseImpl>(
     db: &T,
@@ -105,7 +105,7 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
         mime_type: mime_type.to_string(),
         size_bytes: bytes.len() as i64,
         uri: uri.clone(),
-        metadata: serde_json::json!({
+        metadata: runinator_models::json!({
             "source": "upload",
             "workflow_node_run_id": workflow_node_run_id
         }),

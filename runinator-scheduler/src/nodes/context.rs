@@ -8,11 +8,11 @@
 
 use chrono::Utc;
 use runinator_broker::Broker;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     workflows::{WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
-use serde_json::Value;
 
 use crate::api::WorkflowSchedulerApi;
 use crate::context::runtime_context;

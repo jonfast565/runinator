@@ -64,18 +64,22 @@ impl Provider for AwsProvider {
 
         match request.action_function.as_str() {
             "dynamo_dump" => {
-                let result = dynamo::run_dynamo_dump(request.parameters, request.timeout_secs)?;
+                let result =
+                    dynamo::run_dynamo_dump(request.parameters.into(), request.timeout_secs)?;
                 Ok(TaskExecutionResult {
                     message: Some(format!(
                         "Exported {} DynamoDB row(s) to {}",
                         result.rows, result.artifact.uri
                     )),
-                    output_json: Some(json!({
-                        "provider": "AWS",
-                        "service": "DynamoDB",
-                        "rows": result.rows,
-                        "artifact": result.artifact,
-                    })),
+                    output_json: Some(
+                        json!({
+                            "provider": "AWS",
+                            "service": "DynamoDB",
+                            "rows": result.rows,
+                            "artifact": result.artifact,
+                        })
+                        .into(),
+                    ),
                     chunks: Vec::new(),
                     artifacts: vec![result.artifact],
                 })

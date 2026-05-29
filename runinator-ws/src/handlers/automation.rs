@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
 };
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::value::Value;
 
 use crate::models::{
     ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, IdempotencyRequest,
@@ -34,7 +35,7 @@ async fn list_records<T: DatabaseImpl>(
 async fn create_record<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     record_type: &'static str,
-    Json(record): Json<serde_json::Value>,
+    Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::create_automation_record(db.as_ref(), record_type, record).await {
         Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
@@ -51,7 +52,7 @@ pub(crate) async fn get_external_items<T: DatabaseImpl>(
 
 pub(crate) async fn create_external_item<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "external_items", json).await
 }
@@ -65,7 +66,7 @@ pub(crate) async fn get_external_resources<T: DatabaseImpl>(
 
 pub(crate) async fn create_external_resource<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "external_resources", json).await
 }
@@ -79,7 +80,7 @@ pub(crate) async fn get_feedback<T: DatabaseImpl>(
 
 pub(crate) async fn create_feedback<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "feedback", json).await
 }
@@ -93,7 +94,7 @@ pub(crate) async fn get_gates<T: DatabaseImpl>(
 
 pub(crate) async fn create_gate<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "gates", json).await
 }
@@ -107,7 +108,7 @@ pub(crate) async fn get_workspaces<T: DatabaseImpl>(
 
 pub(crate) async fn create_workspace<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "workspaces", json).await
 }
@@ -121,7 +122,7 @@ pub(crate) async fn get_change_sets<T: DatabaseImpl>(
 
 pub(crate) async fn create_change_set<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "change_sets", json).await
 }
@@ -135,7 +136,7 @@ pub(crate) async fn get_automation_events<T: DatabaseImpl>(
 
 pub(crate) async fn create_automation_event<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "automation_events", json).await
 }
@@ -149,7 +150,7 @@ pub(crate) async fn get_approvals<T: DatabaseImpl>(
 
 pub(crate) async fn create_approval<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
-    json: Json<serde_json::Value>,
+    json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, "approval_requests", json).await
 }

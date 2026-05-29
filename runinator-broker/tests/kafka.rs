@@ -6,8 +6,8 @@ use runinator_broker::{
     Broker, BrokerMessage, ControlCommand, ResultMessage,
 };
 use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent};
+use runinator_models::json;
 use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
-use serde_json::json;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 

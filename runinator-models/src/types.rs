@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{Map, Value};
+
+use crate::value::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuninatorField {
@@ -46,7 +47,7 @@ impl RuninatorField {
     }
 
     fn to_native_value(&self) -> Value {
-        serde_json::json!({
+        crate::json!({
             "ty": self.ty.to_native_value(),
             "required": self.required,
         })
@@ -115,7 +116,7 @@ impl std::fmt::Display for TypeViolation {
 impl std::error::Error for TypeViolation {}
 
 /// Native Runinator value type metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RuninatorType {
     Null,
     Boolean,
@@ -129,13 +130,8 @@ pub enum RuninatorType {
         additional: Option<Box<RuninatorType>>,
     },
     Union(Vec<RuninatorType>),
+    #[default]
     Any,
-}
-
-impl Default for RuninatorType {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 impl RuninatorType {
@@ -257,16 +253,16 @@ impl RuninatorType {
 
     pub fn to_json_schema(&self) -> Value {
         match self {
-            Self::Null => serde_json::json!({ "type": "null" }),
-            Self::Boolean => serde_json::json!({ "type": "boolean" }),
-            Self::Integer => serde_json::json!({ "type": "integer" }),
-            Self::Number => serde_json::json!({ "type": "number" }),
-            Self::String => serde_json::json!({ "type": "string" }),
-            Self::Array(items) => serde_json::json!({
+            Self::Null => crate::json!({ "type": "null" }),
+            Self::Boolean => crate::json!({ "type": "boolean" }),
+            Self::Integer => crate::json!({ "type": "integer" }),
+            Self::Number => crate::json!({ "type": "number" }),
+            Self::String => crate::json!({ "type": "string" }),
+            Self::Array(items) => crate::json!({
                 "type": "array",
                 "items": items.to_json_schema(),
             }),
-            Self::Map(values) => serde_json::json!({
+            Self::Map(values) => crate::json!({
                 "type": "object",
                 "additionalProperties": values.to_json_schema(),
             }),
@@ -283,14 +279,14 @@ impl RuninatorType {
                     .as_ref()
                     .map(|ty| ty.to_json_schema())
                     .unwrap_or(Value::Bool(false));
-                serde_json::json!({
+                crate::json!({
                     "type": "object",
                     "properties": Value::Object(properties),
                     "required": Value::Array(required),
                     "additionalProperties": additional,
                 })
             }
-            Self::Union(variants) => serde_json::json!({
+            Self::Union(variants) => crate::json!({
                 "anyOf": variants.iter().map(Self::to_json_schema).collect::<Vec<_>>(),
             }),
             Self::Any => Value::Bool(true),
@@ -607,7 +603,7 @@ impl RuninatorType {
         }
     }
 
-    fn from_object_schema(object: &Map<String, Value>) -> Self {
+    fn from_object_schema(object: &Map) -> Self {
         let required = object
             .get("required")
             .and_then(Value::as_array)
@@ -831,16 +827,16 @@ impl<'de> Deserialize<'de> for RuninatorType {
 impl RuninatorType {
     fn to_native_value(&self) -> Value {
         match self {
-            Self::Null => serde_json::json!({ "type": "null" }),
-            Self::Boolean => serde_json::json!({ "type": "boolean" }),
-            Self::Integer => serde_json::json!({ "type": "integer" }),
-            Self::Number => serde_json::json!({ "type": "number" }),
-            Self::String => serde_json::json!({ "type": "string" }),
-            Self::Array(items) => serde_json::json!({
+            Self::Null => crate::json!({ "type": "null" }),
+            Self::Boolean => crate::json!({ "type": "boolean" }),
+            Self::Integer => crate::json!({ "type": "integer" }),
+            Self::Number => crate::json!({ "type": "number" }),
+            Self::String => crate::json!({ "type": "string" }),
+            Self::Array(items) => crate::json!({
                 "type": "array",
                 "items": items.to_native_value(),
             }),
-            Self::Map(values) => serde_json::json!({
+            Self::Map(values) => crate::json!({
                 "type": "map",
                 "values": values.to_native_value(),
             }),
@@ -858,11 +854,11 @@ impl RuninatorType {
                 }
                 Value::Object(object)
             }
-            Self::Union(variants) => serde_json::json!({
+            Self::Union(variants) => crate::json!({
                 "type": "union",
                 "variants": variants.iter().map(Self::to_native_value).collect::<Vec<_>>(),
             }),
-            Self::Any => serde_json::json!({ "type": "any" }),
+            Self::Any => crate::json!({ "type": "any" }),
         }
     }
 }

@@ -57,11 +57,20 @@ pub async fn save_workflow_bundle(
 ) -> CommandResult<WorkflowBundle> {
     let url = build_state_url(&state, "workflows/import").await?;
     let payload_size = serde_json::to_vec(&request).map(|v| v.len()).unwrap_or(0);
-    println!("Sending save_workflow_bundle to {}, payload size: {} bytes", url, payload_size);
-    let response = state.client.post(url.clone()).json(&request).send().await.map_err(|err| {
-        eprintln!("Error sending request to {}: {}", url, err);
-        err
-    })?;
+    println!(
+        "Sending save_workflow_bundle to {}, payload size: {} bytes",
+        url, payload_size
+    );
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|err| {
+            eprintln!("Error sending request to {}: {}", url, err);
+            err
+        })?;
     let response = handle_response(url, response).await?;
     let saved = response.json::<WorkflowBundle>().await?;
     let Some(workflow_id) = saved.workflows.first().and_then(|workflow| workflow.id) else {

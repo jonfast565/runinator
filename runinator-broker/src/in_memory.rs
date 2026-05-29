@@ -304,8 +304,8 @@ fn redeliver_result(delivery: ResultDelivery) -> ResultDelivery {
 mod tests {
     use chrono::Utc;
     use runinator_comm::ActionCommand;
+    use runinator_models::json;
     use runinator_models::workflows::WorkflowAction;
-    use serde_json::json;
 
     use crate::{Broker, BrokerMessage, ResultMessage};
 

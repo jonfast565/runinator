@@ -112,8 +112,10 @@ fn configured_service_url_from_env() -> Result<Option<String>, String> {
 
     if let Ok(host) = std::env::var("RUNINATOR_WS_SERVICE_HOST") {
         println!("Checking RUNINATOR_WS_SERVICE_HOST: {}", host);
-        let port = std::env::var("RUNINATOR_WS_SERVICE_PORT").unwrap_or_else(|_| "8080".to_string());
-        let scheme = std::env::var("RUNINATOR_WS_SERVICE_SCHEME").unwrap_or_else(|_| "http".to_string());
+        let port =
+            std::env::var("RUNINATOR_WS_SERVICE_PORT").unwrap_or_else(|_| "8080".to_string());
+        let scheme =
+            std::env::var("RUNINATOR_WS_SERVICE_SCHEME").unwrap_or_else(|_| "http".to_string());
         let mut url_str = format!("{scheme}://{host}");
         if !host.contains(':') && port != "80" && port != "443" {
             url_str.push(':');
@@ -226,10 +228,12 @@ fn bind_discovery_socket(address: SocketAddr) -> std::io::Result<UdpSocket> {
     if address.ip().is_multicast() {
         match address.ip() {
             IpAddr::V4(addr) => {
-                socket.join_multicast_v4(&addr, &Ipv4Addr::UNSPECIFIED).map_err(|e| {
-                    eprintln!("Failed to join multicast v4 group {}: {}", addr, e);
-                    e
-                })?;
+                socket
+                    .join_multicast_v4(&addr, &Ipv4Addr::UNSPECIFIED)
+                    .map_err(|e| {
+                        eprintln!("Failed to join multicast v4 group {}: {}", addr, e);
+                        e
+                    })?;
                 println!("Joined multicast v4 group: {}", addr);
             }
             IpAddr::V6(addr) => {

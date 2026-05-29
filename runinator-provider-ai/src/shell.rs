@@ -3,12 +3,13 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
-use serde_json::{Value, json};
 
 use crate::params::{AiCommandParams, parse_params};
 

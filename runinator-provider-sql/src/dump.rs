@@ -158,24 +158,28 @@ impl SqlProvider {
                     "query_name": export.name,
                     "rows": export.rows,
                     "format": export.format.as_str(),
-                }),
+                })
+                .into(),
             })
             .collect::<Vec<_>>();
 
         Ok(TaskExecutionResult {
             message: Some(format!("Exported {} SQL result file(s)", artifacts.len())),
-            output_json: Some(json!({
-                "provider": "SQL",
-                "exports": exports.iter().map(|export| {
-                    json!({
-                        "name": export.name,
-                        "rows": export.rows,
-                        "path": export.path,
-                        "format": export.format.as_str(),
-                        "size_bytes": export.size_bytes,
-                    })
-                }).collect::<Vec<_>>()
-            })),
+            output_json: Some(
+                json!({
+                    "provider": "SQL",
+                    "exports": exports.iter().map(|export| {
+                        json!({
+                            "name": export.name,
+                            "rows": export.rows,
+                            "path": export.path,
+                            "format": export.format.as_str(),
+                            "size_bytes": export.size_bytes,
+                        })
+                    }).collect::<Vec<_>>()
+                })
+                .into(),
+            ),
             chunks: Vec::new(),
             artifacts,
         })

@@ -10,6 +10,8 @@ use runinator_broker::{
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
@@ -18,7 +20,6 @@ use runinator_models::{
     },
 };
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
-use serde_json::json;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -42,7 +43,7 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
         nodes: vec![],
     };
 
-    let value = serde_json::to_value(response).unwrap();
+    let value: Value = serde_json::to_value(response).unwrap().into();
 
     assert_eq!(value["run"]["status"], "succeeded");
     assert_eq!(value["nodes"], json!([]));
@@ -52,7 +53,7 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
 #[test]
 fn workflow_run_request_defaults_to_non_debug() {
     let request: crate::models::WorkflowRunRequest =
-        serde_json::from_value(json!({ "parameters": { "mode": "test" } })).unwrap();
+        serde_json::from_value(json!({ "parameters": { "mode": "test" } }).into()).unwrap();
 
     assert!(!request.debug);
     assert_eq!(request.parameters["mode"], "test");
@@ -61,7 +62,7 @@ fn workflow_run_request_defaults_to_non_debug() {
 #[test]
 fn workflow_run_request_accepts_debug_flag() {
     let request: crate::models::WorkflowRunRequest =
-        serde_json::from_value(json!({ "parameters": {}, "debug": true })).unwrap();
+        serde_json::from_value(json!({ "parameters": {}, "debug": true }).into()).unwrap();
 
     assert!(request.debug);
 }
@@ -837,52 +838,54 @@ fn trigger(id: Option<i64>, workflow_id: i64) -> WorkflowTrigger {
 #[tokio::test]
 async fn validate_workflow_rejects_invalid_subflow_id() {
     let (db, path) = test_db().await;
-    
+
     // create a valid target workflow
     let target = crate::repository::upsert_workflow(&db, &workflow(None, "target-workflow"))
         .await
         .unwrap();
     let target_id = target.id.unwrap();
-    
+
     // create a workflow with a subflow that references a non-existent workflow
     let mut main_workflow = workflow(None, "main-with-invalid-subflow");
     main_workflow.definition = json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
-            { 
-                "id": "subflow-node", 
-                "kind": "subflow", 
+            {
+                "id": "subflow-node",
+                "kind": "subflow",
                 "subflow_id": 999,  // non-existent workflow id
-                "transitions": { "next": { "$node": "end" } } 
+                "transitions": { "next": { "$node": "end" } }
             },
             { "id": "end", "kind": "end" }
         ]
     });
-    
+
     // validation should fail because the subflow references a non-existent workflow
-    let result = crate::repository::validate_workflow_definition_with_catalog(&db, &main_workflow).await;
+    let result =
+        crate::repository::validate_workflow_definition_with_catalog(&db, &main_workflow).await;
     assert!(result.is_err());
-    
+
     // now test with a valid subflow id
     let mut valid_workflow = workflow(None, "main-with-valid-subflow");
     valid_workflow.definition = json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
-            { 
-                "id": "subflow-node", 
-                "kind": "subflow", 
+            {
+                "id": "subflow-node",
+                "kind": "subflow",
                 "subflow_id": target_id,
-                "transitions": { "next": { "$node": "end" } } 
+                "transitions": { "next": { "$node": "end" } }
             },
             { "id": "end", "kind": "end" }
         ]
     });
-    
+
     // validation should succeed because the subflow references a valid workflow
-    let result = crate::repository::validate_workflow_definition_with_catalog(&db, &valid_workflow).await;
+    let result =
+        crate::repository::validate_workflow_definition_with_catalog(&db, &valid_workflow).await;
     assert!(result.is_ok());
-    
+
     let _ = std::fs::remove_file(path);
 }

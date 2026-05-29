@@ -211,12 +211,12 @@ impl NodeHandler for MapHandler {
                 concurrency: params.concurrency.unwrap_or(1),
                 item: None,
             });
-            if let Some(status) = latest_status(params.target.as_str(), ctx.node_runs) {
-                if status != WorkflowStatus::Succeeded {
-                    return ctx
-                        .transition(&node_run, status, None, Some("map_item_failed".into()))
-                        .await;
-                }
+            if let Some(status) = latest_status(params.target.as_str(), ctx.node_runs)
+                && status != WorkflowStatus::Succeeded
+            {
+                return ctx
+                    .transition(&node_run, status, None, Some("map_item_failed".into()))
+                    .await;
             }
             append_completed_map_item(existing, params.target.as_str(), ctx.node_runs)
         } else {

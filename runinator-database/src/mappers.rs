@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     notifications::Notification,
@@ -10,7 +11,6 @@ use runinator_models::{
         WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use serde_json::Value;
 use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
 
 fn parse_json(raw: String) -> Value {
@@ -19,7 +19,7 @@ fn parse_json(raw: String) -> Value {
 
 fn parse_type(raw: String) -> RuninatorType {
     let value = parse_json(raw);
-    serde_json::from_value(value.clone())
+    serde_json::from_value(value.clone().into())
         .unwrap_or_else(|_| RuninatorType::from_json_schema(&value))
 }
 
@@ -278,7 +278,7 @@ pub fn postgres_row_to_workflow_node_run_artifact(row: &PgRow) -> WorkflowNodeRu
 
 macro_rules! catalog_item_from_row {
     ($row:expr) => {{
-        serde_json::json!({
+        runinator_models::json!({
             "id": $row.get::<i64, _>("id"),
             "uri": $row.get::<String, _>("uri"),
             "item_type": $row.get::<String, _>("item_type"),
@@ -343,7 +343,7 @@ pub fn postgres_row_to_automation_record(row: &PgRow) -> Value {
 
 macro_rules! idempotency_key_from_row {
     ($row:expr) => {{
-        serde_json::json!({
+        runinator_models::json!({
             "id": $row.get::<i64, _>("id"),
             "scope": $row.get::<String, _>("scope"),
             "key": $row.get::<String, _>("key"),

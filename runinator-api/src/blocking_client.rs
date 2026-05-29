@@ -2,13 +2,13 @@ use reqwest::{
     blocking::{Client, Response},
     Url,
 };
+use runinator_models::json;
 use runinator_models::{
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     web::TaskResponse,
     workflows::{WorkflowBundle, WorkflowDefinition},
 };
-use serde_json::json;
 
 use crate::{
     error::{ApiError, Result},

@@ -5,8 +5,8 @@ use runinator_broker::{
     Broker, BrokerMessage, ControlCommand, ResultMessage,
 };
 use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
-use serde_json::json;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 

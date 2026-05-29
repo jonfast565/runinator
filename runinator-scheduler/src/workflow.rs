@@ -1,11 +1,11 @@
 use chrono::{Duration, Utc};
 use log::warn;
 use runinator_broker::Broker;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowRun, WorkflowStatus},
 };
-use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::{
@@ -285,7 +285,7 @@ async fn should_pause_for_debug(
         return Ok(true);
     }
     if control::pause_requested(workflow_run) {
-        let state = debug_pause_state(api, &workflow_run, node, node_runs).await?;
+        let state = debug_pause_state(api, workflow_run, node, node_runs).await?;
         api.update_workflow_run(
             workflow_run.id,
             WorkflowStatus::DebugPaused,
@@ -301,7 +301,7 @@ async fn should_pause_for_debug(
         return Ok(false);
     }
 
-    let state = debug_pause_state(api, &workflow_run, node, node_runs).await?;
+    let state = debug_pause_state(api, workflow_run, node, node_runs).await?;
     api.update_workflow_run(
         workflow_run.id,
         WorkflowStatus::DebugPaused,
@@ -359,7 +359,7 @@ async fn debug_pause_state(
     let last_output = node_runs
         .iter()
         .filter_map(|run| run.output_json.clone())
-        .last()
+        .next_back()
         .unwrap_or(Value::Null);
 
     let one_shot_consumed = matches!(
@@ -369,18 +369,18 @@ async fn debug_pause_state(
 
     let mut run_state = RunState::from_run(workflow_run);
     run_state.ensure_control();
-    // preserve user-owned fields (mode, breakpoints) while updating the runtime debug fields.
+    // preserve user-owned config (mode, breakpoints) while updating the runtime debug fields.
     let debug = run_state.debug_mut();
-    debug.enabled = true;
-    debug.paused = true;
-    debug.step_requested = false;
-    debug.current_node_id = Some(node.id.clone());
-    debug.current_node_kind = Some(node.kind.clone());
-    debug.input_json = Some(input);
-    debug.context_json = Some(context);
-    debug.last_output_json = Some(last_output);
+    debug.config.enabled = true;
+    debug.runtime.paused = true;
+    debug.runtime.step_requested = false;
+    debug.runtime.current_node_id = Some(node.id.clone());
+    debug.runtime.current_node_kind = Some(node.kind.clone());
+    debug.runtime.input_json = Some(input);
+    debug.runtime.context_json = Some(context);
+    debug.runtime.last_output_json = Some(last_output);
     if one_shot_consumed {
-        debug.one_shot_breakpoint = None;
+        debug.runtime.one_shot_breakpoint = None;
     }
     Ok(run_state.into_value()?)
 }
@@ -391,10 +391,10 @@ async fn debug_input_json(
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
-    if node.kind == WorkflowNodeKind::Action {
-        if let Some(action) = &node.action {
-            return build_node_parameters(action, node, workflow_run, node_runs);
-        }
+    if node.kind == WorkflowNodeKind::Action
+        && let Some(action) = &node.action
+    {
+        return build_node_parameters(action, node, workflow_run, node_runs);
     }
     let context = runtime_context(workflow_run, node_runs);
     runinator_workflows::resolve_value_refs(&node.parameters, &context)

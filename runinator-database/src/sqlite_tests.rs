@@ -37,8 +37,8 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
         .create_workflow_run(
             first,
             first_snapshot,
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             None,
         )
         .await
@@ -47,8 +47,8 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
         .create_workflow_run(
             second,
             second_snapshot,
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             None,
         )
         .await
@@ -94,8 +94,8 @@ async fn workflow_runs_can_be_created_and_queried_by_open_name() {
         .create_workflow_run(
             workflow_id,
             snapshot.clone(),
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             Some("Ticket Work: ITP-123".into()),
         )
         .await
@@ -104,8 +104,8 @@ async fn workflow_runs_can_be_created_and_queried_by_open_name() {
         .create_workflow_run(
             workflow_id,
             snapshot,
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             Some("Ticket Work: ITP-123".into()),
         )
         .await
@@ -156,8 +156,8 @@ async fn scheduler_claims_open_workflow_runs_once_until_lease_expires() {
         .create_workflow_run(
             workflow_id,
             snapshot,
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             None,
         )
         .await
@@ -230,14 +230,14 @@ async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
             workflow_id,
             kind: WorkflowTriggerKind::Cron,
             enabled: true,
-            configuration: serde_json::json!({
+            configuration: runinator_models::json!({
                 "cron": "*/5 * * * * *",
                 "parameters": { "source": "cron" }
             }),
             next_execution: Some(due_at),
             blackout_start: None,
             blackout_end: None,
-            metadata: serde_json::json!({ "name": "test-trigger" }),
+            metadata: runinator_models::json!({ "name": "test-trigger" }),
             created_at: None,
             updated_at: None,
         })
@@ -280,7 +280,7 @@ async fn upsert_workflow_without_id_updates_existing_name() {
     let first = db.upsert_workflow(&workflow("pipeline")).await.unwrap();
     let mut updated = workflow("pipeline");
     updated.version = 2;
-    updated.definition = serde_json::json!({ "nodes": [{ "id": "done", "kind": "end" }] });
+    updated.definition = runinator_models::json!({ "nodes": [{ "id": "done", "kind": "end" }] });
 
     let second = db.upsert_workflow(&updated).await.unwrap();
     let workflows = db.fetch_workflows().await.unwrap();
@@ -337,7 +337,7 @@ async fn apply_workflow_result_event_does_not_regress_terminal_status() {
     let succeeded = WorkflowResultEvent::status(
         &command,
         WorkflowStatus::Succeeded,
-        Some(serde_json::json!({ "success": true })),
+        Some(runinator_models::json!({ "success": true })),
         Some("done".into()),
     );
     let running = WorkflowResultEvent::status(&command, WorkflowStatus::Running, None, None);
@@ -437,7 +437,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: serde_json::json!({ "nodes": [] }),
+        definition: runinator_models::json!({ "nodes": [] }),
         created_at: None,
         updated_at: None,
     }
@@ -455,15 +455,19 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
         .create_workflow_run(
             workflow_id,
             snapshot,
-            serde_json::json!({}),
-            serde_json::json!({}),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
             None,
         )
         .await
         .unwrap();
-    db.create_workflow_node_run(workflow_run.id, "node-a".into(), serde_json::json!({}))
-        .await
-        .unwrap()
+    db.create_workflow_node_run(
+        workflow_run.id,
+        "node-a".into(),
+        runinator_models::json!({}),
+    )
+    .await
+    .unwrap()
 }
 
 fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str) -> ActionCommand {
@@ -476,11 +480,11 @@ fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str
             provider: "test".into(),
             function: "execute".into(),
             timeout_seconds: 60,
-            configuration: serde_json::json!({}),
+            configuration: runinator_models::json!({}),
             mcp_enabled: false,
             tags: Vec::new(),
         },
         attempt: 1,
-        parameters: serde_json::json!({}),
+        parameters: runinator_models::json!({}),
     }
 }

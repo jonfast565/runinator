@@ -203,7 +203,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 mod tests;
 
 fn hex_decode(raw: &str) -> Result<Vec<u8>, SendableError> {
-    if raw.len() % 2 != 0 {
+    if !raw.len().is_multiple_of(2) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "hex credential payload has odd length",

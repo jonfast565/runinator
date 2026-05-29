@@ -8,15 +8,11 @@ pub(crate) enum DatabaseKind {
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub(crate) enum DumpFormat {
+    #[default]
     Excel,
     Csv,
-}
-
-impl Default for DumpFormat {
-    fn default() -> Self {
-        DumpFormat::Excel
-    }
 }
 
 impl DumpFormat {

@@ -1,6 +1,13 @@
-use std::{error::Error, fs, io, path::PathBuf, time::Duration};
+use std::{
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_models::json;
+use runinator_models::value::{Map, Value};
 use runinator_models::{
     providers::ProviderMetadata,
     workflows::{
@@ -8,7 +15,6 @@ use runinator_models::{
         WorkflowTrigger,
     },
 };
-use serde_json::{Value, json};
 use tokio::time;
 
 use crate::{
@@ -56,7 +62,7 @@ async fn status(client: &Client, json_output: bool) -> Result<()> {
         Ok(value) => value,
         Err(err) => json!({ "configured": false, "error": err.to_string() }),
     };
-    let mut counts = serde_json::Map::new();
+    let mut counts = Map::new();
     for status in non_terminal_statuses() {
         let runs = client.fetch_workflow_runs_by_status(status).await?;
         counts.insert(status.as_str().into(), runs.len().into());
@@ -118,7 +124,7 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
         WorkflowCommands::Apply { file } => {
             let value = params::load_json_file(file)?;
             if value.get("workflows").is_some() {
-                let bundle: WorkflowBundle = serde_json::from_value(value)?;
+                let bundle: WorkflowBundle = serde_json::from_value(value.into())?;
                 let bundle = client.import_workflow_bundle(&bundle).await?;
                 if json_output {
                     return output::json(&bundle);
@@ -129,7 +135,7 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
                     bundle.triggers.len()
                 );
             } else {
-                let workflow: WorkflowDefinition = serde_json::from_value(value)?;
+                let workflow: WorkflowDefinition = serde_json::from_value(value.into())?;
                 let workflow = client.upsert_workflow(&workflow).await?;
                 if json_output {
                     return output::json(&workflow);
@@ -448,9 +454,9 @@ fn non_terminal_statuses() -> [WorkflowStatus; 7] {
     ]
 }
 
-fn read_workflow_definition(path: &PathBuf) -> Result<WorkflowDefinition> {
+fn read_workflow_definition(path: &Path) -> Result<WorkflowDefinition> {
     let value = params::load_json_file(path)?;
-    Ok(serde_json::from_value(value)?)
+    Ok(serde_json::from_value(value.into())?)
 }
 
 fn write_json_file<T: serde::Serialize>(path: &PathBuf, value: &T) -> Result<()> {

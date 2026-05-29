@@ -20,7 +20,7 @@ pub(crate) struct ConsoleResult {
 pub(crate) fn parse_params(
     request: &ProviderExecutionRequest,
 ) -> Result<ConsoleParams, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
         Box::new(RuntimeError::new(
             "console.invalid_params".into(),
             e.to_string(),

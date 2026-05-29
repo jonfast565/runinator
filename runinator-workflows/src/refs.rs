@@ -1,5 +1,5 @@
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
-use serde_json::{Map, Value};
 
 use crate::errors::WorkflowValidationError;
 
@@ -37,10 +37,11 @@ pub(crate) fn expand_refs_in_value(
                     expand_refs_in_value(&mut replacement, defs, stack)?;
                     stack.pop();
                     for (key, overlay) in map.clone() {
-                        if key != "$ref" && key != "with" {
-                            if let Value::Object(replacement_map) = &mut replacement {
-                                replacement_map.insert(key, overlay);
-                            }
+                        if key != "$ref"
+                            && key != "with"
+                            && let Value::Object(replacement_map) = &mut replacement
+                        {
+                            replacement_map.insert(key, overlay);
                         }
                     }
                     if let Some(with) = map.get("with") {

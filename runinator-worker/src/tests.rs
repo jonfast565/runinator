@@ -2,12 +2,12 @@ use std::ffi::OsString;
 
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_comm::{ActionCommand, WorkflowResultEventKind};
+use runinator_models::json;
 use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
 use runinator_models::{
     providers::{ActionMetadata, ResultMetadata, RuninatorType},
     runs::{RunStatus, TaskExecutionResult},
 };
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::{

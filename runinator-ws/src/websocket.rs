@@ -75,9 +75,13 @@ pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(crate) fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {
+pub(crate) fn merge_json(
+    target: &mut runinator_models::value::Value,
+    overlay: runinator_models::value::Value,
+) {
+    use runinator_models::value::Value;
     match (target, overlay) {
-        (serde_json::Value::Object(target), serde_json::Value::Object(overlay)) => {
+        (Value::Object(target), Value::Object(overlay)) => {
             for (key, value) in overlay {
                 match target.get_mut(&key) {
                     Some(existing) => merge_json(existing, value),
@@ -231,11 +235,10 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if matches!(&event, AppEvent::WorkflowRunChanged { .. }) {
-                                if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
+                            if matches!(&event, AppEvent::WorkflowRunChanged { .. })
+                                && send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
                                     break;
                                 }
-                            }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500).await.is_err() {

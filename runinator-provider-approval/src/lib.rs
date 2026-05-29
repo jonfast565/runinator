@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use runinator_models::json;
+use runinator_models::value::{Map, Value};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -10,14 +12,13 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 #[derive(Deserialize)]
 struct ApprovalParams {
     approval_type: Option<String>,
     prompt: Option<String>,
     #[serde(flatten)]
-    metadata: serde_json::Map<String, Value>,
+    metadata: Map,
 }
 
 #[derive(Serialize)]
@@ -70,7 +71,7 @@ impl Provider for ApprovalProvider {
         };
         Ok(TaskExecutionResult {
             message: Some("Approval request prepared".into()),
-            output_json: serde_json::to_value(result).ok(),
+            output_json: serde_json::to_value(result).ok().map(Into::into),
             chunks: Vec::new(),
             artifacts: Vec::new(),
         })
@@ -78,7 +79,7 @@ impl Provider for ApprovalProvider {
 }
 
 fn parse_params(request: &ProviderExecutionRequest) -> Result<ApprovalParams, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
         Box::new(RuntimeError::new(
             "approval.invalid_params".into(),
             e.to_string(),

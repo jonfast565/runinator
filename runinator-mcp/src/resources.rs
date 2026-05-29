@@ -1,4 +1,5 @@
-use serde_json::{Value, json};
+use runinator_models::json;
+use runinator_models::value::Value;
 
 pub(crate) fn resource_templates() -> Vec<Value> {
     vec![

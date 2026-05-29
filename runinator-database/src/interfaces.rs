@@ -2,6 +2,7 @@ use std::future::Future;
 
 use chrono::{DateTime, Utc};
 use runinator_comm::{ActionCommand, ActionDispatchRecord, WorkflowResultEvent};
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -11,14 +12,13 @@ use runinator_models::{
         WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
-use serde_json::Value;
 
 /// Core persistence operations for Runinator.
 pub trait DatabaseImpl: Send + Sync + 'static {
     /// Execute initialization scripts for the database.
     fn run_init_scripts(
         &self,
-        paths: &Vec<String>,
+        paths: &[String],
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch all runs filtered by their current status.
@@ -240,6 +240,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     ) -> impl Future<Output = Result<WorkflowNodeRun, SendableError>> + Send;
 
     /// Update the status and state of a specific node execution.
+    #[allow(clippy::too_many_arguments)]
     fn update_workflow_node_run(
         &self,
         node_run_id: i64,

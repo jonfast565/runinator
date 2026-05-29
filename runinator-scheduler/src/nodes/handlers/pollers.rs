@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use runinator_comm::WireCodec;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     workflow_state::{
@@ -13,7 +14,6 @@ use runinator_models::{
     },
     workflows::{WorkflowNodeKind, WorkflowStatus},
 };
-use serde_json::Value;
 
 use crate::context::build_node_parameters;
 use crate::nodes::context::NodeContext;
@@ -295,10 +295,10 @@ impl NodeHandler for JoinHandler {
                 )
                 .await;
         }
-        if let Some(node_run) = ctx.latest_with_status(WorkflowStatus::Waiting) {
-            if ctx.timed_out(node_run) {
-                return ctx.time_out(node_run, "Join node timed out").await;
-            }
+        if let Some(node_run) = ctx.latest_with_status(WorkflowStatus::Waiting)
+            && ctx.timed_out(node_run)
+        {
+            return ctx.time_out(node_run, "Join node timed out").await;
         }
         let mut state = ctx.run_state();
         if let Some(target) = state.pop_parallel_remaining() {

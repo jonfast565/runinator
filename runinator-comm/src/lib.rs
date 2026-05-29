@@ -7,10 +7,11 @@ pub use wire::{WireCodec, WireError};
 use chrono::{DateTime, Utc};
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
+    value::Value,
+    workflow_state::DebugMode,
     workflows::{WorkflowAction, WorkflowStatus},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +84,54 @@ pub enum ControlKind {
 pub struct ControlCommand {
     pub workflow_run_id: i64,
     pub kind: ControlKind,
+}
+
+/// the canonical set of debugger operations against a run. one tagged contract replaces the prior
+/// per-endpoint shapes so every layer (frontend, web service, future broker paths) names debug
+/// operations identically. payload-carrying verbs (skip/rerun/set_*) live here rather than on the
+/// unit-variant [`ControlKind`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "verb", rename_all = "snake_case")]
+pub enum DebugVerb {
+    /// advance exactly one node, then pause again.
+    Step,
+    /// resume normal execution (still honoring breakpoints).
+    Continue,
+    /// run until `cursor` is reached, pausing there once.
+    RunToCursor { cursor: String },
+    /// mark the active node succeeded with a synthetic `output` and advance.
+    Skip {
+        #[serde(default)]
+        output: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// supersede the active node's latest attempt and re-execute it with `parameters`.
+    Rerun {
+        #[serde(default)]
+        parameters: Value,
+    },
+    /// replace the configured breakpoint set.
+    SetBreakpoints { breakpoints: Vec<String> },
+    /// set the step granularity.
+    SetMode { mode: DebugMode },
+}
+
+/// a [`DebugVerb`] addressed to a specific workflow run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugCommand {
+    pub workflow_run_id: i64,
+    #[serde(flatten)]
+    pub verb: DebugVerb,
+}
+
+impl DebugCommand {
+    pub fn new(workflow_run_id: i64, verb: DebugVerb) -> Self {
+        Self {
+            workflow_run_id,
+            verb,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

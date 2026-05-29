@@ -28,8 +28,9 @@ use crate::handlers::{
     catalog::{get_catalog_items, upsert_catalog_item},
     credentials::{delete_credential, get_credential, import_secret_bundle, put_credential},
     debug::{
-        continue_debug_workflow_run, rerun_debug_workflow_node, run_to_cursor_workflow_run,
-        skip_debug_workflow_node, step_debug_workflow_run, update_workflow_run_debug,
+        continue_debug_workflow_run, debug_command, rerun_debug_workflow_node,
+        run_to_cursor_workflow_run, skip_debug_workflow_node, step_debug_workflow_run,
+        update_workflow_run_debug,
     },
     health::{health, ready},
     node_runs::{
@@ -222,6 +223,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/scheduler/action_dispatches/{id}/failed",
             post(mark_action_dispatch_failed::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/debug/command",
+            post(debug_command::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/debug/step",

@@ -1,9 +1,73 @@
 use crate::{
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
     types::{RuninatorField, RuninatorType},
+    value::Value,
+    workflow_state::{DebugFrame, DebugMode, WorkflowRunState},
     workflows::*,
 };
 use serde_json::json;
+
+// the split DebugFrame must round-trip through a single flat `debug` object so persisted state
+// and the frontend keep seeing the same wire shape.
+#[test]
+fn debug_frame_flattens_to_flat_object() {
+    let blob: Value = json!({
+        "debug": {
+            "enabled": true,
+            "paused": true,
+            "step_requested": false,
+            "mode": "breakpoints",
+            "breakpoints": ["end"],
+            "one_shot_breakpoint": "mid",
+            "current_node_id": "start",
+            "last_output_json": { "ok": true }
+        }
+    })
+    .into();
+
+    let parsed = WorkflowRunState::from_state(&blob);
+    let debug = parsed.debug.clone().expect("debug frame present");
+    assert!(debug.config.enabled);
+    assert_eq!(debug.config.mode, Some(DebugMode::Breakpoints));
+    assert_eq!(debug.config.breakpoints, vec!["end".to_string()]);
+    assert!(debug.runtime.paused);
+    assert!(!debug.runtime.step_requested);
+    assert_eq!(debug.runtime.one_shot_breakpoint.as_deref(), Some("mid"));
+    assert_eq!(debug.runtime.current_node_id.as_deref(), Some("start"));
+
+    // re-serialize and confirm the keys stay flat under `debug`.
+    let back = parsed.to_state();
+    assert_eq!(back["debug"]["mode"], Value::from(json!("breakpoints")));
+    assert_eq!(back["debug"]["paused"], Value::from(json!(true)));
+    assert_eq!(back["debug"]["breakpoints"], Value::from(json!(["end"])));
+    assert_eq!(
+        back["debug"]["one_shot_breakpoint"],
+        Value::from(json!("mid"))
+    );
+}
+
+#[test]
+fn debug_mode_defaults_to_step_all() {
+    let frame = DebugFrame::default();
+    assert_eq!(frame.config.mode.unwrap_or_default(), DebugMode::StepAll);
+}
+
+// the custom value must serialize byte-identically to serde_json::Value so the http edge, the
+// database text columns, and the frontend keep seeing the same wire form.
+#[test]
+fn value_round_trips_byte_identically_to_serde_json() {
+    let raw = r#"{"b":2,"a":{"nested":[1,2.5,null,"x"],"flag":true},"z":-7,"big":9007199254740993,"empty":{}}"#;
+    let theirs: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let ours: Value = serde_json::from_str(raw).unwrap();
+    // sorted keys + number formatting must match exactly.
+    assert_eq!(
+        serde_json::to_string(&ours).unwrap(),
+        serde_json::to_string(&theirs).unwrap()
+    );
+    // and the bridge in either direction is lossless.
+    assert_eq!(serde_json::Value::from(ours.clone()), theirs);
+    assert_eq!(Value::from(theirs), ours);
+}
 
 #[test]
 fn workflow_status_terminal_and_active() {
@@ -188,8 +252,9 @@ fn provider_metadata_validation_rejects_bad_defaults_and_duplicates() {
     let provider = ProviderMetadata {
         name: "typed".into(),
         actions: vec![ActionMetadata::new("run", "run").with_parameters(vec![
-            ParameterMetadata::optional("count", RuninatorType::Integer).with_default(json!("bad")),
-        ])],
+                ParameterMetadata::optional("count", RuninatorType::Integer)
+                    .with_default(crate::json!("bad")),
+            ])],
         metadata: Default::default(),
     };
     let err = validate_provider_metadata(&provider).unwrap_err();
@@ -254,7 +319,7 @@ fn runinator_type_imports_legacy_json_schema() {
 #[test]
 fn runinator_type_imports_json_schema_edge_shapes() {
     assert_eq!(
-        RuninatorType::from_json_schema(&json!({ "oneOf": [
+        RuninatorType::from_json_schema(&crate::json!({ "oneOf": [
             { "type": "string" },
             { "type": "integer" }
         ] })),
@@ -262,7 +327,7 @@ fn runinator_type_imports_json_schema_edge_shapes() {
     );
     assert_eq!(
         RuninatorType::from_json_schema(
-            &json!({ "type": ["array", "null"], "items": { "type": "string" } })
+            &crate::json!({ "type": ["array", "null"], "items": { "type": "string" } })
         ),
         RuninatorType::Union(vec![
             RuninatorType::array(RuninatorType::String),
@@ -270,15 +335,15 @@ fn runinator_type_imports_json_schema_edge_shapes() {
         ])
     );
     assert_eq!(
-        RuninatorType::from_json_schema(&json!({ "enum": ["open", "closed"] })),
+        RuninatorType::from_json_schema(&crate::json!({ "enum": ["open", "closed"] })),
         RuninatorType::String
     );
     assert_eq!(
-        RuninatorType::from_json_schema(&json!({ "const": 1 })),
+        RuninatorType::from_json_schema(&crate::json!({ "const": 1 })),
         RuninatorType::Integer
     );
     assert_eq!(
-        RuninatorType::from_json_schema(&json!({
+        RuninatorType::from_json_schema(&crate::json!({
             "allOf": [
                 {
                     "type": "object",
@@ -300,14 +365,14 @@ fn runinator_type_imports_json_schema_edge_shapes() {
 
 #[test]
 fn runinator_type_checked_json_schema_rejects_unsupported_edges() {
-    let tuple_items = RuninatorType::from_json_schema_checked(&json!({
+    let tuple_items = RuninatorType::from_json_schema_checked(&crate::json!({
         "type": "array",
         "items": [{ "type": "string" }]
     }))
     .unwrap_err();
     assert!(tuple_items.contains("$.items tuple arrays are not supported"));
 
-    let pattern_properties = RuninatorType::from_json_schema_checked(&json!({
+    let pattern_properties = RuninatorType::from_json_schema_checked(&crate::json!({
         "type": "object",
         "patternProperties": {
             "^x-": { "type": "string" }
@@ -316,7 +381,7 @@ fn runinator_type_checked_json_schema_rejects_unsupported_edges() {
     .unwrap_err();
     assert!(pattern_properties.contains("$.patternProperties is not supported"));
 
-    RuninatorType::from_json_schema_checked(&json!({
+    RuninatorType::from_json_schema_checked(&crate::json!({
         "oneOf": [{ "type": "string" }, { "type": "null" }]
     }))
     .expect("supported oneOf schemas pass checked conversion");
@@ -367,7 +432,7 @@ fn runinator_type_validates_recursive_values() {
         RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Integer]),
     );
 
-    ty.validate_value(&json!({
+    ty.validate_value(&crate::json!({
         "name": "build",
         "env": { "RUST_LOG": "info" },
         "attempt": 1
@@ -375,7 +440,7 @@ fn runinator_type_validates_recursive_values() {
     .expect("valid recursive value passes");
 
     let err = ty
-        .validate_value(&json!({
+        .validate_value(&crate::json!({
             "name": "build",
             "env": { "RUST_LOG": 1 }
         }))
@@ -385,7 +450,7 @@ fn runinator_type_validates_recursive_values() {
     assert_eq!(err.actual, "integer");
 
     let missing = ty
-        .validate_value(&json!({ "env": {} }))
+        .validate_value(&crate::json!({ "env": {} }))
         .expect_err("required fields are checked");
     assert_eq!(missing.path, "$.name");
     assert_eq!(missing.actual, "missing");
@@ -397,7 +462,7 @@ fn runinator_type_rejects_closed_struct_additional_fields() {
         RuninatorType::typed_structure([("name", RuninatorField::required(RuninatorType::String))]);
 
     let err = ty
-        .validate_value(&json!({ "name": "build", "extra": true }))
+        .validate_value(&crate::json!({ "name": "build", "extra": true }))
         .expect_err("closed struct rejects additional fields");
     assert_eq!(err.path, "$.extra");
     assert_eq!(err.actual, "unexpected");
@@ -517,7 +582,7 @@ fn runinator_type_reports_specific_union_validation_errors() {
     ]);
 
     let err = ty
-        .validate_value(&json!({ "name": 1 }))
+        .validate_value(&crate::json!({ "name": 1 }))
         .expect_err("union reports nested variant error");
     assert_eq!(err.path, "$.name");
     assert_eq!(err.expected, "string");

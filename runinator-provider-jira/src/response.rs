@@ -1,8 +1,8 @@
+use runinator_models::json;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::TaskExecutionResult,
 };
-use serde_json::json;
 
 pub(crate) fn json_response(
     provider: &str,

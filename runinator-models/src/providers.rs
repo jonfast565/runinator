@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 pub use crate::types::RuninatorType;
+use crate::value::{Map, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProviderMetadata {
@@ -52,27 +52,24 @@ impl ActionMetadata {
         self
     }
 
-    pub fn to_json_schema(&self) -> serde_json::Value {
-        let mut properties = serde_json::Map::new();
+    pub fn to_json_schema(&self) -> Value {
+        let mut properties = Map::new();
         let mut required = Vec::new();
         for param in &self.parameters {
             let mut prop = param.ty.to_json_schema();
-            if let Some(desc) = &param.description {
-                if let serde_json::Value::Object(object) = &mut prop {
-                    object.insert(
-                        "description".into(),
-                        serde_json::Value::String(desc.clone()),
-                    );
-                }
+            if let Some(desc) = &param.description
+                && let Value::Object(object) = &mut prop
+            {
+                object.insert("description".into(), Value::String(desc.clone()));
             }
             properties.insert(param.name.clone(), prop);
             if param.required {
-                required.push(serde_json::Value::String(param.name.clone()));
+                required.push(Value::String(param.name.clone()));
             }
         }
-        serde_json::json!({
+        crate::json!({
             "type": "object",
-            "properties": serde_json::Value::Object(properties),
+            "properties": Value::Object(properties),
             "required": required,
         })
     }
@@ -125,8 +122,8 @@ impl ParameterMetadata {
         self
     }
 
-    pub fn with_default(mut self, default_value: Value) -> Self {
-        self.default_value = Some(default_value);
+    pub fn with_default(mut self, default_value: impl Into<Value>) -> Self {
+        self.default_value = Some(default_value.into());
         self
     }
 }
@@ -234,5 +231,5 @@ where
             }
         });
     }
-    serde_json::from_value(value).map_err(serde::de::Error::custom)
+    serde_json::from_value(value.into()).map_err(serde::de::Error::custom)
 }

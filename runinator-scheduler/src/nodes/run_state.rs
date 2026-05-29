@@ -10,13 +10,13 @@
 // `append_completed_map_item`) stay as functions here since they read run history, not the blob.
 
 use runinator_comm::{WireCodec, WireError};
+use runinator_models::value::Value;
 use runinator_models::workflow_state::{
     ControlFrame, DebugFrame, LoopFrame, MapFrame, ParallelFrame, RaceFrame, TryFrame,
     WorkflowRunState,
 };
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
 use runinator_workflows::BranchPolicy;
-use serde_json::Value;
 
 use crate::context::latest_node_run;
 

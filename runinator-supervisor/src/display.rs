@@ -116,10 +116,10 @@ fn render_log_tails(snapshot: &StateSnapshot, process_filter: Option<&str>, line
 
     let mut matched = false;
     for process in &snapshot.processes {
-        if let Some(filter) = process_filter {
-            if process.name != filter {
-                continue;
-            }
+        if let Some(filter) = process_filter
+            && process.name != filter
+        {
+            continue;
         }
         matched = true;
         println!(

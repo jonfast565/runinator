@@ -8,8 +8,9 @@ use std::{
     time::Duration,
 };
 
+use runinator_models::json;
 use runinator_models::runs::ProviderExecutionRequest;
-use serde_json::{Value, json};
+use runinator_models::value::Value;
 
 use crate::send::send_notification;
 

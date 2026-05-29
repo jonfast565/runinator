@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{Map, Value};
 use std::fmt;
+
+use crate::value::{Map, Value};
 
 use crate::types::RuninatorType;
 
@@ -28,7 +29,8 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    serde_json::from_value(value.clone()).or_else(|_| Ok(RuninatorType::from_json_schema(&value)))
+    serde_json::from_value(value.clone().into())
+        .or_else(|_| Ok(RuninatorType::from_json_schema(&value)))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -224,7 +226,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             #[serde(default)]
             pub tags: Vec<String>,
             #[serde(flatten)]
-            pub extra: Map<String, Value>,
+            pub extra: Map,
         }
 
         let raw = RawWorkflowAction::deserialize(deserializer)?;
@@ -245,7 +247,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
     }
 }
 
-fn merge_action_configuration(configuration: Value, extra: Map<String, Value>) -> Value {
+fn merge_action_configuration(configuration: Value, extra: Map) -> Value {
     if extra.is_empty() {
         return configuration;
     }
@@ -385,17 +387,12 @@ pub struct WorkflowReentry {
     pub on_exhausted: Option<WorkflowNodeRef>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowSubflowType {
+    #[default]
     Wait,
     FireAndForget,
-}
-
-impl Default for WorkflowSubflowType {
-    fn default() -> Self {
-        Self::Wait
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -34,7 +34,7 @@ pub(crate) async fn get_credential(
                     entries
                         .into_iter()
                         .map(|entry| {
-                            serde_json::json!({
+                            runinator_models::json!({
                                 "scope": entry.scope,
                                 "name": entry.name,
                             })
@@ -53,7 +53,7 @@ pub(crate) async fn get_credential(
     match store.get(&scope, &name) {
         Ok(Some(secret)) => (
             StatusCode::OK,
-            Json(ApiResponse::JsonValue(serde_json::json!({
+            Json(ApiResponse::JsonValue(runinator_models::json!({
                 "scope": scope,
                 "name": name,
                 "secret": String::from_utf8_lossy(&secret)
@@ -70,7 +70,7 @@ pub(crate) async fn put_credential(
     match credential_store().put(&request.scope, &request.name, request.secret.as_bytes()) {
         Ok(()) => (
             StatusCode::OK,
-            Json(ApiResponse::JsonValue(serde_json::json!({
+            Json(ApiResponse::JsonValue(runinator_models::json!({
                 "scope": request.scope,
                 "name": request.name,
                 "stored": true

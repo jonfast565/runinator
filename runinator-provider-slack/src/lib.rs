@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use runinator_models::json;
+use runinator_models::value::{Map, Value};
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -11,7 +13,6 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
 
 #[derive(Deserialize)]
 struct SendMessageParams {
@@ -102,7 +103,7 @@ impl Provider for SlackProvider {
 fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|err| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|err| {
         Box::new(RuntimeError::new(
             "slack.invalid_params".into(),
             err.to_string(),
@@ -135,7 +136,7 @@ fn build_send_message_payload(params: SendMessageParams) -> Result<Value, Sendab
 }
 
 fn insert_array_param(
-    payload: &mut Map<String, Value>,
+    payload: &mut Map,
     name: &str,
     value: Option<Value>,
 ) -> Result<(), SendableError> {

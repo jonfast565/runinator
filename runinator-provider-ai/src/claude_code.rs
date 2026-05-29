@@ -4,13 +4,14 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
-use serde_json::{Value, json};
 
 use crate::params::{ClaudeCodeParams, parse_params};
 

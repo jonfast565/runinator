@@ -1,24 +1,26 @@
 use chrono::{DateTime, Utc};
 use runinator_broker::{Broker, ControlCommand};
-use runinator_comm::{ControlKind, WorkflowResultEvent};
+use runinator_comm::{ControlKind, DebugVerb, WorkflowResultEvent};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::value::Value;
 use runinator_models::{
+    debug::{DEBUG_RERUN, DEBUG_SKIPPED, DEBUG_SUPERSEDED},
     errors::{RuntimeError, SendableError},
     runs::{NewRunArtifact, NewRunChunk},
     web::TaskResponse,
+    workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
-use serde_json::Value;
 
 use crate::handlers::providers::provider_metadata_from_items;
 pub use crate::repository_runs::{
     add_run_artifact, append_run_chunk, fetch_all_artifacts, fetch_run_artifacts, fetch_run_chunks,
     fetch_runs_by_status, persist_artifact_file, update_run_status,
 };
-use crate::repository_state::{ensure_control_object, ensure_debug_object, latest_node_run_for};
+use crate::repository_state::latest_node_run_for;
 
 #[cfg(test)]
 pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
@@ -63,20 +65,21 @@ async fn validate_workflow_subflows<T: DatabaseImpl>(
     let definition = workflow.definition.get("nodes").and_then(Value::as_array);
     if let Some(nodes) = definition {
         for node in nodes {
-            if let Some("subflow") = node.get("kind").and_then(Value::as_str) {
-                if let Some(subflow_id) = node.get("subflow_id").and_then(Value::as_i64) {
-                    if subflow_id > 0 {
-                        match db.fetch_workflow(subflow_id).await {
-                            Ok(Some(_)) => {} // workflow exists, validation passes
-                            _ => {
-                                let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
-                                let err = RuntimeError::new(
-                                    "workflow.subflow.invalid_id".into(),
-                                    format!("Node '{node_id}' references non-existent workflow with id {subflow_id}"),
-                                );
-                                return Err(Box::new(err));
-                            }
-                        }
+            if let Some("subflow") = node.get("kind").and_then(Value::as_str)
+                && let Some(subflow_id) = node.get("subflow_id").and_then(Value::as_i64)
+                && subflow_id > 0
+            {
+                match db.fetch_workflow(subflow_id).await {
+                    Ok(Some(_)) => {} // workflow exists, validation passes
+                    _ => {
+                        let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
+                        let err = RuntimeError::new(
+                            "workflow.subflow.invalid_id".into(),
+                            format!(
+                                "Node '{node_id}' references non-existent workflow with id {subflow_id}"
+                            ),
+                        );
+                        return Err(Box::new(err));
                     }
                 }
             }
@@ -146,17 +149,16 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
         // an id-less workflow is a pack import: overwrite an existing workflow only when
         // the incoming copy carries a strictly newer updated_at, so we do not clobber a
         // workflow the user has since modified.
-        if workflow.id.is_none() {
-            if let Some(existing) = db.fetch_workflow_by_name(workflow.name.clone()).await? {
-                if !incoming_is_newer(workflow.updated_at, existing.updated_at) {
-                    log::info!(
-                        "Skipping import of workflow '{}': stored copy is up to date",
-                        workflow.name
-                    );
-                    workflows.push(existing);
-                    continue;
-                }
-            }
+        if workflow.id.is_none()
+            && let Some(existing) = db.fetch_workflow_by_name(workflow.name.clone()).await?
+            && !incoming_is_newer(workflow.updated_at, existing.updated_at)
+        {
+            log::info!(
+                "Skipping import of workflow '{}': stored copy is up to date",
+                workflow.name
+            );
+            workflows.push(existing);
+            continue;
         }
         workflows.push(upsert_workflow(db, &workflow).await?);
     }
@@ -282,7 +284,7 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
     let workflow_snapshot = fetch_workflow_snapshot(db, trigger.workflow_id).await?;
     let mut state = trigger_state(&trigger);
     if debug {
-        let debug_state = serde_json::json!({
+        let debug_state = runinator_models::json!({
             "enabled": true,
             "paused": false,
             "step_requested": false
@@ -314,7 +316,7 @@ async fn fetch_workflow_snapshot<T: DatabaseImpl>(
 }
 
 fn trigger_state(trigger: &WorkflowTrigger) -> Value {
-    serde_json::json!({
+    runinator_models::json!({
         "control": { "pause_requested": false },
         "trigger": {
             "id": trigger.id,
@@ -333,7 +335,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
 ) -> Result<WorkflowRun, SendableError> {
     let workflow_snapshot = fetch_workflow_snapshot(db, workflow_id).await?;
     let state = if debug {
-        serde_json::json!({
+        runinator_models::json!({
             "control": { "pause_requested": false },
             "debug": {
                 "enabled": true,
@@ -345,7 +347,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
             }
         })
     } else {
-        serde_json::json!({ "control": { "pause_requested": false } })
+        runinator_models::json!({ "control": { "pause_requested": false } })
     };
     let trimmed = normalized_run_name(name);
     db.create_workflow_run(workflow_id, workflow_snapshot, parameters, state, trimmed)
@@ -453,46 +455,69 @@ fn normalized_run_name(name: Option<String>) -> Option<String> {
     })
 }
 
+/// dispatch a single canonical [`DebugVerb`] against a run. every debug operation funnels through
+/// here so the per-verb behavior lives in exactly one place.
+pub async fn apply_debug_command<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    verb: DebugVerb,
+) -> Result<TaskResponse, SendableError> {
+    match verb {
+        DebugVerb::Step => step_debug_workflow_run(db, workflow_run_id).await,
+        DebugVerb::Continue => continue_debug_workflow_run(db, workflow_run_id).await,
+        DebugVerb::RunToCursor { cursor } => {
+            run_to_cursor_workflow_run(db, workflow_run_id, cursor).await
+        }
+        DebugVerb::Skip { output, message } => {
+            skip_debug_workflow_node(db, workflow_run_id, output, message).await
+        }
+        DebugVerb::Rerun { parameters } => {
+            rerun_debug_workflow_node(db, workflow_run_id, parameters).await
+        }
+        DebugVerb::SetBreakpoints { breakpoints } => {
+            set_debug_breakpoints(db, workflow_run_id, breakpoints).await
+        }
+        DebugVerb::SetMode { mode } => set_debug_mode(db, workflow_run_id, mode).await,
+    }
+}
+
+/// load the typed run state, apply `mutate` to the debug frame (always marking it enabled), and
+/// persist with the given status/message. the single typed write path for debug bookkeeping.
+async fn persist_debug_frame<T: DatabaseImpl>(
+    db: &T,
+    run: &WorkflowRun,
+    status: WorkflowStatus,
+    message: Option<String>,
+    mutate: impl FnOnce(&mut DebugFrame),
+) -> Result<(), SendableError> {
+    let mut run_state = WorkflowRunState::from_state(&run.state);
+    let frame = run_state.debug.get_or_insert_with(DebugFrame::default);
+    frame.config.enabled = true;
+    mutate(frame);
+    db.update_workflow_run_status(
+        run.id,
+        status,
+        run.active_node_id.clone(),
+        Some(run_state.to_state()),
+        message,
+    )
+    .await
+}
+
 pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: i64,
 ) -> Result<TaskResponse, SendableError> {
-    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
-    };
-    if run.status.is_terminal() {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.terminal".into(),
-            format!("Workflow run {workflow_run_id} is terminal"),
-        )));
-    }
-    if !run
-        .state
-        .pointer("/debug/enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.disabled".into(),
-            format!("Workflow run {workflow_run_id} is not a debug run"),
-        )));
-    }
-
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-    debug.insert("enabled".into(), Value::Bool(true));
-    debug.insert("paused".into(), Value::Bool(false));
-    debug.insert("step_requested".into(), Value::Bool(true));
-
-    db.update_workflow_run_status(
-        workflow_run_id,
+    let run = require_debug_run(db, workflow_run_id).await?;
+    persist_debug_frame(
+        db,
+        &run,
         WorkflowStatus::Running,
-        run.active_node_id,
-        Some(state),
         Some("Debug step requested".into()),
+        |frame| {
+            frame.runtime.paused = false;
+            frame.runtime.step_requested = true;
+        },
     )
     .await?;
     Ok(TaskResponse {
@@ -506,23 +531,54 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     workflow_run_id: i64,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-    debug.insert("enabled".into(), Value::Bool(true));
-    debug.insert("paused".into(), Value::Bool(false));
-    debug.insert("step_requested".into(), Value::Bool(false));
-
-    db.update_workflow_run_status(
-        workflow_run_id,
+    persist_debug_frame(
+        db,
+        &run,
         WorkflowStatus::Running,
-        run.active_node_id,
-        Some(state),
         Some("Debug continue requested".into()),
+        |frame| {
+            frame.runtime.paused = false;
+            frame.runtime.step_requested = false;
+        },
     )
     .await?;
     Ok(TaskResponse {
         success: true,
         message: "Debug continue requested".into(),
+    })
+}
+
+pub async fn set_debug_breakpoints<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    breakpoints: Vec<String>,
+) -> Result<TaskResponse, SendableError> {
+    let run = require_debug_run(db, workflow_run_id).await?;
+    let status = run.status;
+    persist_debug_frame(db, &run, status, None, |frame| {
+        frame.config.breakpoints = breakpoints;
+    })
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Breakpoints updated".into(),
+    })
+}
+
+pub async fn set_debug_mode<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    mode: DebugMode,
+) -> Result<TaskResponse, SendableError> {
+    let run = require_debug_run(db, workflow_run_id).await?;
+    let status = run.status;
+    persist_debug_frame(db, &run, status, None, |frame| {
+        frame.config.mode = Some(mode);
+    })
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Debug mode updated".into(),
     })
 }
 
@@ -532,63 +588,60 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
     patch: Value,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-
-    let patch_obj = match patch.as_object() {
-        Some(obj) => obj,
-        None => {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.debug.invalid_patch".into(),
-                "Debug patch must be a JSON object".into(),
-            )));
-        }
+    let invalid = |detail: &str| -> SendableError {
+        Box::new(RuntimeError::new(
+            "workflow.debug.invalid_patch".into(),
+            detail.into(),
+        ))
     };
-    if let Some(bps) = patch_obj.get("breakpoints") {
-        if !bps.is_array() {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.debug.invalid_patch".into(),
-                "breakpoints must be an array of node ids".into(),
-            )));
-        }
-        debug.insert("breakpoints".into(), bps.clone());
-    }
-    if let Some(m) = patch_obj.get("mode") {
-        let mode = m.as_str().ok_or_else(|| -> SendableError {
-            Box::new(RuntimeError::new(
-                "workflow.debug.invalid_patch".into(),
-                "mode must be a string".into(),
-            ))
-        })?;
-        if mode != "step_all" && mode != "breakpoints" {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.debug.invalid_patch".into(),
-                format!("mode must be 'step_all' or 'breakpoints', got {mode}"),
-            )));
-        }
-        debug.insert("mode".into(), Value::String(mode.to_string()));
-    }
-    if let Some(osb) = patch_obj.get("one_shot_breakpoint") {
-        if osb.is_null() {
-            debug.insert("one_shot_breakpoint".into(), Value::Null);
-        } else {
-            let id = osb.as_str().ok_or_else(|| -> SendableError {
-                Box::new(RuntimeError::new(
-                    "workflow.debug.invalid_patch".into(),
-                    "one_shot_breakpoint must be a node id string or null".into(),
-                ))
-            })?;
-            debug.insert("one_shot_breakpoint".into(), Value::String(id.to_string()));
-        }
-    }
+    let patch_obj = patch
+        .as_object()
+        .ok_or_else(|| invalid("Debug patch must be a JSON object"))?;
 
-    db.update_workflow_run_status(
-        workflow_run_id,
-        run.status,
-        run.active_node_id,
-        Some(state),
-        None,
-    )
+    // validate the whole patch before touching state.
+    let breakpoints = match patch_obj.get("breakpoints") {
+        Some(bps) => Some(
+            bps.as_array()
+                .ok_or_else(|| invalid("breakpoints must be an array of node ids"))?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| invalid("breakpoints must be an array of node ids"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        None => None,
+    };
+    let mode = match patch_obj.get("mode") {
+        Some(m) => Some(
+            serde_json::from_value::<DebugMode>(m.clone().into())
+                .map_err(|_| invalid("mode must be 'step_all' or 'breakpoints'"))?,
+        ),
+        None => None,
+    };
+    let one_shot = match patch_obj.get("one_shot_breakpoint") {
+        Some(Value::Null) => Some(None),
+        Some(osb) => Some(Some(
+            osb.as_str()
+                .ok_or_else(|| invalid("one_shot_breakpoint must be a node id string or null"))?
+                .to_string(),
+        )),
+        None => None,
+    };
+
+    let status = run.status;
+    persist_debug_frame(db, &run, status, None, |frame| {
+        if let Some(breakpoints) = breakpoints {
+            frame.config.breakpoints = breakpoints;
+        }
+        if let Some(mode) = mode {
+            frame.config.mode = Some(mode);
+        }
+        if let Some(one_shot) = one_shot {
+            frame.runtime.one_shot_breakpoint = one_shot;
+        }
+    })
     .await?;
     Ok(TaskResponse {
         success: true,
@@ -621,9 +674,11 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut state = run.state.clone();
-    let control = ensure_control_object(&mut state);
-    control.insert("pause_requested".into(), Value::Bool(true));
+    let mut run_state = WorkflowRunState::from_state(&run.state);
+    run_state
+        .control
+        .get_or_insert_with(ControlFrame::default)
+        .pause_requested = true;
 
     let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
     let has_running_node = run
@@ -631,10 +686,10 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
         .as_deref()
         .and_then(|node_id| latest_node_run_for(&node_runs, node_id))
         .is_some_and(|node_run| node_run.status == WorkflowStatus::Running);
-    let debug_enabled = run
-        .state
-        .pointer("/debug/enabled")
-        .and_then(Value::as_bool)
+    let debug_enabled = run_state
+        .debug
+        .as_ref()
+        .map(|debug| debug.config.enabled)
         .unwrap_or(false);
     let status = if has_running_node || debug_enabled {
         run.status
@@ -646,7 +701,7 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
         workflow_run_id,
         status,
         run.active_node_id,
-        Some(state),
+        Some(run_state.to_state()),
         Some("Workflow pause requested".into()),
     )
     .await?;
@@ -681,9 +736,11 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut state = run.state.clone();
-    let control = ensure_control_object(&mut state);
-    control.insert("pause_requested".into(), Value::Bool(false));
+    let mut run_state = WorkflowRunState::from_state(&run.state);
+    run_state
+        .control
+        .get_or_insert_with(ControlFrame::default)
+        .pause_requested = false;
     let status = if matches!(
         run.status,
         WorkflowStatus::Paused | WorkflowStatus::DebugPaused
@@ -693,16 +750,16 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
         run.status
     };
     if run.status == WorkflowStatus::DebugPaused {
-        let debug = ensure_debug_object(&mut state);
-        debug.insert("paused".into(), Value::Bool(false));
-        debug.insert("step_requested".into(), Value::Bool(false));
+        let debug = run_state.debug.get_or_insert_with(DebugFrame::default);
+        debug.runtime.paused = false;
+        debug.runtime.step_requested = false;
     }
 
     db.update_workflow_run_status(
         workflow_run_id,
         status,
         run.active_node_id,
-        Some(state),
+        Some(run_state.to_state()),
         Some("Workflow resume requested".into()),
     )
     .await?;
@@ -740,23 +797,21 @@ async fn cancel_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut state = run.state.clone();
-    if state.is_object() {
-        // clear paused / step_requested so any in-flight scheduler tick sees the cancel.
-        if let Some(obj) = state.as_object_mut() {
-            if let Some(debug) = obj.get_mut("debug").and_then(Value::as_object_mut) {
-                debug.insert("paused".into(), Value::Bool(false));
-                debug.insert("step_requested".into(), Value::Bool(false));
-            }
-        }
+    let mut run_state = WorkflowRunState::from_state(&run.state);
+    // clear paused / step_requested so any in-flight scheduler tick sees the cancel.
+    if let Some(debug) = run_state.debug.as_mut() {
+        debug.runtime.paused = false;
+        debug.runtime.step_requested = false;
     }
-    let control = ensure_control_object(&mut state);
-    control.insert("pause_requested".into(), Value::Bool(false));
+    run_state
+        .control
+        .get_or_insert_with(ControlFrame::default)
+        .pause_requested = false;
     db.update_workflow_run_status(
         workflow_run_id,
         WorkflowStatus::Canceled,
         run.active_node_id,
-        Some(state),
+        Some(run_state.to_state()),
         Some("Workflow run canceled".into()),
     )
     .await?;
@@ -787,19 +842,16 @@ pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     node_id: String,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-    debug.insert("enabled".into(), Value::Bool(true));
-    debug.insert("paused".into(), Value::Bool(false));
-    debug.insert("step_requested".into(), Value::Bool(false));
-    debug.insert("one_shot_breakpoint".into(), Value::String(node_id.clone()));
-
-    db.update_workflow_run_status(
-        workflow_run_id,
+    persist_debug_frame(
+        db,
+        &run,
         WorkflowStatus::Running,
-        run.active_node_id,
-        Some(state),
         Some(format!("Run to cursor at {}", node_id)),
+        |frame| {
+            frame.runtime.paused = false;
+            frame.runtime.step_requested = false;
+            frame.runtime.one_shot_breakpoint = Some(node_id.clone());
+        },
     )
     .await?;
     Ok(TaskResponse {
@@ -841,23 +893,20 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
         None,
         Some(output_json),
         None,
-        Some("debug_skipped".into()),
+        Some(DEBUG_SKIPPED.into()),
         Some(skip_message),
     )
     .await?;
 
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-    debug.insert("enabled".into(), Value::Bool(true));
-    debug.insert("paused".into(), Value::Bool(false));
-    debug.insert("step_requested".into(), Value::Bool(true));
-
-    db.update_workflow_run_status(
-        workflow_run_id,
+    persist_debug_frame(
+        db,
+        &run,
         WorkflowStatus::Running,
-        run.active_node_id,
-        Some(state),
         Some(format!("Skipped node {}", active_node_id)),
+        |frame| {
+            frame.runtime.paused = false;
+            frame.runtime.step_requested = true;
+        },
     )
     .await?;
     Ok(TaskResponse {
@@ -892,7 +941,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
             None,
             None,
             None,
-            Some("debug_superseded".into()),
+            Some(DEBUG_SUPERSEDED.into()),
             Some("Superseded by debug re-run".into()),
         )
         .await?;
@@ -907,23 +956,20 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
         None,
         None,
         None,
-        Some("debug_rerun".into()),
+        Some(DEBUG_RERUN.into()),
         None,
     )
     .await?;
 
-    let mut state = run.state;
-    let debug = ensure_debug_object(&mut state);
-    debug.insert("enabled".into(), Value::Bool(true));
-    debug.insert("paused".into(), Value::Bool(false));
-    debug.insert("step_requested".into(), Value::Bool(true));
-
-    db.update_workflow_run_status(
-        workflow_run_id,
+    persist_debug_frame(
+        db,
+        &run,
         WorkflowStatus::Running,
-        run.active_node_id,
-        Some(state),
         Some(format!("Re-running node {}", active_node_id)),
+        |frame| {
+            frame.runtime.paused = false;
+            frame.runtime.step_requested = true;
+        },
     )
     .await?;
     Ok(TaskResponse {
@@ -948,7 +994,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         None => fetch_workflow_snapshot(db, source.workflow_id).await?,
     };
 
-    let mut state = serde_json::json!({
+    let mut state = runinator_models::json!({
         "control": { "pause_requested": false },
         "debug": {
             "enabled": true,
@@ -964,7 +1010,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     // phase d: support resuming from a specific step.
     if let Some(target_node_id) = from_step_id.as_deref() {
         let ancestor_ids = ancestors_in_snapshot(&snapshot, target_node_id)?;
-        state["replay"]["from_step_id"] = serde_json::Value::String(target_node_id.into());
+        state["replay"]["from_step_id"] = Value::String(target_node_id.into());
         let new_run = db
             .create_workflow_run(
                 source.workflow_id,
@@ -1052,12 +1098,14 @@ pub fn ancestors_in_snapshot(
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
     let nodes: Vec<WorkflowNode> = match snapshot.definition.get("nodes") {
-        Some(value) => serde_json::from_value(value.clone()).map_err(|err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "workflow.replay.snapshot_invalid".into(),
-                format!("Failed to parse workflow nodes: {err}"),
-            ))
-        })?,
+        Some(value) => {
+            serde_json::from_value(value.clone().into()).map_err(|err| -> SendableError {
+                Box::new(RuntimeError::new(
+                    "workflow.replay.snapshot_invalid".into(),
+                    format!("Failed to parse workflow nodes: {err}"),
+                ))
+            })?
+        }
         None => Vec::new(),
     };
 
@@ -1094,23 +1142,23 @@ pub fn ancestors_in_snapshot(
         if !visited.insert(node_id.clone()) {
             continue;
         }
-        if let Some(node) = by_id.get(node_id.as_str()) {
-            if matches!(
+        if let Some(node) = by_id.get(node_id.as_str())
+            && matches!(
                 node.kind,
                 WorkflowNodeKind::Loop
                     | WorkflowNodeKind::Map
                     | WorkflowNodeKind::Parallel
                     | WorkflowNodeKind::Try
                     | WorkflowNodeKind::Race
-            ) {
-                return Err(Box::new(RuntimeError::new(
-                    "workflow.replay.control_flow".into(),
-                    format!(
-                        "Cannot restart from step {target_node_id}: ancestor {node_id} is a control-flow node ({:?}) whose state is not safely replayable.",
-                        node.kind
-                    ),
-                )));
-            }
+            )
+        {
+            return Err(Box::new(RuntimeError::new(
+                "workflow.replay.control_flow".into(),
+                format!(
+                    "Cannot restart from step {target_node_id}: ancestor {node_id} is a control-flow node ({:?}) whose state is not safely replayable.",
+                    node.kind
+                ),
+            )));
         }
         if let Some(parents) = reverse.get(&node_id) {
             for parent in parents {
@@ -1146,7 +1194,7 @@ pub fn ancestors_in_snapshot(
 }
 
 fn transition_targets(node: &runinator_models::workflows::WorkflowNode) -> Vec<String> {
-    use serde_json::Value;
+    use runinator_models::value::Value;
     let mut targets = Vec::new();
     fn walk(value: &Value, into: &mut Vec<String>) {
         match value {
@@ -1167,7 +1215,9 @@ fn transition_targets(node: &runinator_models::workflows::WorkflowNode) -> Vec<S
             _ => {}
         }
     }
-    let transitions_value = serde_json::to_value(&node.transitions).unwrap_or(Value::Null);
+    let transitions_value = serde_json::to_value(&node.transitions)
+        .map(Value::from)
+        .unwrap_or(Value::Null);
     walk(&transitions_value, &mut targets);
     walk(&node.condition, &mut targets);
     walk(&node.parameters, &mut targets);
@@ -1275,6 +1325,7 @@ pub async fn create_workflow_node_run<T: DatabaseImpl>(
         .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_workflow_node_run<T: DatabaseImpl>(
     db: &T,
     node_run_id: i64,
@@ -1415,12 +1466,12 @@ pub async fn resolve_approval<T: DatabaseImpl>(
                 None,
                 None,
                 Some(output_json.unwrap_or_else(|| {
-                    serde_json::json!({
+                    runinator_models::json!({
                         "approval_id": approval_id,
                         "approved": approved
                     })
                 })),
-                Some(serde_json::json!({
+                Some(runinator_models::json!({
                     "approval_id": approval_id,
                     "approved": approved
                 })),

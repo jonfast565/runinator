@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::ProviderExecutionRequest,
 };
 use serde::{Deserialize, de::DeserializeOwned};
-use serde_json::Value;
 
 #[derive(Deserialize)]
 pub(crate) struct AiCommandParams {
@@ -49,7 +49,7 @@ pub(crate) fn default_output_format() -> String {
 pub(crate) fn parse_params<T: DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone()).map_err(|e| {
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
         Box::new(RuntimeError::new(
             "ai_command.invalid_params".into(),
             e.to_string(),

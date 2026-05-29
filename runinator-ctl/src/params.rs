@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use serde_json::{Map, Value};
+use runinator_models::value::{Map, Value};
 
 use crate::commands::{Result, err};
 

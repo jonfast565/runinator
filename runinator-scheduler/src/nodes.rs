@@ -109,6 +109,12 @@ pub async fn process_skipped_node(
     Ok(())
 }
 
+#[cfg(test)]
+pub use shims::*;
+
+#[cfg(test)]
+pub(crate) use handlers::workflow_task_idempotency_key;
+
 // thin shims that run a single handler against a context, used by unit tests that exercise nodes
 // directly without the scheduler loop. they do not fire lifecycle hooks.
 #[cfg(test)]
@@ -201,9 +207,3 @@ mod shims {
         run_handler!(SubflowHandler, api, run, node, latest, node_runs)
     }
 }
-
-#[cfg(test)]
-pub use shims::*;
-
-#[cfg(test)]
-pub(crate) use handlers::workflow_task_idempotency_key;

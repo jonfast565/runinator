@@ -1,5 +1,6 @@
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{errors::SendableError, runs::TaskExecutionResult};
-use serde_json::{Value, json};
 
 use crate::params::JiraSearchParams;
 use crate::response::json_response;
@@ -16,10 +17,8 @@ pub(crate) fn jira_search_all(
     let mut next_token: Option<String> = None;
 
     loop {
-        let mut query: Vec<(&str, String)> = vec![
-            ("jql", p.jql.clone()),
-            ("fields", "*all".to_string()),
-        ];
+        let mut query: Vec<(&str, String)> =
+            vec![("jql", p.jql.clone()), ("fields", "*all".to_string())];
         if let Some(token) = next_token.as_ref() {
             query.push(("nextPageToken", token.clone()));
         }
@@ -37,10 +36,7 @@ pub(crate) fn jira_search_all(
             issues.extend(arr.iter().cloned());
         }
 
-        let is_last = page
-            .get("isLast")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let is_last = page.get("isLast").and_then(Value::as_bool).unwrap_or(false);
         next_token = page
             .get("nextPageToken")
             .and_then(Value::as_str)

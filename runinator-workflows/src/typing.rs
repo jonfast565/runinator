@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use runinator_models::value::Value;
 use runinator_models::{
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
     types::{RuninatorType, TypeViolation},
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind},
 };
-use serde_json::Value;
 
 use crate::{
     conditions::validate_condition,
@@ -45,12 +45,12 @@ pub fn validate_workflow_types(
         }
     }
     for node in nodes {
-        if matches!(node.kind, WorkflowNodeKind::Loop | WorkflowNodeKind::Map) {
-            if let Some(output_type) = collection_node_output_type(node, &context)? {
-                context
-                    .node_outputs
-                    .insert(node.id.as_str().to_string(), output_type);
-            }
+        if matches!(node.kind, WorkflowNodeKind::Loop | WorkflowNodeKind::Map)
+            && let Some(output_type) = collection_node_output_type(node, &context)?
+        {
+            context
+                .node_outputs
+                .insert(node.id.as_str().to_string(), output_type);
         }
     }
 
@@ -74,9 +74,7 @@ fn validate_provider_metadata_set(
     Ok(())
 }
 
-fn provider_actions<'a>(
-    providers: &'a [ProviderMetadata],
-) -> HashMap<(String, String), &'a ActionMetadata> {
+fn provider_actions(providers: &[ProviderMetadata]) -> HashMap<(String, String), &ActionMetadata> {
     providers
         .iter()
         .flat_map(|provider| {

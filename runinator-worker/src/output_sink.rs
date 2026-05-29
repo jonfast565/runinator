@@ -4,12 +4,12 @@ use chrono::Utc;
 use log::error;
 use runinator_broker::{Broker, BrokerError, ResultMessage};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
+use runinator_models::value::Value;
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, ProviderExecutionEvent, TaskExecutionResult},
     workflows::WorkflowStatus,
 };
 use runinator_plugin::provider::ProviderEventSink;
-use serde_json::Value;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 #[derive(Clone)]

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use runinator_models::json;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     providers::{
@@ -10,7 +11,6 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::command::run_command;
 use crate::params::{
@@ -120,7 +120,7 @@ impl Provider for GitProvider {
                 };
                 return Ok(TaskExecutionResult {
                     message: Some(format!("Git action {function} completed")),
-                    output_json: serde_json::to_value(result).ok(),
+                    output_json: serde_json::to_value(result).ok().map(Into::into),
                     chunks: Vec::new(),
                     artifacts: Vec::new(),
                 });
@@ -203,7 +203,7 @@ impl Provider for GitProvider {
         };
         Ok(TaskExecutionResult {
             message: Some(format!("Git action {function} completed")),
-            output_json: serde_json::to_value(result).ok(),
+            output_json: serde_json::to_value(result).ok().map(Into::into),
             chunks: Vec::new(),
             artifacts: Vec::new(),
         })

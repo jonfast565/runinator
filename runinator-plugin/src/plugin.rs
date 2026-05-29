@@ -147,10 +147,10 @@ impl Plugin {
         };
 
         stop.store(true, Ordering::Relaxed);
-        if let Some(poller) = poller {
-            if let Ok(Err(err)) = poller.join() {
-                warn!("Plugin event poller failed: {}", err);
-            }
+        if let Some(poller) = poller
+            && let Ok(Err(err)) = poller.join()
+        {
+            warn!("Plugin event poller failed: {}", err);
         }
 
         if result != 0 {

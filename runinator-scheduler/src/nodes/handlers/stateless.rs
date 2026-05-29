@@ -3,12 +3,12 @@
 
 use async_trait::async_trait;
 use runinator_comm::WireCodec;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     workflow_state::{ConfigSummary, EmitOutput, SwitchOutput},
     workflows::{WorkflowNodeKind, WorkflowStatus},
 };
-use serde_json::Value;
 
 use crate::nodes::context::NodeContext;
 use crate::nodes::driver;

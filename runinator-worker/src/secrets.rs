@@ -2,11 +2,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
+use runinator_models::value::Value;
 
 pub(crate) async fn resolve_secret_refs(
     api_client: &AsyncApiClient<StaticLocator>,
-    parameters: serde_json::Value,
-) -> Result<serde_json::Value, SendableError> {
+    parameters: Value,
+) -> Result<Value, SendableError> {
     let mut refs = BTreeSet::new();
     collect_secret_refs(&parameters, &mut refs);
     if refs.is_empty() {
@@ -25,19 +26,19 @@ pub(crate) async fn resolve_secret_refs(
     Ok(replace_secret_refs(parameters, &secrets))
 }
 
-fn collect_secret_refs(value: &serde_json::Value, refs: &mut BTreeSet<SecretRef>) {
+fn collect_secret_refs(value: &Value, refs: &mut BTreeSet<SecretRef>) {
     match value {
-        serde_json::Value::String(raw) => {
+        Value::String(raw) => {
             if let Some(secret_ref) = parse_secret_ref(raw) {
                 refs.insert(secret_ref);
             }
         }
-        serde_json::Value::Array(values) => {
+        Value::Array(values) => {
             for value in values {
                 collect_secret_refs(value, refs);
             }
         }
-        serde_json::Value::Object(object) => {
+        Value::Object(object) => {
             for value in object.values() {
                 collect_secret_refs(value, refs);
             }
@@ -46,22 +47,19 @@ fn collect_secret_refs(value: &serde_json::Value, refs: &mut BTreeSet<SecretRef>
     }
 }
 
-fn replace_secret_refs(
-    value: serde_json::Value,
-    secrets: &HashMap<SecretRef, String>,
-) -> serde_json::Value {
+fn replace_secret_refs(value: Value, secrets: &HashMap<SecretRef, String>) -> Value {
     match value {
-        serde_json::Value::String(raw) => parse_secret_ref(&raw)
+        Value::String(raw) => parse_secret_ref(&raw)
             .and_then(|secret_ref| secrets.get(&secret_ref).cloned())
-            .map(serde_json::Value::String)
-            .unwrap_or(serde_json::Value::String(raw)),
-        serde_json::Value::Array(values) => serde_json::Value::Array(
+            .map(Value::String)
+            .unwrap_or(Value::String(raw)),
+        Value::Array(values) => Value::Array(
             values
                 .into_iter()
                 .map(|value| replace_secret_refs(value, secrets))
                 .collect(),
         ),
-        serde_json::Value::Object(object) => serde_json::Value::Object(
+        Value::Object(object) => Value::Object(
             object
                 .into_iter()
                 .map(|(key, value)| (key, replace_secret_refs(value, secrets)))

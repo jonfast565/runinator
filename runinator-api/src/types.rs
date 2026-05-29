@@ -1,9 +1,9 @@
+use runinator_models::value::Value;
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunStatus},
     workflows::WorkflowStatus,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunStatusPayload {

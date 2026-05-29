@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
-use serde_json::{Map, Value};
 
 use crate::parameters::parse_node_ref_value;
 
@@ -45,7 +45,7 @@ pub fn normalize_definition(definition: Value) -> Value {
     Value::Object(root)
 }
 
-pub fn normalize_layout(root: &mut Map<String, Value>) {
+pub fn normalize_layout(root: &mut Map) {
     let Some(ui) = root.get_mut("ui").and_then(Value::as_object_mut) else {
         return;
     };
@@ -94,7 +94,7 @@ pub(crate) fn ensure_end_node(nodes: &mut Vec<Value>, ids: &mut HashSet<String>)
         return id;
     }
     let id = unique_node_id("end", ids);
-    nodes.push(serde_json::json!({ "id": id, "kind": "end" }));
+    nodes.push(runinator_models::json!({ "id": id, "kind": "end" }));
     id
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn ensure_fail_node(nodes: &mut Vec<Value>, ids: &mut HashSet<String>
         return id;
     }
     let id = unique_node_id("fail", ids);
-    nodes.push(serde_json::json!({ "id": id, "kind": "fail" }));
+    nodes.push(runinator_models::json!({ "id": id, "kind": "fail" }));
     id
 }
 
@@ -136,7 +136,7 @@ pub(crate) fn ensure_start_node(
     };
     nodes.insert(
         0,
-        serde_json::json!({
+        runinator_models::json!({
             "id": id,
             "kind": "start",
             "transitions": { "next": { "$node": target } }
@@ -169,7 +169,7 @@ pub(crate) fn ensure_next_transition(node: &mut Value, target: &str) {
     };
     transitions
         .entry("next")
-        .or_insert_with(|| serde_json::json!({ "$node": target }));
+        .or_insert_with(|| runinator_models::json!({ "$node": target }));
 }
 
 pub(crate) fn has_success_transition(node: &Value) -> bool {

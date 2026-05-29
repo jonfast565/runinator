@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use serde_json::json;
+use runinator_models::json;
 
 use super::{
     ImporterServiceLocator, WorkflowBundleImporter, build_provider_bundle, build_service_locator,
@@ -187,7 +187,8 @@ fn unwrap_workflow_pack_rejects_missing_document() {
 #[test]
 fn sdlc_pack_unwraps_to_workflow_bundle() {
     let raw = include_str!("../../packs/sdlc/workflow-pack.json");
-    let envelope: serde_json::Value = serde_json::from_str(raw).expect("pack file parses");
+    let envelope: runinator_models::value::Value =
+        serde_json::from_str(raw).expect("pack file parses");
     let bundle = unwrap_workflow_pack(envelope).expect("pack unwraps");
     assert!(
         !bundle.workflows.is_empty(),

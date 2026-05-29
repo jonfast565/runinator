@@ -36,17 +36,17 @@ fn open_log_output() -> std::io::Result<fern::Output> {
 
     for path in desired_log_paths() {
         let path_string = path.display().to_string();
-        if let Some(parent) = path.parent() {
-            if let Err(err) = fs::create_dir_all(parent) {
-                had_failure = true;
-                error!(
-                    "Failed to create log directory at {}: {}",
-                    parent.display(),
-                    err
-                );
-                last_error = Some(err);
-                continue;
-            }
+        if let Some(parent) = path.parent()
+            && let Err(err) = fs::create_dir_all(parent)
+        {
+            had_failure = true;
+            error!(
+                "Failed to create log directory at {}: {}",
+                parent.display(),
+                err
+            );
+            last_error = Some(err);
+            continue;
         }
         match fern::log_file(&path) {
             Ok(output) => {
@@ -63,21 +63,17 @@ fn open_log_output() -> std::io::Result<fern::Output> {
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "unable to open log file at any known location",
-        )
-    }))
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::other("unable to open log file at any known location")))
 }
 
 fn desired_log_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    if let Ok(custom) = env::var("RUNINATOR_LOG_PATH") {
-        if !custom.trim().is_empty() {
-            paths.push(PathBuf::from(custom));
-        }
+    if let Ok(custom) = env::var("RUNINATOR_LOG_PATH")
+        && !custom.trim().is_empty()
+    {
+        paths.push(PathBuf::from(custom));
     }
 
     match app_data::default_log_path() {

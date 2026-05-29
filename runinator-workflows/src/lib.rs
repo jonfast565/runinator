@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde_json::{Map, Value};
+use runinator_models::value::{Map, Value};
 
 mod conditions;
 mod errors;
@@ -33,9 +33,9 @@ pub use validation::{parse_nodes, validate_workflow, validate_workflow_with_prov
 pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> Value {
     let mut steps = Map::new();
     for (node, output) in outputs {
-        steps.insert(node.clone(), serde_json::json!({ "output": output }));
+        steps.insert(node.clone(), runinator_models::json!({ "output": output }));
     }
-    serde_json::json!({
+    runinator_models::json!({
         "input": parameters,
         "steps": steps
     })

@@ -8,17 +8,16 @@ use chrono::{TimeZone, Utc};
 use runinator_broker::Broker;
 use runinator_broker::in_memory::InMemoryBroker;
 use runinator_comm::{ActionCommand, ActionDispatchRecord, ControlKind};
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
-    providers::{
-        ActionMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata, RuninatorType,
-    },
+    providers::{ActionMetadata, ProviderMetadata, ProviderRuntimeMetadata},
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
         WorkflowTrigger,
     },
 };
-use serde_json::json;
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -117,6 +116,7 @@ async fn scheduler_marks_skipped_node_succeeded_without_dispatching() {
     ]));
     let run = workflow_run(json!({}), json!({}), "build");
     let api = MockWorkflowApi::with_workflow_run(workflow, run.clone());
+    api.state.lock().unwrap().providers = console_providers();
     let broker = InMemoryBroker::new();
 
     process_workflow_run(&broker, &api, run).await.unwrap();
@@ -527,7 +527,7 @@ fn reentry_exhaustion_ignores_active_latest_visit() {
     let running = node_run_with_id(1, "implement", WorkflowStatus::Running, None, json!({}));
 
     assert_eq!(
-        crate::workflow::reentry_exhaustion(&node, Some(&running), &[running.clone()]),
+        crate::workflow::reentry_exhaustion(&node, Some(&running), std::slice::from_ref(&running)),
         None
     );
 }
@@ -573,6 +573,7 @@ async fn queued_start_to_action_is_dispatched_in_one_pass() {
     let mut run = workflow_run(json!({}), json!({}), "start");
     run.status = WorkflowStatus::Queued;
     let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    api.state.lock().unwrap().providers = console_providers();
     let broker = InMemoryBroker::new();
     let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
 
@@ -607,6 +608,7 @@ async fn synchronous_nodes_advance_to_action_in_one_pass() {
     let mut run = workflow_run(json!({}), json!({}), "start");
     run.status = WorkflowStatus::Queued;
     let api = MockWorkflowApi::with_workflow_run(workflow, run);
+    api.state.lock().unwrap().providers = console_providers();
     let broker = InMemoryBroker::new();
     let run = api.state.lock().unwrap().workflow_run.clone().unwrap();
 
@@ -976,13 +978,13 @@ async fn legacy_subflow_defaults_to_waiting_child() {
 struct WorkflowRunUpdate {
     status: WorkflowStatus,
     active_node_id: Option<String>,
-    state: serde_json::Value,
+    state: Value,
 }
 
 #[derive(Debug, Clone)]
 struct WorkflowNodeRunUpdate {
     status: WorkflowStatus,
-    output_json: serde_json::Value,
+    output_json: Value,
 }
 
 #[derive(Default)]
@@ -1110,7 +1112,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     async fn create_workflow_run(
         &self,
         workflow_id: i64,
-        parameters: serde_json::Value,
+        parameters: Value,
     ) -> Result<WorkflowRun, SendableError> {
         self.create_named_workflow_run(workflow_id, parameters, String::new())
             .await
@@ -1123,7 +1125,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     async fn create_named_workflow_run(
         &self,
         workflow_id: i64,
-        parameters: serde_json::Value,
+        parameters: Value,
         name: String,
     ) -> Result<WorkflowRun, SendableError> {
         let mut state = self.state.lock().unwrap();
@@ -1229,7 +1231,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         _workflow_run_id: i64,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Option<serde_json::Value>,
+        state: Option<Value>,
         _message: Option<String>,
     ) -> Result<(), SendableError> {
         let mut state_guard = self.state.lock().unwrap();
@@ -1276,7 +1278,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         &self,
         workflow_run_id: i64,
         node_id: &str,
-        parameters: serde_json::Value,
+        parameters: Value,
     ) -> Result<WorkflowNodeRun, SendableError> {
         let mut state = self.state.lock().unwrap();
         state.next_node_run_id += 1;
@@ -1304,9 +1306,9 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         node_run_id: i64,
         status: WorkflowStatus,
         attempt: Option<i64>,
-        parameters: Option<serde_json::Value>,
-        output_json: Option<serde_json::Value>,
-        state: Option<serde_json::Value>,
+        parameters: Option<Value>,
+        output_json: Option<Value>,
+        state: Option<Value>,
         transition_reason: Option<String>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
@@ -1338,7 +1340,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         }
         state_guard.node_updates.push(WorkflowNodeRunUpdate {
             status,
-            output_json: output_json.unwrap_or(serde_json::Value::Null),
+            output_json: output_json.unwrap_or(Value::Null),
         });
         Ok(())
     }
@@ -1346,8 +1348,8 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     async fn create_automation_record(
         &self,
         _path: &str,
-        _record: serde_json::Value,
-    ) -> Result<serde_json::Value, SendableError> {
+        _record: Value,
+    ) -> Result<Value, SendableError> {
         Err(test_error("unexpected automation record creation"))
     }
 
@@ -1355,7 +1357,7 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         &self,
         _scope: &str,
         _key: &str,
-    ) -> Result<Option<serde_json::Value>, SendableError> {
+    ) -> Result<Option<Value>, SendableError> {
         Ok(None)
     }
 
@@ -1363,8 +1365,8 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
         &self,
         _scope: &str,
         _key: &str,
-        result: serde_json::Value,
-    ) -> Result<serde_json::Value, SendableError> {
+        result: Value,
+    ) -> Result<Value, SendableError> {
         Ok(result)
     }
 
@@ -1446,15 +1448,11 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
     }
 }
 
-fn node(value: serde_json::Value) -> WorkflowNode {
-    serde_json::from_value(value).unwrap()
+fn node(value: Value) -> WorkflowNode {
+    serde_json::from_value(value.into()).unwrap()
 }
 
-fn workflow_run(
-    parameters: serde_json::Value,
-    state: serde_json::Value,
-    active: &str,
-) -> WorkflowRun {
+fn workflow_run(parameters: Value, state: Value, active: &str) -> WorkflowRun {
     WorkflowRun {
         id: 10,
         workflow_id: 1,
@@ -1479,7 +1477,7 @@ fn simple_workflow() -> WorkflowDefinition {
     ]))
 }
 
-fn workflow_with_nodes(nodes: serde_json::Value) -> WorkflowDefinition {
+fn workflow_with_nodes(nodes: Value) -> WorkflowDefinition {
     WorkflowDefinition {
         id: Some(1),
         name: "debug".into(),
@@ -1511,7 +1509,15 @@ fn workflow_definition_with_id(id: i64, name: &str) -> WorkflowDefinition {
     }
 }
 
-fn action_node(id: &str) -> serde_json::Value {
+fn console_providers() -> Vec<ProviderMetadata> {
+    vec![ProviderMetadata {
+        name: "console".into(),
+        actions: vec![ActionMetadata::new("run", "run")],
+        metadata: ProviderRuntimeMetadata::default(),
+    }]
+}
+
+fn action_node(id: &str) -> Value {
     json!({
         "id": id,
         "kind": "action",
@@ -1529,11 +1535,7 @@ fn node_run(node_id: &str, status: WorkflowStatus) -> WorkflowNodeRun {
     node_run_with_id(1, node_id, status, None, json!({}))
 }
 
-fn node_run_with_output(
-    node_id: &str,
-    status: WorkflowStatus,
-    output: serde_json::Value,
-) -> WorkflowNodeRun {
+fn node_run_with_output(node_id: &str, status: WorkflowStatus, output: Value) -> WorkflowNodeRun {
     node_run_with_id(1, node_id, status, Some(output), json!({}))
 }
 
@@ -1541,8 +1543,8 @@ fn node_run_with_id(
     id: i64,
     node_id: &str,
     status: WorkflowStatus,
-    output_json: Option<serde_json::Value>,
-    state: serde_json::Value,
+    output_json: Option<Value>,
+    state: Value,
 ) -> WorkflowNodeRun {
     WorkflowNodeRun {
         id,
@@ -1564,7 +1566,7 @@ fn node_run_with_id(
 #[tokio::test]
 async fn wait_node_times_out() {
     let node_id = "wait_node";
-    let workflow = workflow_with_nodes(serde_json::json!([
+    let workflow = workflow_with_nodes(runinator_models::json!([
         { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
         {
             "id": node_id,
@@ -1574,7 +1576,11 @@ async fn wait_node_times_out() {
         },
         { "id": "end", "kind": "end" }
     ]));
-    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    let mut run = workflow_run(
+        runinator_models::json!({}),
+        runinator_models::json!({}),
+        node_id,
+    );
     run.workflow_id = workflow.id.unwrap();
 
     let started_at = Utc::now() - chrono::Duration::seconds(2);
@@ -1593,7 +1599,7 @@ async fn wait_node_times_out() {
 #[tokio::test]
 async fn approval_node_times_out() {
     let node_id = "approval_node";
-    let workflow = workflow_with_nodes(serde_json::json!([
+    let workflow = workflow_with_nodes(runinator_models::json!([
         { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
         {
             "id": node_id,
@@ -1602,7 +1608,11 @@ async fn approval_node_times_out() {
         },
         { "id": "end", "kind": "end" }
     ]));
-    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    let mut run = workflow_run(
+        runinator_models::json!({}),
+        runinator_models::json!({}),
+        node_id,
+    );
     run.workflow_id = workflow.id.unwrap();
 
     let started_at = Utc::now() - chrono::Duration::seconds(2);
@@ -1621,7 +1631,7 @@ async fn approval_node_times_out() {
 #[tokio::test]
 async fn action_node_timeout_publishes_cancel_to_broker() {
     let node_id = "action_node";
-    let workflow = workflow_with_nodes(serde_json::json!([
+    let workflow = workflow_with_nodes(runinator_models::json!([
         { "id": "start", "kind": "start", "transitions": { "next": { "$node": node_id } } },
         {
             "id": node_id,
@@ -1635,7 +1645,11 @@ async fn action_node_timeout_publishes_cancel_to_broker() {
         },
         { "id": "end", "kind": "end" }
     ]));
-    let mut run = workflow_run(serde_json::json!({}), serde_json::json!({}), node_id);
+    let mut run = workflow_run(
+        runinator_models::json!({}),
+        runinator_models::json!({}),
+        node_id,
+    );
     run.id = 123;
     run.workflow_id = workflow.id.unwrap();
 

@@ -6,8 +6,7 @@ use crate::{
         SchedulerControlAck, WorkerControlActionKind, WorkerControlEvent, WorkerControlEventKind,
     },
 };
-use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
-use serde_json::json;
+use runinator_models::{json, runs::NewRunChunk, workflows::WorkflowAction};
 use uuid::Uuid;
 
 #[test]

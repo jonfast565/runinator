@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use runinator_models::value::Value;
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
     notifications::Notification,
@@ -11,7 +12,6 @@ use runinator_models::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Serialize)]
 pub struct ApiError {

@@ -77,7 +77,7 @@ impl Provider for SqlProvider {
         token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
-            "dump_data" => self.dump_data(request.parameters, request.timeout_secs, token),
+            "dump_data" => self.dump_data(request.parameters.into(), request.timeout_secs, token),
             _ => Err(Box::new(RuntimeError::new(
                 "UNSUPPORTED_CALL".to_string(),
                 format!(

@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use runinator_models::json;
 
 #[test]
 fn test_parse_json() {

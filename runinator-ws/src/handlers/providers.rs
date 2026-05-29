@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::value::Value;
 use runinator_models::{
     bundles::ProviderBundle,
     providers::{ProviderMetadata, validate_provider_metadata},
@@ -74,7 +75,7 @@ pub(crate) async fn import_provider_bundle<T: DatabaseImpl>(
 }
 
 pub(crate) fn provider_metadata_from_items(
-    items: Vec<serde_json::Value>,
+    items: Vec<Value>,
 ) -> Result<Vec<ProviderMetadata>, serde_json::Error> {
     let mut providers = items
         .into_iter()
@@ -85,14 +86,14 @@ pub(crate) fn provider_metadata_from_items(
 }
 
 pub(crate) fn provider_metadata_from_item(
-    item: serde_json::Value,
+    item: Value,
 ) -> Result<ProviderMetadata, serde_json::Error> {
     let document = item.get("document").cloned().unwrap_or(item);
-    serde_json::from_value(document)
+    serde_json::from_value(document.into())
 }
 
-pub(crate) fn provider_catalog_item(provider: &ProviderMetadata) -> serde_json::Value {
-    serde_json::json!({
+pub(crate) fn provider_catalog_item(provider: &ProviderMetadata) -> Value {
+    runinator_models::json!({
         "uri": format!("runinator://providers/{}", provider.name),
         "item_type": "provider_metadata",
         "name": provider.name,

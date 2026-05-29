@@ -1,8 +1,8 @@
 use runinator_comm::WireCodec;
 use runinator_models::errors::SendableError;
+use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowContextHeader;
 use runinator_models::workflows::{WorkflowAction, WorkflowNode, WorkflowNodeRun, WorkflowRun};
-use serde_json::Value;
 use std::collections::HashMap;
 
 pub fn latest_node_run<'a>(
@@ -31,7 +31,7 @@ pub fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]
     let prev_output = node_runs
         .iter()
         .filter_map(|run| run.output_json.clone())
-        .last();
+        .next_back();
     let outputs = node_runs
         .iter()
         .filter_map(|run| {

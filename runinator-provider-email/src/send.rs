@@ -5,19 +5,20 @@ use lettre::{
     message::{Mailbox, header::ContentType},
     transport::smtp::authentication::Credentials,
 };
+use runinator_models::json;
+use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
-use serde_json::{Value, json};
 
 use crate::params::{EmailSendParams, NotificationPayload, NotificationSendParams};
 
 pub(crate) async fn send_email(
     request: &ProviderExecutionRequest,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let params: EmailSendParams =
-        serde_json::from_value(request.parameters.clone()).map_err(|err| {
+    let params: EmailSendParams = serde_json::from_value(request.parameters.clone().into())
+        .map_err(|err| {
             Box::new(RuntimeError::new(
                 "email.invalid_params".into(),
                 err.to_string(),
@@ -131,7 +132,7 @@ pub(crate) async fn send_email(
 pub(crate) async fn send_notification(
     request: &ProviderExecutionRequest,
 ) -> Result<TaskExecutionResult, SendableError> {
-    let params: NotificationSendParams = serde_json::from_value(request.parameters.clone())
+    let params: NotificationSendParams = serde_json::from_value(request.parameters.clone().into())
         .map_err(|err| {
             Box::new(RuntimeError::new(
                 "notification.invalid_params".into(),

@@ -46,11 +46,14 @@ pub(crate) fn execute_request(
     let exit_code = execute_command(&command, request.timeout_secs, &request.events_jsonl_path)?;
     let response = ProviderExecutionResponse {
         message: Some(format!("Console command exited with code {exit_code}")),
-        output_json: Some(serde_json::json!({
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "command": command,
-        })),
+        output_json: Some(
+            serde_json::json!({
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "command": command,
+            })
+            .into(),
+        ),
         chunks: Vec::new(),
         artifacts: Vec::new(),
     };
