@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use runinator_models::value::Value;
 use runinator_models::{
     providers::ProviderMetadata,
     workflows::{
@@ -20,22 +19,15 @@ pub fn parse_nodes(
 ) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
     let definition = expand_workflow_refs(workflow)?;
     let start = definition
-        .get("start")
-        .and_then(Value::as_str)
+        .start
+        .as_deref()
         .filter(|value| !value.is_empty())
         .ok_or(WorkflowValidationError::MissingStart)?
         .to_string();
-    let nodes = definition
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or(WorkflowValidationError::MissingNodes)?;
-    let nodes = nodes
-        .iter()
-        .map(|value| {
-            serde_json::from_value(value.clone().into())
-                .map_err(|err| WorkflowValidationError::InvalidNode(err.to_string()))
-        })
-        .collect::<Result<Vec<WorkflowNode>, _>>()?;
+    let nodes = definition.nodes;
+    if nodes.is_empty() {
+        return Err(WorkflowValidationError::MissingNodes);
+    }
     Ok((start, nodes))
 }
 

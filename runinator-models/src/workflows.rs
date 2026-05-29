@@ -17,11 +17,43 @@ pub struct WorkflowDefinition {
     #[serde(alias = "input_schema", deserialize_with = "deserialize_workflow_type")]
     pub input_type: RuninatorType,
     #[serde(default)]
-    pub definition: Value,
+    pub definition: WorkflowGraph,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct WorkflowGraph {
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub nodes: Vec<WorkflowNode>,
+    #[serde(default, rename = "$defs")]
+    pub defs: Map,
+    #[serde(default)]
+    pub metadata: Value,
+    #[serde(flatten)]
+    pub extra: Map,
+}
+
+impl WorkflowGraph {
+    pub fn as_value(&self) -> Value {
+        serde_json::to_value(self)
+            .map(Value::from)
+            .unwrap_or_else(|_| Value::Object(Map::new()))
+    }
+
+    pub fn from_value(value: Value) -> Result<Self, String> {
+        serde_json::from_value(value.into()).map_err(|err| err.to_string())
+    }
+}
+
+impl fmt::Display for WorkflowGraph {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_value().fmt(formatter)
+    }
 }
 
 fn deserialize_workflow_type<'de, D>(deserializer: D) -> Result<RuninatorType, D::Error>
@@ -190,7 +222,7 @@ pub enum WorkflowNodeKind {
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct WorkflowAction {
     pub provider: String,
     pub function: String,
@@ -359,7 +391,7 @@ impl<'de> Deserialize<'de> for WorkflowNodeRef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowRetry {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: i64,
@@ -377,7 +409,7 @@ fn default_max_attempts() -> i64 {
     1
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WorkflowReentry {
     #[serde(default)]
     pub enabled: bool,
@@ -395,7 +427,7 @@ pub enum WorkflowSubflowType {
     FireAndForget,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WorkflowSubflow {
     #[serde(default)]
     pub workflow_name: Option<String>,
@@ -407,7 +439,7 @@ pub struct WorkflowSubflow {
     pub subflow_type: WorkflowSubflowType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WorkflowTransitions {
     #[serde(default)]
     pub next: Option<WorkflowNodeRef>,
@@ -423,13 +455,13 @@ pub struct WorkflowTransitions {
     pub branches: Vec<WorkflowBranch>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowBranch {
     pub when: Value,
     pub target: WorkflowNodeRef,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowNode {
     pub id: String,
     pub kind: WorkflowNodeKind,

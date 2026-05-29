@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use runinator_models::value::{Map, Value};
-use runinator_models::workflows::WorkflowDefinition;
+use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 
 use crate::parameters::parse_node_ref_value;
 
@@ -11,7 +11,12 @@ pub fn normalize_workflow(workflow: &WorkflowDefinition) -> WorkflowDefinition {
     normalized
 }
 
-pub fn normalize_definition(definition: Value) -> Value {
+pub fn normalize_definition(definition: WorkflowGraph) -> WorkflowGraph {
+    let normalized = normalize_definition_value(definition.as_value());
+    WorkflowGraph::from_value(normalized).unwrap_or_default()
+}
+
+pub(crate) fn normalize_definition_value(definition: Value) -> Value {
     let mut root = match definition {
         Value::Object(root) => root,
         _ => Map::new(),

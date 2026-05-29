@@ -5,7 +5,8 @@ use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
     runs::NewRunChunk,
     workflows::{
-        WorkflowAction, WorkflowDefinition, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+        WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowStatus, WorkflowTrigger,
+        WorkflowTriggerKind,
     },
 };
 use uuid::Uuid;
@@ -280,7 +281,10 @@ async fn upsert_workflow_without_id_updates_existing_name() {
     let first = db.upsert_workflow(&workflow("pipeline")).await.unwrap();
     let mut updated = workflow("pipeline");
     updated.version = 2;
-    updated.definition = runinator_models::json!({ "nodes": [{ "id": "done", "kind": "end" }] });
+    updated.definition = WorkflowGraph::from_value(
+        runinator_models::json!({ "nodes": [{ "id": "done", "kind": "end" }] }),
+    )
+    .unwrap();
 
     let second = db.upsert_workflow(&updated).await.unwrap();
     let workflows = db.fetch_workflows().await.unwrap();
@@ -437,7 +441,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: runinator_models::json!({ "nodes": [] }),
+        definition: WorkflowGraph::from_value(runinator_models::json!({ "nodes": [] })).unwrap(),
         created_at: None,
         updated_at: None,
     }

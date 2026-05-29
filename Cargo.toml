@@ -30,5 +30,6 @@ members = [
     "runinator-supervisor",
     "runinator-mcp",
     "runinator-workflows",
+    "runinator-wdl",
     "runinator-e2e"
 ]

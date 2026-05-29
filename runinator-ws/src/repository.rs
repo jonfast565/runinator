@@ -11,7 +11,7 @@ use runinator_models::{
     workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeKind, WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
 
@@ -62,25 +62,22 @@ async fn validate_workflow_subflows<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<(), SendableError> {
-    let definition = workflow.definition.get("nodes").and_then(Value::as_array);
-    if let Some(nodes) = definition {
-        for node in nodes {
-            if let Some("subflow") = node.get("kind").and_then(Value::as_str)
-                && let Some(subflow_id) = node.get("subflow_id").and_then(Value::as_i64)
-                && subflow_id > 0
-            {
-                match db.fetch_workflow(subflow_id).await {
-                    Ok(Some(_)) => {} // workflow exists, validation passes
-                    _ => {
-                        let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
-                        let err = RuntimeError::new(
-                            "workflow.subflow.invalid_id".into(),
-                            format!(
-                                "Node '{node_id}' references non-existent workflow with id {subflow_id}"
-                            ),
-                        );
-                        return Err(Box::new(err));
-                    }
+    for node in &workflow.definition.nodes {
+        if node.kind == WorkflowNodeKind::Subflow
+            && let Some(subflow_id) = node.subflow_id
+            && subflow_id > 0
+        {
+            match db.fetch_workflow(subflow_id).await {
+                Ok(Some(_)) => {} // workflow exists, validation passes
+                _ => {
+                    let err = RuntimeError::new(
+                        "workflow.subflow.invalid_id".into(),
+                        format!(
+                            "Node '{}' references non-existent workflow with id {subflow_id}",
+                            node.id
+                        ),
+                    );
+                    return Err(Box::new(err));
                 }
             }
         }
@@ -1097,17 +1094,7 @@ pub fn ancestors_in_snapshot(
     use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-    let nodes: Vec<WorkflowNode> = match snapshot.definition.get("nodes") {
-        Some(value) => {
-            serde_json::from_value(value.clone().into()).map_err(|err| -> SendableError {
-                Box::new(RuntimeError::new(
-                    "workflow.replay.snapshot_invalid".into(),
-                    format!("Failed to parse workflow nodes: {err}"),
-                ))
-            })?
-        }
-        None => Vec::new(),
-    };
+    let nodes: Vec<WorkflowNode> = snapshot.definition.nodes.clone();
 
     if nodes.is_empty() {
         return Ok(Vec::new());

@@ -1,19 +1,16 @@
-use runinator_models::value::{Map, Value};
-use runinator_models::workflows::WorkflowDefinition;
+use runinator_models::value::Value;
+use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 
 use crate::errors::WorkflowValidationError;
 
 pub fn expand_workflow_refs(
     workflow: &WorkflowDefinition,
-) -> Result<Value, WorkflowValidationError> {
-    let mut root = workflow.definition.clone();
-    let defs = root
-        .get("$defs")
-        .cloned()
-        .unwrap_or(Value::Object(Map::new()));
+) -> Result<WorkflowGraph, WorkflowValidationError> {
+    let mut root = workflow.definition.as_value();
+    let defs = Value::Object(workflow.definition.defs.clone());
     let mut stack = Vec::new();
     expand_refs_in_value(&mut root, &defs, &mut stack)?;
-    Ok(root)
+    WorkflowGraph::from_value(root).map_err(WorkflowValidationError::InvalidNode)
 }
 
 pub(crate) fn expand_refs_in_value(

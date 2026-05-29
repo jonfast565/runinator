@@ -15,7 +15,8 @@ use runinator_models::value::Value;
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
-        WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowStatus,
+        WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
+        WorkflowStatus,
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
@@ -161,19 +162,20 @@ fn validate_workflow_returns_normalized_definition() {
     let validated = crate::repository::validate_workflow_definition(&workflow).unwrap();
 
     assert_eq!(validated.name, "validate");
-    assert_eq!(validated.definition["start"], "start");
+    assert_eq!(validated.definition.start.as_deref(), Some("start"));
 }
 
 #[test]
 fn validate_workflow_rejects_invalid_definition_without_persistence() {
     let mut workflow = workflow(None, "invalid");
-    workflow.definition = json!({
+    workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "missing" } } },
             { "id": "done", "kind": "end" }
         ]
-    });
+    }))
+    .unwrap();
 
     assert!(crate::repository::validate_workflow_definition(&workflow).is_err());
 }
@@ -286,12 +288,13 @@ async fn import_skips_workflow_when_name_already_exists() {
     let initial_definition = initial.workflows[0].definition.clone();
     let mut changed = workflow(None, "Core Team SDLC Pipeline");
     changed.version = 2;
-    changed.definition = json!({
+    changed.definition = WorkflowGraph::from_value(json!({
         "start": "done",
         "nodes": [
             { "id": "done", "kind": "end" }
         ]
-    });
+    }))
+    .unwrap();
     let second = WorkflowBundle {
         workflows: vec![changed.clone()],
         triggers: vec![],
@@ -326,12 +329,13 @@ async fn import_upserts_existing_workflow_when_id_is_present() {
     // a save from the command center carries the existing id and must overwrite.
     let mut changed = initial.workflows[0].clone();
     changed.version = 2;
-    changed.definition = json!({
+    changed.definition = WorkflowGraph::from_value(json!({
         "start": "done",
         "nodes": [
             { "id": "done", "kind": "end" }
         ]
-    });
+    }))
+    .unwrap();
     let second = WorkflowBundle {
         workflows: vec![changed.clone()],
         triggers: vec![],
@@ -719,13 +723,14 @@ fn workflow(id: Option<i64>, name: &str) -> WorkflowDefinition {
         input_type: runinator_models::types::RuninatorType::from_json_schema(
             &json!({ "type": "object" }),
         ),
-        definition: json!({
+        definition: WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
                 { "id": "done", "kind": "end" }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     }
@@ -739,7 +744,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({
+        definition: WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "a" } } },
@@ -748,7 +753,8 @@ fn ancestors_in_snapshot_returns_topological_path() {
                 { "id": "c", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "end" } } },
                 { "id": "end", "kind": "end" }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     };
@@ -773,7 +779,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({
+        definition: WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "loop1" } } },
@@ -781,7 +787,8 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
                 { "id": "inside", "kind": "action", "action": { "provider": "console", "function": "run" }, "transitions": { "next": { "$node": "loop1" } } },
                 { "id": "end", "kind": "end" }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     };
@@ -805,13 +812,14 @@ fn ancestors_in_snapshot_rejects_missing_step() {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({
+        definition: WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
                 { "id": "end", "kind": "end" }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     };
@@ -847,7 +855,7 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
 
     // create a workflow with a subflow that references a non-existent workflow
     let mut main_workflow = workflow(None, "main-with-invalid-subflow");
-    main_workflow.definition = json!({
+    main_workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
@@ -859,7 +867,8 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
             },
             { "id": "end", "kind": "end" }
         ]
-    });
+    }))
+    .unwrap();
 
     // validation should fail because the subflow references a non-existent workflow
     let result =
@@ -868,7 +877,7 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
 
     // now test with a valid subflow id
     let mut valid_workflow = workflow(None, "main-with-valid-subflow");
-    valid_workflow.definition = json!({
+    valid_workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
@@ -880,7 +889,8 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
             },
             { "id": "end", "kind": "end" }
         ]
-    });
+    }))
+    .unwrap();
 
     // validation should succeed because the subflow references a valid workflow
     let result =

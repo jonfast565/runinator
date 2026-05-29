@@ -1,0 +1,187 @@
+// wdl grammar. this file is the canonical, human-readable spec of the language.
+// statements are wired into a node graph by lowering; sequence implies the forward
+// edge, blocks expand into control nodes, and arrows make transitions explicit.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+
+document = { SOI ~ workflow ~ EOI }
+
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ stmt* ~ "}" }
+version  = @{ "v" ~ ASCII_DIGIT+ }
+
+// input typing -------------------------------------------------------------
+
+input_block = { "input" ~ "{" ~ type_field* ~ "}" }
+
+type_field   = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ ","? }
+optional_mark = { "?" }
+
+type_expr    = { type_union }
+type_union   = { type_postfix ~ ("|" ~ type_postfix)* }
+type_postfix = { type_atom ~ array_suffix* }
+array_suffix = { "[" ~ "]" }
+type_atom    = { type_map | type_struct | type_named }
+type_map     = { "map" ~ "<" ~ type_expr ~ ">" }
+type_struct  = { "{" ~ type_field* ~ "}" }
+type_named   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// statements ---------------------------------------------------------------
+
+stmt = { annotation* ~ binding? ~ stmt_body ~ transitions? }
+
+annotation = { ann_id | ann_skip }
+ann_id     = { "@id" ~ "(" ~ string ~ ")" }
+ann_skip   = { "@skip" }
+
+binding = { "let" ~ ident ~ "=" }
+
+stmt_body = {
+    if_stmt
+  | for_stmt
+  | match_stmt
+  | parallel_stmt
+  | try_stmt
+  | race_stmt
+  | map_stmt
+  | wait_stmt
+  | emit_stmt
+  | approval_stmt
+  | config_stmt
+  | fail_stmt
+  | subflow_stmt
+  | action_stmt
+}
+
+action_stmt = { ident ~ "." ~ ident ~ "(" ~ arg_list? ~ ")" ~ modifier* }
+arg_list    = { arg ~ ("," ~ arg)* ~ ","? }
+arg         = { ident ~ ":" ~ expr }
+
+modifier      = { "." ~ ident ~ "(" ~ mod_arg_list? ~ ")" }
+mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }
+mod_arg       = { (ident ~ ":")? ~ expr }
+
+subflow_stmt = { subflow_verb ~ string ~ subflow_opt* ~ subflow_with? }
+subflow_verb = { "spawn" | "call" }
+subflow_opt  = { "detached" | "reuse" | subflow_as }
+subflow_as   = { "as" ~ expr }
+subflow_with = { "with" ~ object }
+
+wait_stmt  = { "wait" ~ duration ~ wait_until? ~ wait_initial? }
+wait_until = { "until" ~ string }
+wait_initial = { "initial" ~ string }
+
+emit_stmt = { "emit" ~ string? ~ object? }
+
+approval_stmt = { "approve" ~ expr ~ approval_type? ~ object? }
+approval_type = { "type" ~ string }
+
+config_stmt = { "set" ~ (config_name | config_meta) }
+config_name = { "name" ~ "=" ~ expr }
+config_meta = { "meta" ~ object }
+
+fail_stmt = { "fail" ~ expr? }
+
+if_stmt    = { "if" ~ cond ~ block ~ else_if* ~ else_block? }
+else_if    = { "else" ~ "if" ~ cond ~ block }
+else_block = { "else" ~ block }
+
+for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit? ~ block }
+for_limit  = { "limit" ~ integer }
+
+map_stmt        = { "map" ~ ident ~ "in" ~ expr ~ map_concurrency? ~ block }
+map_concurrency = { "concurrency" ~ integer }
+
+match_stmt    = { "match" ~ expr ~ "{" ~ match_arm* ~ match_default? ~ "}" }
+match_arm     = { match_head ~ "->" ~ arm_body }
+match_head    = { ("when" ~ cond) | expr }
+match_default = { "else" ~ "->" ~ arm_body }
+arm_body      = { block | stmt }
+
+try_stmt   = { "try" ~ block ~ try_catch? ~ try_finally? }
+try_catch  = { "catch" ~ block }
+try_finally = { "finally" ~ block }
+
+parallel_stmt = { "parallel" ~ "{" ~ branch+ ~ "}" ~ join_clause? }
+join_clause   = { "join" ~ branch_policy }
+
+race_stmt    = { "race" ~ winner_clause? ~ "{" ~ branch+ ~ "}" }
+winner_clause = { "winner" ~ branch_policy }
+
+branch        = { "branch" ~ block }
+branch_policy = { "all" | "any" | "first_success" }
+
+block = { "{" ~ stmt* ~ "}" }
+
+// transitions --------------------------------------------------------------
+
+transitions   = { outcome_arrow+ | single_arrow }
+single_arrow  = { "->" ~ target }
+outcome_arrow = { outcome ~ "->" ~ target }
+outcome       = { "ok" | "fail" | "timeout" | "reject" }
+target        = { "done" | "fail" | ident }
+
+// conditions ---------------------------------------------------------------
+
+cond         = { cond_or }
+cond_or      = { cond_and ~ ("||" ~ cond_and)* }
+cond_and     = { cond_unary ~ ("&&" ~ cond_unary)* }
+cond_unary   = { not_cond | cond_primary }
+not_cond     = { "!" ~ cond_unary }
+cond_primary = { paren_cond | cond_exists | cond_cmp }
+paren_cond   = { "(" ~ cond ~ ")" }
+cond_exists  = { "exists" ~ expr }
+cond_cmp     = { expr ~ cmp_op ~ expr }
+cmp_op       = {
+    "==" | "!=" | ">=" | "<=" | ">" | "<"
+  | "contains" | "in" | "starts_with" | "ends_with"
+}
+
+// expressions --------------------------------------------------------------
+
+expr          = { coalesce_expr }
+coalesce_expr = { concat_expr ~ ("??" ~ concat_expr)* }
+concat_expr   = { primary ~ ("++" ~ primary)* }
+
+primary = {
+    paren_expr
+  | func_call
+  | object
+  | array
+  | duration
+  | number
+  | boolean
+  | null_lit
+  | string
+  | path
+}
+
+paren_expr = { "(" ~ expr ~ ")" }
+func_call  = { func_name ~ "(" ~ expr ~ ")" }
+func_name  = { "string" | "json" }
+
+path     = ${ ident ~ ("." ~ path_seg)* }
+path_seg = { ident | integer }
+
+object        = { "{" ~ (object_entry ~ ("," ~ object_entry)*)? ~ ","? ~ "}" }
+object_entry  = { object_pair | object_shorthand }
+object_pair   = { (ident | string) ~ ":" ~ expr }
+object_shorthand = { ident }
+
+array = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
+
+duration = @{ ASCII_DIGIT+ ~ ("s" | "m" | "h" | "d") }
+number   = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+integer  = @{ "-"? ~ ASCII_DIGIT+ }
+boolean  = { "true" | "false" }
+null_lit = { "null" }
+
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// string literals with ${...} interpolation. compound-atomic so inner text keeps its
+// bytes; interpolation re-enables whitespace for the embedded expression.
+string        = ${ "\"" ~ str_part* ~ "\"" }
+str_part      = { interpolation | escape | str_text }
+interpolation = !{ "${" ~ expr ~ "}" }
+escape        = @{ "\\" ~ ANY }
+str_text      = @{ (!("\"" | "\\" | "${") ~ ANY)+ }

@@ -7,11 +7,11 @@ use runinator_models::{
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     types::RuninatorType,
     workflows::{
-        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+        WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
+use sqlx::{postgres::PgRow, sqlite::SqliteRow, Row};
 
 fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
@@ -111,7 +111,8 @@ macro_rules! workflow_from_row {
             version: $row.get("version"),
             enabled: $row.get("enabled"),
             input_type: parse_type($row.get::<String, _>("input_schema")),
-            definition: parse_json($row.get::<String, _>("definition")),
+            definition: WorkflowGraph::from_value(parse_json($row.get::<String, _>("definition")))
+                .unwrap_or_default(),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
             updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0),
         }

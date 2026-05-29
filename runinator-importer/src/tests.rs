@@ -10,7 +10,9 @@ use super::{
 };
 use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
 use runinator_models::workflows::WorkflowBundle;
-use runinator_models::workflows::{WorkflowDefinition, WorkflowTrigger, WorkflowTriggerKind};
+use runinator_models::workflows::{
+    WorkflowDefinition, WorkflowGraph, WorkflowTrigger, WorkflowTriggerKind,
+};
 
 #[tokio::test]
 async fn sync_imports_clean_workflow_bundle_round_trip() {
@@ -166,8 +168,8 @@ async fn load_import_file_unwraps_workflow_pack_envelope() {
         alpha.input_type,
         runinator_models::types::RuninatorType::from_json_schema(&json!({ "type": "object" }))
     );
-    assert_eq!(alpha.definition["start"], json!("n1"));
-    assert_eq!(alpha.definition["metadata"]["description"], json!("first"));
+    assert_eq!(alpha.definition.start.as_deref(), Some("n1"));
+    assert_eq!(alpha.definition.metadata["description"], json!("first"));
 
     let _ = tokio::fs::remove_file(path).await;
 }
@@ -205,7 +207,7 @@ fn sdlc_pack_unwraps_to_workflow_bundle() {
     for workflow in &bundle.workflows {
         assert!(workflow.enabled);
         assert!(workflow.version >= 1);
-        assert!(workflow.definition.is_object());
+        assert!(workflow.definition.as_value().is_object());
         runinator_workflows::validate_workflow_with_providers(workflow, &provider_bundle.providers)
             .expect("sdlc workflow validates");
     }
@@ -260,13 +262,14 @@ fn clean_bundle() -> WorkflowBundle {
             input_type: runinator_models::types::RuninatorType::from_json_schema(
                 &json!({ "type": "object" }),
             ),
-            definition: json!({
+            definition: WorkflowGraph::from_value(json!({
                 "start": "start",
                 "nodes": [
                     { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
                     { "id": "done", "kind": "end" }
                 ]
-            }),
+            }))
+            .unwrap(),
             created_at: None,
             updated_at: None,
         }],

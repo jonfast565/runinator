@@ -14,7 +14,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
     types::RuninatorType,
-    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowTrigger},
 };
 use runinator_plugin::provider::Provider;
 use runinator_provider_ai::AiCommandProvider;
@@ -402,7 +402,8 @@ fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
             version,
             enabled: true,
             input_type,
-            definition: body,
+            definition: WorkflowGraph::from_value(body)
+                .map_err(|err| format!("workflow '{name}' definition is invalid: {err}"))?,
             created_at,
             updated_at,
         });
