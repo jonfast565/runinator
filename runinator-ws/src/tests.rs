@@ -833,3 +833,56 @@ fn trigger(id: Option<i64>, workflow_id: i64) -> WorkflowTrigger {
         updated_at: None,
     }
 }
+
+#[tokio::test]
+async fn validate_workflow_rejects_invalid_subflow_id() {
+    let (db, path) = test_db().await;
+    
+    // create a valid target workflow
+    let target = crate::repository::upsert_workflow(&db, &workflow(None, "target-workflow"))
+        .await
+        .unwrap();
+    let target_id = target.id.unwrap();
+    
+    // create a workflow with a subflow that references a non-existent workflow
+    let mut main_workflow = workflow(None, "main-with-invalid-subflow");
+    main_workflow.definition = json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
+            { 
+                "id": "subflow-node", 
+                "kind": "subflow", 
+                "subflow_id": 999,  // non-existent workflow id
+                "transitions": { "next": { "$node": "end" } } 
+            },
+            { "id": "end", "kind": "end" }
+        ]
+    });
+    
+    // validation should fail because the subflow references a non-existent workflow
+    let result = crate::repository::validate_workflow_definition_with_catalog(&db, &main_workflow).await;
+    assert!(result.is_err());
+    
+    // now test with a valid subflow id
+    let mut valid_workflow = workflow(None, "main-with-valid-subflow");
+    valid_workflow.definition = json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "subflow-node" } } },
+            { 
+                "id": "subflow-node", 
+                "kind": "subflow", 
+                "subflow_id": target_id,
+                "transitions": { "next": { "$node": "end" } } 
+            },
+            { "id": "end", "kind": "end" }
+        ]
+    });
+    
+    // validation should succeed because the subflow references a valid workflow
+    let result = crate::repository::validate_workflow_definition_with_catalog(&db, &valid_workflow).await;
+    assert!(result.is_ok());
+    
+    let _ = std::fs::remove_file(path);
+}

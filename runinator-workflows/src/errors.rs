@@ -50,6 +50,8 @@ pub enum WorkflowValidationError {
     InvalidCondition(String),
     #[error("workflow node '{node}' parameters are invalid: {message}")]
     InvalidNodeParameters { node: String, message: String },
+    #[error("workflow node '{node}' references non-existent workflow with id {id}")]
+    InvalidSubflowId { node: String, id: i64 },
     #[error("workflow type validation failed: {0}")]
     TypeError(String),
     #[error("workflow type validation failed: {}", .0.message)]

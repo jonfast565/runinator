@@ -284,10 +284,9 @@
             <select :value="selectedSubflowName || ''" @change="onSubflowNameChange">
               <option value="">Select a workflow</option>
              <option v-if="selectedSubflowMissing" :value="String(workflows.stepEditor.subflow_id ?? '')">{{ selectedSubflowName }} (unavailable)</option>
-             <option v-for="workflow in availableSubflows" :key="String(workflow.id)" :value="workflow.name">{{ workflow.name }} (ID: {{ workflow.id }})</option>
+             <option v-for="workflow in availableSubflows" :key="String(workflow.id)" :value="workflow.name">{{ workflow.name }}</option>
             </select>
           </label>
-          <label>Workflow ID <input v-model.number="workflows.stepEditor.subflow_id" type="number" min="0" /></label>
         </div>
         <label>Parameters <JsonEditor v-model="workflows.stepEditor.subflow_parameters_json" /></label>
       </section>

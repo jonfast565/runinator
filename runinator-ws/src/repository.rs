@@ -52,7 +52,37 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
     let providers = provider_metadata_from_items(providers)?;
     runinator_workflows::validate_workflow_with_providers(&workflow, &providers)
         .map_err(|err| -> SendableError { Box::new(err) })?;
+    validate_workflow_subflows(db, &workflow).await?;
     Ok(workflow)
+}
+
+async fn validate_workflow_subflows<T: DatabaseImpl>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<(), SendableError> {
+    let definition = workflow.definition.get("nodes").and_then(Value::as_array);
+    if let Some(nodes) = definition {
+        for node in nodes {
+            if let Some("subflow") = node.get("kind").and_then(Value::as_str) {
+                if let Some(subflow_id) = node.get("subflow_id").and_then(Value::as_i64) {
+                    if subflow_id > 0 {
+                        match db.fetch_workflow(subflow_id).await {
+                            Ok(Some(_)) => {} // workflow exists, validation passes
+                            _ => {
+                                let node_id = node.get("id").and_then(Value::as_str).unwrap_or("unknown");
+                                let err = RuntimeError::new(
+                                    "workflow.subflow.invalid_id".into(),
+                                    format!("Node '{node_id}' references non-existent workflow with id {subflow_id}"),
+                                );
+                                return Err(Box::new(err));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_workflow_definition(
