@@ -1484,7 +1484,11 @@ fn workflow_with_nodes(nodes: Value) -> WorkflowDefinition {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({ "start": "start", "nodes": nodes }),
+        definition: runinator_models::workflows::WorkflowGraph::from_value(json!({
+            "start": "start",
+            "nodes": nodes
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     }
@@ -1497,13 +1501,14 @@ fn workflow_definition_with_id(id: i64, name: &str) -> WorkflowDefinition {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({
+        definition: runinator_models::workflows::WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
                 { "id": "done", "kind": "end" }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     }

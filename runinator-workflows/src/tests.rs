@@ -88,7 +88,7 @@ fn validates_subflow_target_by_id_or_name() {
 
 #[test]
 fn rejects_old_reference_syntax() {
-    let wf = workflow(runinator_models::json!({
+    let graph = WorkflowGraph::from_value(runinator_models::json!({
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": "build" } },
@@ -96,10 +96,7 @@ fn rejects_old_reference_syntax() {
             { "id": "done", "kind": "end" }
         ]
     }));
-    assert!(matches!(
-        validate_workflow(&wf),
-        Err(WorkflowValidationError::InvalidNode(_))
-    ));
+    assert!(graph.is_err());
 
     let wf = workflow(runinator_models::json!({
         "start": "start",

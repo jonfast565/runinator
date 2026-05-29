@@ -89,7 +89,7 @@ impl<'a> NodeContext<'a> {
 
     /// create a fresh run for this node, defaulting parameters to the node definition.
     pub async fn create_node_run(&self) -> Result<WorkflowNodeRun, SendableError> {
-        self.create_node_run_with(self.node.parameters.clone())
+        self.create_node_run_with(self.node.parameters.clone().into())
             .await
     }
 

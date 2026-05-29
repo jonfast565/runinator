@@ -4,7 +4,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
     types::{RuninatorType, TypeViolation},
-    workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind},
+    workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowWaitSeconds},
 };
 
 use crate::{
@@ -168,8 +168,24 @@ fn validate_node_types(
     match node.kind {
         WorkflowNodeKind::Action => validate_action_configuration(node, context, provider_actions),
         WorkflowNodeKind::Wait => {
-            if let Some(seconds) = node.wait.get("seconds") {
-                expect_value_type(seconds, context, &WorkflowType::Integer, "wait.seconds")?;
+            if let Some(seconds) = node.wait.seconds.as_ref() {
+                match seconds {
+                    WorkflowWaitSeconds::Integer(value) if *value < 0 => {
+                        return Err(WorkflowValidationError::TypeError(format!(
+                            "node '{}' wait.seconds must be greater than or equal to zero",
+                            node.id
+                        )));
+                    }
+                    WorkflowWaitSeconds::Expression(expression) => {
+                        expect_value_type(
+                            expression.as_value(),
+                            context,
+                            &WorkflowType::Integer,
+                            "wait.seconds",
+                        )?;
+                    }
+                    _ => {}
+                }
             }
             Ok(())
         }

@@ -383,7 +383,7 @@ mod tests {
                 provider: "test".into(),
                 function: "execute".into(),
                 timeout_seconds: 60,
-                configuration: json!({}),
+                configuration: runinator_models::workflows::WorkflowObject::default(),
                 mcp_enabled: false,
                 tags: Vec::new(),
             },

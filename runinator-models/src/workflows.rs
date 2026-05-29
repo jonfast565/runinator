@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::ops::Deref;
 
 use crate::value::{Map, Value};
 
@@ -46,7 +47,83 @@ impl WorkflowGraph {
     }
 
     pub fn from_value(value: Value) -> Result<Self, String> {
-        serde_json::from_value(value.into()).map_err(|err| err.to_string())
+        match serde_json::from_value(value.clone().into()) {
+            Ok(graph) => Ok(graph),
+            Err(_) => {
+                let mut expanded = value;
+                expand_local_defs_refs(&mut expanded, &mut Vec::new())?;
+                serde_json::from_value(expanded.into()).map_err(|err| err.to_string())
+            }
+        }
+    }
+}
+
+fn expand_local_defs_refs(value: &mut Value, stack: &mut Vec<String>) -> Result<(), String> {
+    let defs = value
+        .get("$defs")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    expand_refs_in_value(value, &defs, stack)
+}
+
+fn expand_refs_in_value(value: &mut Value, defs: &Value, stack: &mut Vec<String>) -> Result<(), String> {
+    match value {
+        Value::Object(map) => {
+            if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string) {
+                if let Some(pointer) = reference.strip_prefix("#/$defs/") {
+                    if stack.iter().any(|item| item == &reference) {
+                        return Err(format!("detected local $ref cycle for '{reference}'"));
+                    }
+                    let path = format!("/{pointer}");
+                    let mut replacement = defs
+                        .pointer(&path)
+                        .cloned()
+                        .ok_or_else(|| format!("missing local $ref '{reference}'"))?;
+                    stack.push(reference.clone());
+                    expand_refs_in_value(&mut replacement, defs, stack)?;
+                    stack.pop();
+                    for (key, overlay) in map.clone() {
+                        if key != "$ref"
+                            && key != "with"
+                            && let Value::Object(replacement_map) = &mut replacement
+                        {
+                            replacement_map.insert(key, overlay);
+                        }
+                    }
+                    if let Some(with) = map.get("with") {
+                        merge_overlay(&mut replacement, with.clone());
+                    }
+                    *value = replacement;
+                    return Ok(());
+                }
+            }
+            for nested in map.values_mut() {
+                expand_refs_in_value(nested, defs, stack)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                expand_refs_in_value(item, defs, stack)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn merge_overlay(target: &mut Value, overlay: Value) {
+    match (target, overlay) {
+        (Value::Object(target), Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_overlay(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
+        }
+        (target, overlay) => *target = overlay,
     }
 }
 
@@ -122,6 +199,154 @@ pub struct WorkflowTrigger {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowObject(Value);
+
+impl WorkflowObject {
+    pub fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+
+    pub fn into_object(self) -> Map {
+        self.0.as_object().cloned().unwrap_or_default()
+    }
+
+    pub fn from_value(value: Value) -> Result<Self, String> {
+        match value {
+            Value::Null => Ok(Self(Value::Object(Map::new()))),
+            Value::Object(_) => Ok(Self(value)),
+            _ => Err("value must be an object".into()),
+        }
+    }
+}
+
+impl Default for WorkflowObject {
+    fn default() -> Self {
+        Self(Value::Object(Map::new()))
+    }
+}
+
+impl Deref for WorkflowObject {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_value()
+    }
+}
+
+impl Serialize for WorkflowObject {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowObject {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        WorkflowObject::from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for WorkflowObject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl From<WorkflowObject> for Value {
+    fn from(value: WorkflowObject) -> Self {
+        value.into_value()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowCondition(Value);
+
+impl WorkflowCondition {
+    pub fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+}
+
+impl From<WorkflowCondition> for Value {
+    fn from(value: WorkflowCondition) -> Self {
+        value.into_value()
+    }
+}
+
+impl Default for WorkflowCondition {
+    fn default() -> Self {
+        Self(Value::Null)
+    }
+}
+
+impl Deref for WorkflowCondition {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_value()
+    }
+}
+
+impl Serialize for WorkflowCondition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowCondition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::Null | Value::Object(_) => Ok(Self(value)),
+            _ => Err(serde::de::Error::custom("condition must be null or an object")),
+        }
+    }
+}
+
+impl fmt::Display for WorkflowCondition {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum WorkflowWaitSeconds {
+    Integer(i64),
+    Expression(WorkflowObject),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WorkflowWait {
+    #[serde(default)]
+    pub seconds: Option<WorkflowWaitSeconds>,
+    #[serde(default)]
+    pub until_status: Option<String>,
+    #[serde(default)]
+    pub initial_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -229,7 +454,7 @@ pub struct WorkflowAction {
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: i64,
     #[serde(default)]
-    pub configuration: Value,
+    pub configuration: WorkflowObject,
     #[serde(default)]
     pub mcp_enabled: bool,
     #[serde(default)]
@@ -267,7 +492,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
                 "action metadata is no longer supported; use action configuration",
             ));
         }
-        let configuration = merge_action_configuration(raw.configuration, raw.extra);
+        let configuration = merge_action_configuration(raw.configuration, raw.extra)
+            .map_err(serde::de::Error::custom)?;
         Ok(Self {
             provider: raw.provider,
             function: raw.function,
@@ -279,23 +505,19 @@ impl<'de> Deserialize<'de> for WorkflowAction {
     }
 }
 
-fn merge_action_configuration(configuration: Value, extra: Map) -> Value {
+fn merge_action_configuration(configuration: Value, extra: Map) -> Result<WorkflowObject, String> {
     if extra.is_empty() {
-        return configuration;
+        return WorkflowObject::from_value(configuration);
     }
     let mut merged = match configuration {
         Value::Object(object) => object,
         Value::Null => Map::new(),
-        other => {
-            let mut object = Map::new();
-            object.insert("value".into(), other);
-            object
-        }
+        _ => return Err("action configuration must be an object".into()),
     };
     for (key, value) in extra {
         merged.entry(key).or_insert(value);
     }
-    Value::Object(merged)
+    Ok(WorkflowObject(Value::Object(merged)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -470,11 +692,11 @@ pub struct WorkflowNode {
     #[serde(default)]
     pub action: Option<WorkflowAction>,
     #[serde(default)]
-    pub parameters: Value,
+    pub parameters: WorkflowObject,
     #[serde(default)]
-    pub wait: Value,
+    pub wait: WorkflowWait,
     #[serde(default)]
-    pub condition: Value,
+    pub condition: WorkflowCondition,
     #[serde(default)]
     pub transitions: WorkflowTransitions,
     #[serde(default)]

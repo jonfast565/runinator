@@ -484,7 +484,7 @@ fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str
             provider: "test".into(),
             function: "execute".into(),
             timeout_seconds: 60,
-            configuration: runinator_models::json!({}),
+            configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
         },

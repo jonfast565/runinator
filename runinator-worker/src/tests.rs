@@ -155,7 +155,7 @@ fn worker_validates_provider_output_fields_when_present() {
         provider: "Console".into(),
         function: "run".into(),
         timeout_seconds: 60,
-        configuration: json!({}),
+        configuration: runinator_models::workflows::WorkflowObject::default(),
         mcp_enabled: false,
         tags: Vec::new(),
     };
@@ -181,7 +181,7 @@ fn action_command() -> ActionCommand {
             provider: "test".into(),
             function: "execute".into(),
             timeout_seconds: 60,
-            configuration: json!({}),
+            configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
         },

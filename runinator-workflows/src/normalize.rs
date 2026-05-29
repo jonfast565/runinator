@@ -172,9 +172,9 @@ pub(crate) fn ensure_next_transition(node: &mut Value, target: &str) {
     let Some(transitions) = transitions.as_object_mut() else {
         return;
     };
-    transitions
-        .entry("next")
-        .or_insert_with(|| runinator_models::json!({ "$node": target }));
+    if !valid_node_ref_value(transitions.get("next")) {
+        transitions.insert("next".to_string(), runinator_models::json!({ "$node": target }));
+    }
 }
 
 pub(crate) fn has_success_transition(node: &Value) -> bool {

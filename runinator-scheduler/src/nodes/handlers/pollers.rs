@@ -239,7 +239,7 @@ impl NodeHandler for ApprovalHandler {
             .create_automation_record("/approvals", record.to_wire_value()?)
             .await?;
         let approval_state = ApprovalState {
-            approval: ctx.node.parameters.clone(),
+            approval: ctx.node.parameters.clone().into(),
             approval_id: approval.get("id").and_then(Value::as_i64),
         };
         ctx.update_node_run(

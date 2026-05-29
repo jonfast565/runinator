@@ -36,7 +36,7 @@ pub async fn ensure_node_run(
     if let Some(latest) = latest {
         return Ok(latest.clone());
     }
-    api.create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+    api.create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone().into())
         .await
 }
 
@@ -189,7 +189,7 @@ pub async fn block_node(
     message: &str,
 ) -> Result<(), SendableError> {
     let node_run = api
-        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
+        .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone().into())
         .await?;
     api.update_workflow_node_run(
         node_run.id,

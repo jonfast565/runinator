@@ -1,6 +1,6 @@
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
-    WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus,
+    WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus, WorkflowWaitSeconds,
 };
 
 use crate::conditions::{evaluate_condition, validate_condition};
@@ -148,23 +148,16 @@ pub fn parse_emit_parameters(
 
 /// parse a wait node's `wait` config. all fields default, so non-object configs are tolerated.
 pub fn parse_wait_parameters(node: &WorkflowNode) -> WaitParameters {
-    let seconds = node
-        .wait
-        .get("seconds")
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
-        .max(0);
-    let until_status = node
-        .wait
-        .get("until_status")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let seconds = match node.wait.seconds.as_ref() {
+        Some(WorkflowWaitSeconds::Integer(value)) => (*value).max(0),
+        Some(WorkflowWaitSeconds::Expression(_)) | None => 0,
+    };
+    let until_status = node.wait.until_status.clone();
     let initial_status = node
         .wait
-        .get("initial_status")
-        .and_then(Value::as_str)
-        .unwrap_or(WorkflowStatus::Waiting.as_str())
-        .to_string();
+        .initial_status
+        .clone()
+        .unwrap_or_else(|| WorkflowStatus::Waiting.as_str().to_string());
     WaitParameters {
         seconds,
         until_status,
@@ -189,7 +182,7 @@ pub fn parse_approval_parameters(node: &WorkflowNode) -> ApprovalParameters {
     ApprovalParameters {
         approval_type,
         prompt,
-        metadata: node.parameters.clone(),
+        metadata: node.parameters.clone().into(),
     }
 }
 
@@ -372,7 +365,6 @@ pub(crate) fn value_refs(
 ) -> Result<Vec<WorkflowValueRef>, WorkflowValidationError> {
     let mut refs = Vec::new();
     collect_value_refs(&node.parameters, &mut refs)?;
-    collect_value_refs(&node.wait, &mut refs)?;
     collect_value_refs(&node.condition, &mut refs)?;
     for branch in &node.transitions.branches {
         collect_value_refs(&branch.when, &mut refs)?;
