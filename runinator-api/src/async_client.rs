@@ -4,6 +4,20 @@ use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
+    api_routes::{
+        api_approval_command, api_run, api_run_artifacts, api_run_chunks,
+        api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
+        api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
+        api_workflow, api_workflow_node_run, api_workflow_node_run_artifacts,
+        api_workflow_node_run_chunks, api_workflow_run, api_workflow_run_command,
+        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
+        api_workflow_runs, api_workflow_trigger, api_workflow_trigger_runs, api_workflow_triggers,
+        API_APPROVALS, API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PROVIDERS, API_RUNS,
+        API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
+        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_VALIDATE,
+        API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+    },
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
@@ -44,7 +58,7 @@ where
 
     /// Fetch provider/action metadata for task authoring.
     pub async fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
-        let url = self.build_url("/providers").await?;
+        let url = self.build_url(API_PROVIDERS).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ProviderMetadata>>().await?)
@@ -52,14 +66,14 @@ where
 
     /// Register provider/action metadata with the web service.
     pub async fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
-        let url = self.build_url("/providers").await?;
+        let url = self.build_url(API_PROVIDERS).await?;
         let response = self.client.post(url.clone()).json(provider).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ProviderMetadata>().await?)
     }
 
     pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary> {
-        let url = self.build_url(&format!("/runs/{run_id}")).await?;
+        let url = self.build_url(&api_run(run_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<RunSummary>().await?)
@@ -67,7 +81,7 @@ where
 
     pub async fn fetch_runs_by_status(&self, status: RunStatus) -> Result<Vec<RunSummary>> {
         let url = self
-            .build_url(&format!("/runs?status={}", status.as_str()))
+            .build_url(&format!("{API_RUNS}?status={}", status.as_str()))
             .await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -79,7 +93,7 @@ where
         run_id: i64,
         payload: &RunStatusPayload,
     ) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/runs/{run_id}")).await?;
+        let url = self.build_url(&api_run(run_id)).await?;
         let response = self.client.patch(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -90,7 +104,7 @@ where
         run_id: i64,
         payload: &RunChunkPayload,
     ) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/runs/{run_id}/chunks")).await?;
+        let url = self.build_url(&api_run_chunks(run_id)).await?;
         let response = self.client.post(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -101,28 +115,28 @@ where
         run_id: i64,
         payload: &RunArtifactPayload,
     ) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/runs/{run_id}/artifacts")).await?;
+        let url = self.build_url(&api_run_artifacts(run_id)).await?;
         let response = self.client.post(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition> {
-        let url = self.build_url(&format!("/workflows/{workflow_id}")).await?;
+        let url = self.build_url(&api_workflow(workflow_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
 
     pub async fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
-        let url = self.build_url("/workflows").await?;
+        let url = self.build_url(API_WORKFLOWS).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowDefinition>>().await?)
     }
 
     pub async fn fetch_workflow_by_name(&self, name: &str) -> Result<WorkflowDefinition> {
-        let mut url = self.build_url("/workflows").await?;
+        let mut url = self.build_url(API_WORKFLOWS).await?;
         url.query_pairs_mut().append_pair("name", name);
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -134,8 +148,8 @@ where
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition> {
         let url = match workflow.id {
-            Some(id) => self.build_url(&format!("/workflows/{id}")).await?,
-            None => self.build_url("/workflows").await?,
+            Some(id) => self.build_url(&api_workflow(id)).await?,
+            None => self.build_url(API_WORKFLOWS).await?,
         };
         let response = match workflow.id {
             Some(_) => self.client.patch(url.clone()).json(workflow).send().await?,
@@ -149,7 +163,7 @@ where
         &self,
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition> {
-        let url = self.build_url("/workflows/validate").await?;
+        let url = self.build_url(API_WORKFLOWS_VALIDATE).await?;
         let response = self.client.post(url.clone()).json(workflow).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
@@ -177,8 +191,8 @@ where
 
     pub async fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
         let path = workflow_id
-            .map(|id| format!("/workflows/{id}/export"))
-            .unwrap_or_else(|| "/workflows/export".into());
+            .map(|id| format!("{}/export", api_workflow(id)))
+            .unwrap_or_else(|| API_WORKFLOWS_EXPORT.into());
         let url = self.build_url(&path).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -205,16 +219,14 @@ where
     }
 
     pub async fn fetch_workflow_triggers(&self, workflow_id: i64) -> Result<Vec<WorkflowTrigger>> {
-        let url = self
-            .build_url(&format!("/workflows/{workflow_id}/triggers"))
-            .await?;
+        let url = self.build_url(&api_workflow_triggers(workflow_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowTrigger>>().await?)
     }
 
     pub async fn fetch_due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>> {
-        let url = self.build_url("/workflow_triggers/due").await?;
+        let url = self.build_url(API_WORKFLOW_TRIGGERS_DUE).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowTrigger>>().await?)
@@ -226,7 +238,7 @@ where
         limit: i64,
     ) -> Result<Vec<WorkflowRun>> {
         let url = self
-            .build_url("/scheduler/workflow_trigger_firings/claim")
+            .build_url(API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM)
             .await?;
         let response = self
             .client
@@ -239,9 +251,7 @@ where
     }
 
     pub async fn fetch_workflow_trigger(&self, trigger_id: i64) -> Result<WorkflowTrigger> {
-        let url = self
-            .build_url(&format!("/workflow_triggers/{trigger_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowTrigger>().await?)
@@ -252,9 +262,9 @@ where
         trigger: &WorkflowTrigger,
     ) -> Result<WorkflowTrigger> {
         let url = match trigger.id {
-            Some(id) => self.build_url(&format!("/workflow_triggers/{id}")).await?,
+            Some(id) => self.build_url(&api_workflow_trigger(id)).await?,
             None => {
-                self.build_url(&format!("/workflows/{}/triggers", trigger.workflow_id))
+                self.build_url(&api_workflow_triggers(trigger.workflow_id))
                     .await?
             }
         };
@@ -267,9 +277,7 @@ where
     }
 
     pub async fn delete_workflow_trigger(&self, trigger_id: i64) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&format!("/workflow_triggers/{trigger_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
         let response = self.client.delete(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -282,7 +290,7 @@ where
         debug: bool,
     ) -> Result<WorkflowRun> {
         let url = self
-            .build_url(&format!("/workflow_triggers/{trigger_id}/runs"))
+            .build_url(&api_workflow_trigger_runs(trigger_id))
             .await?;
         let response = self
             .client
@@ -318,9 +326,7 @@ where
         debug: bool,
         name: Option<String>,
     ) -> Result<WorkflowRun> {
-        let url = self
-            .build_url(&format!("/workflows/{workflow_id}/runs"))
-            .await?;
+        let url = self.build_url(&api_workflow_runs(workflow_id)).await?;
         let response = self
             .client
             .post(url.clone())
@@ -343,7 +349,7 @@ where
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>> {
         let url = self
-            .build_url(&format!("/workflow_runs?status={}", status.as_str()))
+            .build_url(&format!("{API_WORKFLOW_RUNS}?status={}", status.as_str()))
             .await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -357,7 +363,7 @@ where
         lease_until: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<WorkflowRun>> {
-        let url = self.build_url("/scheduler/workflow_runs/claim").await?;
+        let url = self.build_url(API_SCHEDULER_WORKFLOW_RUNS_CLAIM).await?;
         let response = self
             .client
             .post(url.clone())
@@ -380,9 +386,7 @@ where
         lease_until: DateTime<Utc>,
     ) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!(
-                "/scheduler/workflow_runs/{workflow_run_id}/claim/renew"
-            ))
+            .build_url(&api_scheduler_workflow_run_claim_renew(workflow_run_id))
             .await?;
         let response = self
             .client
@@ -400,9 +404,7 @@ where
         scheduler_id: &str,
     ) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!(
-                "/scheduler/workflow_runs/{workflow_run_id}/claim/release"
-            ))
+            .build_url(&api_scheduler_workflow_run_claim_release(workflow_run_id))
             .await?;
         let response = self
             .client
@@ -419,7 +421,7 @@ where
         status: Option<WorkflowStatus>,
         workflow_id: Option<i64>,
     ) -> Result<Vec<WorkflowRun>> {
-        let mut url = self.build_url("/workflow_runs").await?;
+        let mut url = self.build_url(API_WORKFLOW_RUNS).await?;
         if let Some(status) = status {
             url.query_pairs_mut().append_pair("status", status.as_str());
         }
@@ -437,7 +439,7 @@ where
         name: &str,
         open_only: bool,
     ) -> Result<Vec<WorkflowRun>> {
-        let mut url = self.build_url("/workflow_runs").await?;
+        let mut url = self.build_url(API_WORKFLOW_RUNS).await?;
         url.query_pairs_mut()
             .append_pair("name", name)
             .append_pair("open", if open_only { "true" } else { "false" });
@@ -454,9 +456,7 @@ where
         state: Option<Value>,
         message: Option<String>,
     ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
         let response = self
             .client
             .patch(url.clone())
@@ -478,7 +478,7 @@ where
         name: Option<String>,
     ) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}/rename"))
+            .build_url(&api_workflow_run_rename(workflow_run_id))
             .await?;
         let response = self
             .client
@@ -511,7 +511,7 @@ where
         from_step_id: Option<String>,
     ) -> Result<WorkflowRun> {
         let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}/replay"))
+            .build_url(&api_workflow_run_replay(workflow_run_id))
             .await?;
         let response = self
             .client
@@ -536,7 +536,7 @@ where
         command: &str,
     ) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}/{command}"))
+            .build_url(&api_workflow_run_command(workflow_run_id, command))
             .await?;
         let response = self
             .client
@@ -553,7 +553,7 @@ where
         dedupe_key: &str,
         command: &ActionCommand,
     ) -> Result<ActionDispatchRecord> {
-        let url = self.build_url("/scheduler/action_dispatches").await?;
+        let url = self.build_url(API_SCHEDULER_ACTION_DISPATCHES).await?;
         let response = self
             .client
             .post(url.clone())
@@ -572,7 +572,7 @@ where
         limit: i64,
     ) -> Result<Vec<ActionDispatchRecord>> {
         let mut url = self
-            .build_url("/scheduler/action_dispatches/pending")
+            .build_url(API_SCHEDULER_ACTION_DISPATCHES_PENDING)
             .await?;
         url.query_pairs_mut()
             .append_pair("limit", &limit.to_string());
@@ -583,9 +583,7 @@ where
 
     pub async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!(
-                "/scheduler/action_dispatches/{dispatch_id}/published"
-            ))
+            .build_url(&api_scheduler_action_dispatch_published(dispatch_id))
             .await?;
         let response = self.client.post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -598,9 +596,7 @@ where
         error: &str,
     ) -> Result<TaskResponse> {
         let url = self
-            .build_url(&format!(
-                "/scheduler/action_dispatches/{dispatch_id}/failed"
-            ))
+            .build_url(&api_scheduler_action_dispatch_failed(dispatch_id))
             .await?;
         let response = self
             .client
@@ -616,9 +612,7 @@ where
         &self,
         workflow_run_id: i64,
     ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>)> {
-        let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
@@ -646,7 +640,7 @@ where
         parameters: Value,
     ) -> Result<WorkflowNodeRun> {
         let url = self
-            .build_url(&format!("/workflow_runs/{workflow_run_id}/nodes"))
+            .build_url(&api_workflow_run_nodes(workflow_run_id))
             .await?;
         let response = self
             .client
@@ -670,9 +664,7 @@ where
         transition_reason: Option<String>,
         message: Option<String>,
     ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&format!("/workflow_node_runs/{node_run_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
         let response = self
             .client
             .patch(url.clone())
@@ -696,9 +688,7 @@ where
         node_run_id: i64,
         payload: &WorkflowNodeRunStatusPayload,
     ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&format!("/workflow_node_runs/{node_run_id}"))
-            .await?;
+        let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
         let response = self.client.patch(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
@@ -710,7 +700,7 @@ where
         payload: &RunChunkPayload,
     ) -> Result<Vec<WorkflowNodeRunChunk>> {
         let url = self
-            .build_url(&format!("/workflow_node_runs/{node_run_id}/chunks"))
+            .build_url(&api_workflow_node_run_chunks(node_run_id))
             .await?;
         let response = self.client.post(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -724,7 +714,7 @@ where
         limit: i64,
     ) -> Result<Vec<WorkflowNodeRunChunk>> {
         let mut url = self
-            .build_url(&format!("/workflow_node_runs/{node_run_id}/chunks"))
+            .build_url(&api_workflow_node_run_chunks(node_run_id))
             .await?;
         url.query_pairs_mut()
             .append_pair("limit", &limit.to_string());
@@ -743,7 +733,7 @@ where
         payload: &RunArtifactPayload,
     ) -> Result<Vec<WorkflowNodeRunArtifact>> {
         let url = self
-            .build_url(&format!("/workflow_node_runs/{node_run_id}/artifacts"))
+            .build_url(&api_workflow_node_run_artifacts(node_run_id))
             .await?;
         let response = self.client.post(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -751,14 +741,14 @@ where
     }
 
     pub async fn fetch_supervisor_status(&self) -> Result<Value> {
-        let url = self.build_url("/supervisor/status").await?;
+        let url = self.build_url(API_SUPERVISOR_STATUS).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }
 
     pub async fn fetch_approvals(&self, workflow_run_id: Option<i64>) -> Result<Vec<Value>> {
-        let mut url = self.build_url("/approvals").await?;
+        let mut url = self.build_url(API_APPROVALS).await?;
         if let Some(workflow_run_id) = workflow_run_id {
             url.query_pairs_mut()
                 .append_pair("workflow_run_id", &workflow_run_id.to_string());
@@ -800,7 +790,7 @@ where
     ) -> Result<Value> {
         let command = if approved { "approve" } else { "reject" };
         let url = self
-            .build_url(&format!("/approvals/{approval_id}/{command}"))
+            .build_url(&api_approval_command(approval_id, command))
             .await?;
         let response = self
             .client
@@ -825,7 +815,7 @@ where
 
     pub async fn fetch_idempotency_key(&self, scope: &str, key: &str) -> Result<Option<Value>> {
         let url = self
-            .build_url(&format!("/idempotency_keys?scope={scope}&key={key}"))
+            .build_url(&format!("{API_IDEMPOTENCY_KEYS}?scope={scope}&key={key}"))
             .await?;
         let response = self.client.get(url.clone()).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -841,7 +831,7 @@ where
         key: &str,
         result: Value,
     ) -> Result<Value> {
-        let url = self.build_url("/idempotency_keys").await?;
+        let url = self.build_url(API_IDEMPOTENCY_KEYS).await?;
         let response = self
             .client
             .post(url.clone())
@@ -853,7 +843,7 @@ where
     }
 
     pub async fn fetch_credential(&self, scope: &str, name: &str) -> Result<String> {
-        let mut url = self.build_url("/credentials").await?;
+        let mut url = self.build_url(API_CREDENTIALS).await?;
         url.query_pairs_mut()
             .append_pair("scope", scope)
             .append_pair("name", name);

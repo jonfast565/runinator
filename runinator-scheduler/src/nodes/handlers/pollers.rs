@@ -249,7 +249,7 @@ impl NodeHandler for ApprovalHandler {
             None,
             None,
             Some(approval_state.to_wire_value()?),
-            Some("approval_required".into()),
+            Some(WorkflowStatus::ApprovalRequired.as_str().into()),
             None,
         )
         .await?;

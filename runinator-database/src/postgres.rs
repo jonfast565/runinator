@@ -1,7 +1,6 @@
 use std::{fs, path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Utc};
-use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
@@ -23,7 +22,16 @@ use sqlx::{
 
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
-use crate::{interfaces::DatabaseImpl, mappers};
+use crate::{
+    common::{
+        is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_str,
+        next_execution_for_cron, status_list, trigger_parameters, trigger_state,
+        workflow_result_event_type,
+    },
+    interfaces::DatabaseImpl,
+    mappers,
+    queries::{self, SqlDialect},
+};
 
 pub struct PostgresDb {
     pub pool: PgPool,
@@ -65,83 +73,6 @@ impl PostgresDb {
     }
 }
 
-fn json_str(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn json_opt_str(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-fn json_opt_i64(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
-}
-
-fn json_metadata(value: &Value) -> String {
-    value
-        .get("metadata")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
-        .to_string()
-}
-
-fn workflow_result_event_type(event: &WorkflowResultEvent) -> &'static str {
-    match &event.kind {
-        WorkflowResultEventKind::Status { .. } => "status",
-        WorkflowResultEventKind::Chunk { .. } => "chunk",
-        WorkflowResultEventKind::Artifact { .. } => "artifact",
-    }
-}
-
-fn next_execution_for_cron(
-    cron_schedule: &str,
-    now: DateTime<Utc>,
-) -> Result<DateTime<Utc>, SendableError> {
-    let cron = cron_schedule
-        .parse::<Cron>()
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    cron.find_next_occurrence(&now, false)
-        .map_err(|err| -> SendableError { Box::new(err) })
-}
-
-fn trigger_parameters(trigger: &WorkflowTrigger) -> Value {
-    trigger
-        .configuration
-        .get("parameters")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
-}
-
-fn trigger_state(trigger: &WorkflowTrigger) -> Value {
-    runinator_models::json!({
-        "control": { "pause_requested": false },
-        "trigger": {
-            "id": trigger.id,
-            "kind": trigger.kind,
-            "metadata": trigger.metadata
-        }
-    })
-}
-
-fn is_trigger_in_blackout(trigger: &WorkflowTrigger, now: DateTime<Utc>) -> bool {
-    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
-        return now >= start && now <= end;
-    }
-    false
-}
-
-fn status_list(statuses: &[WorkflowStatus]) -> String {
-    statuses
-        .iter()
-        .map(|status| format!("'{}'", status.as_str().replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 impl PostgresDb {
     pub async fn run_migrations(&self) -> Result<(), SendableError> {
         info!("Running embedded PostgreSQL migrations");
@@ -172,12 +103,10 @@ impl DatabaseImpl for PostgresDb {
         &self,
         status: RunStatus,
     ) -> Result<Vec<RunSummary>, SendableError> {
-        let rows = sqlx::query(
-            "SELECT id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = $1 ORDER BY id",
-        )
-        .bind(status.as_str())
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&queries::fetch_runs_by_status(SqlDialect::Postgres))
+            .bind(status.as_str())
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .into_iter()
             .map(|row| mappers::postgres_row_to_run_summary(&row))
@@ -196,18 +125,19 @@ impl DatabaseImpl for PostgresDb {
             RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
         );
         let now = Utc::now().timestamp();
-        self.pool.execute(sqlx::query(
-            "UPDATE runs SET status = $1, output_json = COALESCE($2, output_json), message = COALESCE($3, message), started_at = CASE WHEN $4 = 'running' AND started_at IS NULL THEN $5 ELSE started_at END, finished_at = CASE WHEN $6 THEN $7 ELSE finished_at END WHERE id = $8",
-        )
-        .bind(status.as_str())
-        .bind(output_json.map(|v| v.to_string()))
-        .bind(message)
-        .bind(status.as_str())
-        .bind(now)
-        .bind(terminal)
-        .bind(now)
-        .bind(run_id))
-        .await?;
+        self.pool
+            .execute(
+                sqlx::query(&queries::update_run_status(SqlDialect::Postgres))
+                    .bind(status.as_str())
+                    .bind(output_json.map(|v| v.to_string()))
+                    .bind(message)
+                    .bind(status.as_str())
+                    .bind(now)
+                    .bind(terminal)
+                    .bind(now)
+                    .bind(run_id),
+            )
+            .await?;
         Ok(())
     }
 
@@ -684,18 +614,7 @@ impl DatabaseImpl for PostgresDb {
             return Ok(Vec::new());
         }
         let statuses = status_list(&statuses);
-        let sql = format!(
-            "UPDATE workflow_runs SET scheduler_claimed_by = $1, scheduler_claimed_until = $2
-             WHERE id IN (
-                 SELECT id FROM workflow_runs
-                 WHERE status IN ({statuses})
-                   AND (scheduler_claimed_until IS NULL OR scheduler_claimed_until <= $3 OR scheduler_claimed_by = $1)
-                 ORDER BY id
-                 LIMIT $4
-                 FOR UPDATE SKIP LOCKED
-             )
-             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name"
-        );
+        let sql = queries::claim_workflow_runs_for_scheduler(SqlDialect::Postgres, &statuses);
         let rows = sqlx::query(&sql)
             .bind(&scheduler_id)
             .bind(lease_until.timestamp())
@@ -1032,7 +951,7 @@ impl DatabaseImpl for PostgresDb {
                     "UPDATE workflow_node_runs SET status = $1, output_json = COALESCE($2, output_json), message = COALESCE($3, message), started_at = CASE WHEN $4 = 'running' THEN $5 WHEN $6 = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN $7 THEN $8 WHEN $9 = 'queued' THEN NULL ELSE finished_at END WHERE id = $10 AND NOT (status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND $11 NOT IN ('succeeded', 'failed', 'timed_out', 'canceled'))",
                 )
                 .bind(status.as_str())
-                .bind(output_json.as_ref().map(|value| value.to_string()))
+                .bind(output_json.as_ref().map(|value: &Value| value.to_string()))
                 .bind(message)
                 .bind(status.as_str())
                 .bind(now)

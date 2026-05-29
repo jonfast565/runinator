@@ -1,7 +1,6 @@
 use std::{fs, path::PathBuf};
 
 use chrono::{DateTime, Utc};
-use croner::Cron;
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
@@ -19,7 +18,16 @@ use sqlx::{
     ConnectOptions, Executor, Row, SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions,
 };
 
-use crate::{interfaces::DatabaseImpl, mappers};
+use crate::{
+    common::{
+        is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_str,
+        next_execution_for_cron, status_list, trigger_parameters, trigger_state,
+        workflow_result_event_type,
+    },
+    interfaces::DatabaseImpl,
+    mappers,
+    queries::{self, SqlDialect},
+};
 
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
@@ -73,83 +81,6 @@ impl SqliteDb {
     }
 }
 
-fn json_str(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn json_opt_str(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-fn json_opt_i64(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
-}
-
-fn json_metadata(value: &Value) -> String {
-    value
-        .get("metadata")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
-        .to_string()
-}
-
-fn workflow_result_event_type(event: &WorkflowResultEvent) -> &'static str {
-    match &event.kind {
-        WorkflowResultEventKind::Status { .. } => "status",
-        WorkflowResultEventKind::Chunk { .. } => "chunk",
-        WorkflowResultEventKind::Artifact { .. } => "artifact",
-    }
-}
-
-fn next_execution_for_cron(
-    cron_schedule: &str,
-    now: DateTime<Utc>,
-) -> Result<DateTime<Utc>, SendableError> {
-    let cron = cron_schedule
-        .parse::<Cron>()
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    cron.find_next_occurrence(&now, false)
-        .map_err(|err| -> SendableError { Box::new(err) })
-}
-
-fn trigger_parameters(trigger: &WorkflowTrigger) -> Value {
-    trigger
-        .configuration
-        .get("parameters")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
-}
-
-fn trigger_state(trigger: &WorkflowTrigger) -> Value {
-    runinator_models::json!({
-        "control": { "pause_requested": false },
-        "trigger": {
-            "id": trigger.id,
-            "kind": trigger.kind,
-            "metadata": trigger.metadata
-        }
-    })
-}
-
-fn is_trigger_in_blackout(trigger: &WorkflowTrigger, now: DateTime<Utc>) -> bool {
-    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
-        return now >= start && now <= end;
-    }
-    false
-}
-
-fn status_list(statuses: &[WorkflowStatus]) -> String {
-    statuses
-        .iter()
-        .map(|status| format!("'{}'", status.as_str().replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 impl SqliteDb {
     pub async fn run_migrations(&self) -> Result<(), SendableError> {
         info!("Running embedded SQLite migrations");
@@ -180,12 +111,10 @@ impl DatabaseImpl for SqliteDb {
         &self,
         status: RunStatus,
     ) -> Result<Vec<RunSummary>, SendableError> {
-        let rows = sqlx::query(
-            "SELECT id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = ? ORDER BY id",
-        )
-        .bind(status.as_str())
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&queries::fetch_runs_by_status(SqlDialect::Sqlite))
+            .bind(status.as_str())
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .into_iter()
             .map(|row| mappers::sqlite_row_to_run_summary(&row))
@@ -204,18 +133,19 @@ impl DatabaseImpl for SqliteDb {
             status,
             RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
         );
-        self.pool.execute(sqlx::query(
-            "UPDATE runs SET status = ?, output_json = COALESCE(?, output_json), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
-        )
-        .bind(status.as_str())
-        .bind(output_json.map(|v| v.to_string()))
-        .bind(message)
-        .bind(status.as_str())
-        .bind(now)
-        .bind(terminal)
-        .bind(now)
-        .bind(run_id))
-        .await?;
+        self.pool
+            .execute(
+                sqlx::query(&queries::update_run_status(SqlDialect::Sqlite))
+                    .bind(status.as_str())
+                    .bind(output_json.map(|v| v.to_string()))
+                    .bind(message)
+                    .bind(status.as_str())
+                    .bind(now)
+                    .bind(terminal)
+                    .bind(now)
+                    .bind(run_id),
+            )
+            .await?;
         Ok(())
     }
 
@@ -650,17 +580,7 @@ impl DatabaseImpl for SqliteDb {
             return Ok(Vec::new());
         }
         let statuses = status_list(&statuses);
-        let sql = format!(
-            "UPDATE workflow_runs SET scheduler_claimed_by = ?, scheduler_claimed_until = ?
-             WHERE id IN (
-                 SELECT id FROM workflow_runs
-                 WHERE status IN ({statuses})
-                   AND (scheduler_claimed_until IS NULL OR scheduler_claimed_until <= ? OR scheduler_claimed_by = ?)
-                 ORDER BY id
-                 LIMIT ?
-             )
-             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name"
-        );
+        let sql = queries::claim_workflow_runs_for_scheduler(SqlDialect::Sqlite, &statuses);
         let rows = sqlx::query(&sql)
             .bind(&scheduler_id)
             .bind(lease_until.timestamp())
@@ -997,7 +917,7 @@ impl DatabaseImpl for SqliteDb {
                     "UPDATE workflow_node_runs SET status = ?, output_json = COALESCE(?, output_json), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' THEN ? WHEN ? = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN ? THEN ? WHEN ? = 'queued' THEN NULL ELSE finished_at END WHERE id = ? AND NOT (status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND ? NOT IN ('succeeded', 'failed', 'timed_out', 'canceled'))",
                 )
                 .bind(status.as_str())
-                .bind(output_json.as_ref().map(|value| value.to_string()))
+                .bind(output_json.as_ref().map(|value: &Value| value.to_string()))
                 .bind(message)
                 .bind(status.as_str())
                 .bind(now)

@@ -7,6 +7,12 @@ use axum::{
 };
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::api_routes::{
+    API_ARTIFACTS, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+    API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+    API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+    API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
+};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::events::EventSender;
@@ -86,21 +92,21 @@ pub fn build_router<T: DatabaseImpl>(
             get(ws_workflow_node_run_stream::<T>),
         )
         .route(
-            "/workflows",
+            API_WORKFLOWS,
             get(get_workflows::<T>)
                 .post(upsert_workflow::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workflows/validate",
+            API_WORKFLOWS_VALIDATE,
             post(validate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflows/import",
+            API_WORKFLOWS_IMPORT,
             post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflows/export",
+            API_WORKFLOWS_EXPORT,
             get(export_workflow_bundle::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -121,11 +127,11 @@ pub fn build_router<T: DatabaseImpl>(
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_triggers/due",
+            API_WORKFLOW_TRIGGERS_DUE,
             get(get_due_workflow_triggers::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/scheduler/workflow_trigger_firings/claim",
+            API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
             post(claim_due_workflow_trigger_firings::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -140,14 +146,14 @@ pub fn build_router<T: DatabaseImpl>(
             post(create_workflow_trigger_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/workflow_runs",
+            API_WORKFLOW_RUNS,
             get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/scheduler/workflow_runs/claim",
+            API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
         )
-        .route("/runs", get(get_runs::<T>).layer(Extension(pool.clone())))
+        .route(API_RUNS, get(get_runs::<T>).layer(Extension(pool.clone())))
         .route(
             "/runs/{id}",
             patch(update_run::<T>).layer(Extension(pool.clone())),
@@ -165,7 +171,7 @@ pub fn build_router<T: DatabaseImpl>(
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/artifacts",
+            API_ARTIFACTS,
             get(list_artifacts::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -209,11 +215,11 @@ pub fn build_router<T: DatabaseImpl>(
             post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/scheduler/action_dispatches",
+            API_SCHEDULER_ACTION_DISPATCHES,
             post(enqueue_action_dispatch::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/scheduler/action_dispatches/pending",
+            API_SCHEDULER_ACTION_DISPATCHES_PENDING,
             get(pending_action_dispatches::<T>).layer(Extension(pool.clone())),
         )
         .route(
@@ -369,7 +375,7 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .route("/credentials/import", post(import_secret_bundle))
         .route(
-            "/providers",
+            API_PROVIDERS,
             get(get_providers::<T>)
                 .post(upsert_provider::<T>)
                 .layer(Extension(pool.clone())),

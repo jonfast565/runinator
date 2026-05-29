@@ -97,7 +97,10 @@ pub async fn fire_outcome(
             NodeOutcome::Started => hook.on_started(ctx).await,
             NodeOutcome::Pending => {}
             NodeOutcome::Retrying => hook.on_failed(ctx, Some("retrying")).await,
-            NodeOutcome::Blocked => hook.on_failed(ctx, Some("blocked")).await,
+            NodeOutcome::Blocked => {
+                hook.on_failed(ctx, Some(WorkflowStatus::Blocked.as_str()))
+                    .await
+            }
             NodeOutcome::Advanced { status, target } => {
                 match status {
                     WorkflowStatus::Succeeded | WorkflowStatus::Running => {

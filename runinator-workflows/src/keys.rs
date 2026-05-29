@@ -1,0 +1,32 @@
+pub(crate) const COND_ALL: &str = "all";
+pub(crate) const COND_ANY: &str = "any";
+pub(crate) const COND_NOT: &str = "not";
+pub(crate) const COND_VALUE: &str = "value";
+pub(crate) const COND_LEFT: &str = "left";
+pub(crate) const COND_EQUALS: &str = "equals";
+pub(crate) const COND_NOT_EQUALS: &str = "not_equals";
+pub(crate) const COND_CONTAINS: &str = "contains";
+pub(crate) const COND_IN: &str = "in";
+pub(crate) const COND_STARTS_WITH: &str = "starts_with";
+pub(crate) const COND_ENDS_WITH: &str = "ends_with";
+pub(crate) const COND_GREATER_THAN: &str = "greater_than";
+pub(crate) const COND_GREATER_THAN_OR_EQUAL: &str = "greater_than_or_equal";
+pub(crate) const COND_LESS_THAN: &str = "less_than";
+pub(crate) const COND_LESS_THAN_OR_EQUAL: &str = "less_than_or_equal";
+pub(crate) const COND_EXISTS: &str = "exists";
+
+pub(crate) const EXPR_VALUE: &str = "$value";
+pub(crate) const EXPR_REF: &str = "$ref";
+pub(crate) const EXPR_CONCAT: &str = "$concat";
+pub(crate) const EXPR_COALESCE: &str = "$coalesce";
+pub(crate) const EXPR_LITERAL: &str = "$literal";
+pub(crate) const EXPR_TO_STRING: &str = "$to_string";
+pub(crate) const EXPR_TO_JSON_STRING: &str = "$to_json_string";
+pub(crate) const EXPR_NODE: &str = "$node";
+
+pub(crate) const REF_NODE: &str = "node";
+pub(crate) const REF_OUTPUT: &str = "output";
+pub(crate) const REF_INPUT: &str = "input";
+pub(crate) const REF_PREV: &str = "prev";
+pub(crate) const REF_WORKFLOW: &str = "workflow";
+pub(crate) const REF_STEPS: &str = "steps";

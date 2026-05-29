@@ -3,6 +3,11 @@ use runinator_models::workflows::{WorkflowNode, WorkflowStatus};
 
 use crate::errors::WorkflowValidationError;
 use crate::expressions::resolve_value_refs;
+use crate::keys::{
+    COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS, COND_GREATER_THAN,
+    COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN, COND_LESS_THAN_OR_EQUAL,
+    COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
+};
 
 pub fn evaluate_condition(
     condition: &Value,
@@ -16,7 +21,7 @@ pub fn evaluate_condition(
             "condition must be an object".into(),
         ));
     };
-    if let Some(all) = object.get("all") {
+    if let Some(all) = object.get(COND_ALL) {
         let Some(items) = all.as_array() else {
             return Err(WorkflowValidationError::InvalidCondition(
                 "all must be an array".into(),
@@ -29,7 +34,7 @@ pub fn evaluate_condition(
         }
         return Ok(true);
     }
-    if let Some(any) = object.get("any") {
+    if let Some(any) = object.get(COND_ANY) {
         let Some(items) = any.as_array() else {
             return Err(WorkflowValidationError::InvalidCondition(
                 "any must be an array".into(),
@@ -42,64 +47,64 @@ pub fn evaluate_condition(
         }
         return Ok(false);
     }
-    if let Some(not) = object.get("not") {
+    if let Some(not) = object.get(COND_NOT) {
         return Ok(!evaluate_condition(not, context)?);
     }
 
     let left = object
-        .get("value")
-        .or_else(|| object.get("left"))
+        .get(COND_VALUE)
+        .or_else(|| object.get(COND_LEFT))
         .ok_or_else(|| WorkflowValidationError::InvalidCondition("missing value".into()))?;
     let left = resolve_value_refs(left, context)?;
-    if let Some(expected) = object.get("equals") {
+    if let Some(expected) = object.get(COND_EQUALS) {
         return Ok(left == resolve_value_refs(expected, context)?);
     }
-    if let Some(expected) = object.get("not_equals") {
+    if let Some(expected) = object.get(COND_NOT_EQUALS) {
         return Ok(left != resolve_value_refs(expected, context)?);
     }
-    if let Some(expected) = object.get("contains") {
+    if let Some(expected) = object.get(COND_CONTAINS) {
         return contains_value(&left, &resolve_value_refs(expected, context)?);
     }
-    if let Some(expected) = object.get("in") {
+    if let Some(expected) = object.get(COND_IN) {
         return Ok(resolve_value_refs(expected, context)?
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item == &left)));
     }
-    if let Some(expected) = object.get("starts_with") {
+    if let Some(expected) = object.get(COND_STARTS_WITH) {
         return string_match(
             &left,
             &resolve_value_refs(expected, context)?,
             |left, right| left.starts_with(right),
         );
     }
-    if let Some(expected) = object.get("ends_with") {
+    if let Some(expected) = object.get(COND_ENDS_WITH) {
         return string_match(
             &left,
             &resolve_value_refs(expected, context)?,
             |left, right| left.ends_with(right),
         );
     }
-    if let Some(expected) = object.get("greater_than") {
+    if let Some(expected) = object.get(COND_GREATER_THAN) {
         return compare_value(&left, &resolve_value_refs(expected, context)?, |ordering| {
             ordering.is_gt()
         });
     }
-    if let Some(expected) = object.get("greater_than_or_equal") {
+    if let Some(expected) = object.get(COND_GREATER_THAN_OR_EQUAL) {
         return compare_value(&left, &resolve_value_refs(expected, context)?, |ordering| {
             ordering.is_ge()
         });
     }
-    if let Some(expected) = object.get("less_than") {
+    if let Some(expected) = object.get(COND_LESS_THAN) {
         return compare_value(&left, &resolve_value_refs(expected, context)?, |ordering| {
             ordering.is_lt()
         });
     }
-    if let Some(expected) = object.get("less_than_or_equal") {
+    if let Some(expected) = object.get(COND_LESS_THAN_OR_EQUAL) {
         return compare_value(&left, &resolve_value_refs(expected, context)?, |ordering| {
             ordering.is_le()
         });
     }
-    if let Some(expected) = object.get("exists") {
+    if let Some(expected) = object.get(COND_EXISTS) {
         return Ok(expected.as_bool().unwrap_or(true) != left.is_null());
     }
     Err(WorkflowValidationError::InvalidCondition(

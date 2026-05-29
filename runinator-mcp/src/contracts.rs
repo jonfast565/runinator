@@ -1,0 +1,11 @@
+pub(crate) const RESOURCE_WORKFLOWS_URI: &str = "runinator://workflows";
+pub(crate) const RESOURCE_WORKFLOW_TEMPLATE_URI: &str = "runinator://workflows/{id}";
+pub(crate) const RESOURCE_WORKFLOW_RUN_TEMPLATE_URI: &str = "runinator://workflow_runs/{id}";
+pub(crate) const RESOURCE_RUN_TEMPLATE_URI: &str = "runinator://runs/{id}";
+pub(crate) const RESOURCE_RUN_CHUNKS_TEMPLATE_URI: &str = "runinator://runs/{id}/chunks";
+pub(crate) const RESOURCE_RUN_ARTIFACTS_TEMPLATE_URI: &str = "runinator://runs/{id}/artifacts";
+pub(crate) const RESOURCE_WORKFLOW_URI_PREFIX: &str = "runinator://workflows/";
+pub(crate) const RESOURCE_WORKFLOW_RUN_URI_PREFIX: &str = "runinator://workflow_runs/";
+pub(crate) const RESOURCE_RUN_URI_PREFIX: &str = "runinator://runs/";
+pub(crate) const RESOURCE_ARTIFACT_URI_PREFIX: &str = "runinator://artifacts/";
+pub(crate) const STATUS_UNKNOWN: &str = "unknown";

@@ -4,6 +4,7 @@ use reqwest::{
 };
 use runinator_models::json;
 use runinator_models::{
+    api_routes::{api_workflow, api_workflow_run_command, API_PROVIDERS, API_WORKFLOWS_VALIDATE},
     bundles::{Bundle, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     web::TaskResponse,
@@ -39,7 +40,7 @@ where
 
     /// Fetch provider/action metadata for task authoring.
     pub fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
-        let url = self.build_url("/providers")?;
+        let url = self.build_url(API_PROVIDERS)?;
         let response = self.client.get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<Vec<ProviderMetadata>>()?)
@@ -47,14 +48,14 @@ where
 
     /// Register provider/action metadata with the web service.
     pub fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
-        let url = self.build_url("/providers")?;
+        let url = self.build_url(API_PROVIDERS)?;
         let response = self.client.post(url.clone()).json(provider).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<ProviderMetadata>()?)
     }
 
     pub fn validate_workflow(&self, workflow: &WorkflowDefinition) -> Result<WorkflowDefinition> {
-        let url = self.build_url("/workflows/validate")?;
+        let url = self.build_url(API_WORKFLOWS_VALIDATE)?;
         let response = self.client.post(url.clone()).json(workflow).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowDefinition>()?)
@@ -82,8 +83,8 @@ where
 
     pub fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
         let path = workflow_id
-            .map(|id| format!("/workflows/{id}/export"))
-            .unwrap_or_else(|| "/workflows/export".into());
+            .map(|id| format!("{}/export", api_workflow(id)))
+            .unwrap_or_else(|| runinator_models::api_routes::API_WORKFLOWS_EXPORT.into());
         let url = self.build_url(&path)?;
         let response = self.client.get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
@@ -107,7 +108,7 @@ where
         workflow_run_id: i64,
         command: &str,
     ) -> Result<TaskResponse> {
-        let url = self.build_url(&format!("/workflow_runs/{workflow_run_id}/{command}"))?;
+        let url = self.build_url(&api_workflow_run_command(workflow_run_id, command))?;
         let response = self.client.post(url.clone()).json(&json!({})).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<TaskResponse>()?)

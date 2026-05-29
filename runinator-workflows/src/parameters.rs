@@ -1,9 +1,12 @@
 use runinator_models::value::{Map, Value};
-use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRef};
+use runinator_models::workflows::{
+    WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus,
+};
 
 use crate::conditions::{evaluate_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_value_ref;
+use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
     ApprovalParameters, BranchPolicy, EmitParameters, JoinParameters, LoopParameters,
     MapParameters, ParallelParameters, RaceParameters, SwitchCase, SwitchParameters, TryParameters,
@@ -33,8 +36,8 @@ pub fn parse_switch_parameters(
                 when.clone()
             } else {
                 let mut condition = Map::new();
-                condition.insert("value".into(), value.clone());
-                for key in ["equals", "not_equals", "exists"] {
+                condition.insert(COND_VALUE.into(), value.clone());
+                for key in [COND_EQUALS, COND_NOT_EQUALS, COND_EXISTS] {
                     if let Some(expected) = case_object.get(key) {
                         condition.insert(key.into(), expected.clone());
                     }
@@ -160,7 +163,7 @@ pub fn parse_wait_parameters(node: &WorkflowNode) -> WaitParameters {
         .wait
         .get("initial_status")
         .and_then(Value::as_str)
-        .unwrap_or("waiting")
+        .unwrap_or(WorkflowStatus::Waiting.as_str())
         .to_string();
     WaitParameters {
         seconds,

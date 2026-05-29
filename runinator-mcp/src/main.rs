@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+mod contracts;
 mod protocol;
 mod resources;
 mod tools;
@@ -13,10 +14,16 @@ use reqwest::blocking::Client;
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
+    api_routes::{
+        API_PROVIDERS, API_RUNS, API_WORKFLOW_RUNS, API_WORKFLOWS, API_WORKFLOWS_EXPORT,
+        API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, api_run_artifacts, api_workflow,
+        api_workflow_run, api_workflow_runs,
+    },
     runs::RunStatus,
     workflows::{WorkflowDefinition, WorkflowStatus},
 };
 
+use contracts::{RESOURCE_ARTIFACT_URI_PREFIX, RESOURCE_WORKFLOW_RUN_URI_PREFIX};
 use protocol::{json_export_response, json_tool_response, required_i64, required_value};
 use resources::{
     resource_entries_from_runs, resource_entries_from_workflow_runs, resource_path_for_uri,
@@ -103,7 +110,7 @@ impl McpServer {
 
         let mut response: Value = self
             .client
-            .post(self.url(&format!("workflows/{workflow_id}/runs")))
+            .post(self.url(&api_workflow_runs(workflow_id)))
             .json(&request)
             .send()
             .map_err(|err| err.to_string())?
@@ -130,13 +137,14 @@ impl McpServer {
         let status = workflow_run
             .get("status")
             .and_then(Value::as_str)
-            .unwrap_or("queued");
-        if matches!(status, "succeeded" | "failed" | "timed_out" | "canceled") {
-            let is_error = status != "succeeded";
+            .and_then(|status| WorkflowStatus::try_from(status).ok())
+            .unwrap_or(WorkflowStatus::Queued);
+        if status.is_terminal() {
+            let is_error = status != WorkflowStatus::Succeeded;
             return Ok(json!({
                 "content": [{
                     "type": "text",
-                    "text": format!("Runinator workflow finished with status {status}. Workflow run resource: runinator://workflow_runs/{workflow_run_id}")
+                    "text": format!("Runinator workflow finished with status {}. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id}", status.as_str())
                 }],
                 "structuredContent": {
                     "workflow_run": workflow_run,
@@ -148,7 +156,7 @@ impl McpServer {
         Ok(json!({
             "content": [{
                 "type": "text",
-                "text": format!("Runinator workflow queued. Workflow run resource: runinator://workflow_runs/{workflow_run_id}")
+                "text": format!("Runinator workflow queued. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id}")
             }],
             "structuredContent": response,
             "isError": false,
@@ -158,40 +166,40 @@ impl McpServer {
     fn fixed_tool_call(&self, name: &str, arguments: Value) -> Result<Option<Value>, String> {
         let result = match name {
             "runinator_list_providers" => {
-                let providers = self.fetch_api_json("providers")?;
+                let providers = self.fetch_api_json(API_PROVIDERS)?;
                 json_tool_response("Provider metadata", providers, false)?
             }
             "runinator_list_workflows" => {
-                let workflows = self.fetch_api_json("workflows")?;
+                let workflows = self.fetch_api_json(API_WORKFLOWS)?;
                 json_tool_response("Workflow definitions", workflows, false)?
             }
             "runinator_get_workflow" => {
                 let workflow_id = required_i64(&arguments, "workflow_id")?;
-                let workflow = self.fetch_api_json(&format!("workflows/{workflow_id}"))?;
+                let workflow = self.fetch_api_json(&api_workflow(workflow_id))?;
                 json_tool_response("Workflow definition", workflow, false)?
             }
             "runinator_validate_workflow" => {
                 let workflow = required_value(&arguments, "workflow")?;
-                let workflow = self.post_api_json("workflows/validate", workflow)?;
+                let workflow = self.post_api_json(API_WORKFLOWS_VALIDATE, workflow)?;
                 json_tool_response("Workflow validates", workflow, false)?
             }
             "runinator_save_workflow" => {
                 let workflow = required_value(&arguments, "workflow")?;
                 let saved = if let Some(workflow_id) = workflow.get("id").and_then(Value::as_i64) {
-                    self.patch_api_json(&format!("workflows/{workflow_id}"), workflow)?
+                    self.patch_api_json(&api_workflow(workflow_id), workflow)?
                 } else {
-                    self.post_api_json("workflows", workflow)?
+                    self.post_api_json(API_WORKFLOWS, workflow)?
                 };
                 json_tool_response("Workflow saved", saved, false)?
             }
             "runinator_import_workflow_bundle" => {
-                let bundle = self.post_api_json("workflows/import", arguments)?;
+                let bundle = self.post_api_json(API_WORKFLOWS_IMPORT, arguments)?;
                 json_tool_response("Workflow bundle imported", bundle, false)?
             }
             "runinator_export_workflow_bundle" => {
                 let path = match arguments.get("workflow_id").and_then(Value::as_i64) {
-                    Some(workflow_id) => format!("workflows/{workflow_id}/export"),
-                    None => "workflows/export".to_string(),
+                    Some(workflow_id) => format!("{}/export", api_workflow(workflow_id)),
+                    None => API_WORKFLOWS_EXPORT.to_string(),
                 };
                 let bundle = self.fetch_api_json(&path)?;
                 json_export_response(bundle)?
@@ -274,7 +282,7 @@ impl McpServer {
 
     fn wait_for_quick_completion(&self, run_id: i64) -> Result<Option<Value>, String> {
         for _ in 0..10 {
-            let run = self.fetch_api_json(&format!("workflow_runs/{run_id}"))?;
+            let run = self.fetch_api_json(&api_workflow_run(run_id))?;
             let status = run
                 .get("status")
                 .and_then(Value::as_str)
@@ -297,7 +305,7 @@ impl McpServer {
 
     fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>, String> {
         self.client
-            .get(self.url("workflows"))
+            .get(self.url(API_WORKFLOWS))
             .send()
             .map_err(|err| err.to_string())?
             .error_for_status()
@@ -307,7 +315,7 @@ impl McpServer {
     }
 
     fn recent_resource_entries(&self) -> Result<Vec<Value>, String> {
-        let mut workflow_runs = match self.fetch_api_json("workflow_runs") {
+        let mut workflow_runs = match self.fetch_api_json(API_WORKFLOW_RUNS) {
             Ok(Value::Array(items)) => items,
             _ => Vec::new(),
         };
@@ -325,7 +333,7 @@ impl McpServer {
             RunStatus::Canceled,
         ] {
             if let Ok(Value::Array(items)) =
-                self.fetch_api_json(&format!("runs?status={}", status.as_str()))
+                self.fetch_api_json(&format!("{API_RUNS}?status={}", status.as_str()))
             {
                 runs.extend(items);
             }
@@ -340,9 +348,7 @@ impl McpServer {
             let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
                 continue;
             };
-            if let Ok(Value::Array(artifacts)) =
-                self.fetch_api_json(&format!("runs/{run_id}/artifacts"))
-            {
+            if let Ok(Value::Array(artifacts)) = self.fetch_api_json(&api_run_artifacts(run_id)) {
                 for artifact in artifacts {
                     let Some(artifact_id) = artifact.get("id").and_then(Value::as_i64) else {
                         continue;
@@ -352,7 +358,7 @@ impl McpServer {
                         .and_then(Value::as_str)
                         .unwrap_or("Artifact");
                     resources.push(json!({
-                        "uri": format!("runinator://artifacts/{artifact_id}"),
+                        "uri": format!("{RESOURCE_ARTIFACT_URI_PREFIX}{artifact_id}"),
                         "name": format!("Artifact {artifact_id}: {name}"),
                         "mimeType": "application/json",
                     }));

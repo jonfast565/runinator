@@ -198,7 +198,7 @@ pub async fn block_node(
         None,
         None,
         None,
-        Some("blocked".into()),
+        Some(WorkflowStatus::Blocked.as_str().into()),
         Some(message.into()),
     )
     .await?;

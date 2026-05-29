@@ -2,6 +2,10 @@ use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
 
 use crate::errors::WorkflowValidationError;
+use crate::keys::{
+    EXPR_COALESCE, EXPR_CONCAT, EXPR_LITERAL, EXPR_NODE, EXPR_REF, EXPR_TO_JSON_STRING,
+    EXPR_TO_STRING, EXPR_VALUE, REF_INPUT, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
+};
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
 
 pub fn resolve_value_refs(
@@ -16,25 +20,25 @@ pub(crate) fn parse_expression(
     value: &Value,
 ) -> Result<WorkflowExpression, WorkflowValidationError> {
     match value {
-        Value::Object(map) if map.contains_key("$value") => {
+        Value::Object(map) if map.contains_key(EXPR_VALUE) => {
             Err(WorkflowValidationError::InvalidValueRef(value.to_string()))
         }
         Value::Object(map)
-            if map.contains_key("$ref")
-                || map.contains_key("$concat")
-                || map.contains_key("$coalesce")
-                || map.contains_key("$literal")
-                || map.contains_key("$to_string")
-                || map.contains_key("$to_json_string")
-                || map.contains_key("$node") =>
+            if map.contains_key(EXPR_REF)
+                || map.contains_key(EXPR_CONCAT)
+                || map.contains_key(EXPR_COALESCE)
+                || map.contains_key(EXPR_LITERAL)
+                || map.contains_key(EXPR_TO_STRING)
+                || map.contains_key(EXPR_TO_JSON_STRING)
+                || map.contains_key(EXPR_NODE) =>
         {
             if map.len() != 1 {
                 return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
             }
-            if let Some(reference) = map.get("$ref") {
+            if let Some(reference) = map.get(EXPR_REF) {
                 return Ok(WorkflowExpression::Ref(parse_value_ref(reference)?));
             }
-            if let Some(items) = map.get("$concat") {
+            if let Some(items) = map.get(EXPR_CONCAT) {
                 let items = items
                     .as_array()
                     .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
@@ -45,7 +49,7 @@ pub(crate) fn parse_expression(
                         .collect::<Result<Vec<_>, _>>()?,
                 ));
             }
-            if let Some(items) = map.get("$coalesce") {
+            if let Some(items) = map.get(EXPR_COALESCE) {
                 let items = items
                     .as_array()
                     .filter(|items| !items.is_empty())
@@ -57,15 +61,15 @@ pub(crate) fn parse_expression(
                         .collect::<Result<Vec<_>, _>>()?,
                 ));
             }
-            if let Some(literal) = map.get("$literal") {
+            if let Some(literal) = map.get(EXPR_LITERAL) {
                 return Ok(WorkflowExpression::Literal(literal.clone()));
             }
-            if let Some(nested) = map.get("$to_string") {
+            if let Some(nested) = map.get(EXPR_TO_STRING) {
                 return Ok(WorkflowExpression::ToString(Box::new(parse_expression(
                     nested,
                 )?)));
             }
-            if let Some(nested) = map.get("$to_json_string") {
+            if let Some(nested) = map.get(EXPR_TO_JSON_STRING) {
                 return Ok(WorkflowExpression::ToJsonString(Box::new(
                     parse_expression(nested)?,
                 )));
@@ -101,11 +105,11 @@ pub(crate) fn evaluate_static_expression(
     match expression {
         WorkflowExpression::Literal(value) => Ok(value),
         WorkflowExpression::Ref(reference) => Ok(Value::Object(Map::from_iter([(
-            "$ref".into(),
+            EXPR_REF.into(),
             serialize_value_ref(&reference),
         )]))),
         WorkflowExpression::Concat(items) => Ok(Value::Object(Map::from_iter([(
-            "$concat".into(),
+            EXPR_CONCAT.into(),
             Value::Array(
                 items
                     .into_iter()
@@ -114,7 +118,7 @@ pub(crate) fn evaluate_static_expression(
             ),
         )]))),
         WorkflowExpression::Coalesce(items) => Ok(Value::Object(Map::from_iter([(
-            "$coalesce".into(),
+            EXPR_COALESCE.into(),
             Value::Array(
                 items
                     .into_iter()
@@ -123,11 +127,11 @@ pub(crate) fn evaluate_static_expression(
             ),
         )]))),
         WorkflowExpression::ToString(nested) => Ok(Value::Object(Map::from_iter([(
-            "$to_string".into(),
+            EXPR_TO_STRING.into(),
             evaluate_static_expression(*nested)?,
         )]))),
         WorkflowExpression::ToJsonString(nested) => Ok(Value::Object(Map::from_iter([(
-            "$to_json_string".into(),
+            EXPR_TO_JSON_STRING.into(),
             evaluate_static_expression(*nested)?,
         )]))),
     }
@@ -204,29 +208,29 @@ pub(crate) fn parse_value_ref(value: &Value) -> Result<WorkflowValueRef, Workflo
         .as_object()
         .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
     if object.len() != 1
-        && !(object.len() == 2 && object.contains_key("node") && object.contains_key("output"))
+        && !(object.len() == 2 && object.contains_key(REF_NODE) && object.contains_key(REF_OUTPUT))
     {
         return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
     }
-    if let Some(path) = object.get("input") {
+    if let Some(path) = object.get(REF_INPUT) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Input,
             path: parse_path(path)?,
         });
     }
-    if let Some(path) = object.get("prev") {
+    if let Some(path) = object.get(REF_PREV) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Prev,
             path: parse_path(path)?,
         });
     }
-    if let Some(path) = object.get("workflow") {
+    if let Some(path) = object.get(REF_WORKFLOW) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Workflow,
             path: parse_path(path)?,
         });
     }
-    if let (Some(node), Some(output)) = (object.get("node"), object.get("output")) {
+    if let (Some(node), Some(output)) = (object.get(REF_NODE), object.get(REF_OUTPUT)) {
         let node = node
             .as_str()
             .filter(|node| !node.is_empty())
@@ -266,13 +270,13 @@ pub(crate) fn resolve_value_ref(
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
     let base = match &reference.source {
-        WorkflowRefSource::Input => context.get("input"),
-        WorkflowRefSource::Prev => context.get("prev"),
-        WorkflowRefSource::Workflow => context.get("workflow"),
+        WorkflowRefSource::Input => context.get(REF_INPUT),
+        WorkflowRefSource::Prev => context.get(REF_PREV),
+        WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
         WorkflowRefSource::NodeOutput(node) => context
-            .get("steps")
+            .get(REF_STEPS)
             .and_then(|steps| steps.get(node.as_str()))
-            .and_then(|step| step.get("output")),
+            .and_then(|step| step.get(REF_OUTPUT)),
     }
     .ok_or_else(|| {
         WorkflowValidationError::InvalidValueRef(serialize_value_ref(reference).to_string())
@@ -308,11 +312,11 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
             .collect(),
     );
     match &reference.source {
-        WorkflowRefSource::Input => runinator_models::json!({ "input": path }),
-        WorkflowRefSource::Prev => runinator_models::json!({ "prev": path }),
-        WorkflowRefSource::Workflow => runinator_models::json!({ "workflow": path }),
+        WorkflowRefSource::Input => runinator_models::json!({ (REF_INPUT): path }),
+        WorkflowRefSource::Prev => runinator_models::json!({ (REF_PREV): path }),
+        WorkflowRefSource::Workflow => runinator_models::json!({ (REF_WORKFLOW): path }),
         WorkflowRefSource::NodeOutput(node) => {
-            runinator_models::json!({ "node": node.as_str(), "output": path })
+            runinator_models::json!({ (REF_NODE): node.as_str(), (REF_OUTPUT): path })
         }
     }
 }

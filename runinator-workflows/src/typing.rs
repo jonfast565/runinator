@@ -11,6 +11,11 @@ use crate::{
     conditions::validate_condition,
     errors::{WorkflowTypeDiagnostic, WorkflowValidationError},
     expressions::{parse_expression, serialize_value_ref},
+    keys::{
+        COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS,
+        COND_GREATER_THAN, COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN,
+        COND_LESS_THAN_OR_EQUAL, COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
+    },
     parameters::{parse_map_parameters, parse_switch_parameters},
     types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef},
 };
@@ -465,7 +470,7 @@ fn validate_condition_types(
     let object = condition.as_object().ok_or_else(|| {
         WorkflowValidationError::InvalidCondition("condition must be an object".into())
     })?;
-    if let Some(all) = object.get("all") {
+    if let Some(all) = object.get(COND_ALL) {
         let Some(items) = all.as_array() else {
             return Err(WorkflowValidationError::InvalidCondition(
                 "all must be an array".into(),
@@ -476,7 +481,7 @@ fn validate_condition_types(
         }
         return Ok(());
     }
-    if let Some(any) = object.get("any") {
+    if let Some(any) = object.get(COND_ANY) {
         let Some(items) = any.as_array() else {
             return Err(WorkflowValidationError::InvalidCondition(
                 "any must be an array".into(),
@@ -487,29 +492,29 @@ fn validate_condition_types(
         }
         return Ok(());
     }
-    if let Some(not) = object.get("not") {
+    if let Some(not) = object.get(COND_NOT) {
         validate_condition_types(not, context)?;
         return Ok(());
     }
 
     let left = object
-        .get("value")
-        .or_else(|| object.get("left"))
+        .get(COND_VALUE)
+        .or_else(|| object.get(COND_LEFT))
         .ok_or_else(|| WorkflowValidationError::InvalidCondition("missing value".into()))?;
     let left_type = infer_value_type(left, context)?;
-    if let Some(expected) = object.get("equals") {
+    if let Some(expected) = object.get(COND_EQUALS) {
         comparable_types(&left_type, &infer_value_type(expected, context)?)?;
         return Ok(());
     }
-    if let Some(expected) = object.get("not_equals") {
+    if let Some(expected) = object.get(COND_NOT_EQUALS) {
         comparable_types(&left_type, &infer_value_type(expected, context)?)?;
         return Ok(());
     }
-    if let Some(expected) = object.get("contains") {
+    if let Some(expected) = object.get(COND_CONTAINS) {
         let expected_type = infer_value_type(expected, context)?;
         return validate_contains_type(&left_type, &expected_type);
     }
-    if let Some(expected) = object.get("in") {
+    if let Some(expected) = object.get(COND_IN) {
         let expected_type = infer_value_type(expected, context)?;
         let WorkflowType::Array(item_type) = expected_type else {
             return Err(WorkflowValidationError::TypeError(
@@ -520,8 +525,8 @@ fn validate_condition_types(
         return Ok(());
     }
     if let Some(expected) = object
-        .get("starts_with")
-        .or_else(|| object.get("ends_with"))
+        .get(COND_STARTS_WITH)
+        .or_else(|| object.get(COND_ENDS_WITH))
     {
         expect_type(&left_type, &WorkflowType::String, "string condition value")?;
         expect_type(
@@ -532,10 +537,10 @@ fn validate_condition_types(
         return Ok(());
     }
     if let Some(expected) = object
-        .get("greater_than")
-        .or_else(|| object.get("greater_than_or_equal"))
-        .or_else(|| object.get("less_than"))
-        .or_else(|| object.get("less_than_or_equal"))
+        .get(COND_GREATER_THAN)
+        .or_else(|| object.get(COND_GREATER_THAN_OR_EQUAL))
+        .or_else(|| object.get(COND_LESS_THAN))
+        .or_else(|| object.get(COND_LESS_THAN_OR_EQUAL))
     {
         let right_type = infer_value_type(expected, context)?;
         if (left_type.is_numeric() && right_type.is_numeric())
@@ -547,7 +552,7 @@ fn validate_condition_types(
             "ordering comparison requires both values to be numbers or strings".into(),
         ));
     }
-    if let Some(expected) = object.get("exists") {
+    if let Some(expected) = object.get(COND_EXISTS) {
         expect_value_type(expected, context, &WorkflowType::Boolean, "exists")?;
         return Ok(());
     }

@@ -1,35 +1,46 @@
+use crate::contracts::{
+    RESOURCE_ARTIFACT_URI_PREFIX, RESOURCE_RUN_ARTIFACTS_TEMPLATE_URI,
+    RESOURCE_RUN_CHUNKS_TEMPLATE_URI, RESOURCE_RUN_TEMPLATE_URI, RESOURCE_RUN_URI_PREFIX,
+    RESOURCE_WORKFLOW_RUN_TEMPLATE_URI, RESOURCE_WORKFLOW_RUN_URI_PREFIX,
+    RESOURCE_WORKFLOW_TEMPLATE_URI, RESOURCE_WORKFLOW_URI_PREFIX, RESOURCE_WORKFLOWS_URI,
+    STATUS_UNKNOWN,
+};
+use runinator_models::api_routes::{
+    API_ARTIFACTS, API_RUNS, API_WORKFLOWS, api_run, api_run_artifacts, api_workflow,
+    api_workflow_run,
+};
 use runinator_models::json;
 use runinator_models::value::Value;
 
 pub(crate) fn resource_templates() -> Vec<Value> {
     vec![
         json!({
-            "uri": "runinator://workflows",
+            "uri": RESOURCE_WORKFLOWS_URI,
             "name": "Workflow list",
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://workflows/{id}",
+            "uri": RESOURCE_WORKFLOW_TEMPLATE_URI,
             "name": "Workflow definition",
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://workflow_runs/{id}",
+            "uri": RESOURCE_WORKFLOW_RUN_TEMPLATE_URI,
             "name": "Workflow run",
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://runs/{id}",
+            "uri": RESOURCE_RUN_TEMPLATE_URI,
             "name": "Run summary",
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://runs/{id}/chunks",
+            "uri": RESOURCE_RUN_CHUNKS_TEMPLATE_URI,
             "name": "Run output chunks",
             "mimeType": "application/json"
         }),
         json!({
-            "uri": "runinator://runs/{id}/artifacts",
+            "uri": RESOURCE_RUN_ARTIFACTS_TEMPLATE_URI,
             "name": "Run artifacts",
             "mimeType": "application/json"
         }),
@@ -37,43 +48,52 @@ pub(crate) fn resource_templates() -> Vec<Value> {
 }
 
 pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
-    if uri == "runinator://workflows" {
-        return Some("workflows".into());
+    if uri == RESOURCE_WORKFLOWS_URI {
+        return Some(API_WORKFLOWS.trim_start_matches('/').to_string());
     }
     if let Some(workflow_id) = uri
-        .strip_prefix("runinator://workflows/")
+        .strip_prefix(RESOURCE_WORKFLOW_URI_PREFIX)
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return Some(format!("workflows/{workflow_id}"));
+        return Some(api_workflow(workflow_id).trim_start_matches('/').to_string());
     }
     if let Some(workflow_run_id) = uri
-        .strip_prefix("runinator://workflow_runs/")
+        .strip_prefix(RESOURCE_WORKFLOW_RUN_URI_PREFIX)
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return Some(format!("workflow_runs/{workflow_run_id}"));
+        return Some(api_workflow_run(workflow_run_id).trim_start_matches('/').to_string());
     }
-    if let Some(raw) = uri.strip_prefix("runinator://runs/") {
+    if let Some(raw) = uri.strip_prefix(RESOURCE_RUN_URI_PREFIX) {
         if let Some(run_id) = raw
             .strip_suffix("/chunks")
             .and_then(|id| id.parse::<i64>().ok())
         {
-            return Some(format!("runs/{run_id}/chunks?limit=500"));
+            return Some(format!(
+                "{}/{}{}",
+                API_RUNS.trim_start_matches('/'),
+                run_id,
+                "/chunks?limit=500"
+            ));
         }
         if let Some(run_id) = raw
             .strip_suffix("/artifacts")
             .and_then(|id| id.parse::<i64>().ok())
         {
-            return Some(format!("runs/{run_id}/artifacts"));
+            return Some(api_run_artifacts(run_id).trim_start_matches('/').to_string());
         }
         if let Ok(run_id) = raw.parse::<i64>() {
-            return Some(format!("runs/{run_id}"));
+            return Some(api_run(run_id).trim_start_matches('/').to_string());
         }
     }
     if let Some(artifact_id) = uri
-        .strip_prefix("runinator://artifacts/")
+        .strip_prefix(RESOURCE_ARTIFACT_URI_PREFIX)
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return Some(format!("artifacts/{artifact_id}"));
+        return Some(format!(
+            "{}/{}",
+            API_ARTIFACTS.trim_start_matches('/'),
+            artifact_id
+        ));
     }
     None
 }
@@ -87,9 +107,9 @@ pub(crate) fn resource_entries_from_workflow_runs(workflow_runs: &[Value]) -> Ve
         let status = run
             .get("status")
             .and_then(Value::as_str)
-            .unwrap_or("unknown");
+            .unwrap_or(STATUS_UNKNOWN);
         resources.push(json!({
-            "uri": format!("runinator://workflow_runs/{run_id}"),
+            "uri": format!("{RESOURCE_WORKFLOW_RUN_URI_PREFIX}{run_id}"),
             "name": format!("Workflow run {run_id}: {status}"),
             "mimeType": "application/json",
         }));
@@ -106,19 +126,19 @@ pub(crate) fn resource_entries_from_runs(runs: &[Value]) -> Vec<Value> {
         let status = run
             .get("status")
             .and_then(Value::as_str)
-            .unwrap_or("unknown");
+            .unwrap_or(STATUS_UNKNOWN);
         resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}"),
+            "uri": format!("{RESOURCE_RUN_URI_PREFIX}{run_id}"),
             "name": format!("Run {run_id}: {status}"),
             "mimeType": "application/json",
         }));
         resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}/chunks"),
+            "uri": format!("{RESOURCE_RUN_URI_PREFIX}{run_id}/chunks"),
             "name": format!("Run {run_id} chunks"),
             "mimeType": "application/json",
         }));
         resources.push(json!({
-            "uri": format!("runinator://runs/{run_id}/artifacts"),
+            "uri": format!("{RESOURCE_RUN_URI_PREFIX}{run_id}/artifacts"),
             "name": format!("Run {run_id} artifacts"),
             "mimeType": "application/json",
         }));
