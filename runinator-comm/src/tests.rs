@@ -1,7 +1,7 @@
 use prost::Message;
 
 use crate::{
-    ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind,
+    ActionCommand, ControlKind, WireCodec, WorkflowResultEvent, WorkflowResultEventKind,
     worker_control::{
         SchedulerControlAck, WorkerControlActionKind, WorkerControlEvent, WorkerControlEventKind,
     },
@@ -72,8 +72,8 @@ fn workflow_result_events_round_trip_with_json() {
         },
     );
 
-    let encoded = event.to_json().unwrap();
-    let decoded = WorkflowResultEvent::from_json(&encoded).unwrap();
+    let encoded = event.to_wire().unwrap();
+    let decoded = WorkflowResultEvent::from_wire(&encoded).unwrap();
 
     assert_eq!(decoded.command_id, command.command_id);
     assert_eq!(decoded.workflow_node_run_id, 20);

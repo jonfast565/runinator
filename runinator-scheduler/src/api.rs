@@ -14,6 +14,7 @@ use runinator_models::{
 };
 use serde_json::Value;
 
+use crate::nodes::RunState;
 use crate::worker_comm::WorkerManager;
 
 #[async_trait]
@@ -378,12 +379,13 @@ impl SchedulerApi {
     ) -> Result<(), SendableError> {
         if let Some(next_state) = state.as_mut() {
             if let Ok((run, _)) = self.client.fetch_workflow_run(workflow_run_id).await {
-                if let Some(debug) = run.state.get("debug").cloned() {
-                    if !next_state.is_object() {
-                        *next_state = serde_json::json!({});
-                    }
-                    if let Some(object) = next_state.as_object_mut() {
-                        object.entry("debug").or_insert(debug);
+                let existing = RunState::from_value(&run.state);
+                if let Some(debug) = existing.debug() {
+                    let mut next = RunState::from_value(next_state);
+                    // carry the prior debug frame forward only when the new state omits one.
+                    if next.debug().is_none() {
+                        next.set_debug(debug.clone());
+                        *next_state = next.into_value()?;
                     }
                 }
             }

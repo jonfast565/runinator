@@ -1,30 +1,13 @@
-// centralized helpers for state.control.* pointer access and mutation.
+// centralized helpers for the `state.control` frame.
 // every read defaults so legacy runs without new fields still behave.
 
 use runinator_models::workflows::WorkflowRun;
-use serde_json::{Map, Value};
+
+use crate::nodes::RunState;
 
 pub fn pause_requested(workflow_run: &WorkflowRun) -> bool {
-    workflow_run
-        .state
-        .pointer("/control/pause_requested")
-        .and_then(Value::as_bool)
+    RunState::from_run(workflow_run)
+        .control()
+        .map(|control| control.pause_requested)
         .unwrap_or(false)
-}
-
-pub fn ensure_control_object(state: &mut Value) -> &mut Map<String, Value> {
-    let object = ensure_object(state);
-    let control = object
-        .entry("control")
-        .or_insert_with(|| Value::Object(Map::new()));
-    ensure_object(control)
-}
-
-fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
-    loop {
-        if let Value::Object(object) = value {
-            return object;
-        }
-        *value = Value::Object(Map::new());
-    }
 }

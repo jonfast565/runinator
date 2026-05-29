@@ -1,5 +1,8 @@
 use crate::context::*;
-use crate::{api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run, workflow::process_workflow_run_step};
+use crate::{
+    api::WorkflowSchedulerApi, nodes::*, workflow::process_workflow_run,
+    workflow::process_workflow_run_step,
+};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use runinator_broker::Broker;
@@ -1651,12 +1654,15 @@ async fn action_node_timeout_publishes_cancel_to_broker() {
     }
     let broker = Arc::new(runinator_broker::in_memory::InMemoryBroker::new());
 
-    process_workflow_run_step(broker.as_ref(), &api, run).await.unwrap();
+    process_workflow_run_step(broker.as_ref(), &api, run)
+        .await
+        .unwrap();
 
     assert_eq!(api.last_run_update().status, WorkflowStatus::TimedOut);
 
     // check if control message was published
-    let control: runinator_broker::ControlDelivery = broker.receive_control("test-consumer").await.unwrap();
+    let control: runinator_broker::ControlDelivery =
+        broker.receive_control("test-consumer").await.unwrap();
     assert_eq!(control.command.workflow_run_id, 123);
     assert_eq!(control.command.kind, ControlKind::Cancel);
 }

@@ -13,14 +13,15 @@ use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;
+use runinator_comm::WireCodec;
 use runinator_comm::worker_control::WorkerControlEventKind;
 use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::workflow_state::TaskStatusOutput;
 use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{
     cancel::CancellationToken, load_libraries_from_path, plugin::Plugin, print_libs,
 };
 use runinator_utilities::startup;
-use serde_json::json;
 use tokio::{
     sync::{Mutex, Notify, Semaphore},
     task::JoinSet,
@@ -459,10 +460,12 @@ async fn process_delivery(
         Err(err) => {
             let message = format!("Failed to resolve action secrets: {err}");
             error!("{}", message);
-            let output_json = json!({
-                "success": false,
-                "message": message,
-            });
+            let output_json = TaskStatusOutput {
+                success: false,
+                duration_ms: None,
+                message: Some(message.clone()),
+            }
+            .to_wire_value()?;
             if let Err(err) = sink
                 .publish_status(
                     WorkflowStatus::Failed,
@@ -537,13 +540,15 @@ async fn process_delivery(
             .execution_result
             .as_ref()
             .and_then(|execution_result| execution_result.output_json.clone())
+            .map(Ok)
             .unwrap_or_else(|| {
-                json!({
-                    "success": true,
-                    "duration_ms": task_result.duration_ms(),
-                    "message": provider_message,
-                })
-            });
+                TaskStatusOutput {
+                    success: true,
+                    duration_ms: Some(task_result.duration_ms()),
+                    message: provider_message.clone(),
+                }
+                .to_wire_value()
+            })?;
         if let Err(err) = sink
             .publish_status(
                 WorkflowStatus::Succeeded,
@@ -577,11 +582,12 @@ async fn process_delivery(
             runinator_models::runs::RunStatus::Canceled => WorkflowStatus::Canceled,
             _ => WorkflowStatus::Failed,
         };
-        let output_json = json!({
-            "success": false,
-            "duration_ms": task_result.duration_ms(),
-            "message": provider_message,
-        });
+        let output_json = TaskStatusOutput {
+            success: false,
+            duration_ms: Some(task_result.duration_ms()),
+            message: provider_message.clone(),
+        }
+        .to_wire_value()?;
         if let Err(err) = sink
             .publish_status(status, Some(output_json), provider_message.clone())
             .await

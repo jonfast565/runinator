@@ -5,8 +5,9 @@ use crate::conditions::{evaluate_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_value_ref;
 use crate::types::{
-    BranchPolicy, EmitParameters, JoinParameters, MapParameters, ParallelParameters,
-    RaceParameters, SwitchCase, SwitchParameters, TryParameters, WorkflowValueRef,
+    ApprovalParameters, BranchPolicy, EmitParameters, JoinParameters, LoopParameters,
+    MapParameters, ParallelParameters, RaceParameters, SwitchCase, SwitchParameters, TryParameters,
+    WaitParameters, WorkflowValueRef,
 };
 
 pub fn parse_switch_parameters(
@@ -140,6 +141,63 @@ pub fn parse_emit_parameters(
     let event_type = optional_string(object.get("event_type"));
     let data = object.get("data").cloned().unwrap_or(Value::Null);
     Ok(EmitParameters { event_type, data })
+}
+
+/// parse a wait node's `wait` config. all fields default, so non-object configs are tolerated.
+pub fn parse_wait_parameters(node: &WorkflowNode) -> WaitParameters {
+    let seconds = node
+        .wait
+        .get("seconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0);
+    let until_status = node
+        .wait
+        .get("until_status")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let initial_status = node
+        .wait
+        .get("initial_status")
+        .and_then(Value::as_str)
+        .unwrap_or("waiting")
+        .to_string();
+    WaitParameters {
+        seconds,
+        until_status,
+        initial_status,
+    }
+}
+
+/// parse an approval node's parameters. carries the raw parameters along as approval metadata.
+pub fn parse_approval_parameters(node: &WorkflowNode) -> ApprovalParameters {
+    let approval_type = node
+        .parameters
+        .get("approval_type")
+        .and_then(Value::as_str)
+        .unwrap_or("generic")
+        .to_string();
+    let prompt = node
+        .parameters
+        .get("prompt")
+        .and_then(Value::as_str)
+        .unwrap_or("Approval required")
+        .to_string();
+    ApprovalParameters {
+        approval_type,
+        prompt,
+        metadata: node.parameters.clone(),
+    }
+}
+
+/// extract a loop node's iteration items from its runtime-resolved parameters.
+pub fn parse_loop_items(resolved_parameters: &Value) -> LoopParameters {
+    let items = resolved_parameters
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    LoopParameters { items }
 }
 
 pub fn evaluate_switch(

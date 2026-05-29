@@ -1,5 +1,8 @@
 pub mod discovery;
+pub mod wire;
 pub mod worker_control;
+
+pub use wire::{WireCodec, WireError};
 
 use chrono::{DateTime, Utc};
 use runinator_models::{
@@ -111,60 +114,12 @@ pub enum WorkflowResultEventKind {
     },
 }
 
-impl WorkerAnnouncement {
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
-    }
-}
-
-impl WebServiceAnnouncement {
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
-    }
-}
-
-impl GossipMessage {
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
-    }
-}
-
-impl ActionCommand {
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
-    }
-}
-
 impl ControlCommand {
     pub fn new(workflow_run_id: i64, kind: ControlKind) -> Self {
         Self {
             workflow_run_id,
             kind,
         }
-    }
-
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
     }
 }
 
@@ -191,14 +146,6 @@ impl WorkflowResultEvent {
 
     pub fn artifact(command: &ActionCommand, artifact: NewRunArtifact) -> Self {
         Self::new(command, WorkflowResultEventKind::Artifact { artifact })
-    }
-
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
     }
 
     fn new(command: &ActionCommand, kind: WorkflowResultEventKind) -> Self {

@@ -7,6 +7,7 @@ pub mod providers;
 pub mod runs;
 pub mod types;
 pub mod web;
+pub mod workflow_state;
 pub mod workflows;
 
 #[cfg(test)]

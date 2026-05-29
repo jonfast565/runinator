@@ -99,3 +99,22 @@ pub struct EmitParameters {
     pub event_type: Option<String>,
     pub data: Value,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaitParameters {
+    pub seconds: i64,
+    pub until_status: Option<String>,
+    pub initial_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApprovalParameters {
+    pub approval_type: String,
+    pub prompt: String,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopParameters {
+    pub items: Vec<Value>,
+}

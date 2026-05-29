@@ -3,7 +3,7 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use log::{debug, error, warn};
 use tokio::{net::UdpSocket, time};
 
-use crate::GossipMessage;
+use crate::{GossipMessage, WireCodec};
 
 const BUFFER_SIZE: usize = 65_536;
 
@@ -61,7 +61,7 @@ where
                         continue;
                     };
 
-                    match GossipMessage::from_json(as_str) {
+                    match GossipMessage::from_wire(as_str) {
                         Ok(message) => handler(message, addr).await,
                         Err(err) => warn!("Failed to parse gossip message: {}", err),
                     }
@@ -88,7 +88,7 @@ pub async fn broadcast_gossip_message(
     message: &GossipMessage,
     targets: &[String],
 ) {
-    match message.to_json() {
+    match message.to_wire() {
         Ok(payload) => {
             for target in targets {
                 if let Err(err) = socket.send_to(payload.as_bytes(), target).await {

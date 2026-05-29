@@ -1,4 +1,6 @@
+use runinator_comm::WireCodec;
 use runinator_models::errors::SendableError;
+use runinator_models::workflow_state::WorkflowContextHeader;
 use runinator_models::workflows::{WorkflowAction, WorkflowNode, WorkflowNodeRun, WorkflowRun};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -40,19 +42,29 @@ pub fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]
         .collect::<HashMap<_, _>>();
     let mut context = runinator_workflows::outputs_context(&workflow_run.parameters, &outputs);
     if let Some(object) = context.as_object_mut() {
+        let header = WorkflowContextHeader {
+            run_id: workflow_run.id,
+            workflow_id: workflow_run.workflow_id,
+            state: workflow_run.state.clone(),
+        };
+        // a simple {i64,i64,Value} header cannot fail to serialize; null is an unreachable fallback.
         object.insert(
             "workflow".into(),
-            serde_json::json!({
-                "run_id": workflow_run.id,
-                "workflow_id": workflow_run.workflow_id,
-                "state": workflow_run.state,
-            }),
+            header.to_wire_value().unwrap_or(Value::Null),
         );
         if let Some(prev) = prev_output {
             object.insert("prev".into(), prev);
         }
     }
     context
+}
+
+/// write a node's output into the `steps.<id>.output` slot of an evaluation scope. the scope is a
+/// dynamic value consumed by the workflows expression evaluator, not a persisted wire payload.
+pub fn set_step_output(scope: &mut Value, node_id: &str, output: Value) {
+    if let Some(slot) = scope.pointer_mut(&format!("/steps/{node_id}/output")) {
+        *slot = output;
+    }
 }
 
 pub fn merge_parameters(defaults: &Value, parameters: &Value) -> Value {

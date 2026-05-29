@@ -155,7 +155,7 @@ pub async fn process_workflow_run_step(
         } else if debug::step_requested(&workflow_run) || debug::paused(&workflow_run) {
             let mut next = workflow_run.clone();
             next.status = WorkflowStatus::Running;
-            next.state = debug::state_with_step_cleared(workflow_run.state.clone());
+            next.state = debug::state_with_step_cleared(workflow_run.state.clone())?;
             api.update_workflow_run(
                 next.id,
                 WorkflowStatus::Running,
@@ -197,88 +197,7 @@ pub async fn process_workflow_run_step(
         }
         return Ok(());
     }
-    match node.kind {
-        WorkflowNodeKind::Start => {
-            process_start_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Action => {
-            process_task_node(broker, api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Wait => {
-            process_wait_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Condition => {
-            process_condition_node(api, &workflow_run, node, &node_runs).await?
-        }
-        WorkflowNodeKind::Switch => {
-            process_switch_node(api, &workflow_run, node, &node_runs).await?
-        }
-        WorkflowNodeKind::Approval => {
-            process_approval_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Loop => {
-            process_loop_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Parallel => {
-            process_parallel_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Join => {
-            process_join_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Try => {
-            process_try_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Map => {
-            process_map_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Race => {
-            process_race_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::Emit => process_emit_node(api, &workflow_run, node, &node_runs).await?,
-        WorkflowNodeKind::Config => {
-            process_config_node(api, &workflow_run, node, &node_runs).await?
-        }
-        WorkflowNodeKind::Subflow => {
-            process_subflow_node(api, &workflow_run, node, latest, &node_runs).await?
-        }
-        WorkflowNodeKind::End => {
-            ensure_completed_node_run(api, &workflow_run, node, latest, "end_reached").await?;
-            if let Some(loop_node) = workflow_run
-                .state
-                .pointer("/loop/return_to")
-                .and_then(Value::as_str)
-            {
-                api.update_workflow_run(
-                    workflow_run.id,
-                    WorkflowStatus::Running,
-                    Some(loop_node.to_string()),
-                    Some(serde_json::json!({ "loop": {} })),
-                    None,
-                )
-                .await?;
-                return Ok(());
-            }
-            api.update_workflow_run(
-                workflow_run.id,
-                WorkflowStatus::Succeeded,
-                Some(node.id.clone()),
-                None,
-                None,
-            )
-            .await?;
-        }
-        WorkflowNodeKind::Fail => {
-            ensure_completed_node_run(api, &workflow_run, node, latest, "fail_reached").await?;
-            api.update_workflow_run(
-                workflow_run.id,
-                WorkflowStatus::Failed,
-                Some(node.id.clone()),
-                None,
-                Some("Workflow reached fail node".into()),
-            )
-            .await?;
-        }
-    };
+    dispatch_node(broker, api, &workflow_run, node, latest, &node_runs).await?;
 
     Ok(())
 }
@@ -375,6 +294,7 @@ async fn should_pause_for_debug(
             Some(format!("Debug paused before node {}", node.id)),
         )
         .await?;
+        crate::nodes::fire_paused(api, workflow_run, node, latest, node_runs).await;
         return Ok(true);
     }
     if !debug::should_break_at(workflow_run, &node.id) {
@@ -390,6 +310,7 @@ async fn should_pause_for_debug(
         Some(format!("Debug paused before node {}", node.id)),
     )
     .await?;
+    crate::nodes::fire_paused(api, workflow_run, node, latest, node_runs).await;
     Ok(true)
 }
 
@@ -433,10 +354,6 @@ async fn debug_pause_state(
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
-    let mut state = workflow_run.state.clone();
-    if !state.is_object() {
-        state = serde_json::json!({});
-    }
     let input = debug_input_json(api, workflow_run, node, node_runs).await?;
     let context = runtime_context(workflow_run, node_runs);
     let last_output = node_runs
@@ -450,24 +367,22 @@ async fn debug_pause_state(
         Some(ref id) if id == &node.id
     );
 
-    control::ensure_control_object(&mut state);
-    // preserve user-owned fields (mode, breakpoints) when assembling new debug object.
-    let debug_obj = debug::ensure_debug_object(&mut state);
-    debug_obj.insert("enabled".into(), Value::Bool(true));
-    debug_obj.insert("paused".into(), Value::Bool(true));
-    debug_obj.insert("step_requested".into(), Value::Bool(false));
-    debug_obj.insert("current_node_id".into(), Value::String(node.id.clone()));
-    debug_obj.insert(
-        "current_node_kind".into(),
-        serde_json::to_value(node.kind.clone()).unwrap_or(Value::Null),
-    );
-    debug_obj.insert("input_json".into(), input);
-    debug_obj.insert("context_json".into(), context);
-    debug_obj.insert("last_output_json".into(), last_output);
+    let mut run_state = RunState::from_run(workflow_run);
+    run_state.ensure_control();
+    // preserve user-owned fields (mode, breakpoints) while updating the runtime debug fields.
+    let debug = run_state.debug_mut();
+    debug.enabled = true;
+    debug.paused = true;
+    debug.step_requested = false;
+    debug.current_node_id = Some(node.id.clone());
+    debug.current_node_kind = Some(node.kind.clone());
+    debug.input_json = Some(input);
+    debug.context_json = Some(context);
+    debug.last_output_json = Some(last_output);
     if one_shot_consumed {
-        debug_obj.insert("one_shot_breakpoint".into(), Value::Null);
+        debug.one_shot_breakpoint = None;
     }
-    Ok(state)
+    Ok(run_state.into_value()?)
 }
 
 async fn debug_input_json(
@@ -517,65 +432,4 @@ pub(crate) fn reentry_exhaustion(
             .map(|target| ReentryExhaustion::Route(target.as_str().to_string()))
             .unwrap_or(ReentryExhaustion::Block),
     )
-}
-
-async fn process_start_node(
-    api: &dyn WorkflowSchedulerApi,
-    workflow_run: &WorkflowRun,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let created;
-    let node_run = if let Some(latest) = latest {
-        latest
-    } else {
-        created = api
-            .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
-            .await?;
-        &created
-    };
-    transition_from_node(
-        api,
-        workflow_run,
-        node,
-        node_run,
-        WorkflowStatus::Succeeded,
-        None,
-        Some("start_reached".into()),
-        node_runs,
-    )
-    .await
-}
-
-async fn ensure_completed_node_run(
-    api: &dyn WorkflowSchedulerApi,
-    workflow_run: &WorkflowRun,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    reason: &str,
-) -> Result<(), SendableError> {
-    if latest.is_some_and(|run| run.status == WorkflowStatus::Succeeded) {
-        return Ok(());
-    }
-    let created;
-    let node_run = if let Some(latest) = latest {
-        latest
-    } else {
-        created = api
-            .create_workflow_node_run(workflow_run.id, &node.id, node.parameters.clone())
-            .await?;
-        &created
-    };
-    api.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Succeeded,
-        Some(node_run.attempt + 1),
-        None,
-        None,
-        None,
-        Some(reason.into()),
-        None,
-    )
-    .await
 }
