@@ -49,6 +49,7 @@ pub enum StmtKind {
     Fail(Option<Expr>),
     If(IfStmt),
     For(ForStmt),
+    While(WhileStmt),
     Match(MatchStmt),
     Parallel(ParallelStmt),
     Try(TryStmt),
@@ -119,9 +120,16 @@ pub struct SubflowStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaitStmt {
-    pub seconds: i64,
+    pub amount: WaitAmount,
     pub until_status: Option<String>,
     pub initial_status: Option<String>,
+}
+
+/// the wait duration: a literal count of seconds or an expression yielding seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WaitAmount {
+    Seconds(i64),
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +162,15 @@ pub struct IfStmt {
 pub struct ForStmt {
     pub var: String,
     pub items: Expr,
+    pub limit: Option<i64>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStmt {
+    pub cond: Cond,
+    /// `until c` sets this; the loop runs while `!cond`. lowering negates `cond`.
+    pub negate: bool,
     pub limit: Option<i64>,
     pub body: Block,
 }

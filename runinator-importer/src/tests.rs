@@ -174,6 +174,94 @@ async fn load_import_file_unwraps_workflow_pack_envelope() {
     let _ = tokio::fs::remove_file(path).await;
 }
 
+#[tokio::test]
+async fn load_import_file_compiles_wdl_directory() {
+    let dir = std::env::temp_dir().join(format!(
+        "runinator-importer-wdldir-{}",
+        uuid::Uuid::new_v4()
+    ));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(
+        dir.join("alpha.wdl"),
+        "workflow \"Alpha\" v1 {\n  let a = console.run(command: \"a\")\n}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        dir.join("beta.wdl"),
+        "workflow \"Beta\" v1 {\n  let b = console.run(command: \"b\")\n}\n",
+    )
+    .await
+    .unwrap();
+    // a non-wdl file is ignored.
+    tokio::fs::write(dir.join("README.md"), "ignore me")
+        .await
+        .unwrap();
+
+    let bundle = load_import_file(&dir).await.unwrap();
+
+    assert_eq!(bundle.workflows.len(), 2);
+    assert!(bundle.triggers.is_empty());
+    let names: Vec<_> = bundle.workflows.iter().map(|w| w.name.clone()).collect();
+    assert!(names.contains(&"Alpha".to_string()));
+    assert!(names.contains(&"Beta".to_string()));
+    assert!(bundle.workflows.iter().all(|w| w.enabled));
+
+    let _ = tokio::fs::remove_dir_all(dir).await;
+}
+
+#[tokio::test]
+async fn load_import_file_resolves_wdlp_manifest_with_triggers() {
+    let dir =
+        std::env::temp_dir().join(format!("runinator-importer-wdlp-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(
+        dir.join("alpha.wdl"),
+        "workflow \"Alpha\" v1 {\n  let a = console.run(command: \"a\")\n}\n",
+    )
+    .await
+    .unwrap();
+    let manifest = json!({
+        "item_type": "wdl_pack",
+        "name": "Sample",
+        "version": 4,
+        "workflows": ["alpha.wdl"],
+        "triggers": [{
+            "id": null,
+            "workflow_id": 0,
+            "kind": "manual",
+            "enabled": true,
+            "configuration": {},
+            "metadata": {}
+        }]
+    });
+    let manifest_path = dir.join("pack.wdlp");
+    tokio::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap())
+        .await
+        .unwrap();
+
+    let bundle = load_import_file(&manifest_path).await.unwrap();
+
+    assert_eq!(bundle.workflows.len(), 1);
+    assert_eq!(bundle.workflows[0].name, "Alpha");
+    // the manifest version flows through as the default when the source omits vN.
+    assert_eq!(bundle.workflows[0].version, 1); // source declared v1, which wins
+    assert_eq!(bundle.triggers.len(), 1);
+    assert_eq!(bundle.triggers[0].kind, WorkflowTriggerKind::Manual);
+
+    let _ = tokio::fs::remove_dir_all(dir).await;
+}
+
+#[tokio::test]
+async fn sdlc_wdlp_pack_compiles_both_workflows() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/sdlc.wdlp");
+    let bundle = load_import_file(&manifest).await.expect("wdlp pack loads");
+    let names: Vec<_> = bundle.workflows.iter().map(|w| w.name.clone()).collect();
+    assert!(names.contains(&"Core Team SDLC Pipeline".to_string()));
+    assert!(names.contains(&"Ticket Work".to_string()));
+    assert!(bundle.workflows.iter().all(|w| w.enabled));
+}
+
 #[test]
 fn unwrap_workflow_pack_rejects_missing_document() {
     let envelope = json!({

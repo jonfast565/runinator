@@ -2,8 +2,10 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
   cancelWorkflowRun,
+  compileWdl,
   continueWorkflowRun,
   createWorkflowRun,
+  decompileToWdl,
   deleteWorkflow,
   deleteWorkflowTrigger,
   fetchWorkflowNodeRunArtifacts,
@@ -75,6 +77,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const selectedWorkflowId = ref<number | null>(null);
   const workflowDraft = reactive<WorkflowDefinition>(newWorkflowDraft());
   const workflowJson = ref("{}");
+  const workflowWdl = ref("");
   const workflowConcurrency = ref(1);
   const workflowSettingsOpen = ref(false);
   const workflowTriggers = ref<WorkflowTrigger[]>([]);
@@ -83,7 +86,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const triggerEditorError = ref("");
   const triggerDraft = reactive<WorkflowTrigger>(newWorkflowTriggerDraft(0, "cron"));
   const triggerJson = reactive({ configuration: "{}", metadata: "{}" });
-  const workflowEditorMode = ref<"graph" | "json">("graph");
+  const workflowEditorMode = ref<"graph" | "json" | "wdl">("graph");
   const workflowLayoutDirection = ref<WorkflowLayoutDirection>("horizontal");
   const workflowInspectorMode = ref<"step">("step");
   const stepEditorOpen = ref(false);
@@ -1370,6 +1373,49 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     isDirty.value = true;
   }
 
+  // compile the wdl editor contents into the draft definition. mirrors syncWorkflowJson:
+  // on a compile error we keep the wdl text and surface the message rather than clobbering.
+  async function syncWorkflowWdl(): Promise<boolean> {
+    let compiled: WorkflowDefinition;
+    try {
+      compiled = await compileWdl(workflowWdl.value, workflowDraft.enabled);
+    } catch (err) {
+      app.setError(`WDL compile error: ${errorMessage(err)}`);
+      return false;
+    }
+    workflowDraft.name = compiled.name;
+    workflowDraft.version = compiled.version;
+    workflowDraft.input_type = compiled.input_type;
+    workflowDraft.definition = compiled.definition;
+    workflowDraft.definition.concurrency = workflowConcurrency.value;
+    Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
+    workflowJson.value = pretty(workflowDraft.definition);
+    isDirty.value = true;
+    return true;
+  }
+
+  // decompile the current draft into wdl text for the editor. some control shapes cannot be
+  // recovered structurally, so on failure we drop back to the json view with a notice.
+  async function refreshWorkflowWdl(): Promise<void> {
+    try {
+      workflowWdl.value = await decompileToWdl(cloneJson(workflowDraft));
+    } catch (err) {
+      workflowWdl.value = "";
+      if (workflowEditorMode.value === "wdl") {
+        workflowEditorMode.value = "json";
+      }
+      app.setError(`Could not render WDL for this workflow (${errorMessage(err)}); showing JSON.`);
+    }
+  }
+
+  // switch to the wdl tab, decompiling the current draft so the editor reflects it.
+  async function enterWdlMode(): Promise<void> {
+    await refreshWorkflowWdl();
+    if (workflowEditorMode.value !== "json") {
+      workflowEditorMode.value = "wdl";
+    }
+  }
+
   function ensureWorkflowNodes(): JsonRecord[] {
     if (!workflowDraft.definition || typeof workflowDraft.definition !== "object") workflowDraft.definition = {};
     if (!Array.isArray(workflowDraft.definition.nodes)) workflowDraft.definition.nodes = [];
@@ -1638,7 +1684,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function saveSelectedWorkflowBundle() {
-    if (!syncWorkflowJson()) return;
+    const synced = workflowEditorMode.value === "wdl" ? await syncWorkflowWdl() : syncWorkflowJson();
+    if (!synced) return;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
     const saved = await app.runOperation("Saving workflow", () => saveWorkflowBundle(workflowBundleSaveRequest()));
@@ -1690,6 +1737,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedWorkflowId,
     workflowDraft,
     workflowJson,
+    workflowWdl,
     workflowConcurrency,
     workflowSettingsOpen,
     workflowTriggers,
@@ -1812,6 +1860,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     isDirty,
     syncWorkflowJson,
     syncWorkflowDraftToJson,
+    syncWorkflowWdl,
+    enterWdlMode,
     ensureWorkflowNodes,
     addConditionBranchEditor,
     removeConditionBranchEditor,
@@ -1930,6 +1980,14 @@ export function newWorkflowDraft(): WorkflowDefinition {
 function boundedIndex(current: number, delta: number, length: number): number {
   if (current < 0) return delta > 0 ? 0 : length - 1;
   return Math.min(length - 1, Math.max(0, current + delta));
+}
+
+// tauri command rejections surface as the serialized CommandError string; fall back to
+// String() for native errors.
+function errorMessage(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 function formatMaybeDate(value?: string | null): string {

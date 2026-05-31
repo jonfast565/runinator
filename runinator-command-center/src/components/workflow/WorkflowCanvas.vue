@@ -3,6 +3,7 @@
     <WorkflowToolbar />
     <div class="workflow-mode-tabs">
       <button :class="{ active: workflows.workflowEditorMode === 'graph' }" @click="workflows.workflowEditorMode = 'graph'">Graph</button>
+      <button :class="{ active: workflows.workflowEditorMode === 'wdl' }" @click="workflows.enterWdlMode()">WDL</button>
       <button :class="{ active: workflows.workflowEditorMode === 'json' }" @click="workflows.workflowEditorMode = 'json'">JSON</button>
     </div>
     <VueFlow
@@ -127,11 +128,18 @@
         <button type="button" @click="closeEdgeEditor">Cancel</button>
       </div>
     </form>
+    <WdlEditor
+      v-show="workflows.workflowEditorMode === 'wdl'"
+      v-model="workflows.workflowWdl"
+      class="workflow-wdl-editor"
+      @blur="workflows.syncWorkflowWdl"
+    />
     <JsonEditor
       v-show="workflows.workflowEditorMode === 'json'"
       v-model="workflows.workflowJson"
       class="workflow-json-editor"
-      @blur="workflows.syncWorkflowJson"
+      title="Compiled JSON (read-only)"
+      :readonly="true"
     />
   </div>
 </template>
@@ -143,6 +151,7 @@ import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption } from "../../
 import { useWorkflowsStore } from "../../stores/workflows";
 import { optionIdForSourceHandle } from "../../utils/workflows";
 import JsonEditor from "../shared/JsonEditor.vue";
+import WdlEditor from "../shared/WdlEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 

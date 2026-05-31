@@ -39,6 +39,8 @@ binding = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" }
 stmt_body = {
     if_stmt
   | for_stmt
+  | while_stmt
+  | until_stmt
   | match_stmt
   | parallel_stmt
   | try_stmt
@@ -53,9 +55,12 @@ stmt_body = {
   | action_stmt
 }
 
-action_stmt = { ident ~ "." ~ ident ~ "(" ~ arg_list? ~ ")" ~ modifier* }
-arg_list    = { arg ~ ("," ~ arg)* ~ ","? }
-arg         = { ident ~ ":" ~ expr }
+// provider/function names may contain internal hyphens (e.g. `ai-command`); this token is
+// confined to the call position, where `-` is never an operator.
+action_stmt  = { action_ident ~ "." ~ action_ident ~ "(" ~ arg_list? ~ ")" ~ modifier* }
+action_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
+arg_list     = { arg ~ ("," ~ arg)* ~ ","? }
+arg          = { ident ~ ":" ~ expr }
 
 modifier      = { "." ~ ident ~ "(" ~ mod_arg_list? ~ ")" }
 mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }
@@ -67,8 +72,10 @@ subflow_opt  = { "detached" | "reuse" | subflow_as }
 subflow_as   = { "as" ~ expr }
 subflow_with = { "with" ~ object }
 
-wait_stmt  = { "wait" ~ duration ~ wait_until? ~ wait_initial? }
-wait_until = { "until" ~ string }
+wait_stmt   = { "wait" ~ wait_amount ~ wait_until? ~ wait_initial? }
+// a literal duration (`30s`) or an expression yielding seconds (`input.poll.interval`).
+wait_amount = { duration | expr }
+wait_until  = { "until" ~ string }
 wait_initial = { "initial" ~ string }
 
 emit_stmt = { "emit" ~ string? ~ object? }
@@ -88,6 +95,11 @@ else_block = { "else" ~ block }
 
 for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit? ~ block }
 for_limit  = { "limit" ~ integer }
+
+// condition-driven loops. `while c {}` repeats the body while c holds; `until c {}` is
+// sugar for `while !c {}`. an optional `limit` caps iterations (a safety bound).
+while_stmt = { "while" ~ cond ~ for_limit? ~ block }
+until_stmt = { "until" ~ cond ~ for_limit? ~ block }
 
 map_stmt        = { "map" ~ ident ~ "in" ~ expr ~ map_concurrency? ~ block }
 map_concurrency = { "concurrency" ~ integer }

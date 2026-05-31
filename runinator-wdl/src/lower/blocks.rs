@@ -8,6 +8,10 @@ use crate::errors::WdlError;
 
 use super::{Lowerer, node, node_ref};
 
+// safety cap applied to a `while`/`until` loop that omits an explicit `limit`, so a
+// condition that never settles cannot loop forever. surfaced in decompiled source.
+const DEFAULT_WHILE_LIMIT: i64 = 1000;
+
 impl Lowerer {
     pub(super) fn lower_if(
         &mut self,
@@ -66,6 +70,50 @@ impl Lowerer {
             fields.push(("max_iterations", Value::from(limit)));
         }
         self.push(node(id, "loop", fields));
+        Ok(())
+    }
+
+    pub(super) fn lower_while(
+        &mut self,
+        while_stmt: &WhileStmt,
+        id: &str,
+        cont: &str,
+    ) -> Result<(), WdlError> {
+        // the loop condition; `until` negates it so the loop runs while `!cond`.
+        let mut condition = self.lower_cond(&while_stmt.cond)?;
+        if while_stmt.negate {
+            let mut not_map = Map::new();
+            not_map.insert("not".into(), condition);
+            condition = Value::Object(not_map);
+        }
+
+        // the body loops back to this header; a false condition falls through to cont.
+        let body_entry = self.lower_block(&while_stmt.body, id)?;
+
+        let mut branch = Map::new();
+        branch.insert("when".into(), condition);
+        branch.insert("target".into(), node_ref(&body_entry));
+
+        let mut transitions = Map::new();
+        transitions.insert("branches".into(), Value::Array(vec![Value::Object(branch)]));
+        transitions.insert("next".into(), node_ref(cont));
+
+        // reentry both authorizes the back-edge in validation and bounds the loop; hitting
+        // the cap exits to cont, matching the false-condition exit.
+        let max_visits = while_stmt.limit.unwrap_or(DEFAULT_WHILE_LIMIT);
+        let mut reentry = Map::new();
+        reentry.insert("enabled".into(), Value::Bool(true));
+        reentry.insert("max_visits".into(), Value::from(max_visits));
+        reentry.insert("on_exhausted".into(), node_ref(cont));
+
+        self.push(node(
+            id,
+            "condition",
+            vec![
+                ("transitions", Value::Object(transitions)),
+                ("reentry", Value::Object(reentry)),
+            ],
+        ));
         Ok(())
     }
 

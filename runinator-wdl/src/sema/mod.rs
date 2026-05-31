@@ -98,6 +98,7 @@ pub(super) fn child_blocks(kind: &StmtKind) -> Vec<&Block> {
             blocks
         }
         StmtKind::For(for_stmt) => vec![&for_stmt.body],
+        StmtKind::While(while_stmt) => vec![&while_stmt.body],
         StmtKind::Map(map_stmt) => vec![&map_stmt.body],
         StmtKind::Match(match_stmt) => {
             let mut blocks: Vec<&Block> = match_stmt.arms.iter().map(|arm| &arm.body).collect();

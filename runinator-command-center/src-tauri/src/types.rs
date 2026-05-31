@@ -40,3 +40,14 @@ pub struct CredentialPutRequest {
     pub name: String,
     pub secret: String,
 }
+
+/// a wdl diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticSummary {
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub column: usize,
+    pub severity: String,
+    pub message: String,
+}

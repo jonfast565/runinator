@@ -161,6 +161,7 @@ impl Lowerer {
             StmtKind::Fail(_) => "fail_node",
             StmtKind::If(_) => "if",
             StmtKind::For(_) => "for_loop",
+            StmtKind::While(_) => "while_loop",
             StmtKind::Match(_) => "switch",
             StmtKind::Parallel(_) => "parallel",
             StmtKind::Try(_) => "try",
@@ -186,6 +187,10 @@ impl Lowerer {
             StmtKind::For(for_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
                 self.lower_for(for_stmt, id, &cont)
+            }
+            StmtKind::While(while_stmt) => {
+                let cont = self.block_cont(&stmt.transitions, next);
+                self.lower_while(while_stmt, id, &cont)
             }
             StmtKind::Match(match_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
@@ -316,7 +321,11 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), WdlError> {
         let mut wait_obj = Map::new();
-        wait_obj.insert("seconds".into(), Value::from(wait.seconds));
+        let seconds = match &wait.amount {
+            WaitAmount::Seconds(seconds) => Value::from(*seconds),
+            WaitAmount::Expr(expr) => self.lower_expr(expr)?,
+        };
+        wait_obj.insert("seconds".into(), seconds);
         if let Some(status) = &wait.until_status {
             wait_obj.insert("until_status".into(), Value::String(status.clone()));
         }

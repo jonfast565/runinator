@@ -1,7 +1,9 @@
-// reconstructs wdl source from a WorkflowDefinition. it walks the graph from the start
-// node, emitting linear sequences and recovering for/if/match blocks. control shapes it
-// cannot yet structure (parallel/join/try/race/map) surface as a clear error so callers
-// know the definition needs manual porting.
+// reconstructs wdl source from a WorkflowDefinition. it walks the graph from the start node,
+// recovering structured blocks (for/while/if/match/parallel/race/try) where possible. each
+// node is emitted exactly once; every other edge into it (fail/reject/timeout arrows, back
+// edges, and fan-in convergence) is rendered as an explicit `-> label` arrow, and nodes
+// reached only by such arrows are emitted as top-level labelled statements. this lets
+// arbitrary graphs round-trip, since wdl labels are global.
 
 mod expr;
 
@@ -22,6 +24,13 @@ pub(super) struct Decompiler<'a> {
     loop_vars: Vec<(String, String)>,
     // declared `let <id>: <type>` annotations recovered from graph metadata.
     declared_types: HashMap<String, RuninatorType>,
+    // node ids already emitted; each node is emitted exactly once and every other edge into
+    // it becomes an explicit `-> label` arrow (labels are global, so this round-trips).
+    visited: HashSet<String>,
+    // nodes reached only by non-linear edges (fail/reject/timeout, or convergence) that must
+    // still be emitted as top-level labelled statements; drained after the main walk.
+    worklist: VecDeque<String>,
+    queued: HashSet<String>,
     out: String,
     indent: usize,
 }
@@ -52,6 +61,9 @@ pub fn decompile_definition(definition: &WorkflowDefinition) -> Result<String, W
         fail_ids,
         loop_vars: Vec::new(),
         declared_types,
+        visited: HashSet::new(),
+        worklist: VecDeque::new(),
+        queued: HashSet::new(),
         out: String::new(),
         indent: 0,
     };
@@ -75,6 +87,15 @@ pub fn decompile_definition(definition: &WorkflowDefinition) -> Result<String, W
         .map(|target| target.as_str().to_string());
     if let Some(entry) = entry {
         decompiler.emit_region(&entry, None)?;
+    }
+
+    // emit any nodes reached only by fail/reject/timeout arrows or convergence as top-level
+    // labelled statements; references to them elsewhere were rendered as `-> label` arrows.
+    while let Some(id) = decompiler.worklist.pop_front() {
+        if decompiler.visited.contains(&id) || !decompiler.nodes.contains_key(id.as_str()) {
+            continue;
+        }
+        decompiler.emit_region(&id, None)?;
     }
 
     decompiler.indent -= 1;
@@ -143,32 +164,41 @@ impl<'a> Decompiler<'a> {
             if self.end_ids.contains(&cur) {
                 break;
             }
+            // reaching a node twice means an unstructured back-edge (e.g. a poll loop) or a
+            // fan-in convergence that this structured walk cannot render. fail cleanly rather
+            // than recursing without bound or emitting duplicate node ids.
+            if !self.visited.insert(cur.clone()) {
+                return Err(WdlError::Decompile(format!(
+                    "workflow reaches node '{cur}' by more than one path (an unstructured loop or convergence) that cannot be decompiled to wdl; author this workflow in wdl directly"
+                )));
+            }
             let node = match self.nodes.get(cur.as_str()) {
                 Some(node) => *node,
                 None => break,
             };
             match &node.kind {
-                WorkflowNodeKind::Loop => {
-                    let after = self.emit_loop(node)?;
-                    match after {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
+                WorkflowNodeKind::Loop => match self.emit_loop(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
                 WorkflowNodeKind::Condition => {
-                    let merge = self.emit_if(node, stop)?;
+                    // a reentry-enabled single-branch condition node is a while/until loop
+                    // header (its body loops back); anything else is a plain if/else.
+                    let is_while = node.reentry.enabled && node.transitions.branches.len() == 1;
+                    let merge = if is_while {
+                        self.emit_while(node, stop)?
+                    } else {
+                        self.emit_if(node, stop)?
+                    };
                     match merge {
                         Some(next) => cur = next,
                         None => break,
                     }
                 }
-                WorkflowNodeKind::Switch => {
-                    let merge = self.emit_match(node, stop)?;
-                    match merge {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
+                WorkflowNodeKind::Switch => match self.emit_match(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
                 WorkflowNodeKind::Fail => {
                     self.line("fail");
                     break;
@@ -179,42 +209,37 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Emit
                 | WorkflowNodeKind::Approval
                 | WorkflowNodeKind::Config => {
-                    let success = self.emit_leaf(node)?;
+                    let success = self.emit_leaf(node, stop)?;
                     match success {
-                        Some(next) if !self.is_terminal(&next) && stop != Some(next.as_str()) => {
+                        // keep walking only into a fresh linear successor; a jump to a
+                        // terminal, the region stop, or an already-emitted node was rendered
+                        // as an explicit arrow by emit_leaf, so stop here.
+                        Some(next)
+                            if !self.is_terminal(&next)
+                                && stop != Some(next.as_str())
+                                && !self.visited.contains(&next) =>
+                        {
                             cur = next;
                         }
                         _ => break,
                     }
                 }
-                WorkflowNodeKind::Map => {
-                    let after = self.emit_map(node)?;
-                    match after {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
-                WorkflowNodeKind::Parallel => {
-                    let after = self.emit_parallel(node)?;
-                    match after {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
-                WorkflowNodeKind::Race => {
-                    let after = self.emit_race(node)?;
-                    match after {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
-                WorkflowNodeKind::Try => {
-                    let after = self.emit_try(node)?;
-                    match after {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
-                }
+                WorkflowNodeKind::Map => match self.emit_map(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
+                WorkflowNodeKind::Parallel => match self.emit_parallel(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
+                WorkflowNodeKind::Race => match self.emit_race(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
+                WorkflowNodeKind::Try => match self.emit_try(node, stop)? {
+                    Some(next) => cur = next,
+                    None => break,
+                },
                 // a join is consumed by its parallel; if reached directly, pass through.
                 WorkflowNodeKind::Join => match node.transitions.next.as_ref() {
                     Some(target) => cur = target.as_str().to_string(),
@@ -240,10 +265,62 @@ impl<'a> Decompiler<'a> {
         }
     }
 
+    /// queue a node to be emitted as a top-level labelled statement, unless it is terminal,
+    /// already emitted, or already queued.
+    fn defer(&mut self, id: &str) {
+        if self.is_terminal(id) || self.visited.contains(id) || !self.queued.insert(id.to_string())
+        {
+            return;
+        }
+        self.worklist.push_back(id.to_string());
+    }
+
+    /// print a control block's closing line (`}` or e.g. `} join all`), appending an explicit
+    /// `-> label` when the block's exit is not the next inline statement (a terminal, the region
+    /// stop, or an already-emitted node). returns `Some(next)` when the caller should keep
+    /// walking inline into a fresh successor.
+    fn close_block_line(
+        &mut self,
+        closing: &str,
+        cont: Option<String>,
+        stop: Option<&str>,
+    ) -> Option<String> {
+        match cont {
+            None => {
+                self.line(closing);
+                None
+            }
+            Some(c) if Some(c.as_str()) == stop => {
+                self.line(closing);
+                None
+            }
+            Some(c) if self.end_ids.contains(&c) => {
+                self.line(closing);
+                None
+            }
+            Some(c) if self.fail_ids.contains(&c) => {
+                self.line(&format!("{closing} -> fail"));
+                None
+            }
+            Some(c) if self.visited.contains(&c) => {
+                self.line(&format!("{closing} -> {c}"));
+                None
+            }
+            Some(c) => {
+                self.line(closing);
+                Some(c)
+            }
+        }
+    }
+
     // leaf statements -------------------------------------------------------
 
     /// emit a single leaf statement with its outcome arrows. returns the success target.
-    fn emit_leaf(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_leaf(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let (text, lets_binding) = self.statement_text(node)?;
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
@@ -263,33 +340,38 @@ impl<'a> Decompiler<'a> {
             .or(transitions.next.as_ref())
             .map(|target| target.as_str().to_string());
 
-        // collect failure-style arrows; the success arrow is only explicit when it jumps
-        // to a terminal (otherwise it is the linear successor we keep emitting).
+        // collect failure-style arrows and queue their targets for top-level emission, since
+        // the linear walk never descends into them.
         let mut arrows: Vec<(String, String)> = Vec::new();
-        if let Some(target) = &transitions.on_failure {
-            arrows.push(("fail".into(), self.target_label(target.as_str())));
+        for (outcome, target) in [
+            ("fail", &transitions.on_failure),
+            ("timeout", &transitions.on_timeout),
+            ("reject", &transitions.on_reject),
+        ] {
+            if let Some(target) = target {
+                arrows.push((outcome.into(), self.target_label(target.as_str())));
+                self.defer(target.as_str());
+            }
         }
-        if let Some(target) = &transitions.on_timeout {
-            arrows.push(("timeout".into(), self.target_label(target.as_str())));
-        }
-        if let Some(target) = &transitions.on_reject {
-            arrows.push(("reject".into(), self.target_label(target.as_str())));
-        }
-        let success_terminal = success
-            .as_deref()
-            .map(|id| self.is_terminal(id))
-            .unwrap_or(false);
 
-        if success_terminal && arrows.is_empty() {
-            let label = self.target_label(success.as_deref().unwrap());
-            self.line(&format!("{prefix}{text} -> {label}"));
-        } else if arrows.is_empty() {
-            self.line(&format!("{prefix}{text}"));
+        // the success edge is explicit when it jumps to a terminal or to a node already
+        // emitted elsewhere; otherwise it is the linear successor we keep walking into.
+        let success_arrow = match success.as_deref() {
+            Some(id) if Some(id) == stop => None,
+            Some(id) if self.is_terminal(id) => Some(self.target_label(id)),
+            Some(id) if self.visited.contains(id) => Some(id.to_string()),
+            _ => None,
+        };
+
+        if arrows.is_empty() {
+            match &success_arrow {
+                Some(label) => self.line(&format!("{prefix}{text} -> {label}")),
+                None => self.line(&format!("{prefix}{text}")),
+            }
         } else {
             self.line(&format!("{prefix}{text}"));
             self.indent += 1;
-            if success_terminal {
-                let label = self.target_label(success.as_deref().unwrap());
+            if let Some(label) = &success_arrow {
                 self.line(&format!("ok -> {label}"));
             }
             for (outcome, label) in &arrows {
@@ -306,7 +388,7 @@ impl<'a> Decompiler<'a> {
         match &node.kind {
             WorkflowNodeKind::Action => Ok((self.action_text(node)?, true)),
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
-            WorkflowNodeKind::Wait => Ok((self.wait_text(node), false)),
+            WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
             WorkflowNodeKind::Emit => Ok((self.emit_text(node)?, false)),
             WorkflowNodeKind::Approval => Ok((self.approval_text(node)?, false)),
             WorkflowNodeKind::Config => Ok((self.config_text(node)?, false)),
@@ -381,19 +463,20 @@ impl<'a> Decompiler<'a> {
         Ok(text)
     }
 
-    fn wait_text(&self, node: &WorkflowNode) -> String {
-        let seconds = match &node.wait.seconds {
-            Some(WorkflowWaitSeconds::Integer(seconds)) => *seconds,
-            _ => 0,
+    fn wait_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let amount = match &node.wait.seconds {
+            Some(WorkflowWaitSeconds::Integer(seconds)) => format!("{seconds}s"),
+            Some(WorkflowWaitSeconds::Expression(expr)) => self.expr(expr.as_value())?,
+            None => "0s".to_string(),
         };
-        let mut text = format!("wait {seconds}s");
+        let mut text = format!("wait {amount}");
         if let Some(status) = &node.wait.until_status {
             text.push_str(&format!(" until {}", quote(status)));
         }
         if let Some(status) = &node.wait.initial_status {
             text.push_str(&format!(" initial {}", quote(status)));
         }
-        text
+        Ok(text)
     }
 
     fn emit_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -459,7 +542,11 @@ impl<'a> Decompiler<'a> {
 
     // control blocks --------------------------------------------------------
 
-    fn emit_loop(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_loop(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let body_entry = node
             .transitions
             .next
@@ -489,9 +576,40 @@ impl<'a> Decompiler<'a> {
         }
         self.loop_vars.pop();
         self.indent -= 1;
-        self.line("}");
 
-        Ok(after)
+        Ok(self.close_block_line("}", after, stop))
+    }
+
+    fn emit_while(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
+        let branch = node
+            .transitions
+            .branches
+            .first()
+            .ok_or_else(|| WdlError::Decompile("while node has no branch".into()))?;
+        let body_entry = branch.target.as_str().to_string();
+        let after = node
+            .transitions
+            .next
+            .as_ref()
+            .map(|target| target.as_str().to_string());
+
+        let mut header = format!("while {}", self.cond(&branch.when)?);
+        if node.reentry.max_visits > 0 {
+            header.push_str(&format!(" limit {}", node.reentry.max_visits));
+        }
+        header.push_str(" {");
+        self.line(&header);
+
+        self.indent += 1;
+        // the body loops back to this header, so stop the region walk there.
+        self.emit_region(&body_entry, Some(node.id.as_str()))?;
+        self.indent -= 1;
+
+        Ok(self.close_block_line("}", after, stop))
     }
 
     fn emit_if(
@@ -530,16 +648,18 @@ impl<'a> Decompiler<'a> {
         }
 
         if let Some(else_target) = &else_target {
-            if merge_ref != Some(else_target.as_str()) && !self.end_ids.contains(else_target) {
+            if merge_ref != Some(else_target.as_str())
+                && !self.end_ids.contains(else_target)
+                && !self.visited.contains(else_target)
+            {
                 self.line("} else {");
                 self.indent += 1;
                 self.emit_region(else_target, merge_ref)?;
                 self.indent -= 1;
             }
         }
-        self.line("}");
 
-        Ok(merge)
+        Ok(self.close_block_line("}", merge, stop))
     }
 
     fn emit_match(
@@ -597,7 +717,7 @@ impl<'a> Decompiler<'a> {
             self.line("}");
         }
         if let Some(default) = &default {
-            if merge_ref != Some(default.as_str()) {
+            if merge_ref != Some(default.as_str()) && !self.visited.contains(default) {
                 self.line("else -> {");
                 self.indent += 1;
                 self.emit_region(default, merge_ref)?;
@@ -606,12 +726,15 @@ impl<'a> Decompiler<'a> {
             }
         }
         self.indent -= 1;
-        self.line("}");
 
-        Ok(merge)
+        Ok(self.close_block_line("}", merge, stop))
     }
 
-    fn emit_map(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_map(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let body_entry = single_node_id(node.parameters.get("target"));
         let after = node
             .transitions
@@ -637,12 +760,15 @@ impl<'a> Decompiler<'a> {
         }
         self.loop_vars.pop();
         self.indent -= 1;
-        self.line("}");
 
-        Ok(after)
+        Ok(self.close_block_line("}", after, stop))
     }
 
-    fn emit_parallel(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_parallel(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let branches = node_ref_ids(node.parameters.get("branches"));
         let join = self.find_join(&branches).ok_or_else(|| {
             WdlError::Decompile(format!("parallel '{}' has no matching join", node.id))
@@ -659,12 +785,15 @@ impl<'a> Decompiler<'a> {
             self.line("}");
         }
         self.indent -= 1;
-        self.line(&format!("}} join {mode}"));
 
-        Ok(cont)
+        Ok(self.close_block_line(&format!("}} join {mode}"), cont, stop))
     }
 
-    fn emit_race(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_race(
+        &mut self,
+        node: &WorkflowNode,
+        outer_stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let branches = node_ref_ids(node.parameters.get("branches"));
         let winner = node
             .parameters
@@ -677,24 +806,27 @@ impl<'a> Decompiler<'a> {
             .next
             .as_ref()
             .map(|target| target.as_str().to_string());
-        let stop = cont.as_deref();
+        let branch_stop = cont.clone();
 
         self.line(&format!("race winner {winner} {{"));
         self.indent += 1;
         for branch in &branches {
             self.line("branch {");
             self.indent += 1;
-            self.emit_region(branch, stop)?;
+            self.emit_region(branch, branch_stop.as_deref())?;
             self.indent -= 1;
             self.line("}");
         }
         self.indent -= 1;
-        self.line("}");
 
-        Ok(cont)
+        Ok(self.close_block_line("}", cont, outer_stop))
     }
 
-    fn emit_try(&mut self, node: &WorkflowNode) -> Result<Option<String>, WdlError> {
+    fn emit_try(
+        &mut self,
+        node: &WorkflowNode,
+        outer_stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
         let body = single_node_id(node.parameters.get("body"));
         let catch = single_node_id(node.parameters.get("catch"));
         let finally = single_node_id(node.parameters.get("finally"));
@@ -703,29 +835,28 @@ impl<'a> Decompiler<'a> {
             .next
             .as_ref()
             .map(|target| target.as_str().to_string());
-        let stop = cont.as_deref();
+        let branch_stop = cont.clone();
 
         self.line("try {");
         self.indent += 1;
         if let Some(body) = &body {
-            self.emit_region(body, stop)?;
+            self.emit_region(body, branch_stop.as_deref())?;
         }
         self.indent -= 1;
         if let Some(catch) = &catch {
             self.line("} catch {");
             self.indent += 1;
-            self.emit_region(catch, stop)?;
+            self.emit_region(catch, branch_stop.as_deref())?;
             self.indent -= 1;
         }
         if let Some(finally) = &finally {
             self.line("} finally {");
             self.indent += 1;
-            self.emit_region(finally, stop)?;
+            self.emit_region(finally, branch_stop.as_deref())?;
             self.indent -= 1;
         }
-        self.line("}");
 
-        Ok(cont)
+        Ok(self.close_block_line("}", cont, outer_stop))
     }
 
     /// find the join node that synchronizes the given parallel branches.

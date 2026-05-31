@@ -16,10 +16,11 @@ use crate::{
     error::{CommandError, CommandResult},
     state::CommandCenterState,
     types::{
-        CredentialPutRequest, CredentialSummary, ServiceStatus, WorkflowRunCreated,
-        WorkflowRunDetail,
+        CredentialPutRequest, CredentialSummary, DiagnosticSummary, ServiceStatus,
+        WorkflowRunCreated, WorkflowRunDetail,
     },
 };
+use runinator_wdl::{CompileOptions, Severity};
 
 #[tauri::command]
 pub async fn get_service_status(
@@ -77,6 +78,73 @@ pub async fn save_workflow_bundle(
         return Ok(saved);
     };
     get_json(&state, &format!("workflows/{workflow_id}/export")).await
+}
+
+#[tauri::command]
+pub fn compile_wdl(source: String, enabled: bool) -> CommandResult<WorkflowDefinition> {
+    let options = CompileOptions {
+        enabled,
+        ..CompileOptions::default()
+    };
+    runinator_wdl::compile_str(&source, &options)
+        .map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
+#[tauri::command]
+pub fn analyze_wdl(source: String) -> CommandResult<Vec<DiagnosticSummary>> {
+    // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
+    let diagnostics = match runinator_wdl::analyze_source(&source) {
+        Ok(diagnostics) => diagnostics,
+        Err(err) => return Ok(vec![wdl_error_to_summary(err, &source)]),
+    };
+    let summaries = diagnostics
+        .into_iter()
+        .map(|diagnostic| {
+            let (line, column) = diagnostic.span.line_col(&source);
+            let severity = match diagnostic.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            DiagnosticSummary {
+                start: diagnostic.span.start,
+                end: diagnostic.span.end,
+                line,
+                column,
+                severity: severity.to_string(),
+                message: diagnostic.message,
+            }
+        })
+        .collect();
+    Ok(summaries)
+}
+
+/// flatten a `WdlError` into a single error diagnostic anchored to its span when it has one.
+fn wdl_error_to_summary(err: runinator_wdl::WdlError, source: &str) -> DiagnosticSummary {
+    use runinator_wdl::WdlError;
+    let span = match &err {
+        WdlError::Syntax { span, .. } | WdlError::Semantic { span, .. } => Some(*span),
+        _ => None,
+    };
+    let (start, end, line, column) = match span {
+        Some(span) => {
+            let (line, column) = span.line_col(source);
+            (span.start, span.end, line, column)
+        }
+        None => (0, 0, 1, 1),
+    };
+    DiagnosticSummary {
+        start,
+        end,
+        line,
+        column,
+        severity: "error".to_string(),
+        message: err.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn decompile_to_wdl(workflow: WorkflowDefinition) -> CommandResult<String> {
+    runinator_wdl::decompile(&workflow).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
 #[tauri::command]

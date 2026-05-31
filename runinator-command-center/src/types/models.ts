@@ -246,6 +246,15 @@ export interface WorkflowBundle {
   triggers: WorkflowTrigger[];
 }
 
+export interface WdlDiagnostic {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  severity: "error" | "warning";
+  message: string;
+}
+
 export type WorkflowTriggerKind = "cron" | "manual";
 
 export interface WorkflowTrigger {

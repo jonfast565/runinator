@@ -74,7 +74,7 @@
       "args": [
         "--once",
         "--workflows-file",
-        "./packs/sdlc/workflow-pack.json",
+        "./packs/sdlc/sdlc.wdlp",
         "--gossip-bind",
         "127.0.0.1",
         "--gossip-port",

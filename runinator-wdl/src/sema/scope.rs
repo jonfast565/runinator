@@ -128,6 +128,10 @@ fn resolve_stmt(
             resolve_block(&for_stmt.body, symbols, scope, diagnostics);
             scope.pop();
         }
+        StmtKind::While(while_stmt) => {
+            resolve_cond(&while_stmt.cond, symbols, scope, diagnostics);
+            resolve_block(&while_stmt.body, symbols, scope, diagnostics);
+        }
         StmtKind::Map(map_stmt) => {
             resolve_expr(&map_stmt.items, symbols, scope, diagnostics);
             scope.push(map_stmt.var.clone());

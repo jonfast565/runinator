@@ -13,6 +13,7 @@ import type {
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
+  WdlDiagnostic,
   WorkflowBundle,
   WorkflowDefinition,
   WorkflowRunCreated,
@@ -79,6 +80,18 @@ export async function saveWorkflow(workflow: WorkflowDefinition) {
 
 export async function saveWorkflowBundle(request: WorkflowBundle) {
   return command<WorkflowBundle>("save_workflow_bundle", { request });
+}
+
+export async function compileWdl(source: string, enabled: boolean) {
+  return command<WorkflowDefinition>("compile_wdl", { source, enabled });
+}
+
+export async function analyzeWdl(source: string) {
+  return command<WdlDiagnostic[]>("analyze_wdl", { source });
+}
+
+export async function decompileToWdl(workflow: WorkflowDefinition) {
+  return command<string>("decompile_to_wdl", { workflow });
 }
 
 export async function deleteWorkflow(workflowId: number) {

@@ -336,23 +336,25 @@ fn workflow_bundle_path(config: &Config) -> std::path::PathBuf {
 }
 
 async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
+    // a directory is treated as a pack: every *.wdl inside becomes one workflow.
+    if path.is_dir() {
+        return load_wdl_directory(path).await;
+    }
+
+    let extension = path.extension().and_then(|ext| ext.to_str());
+
+    // a .wdlp manifest lists the .wdl files (and triggers) that make up a multi-workflow pack.
+    if extension == Some("wdlp") {
+        return load_wdl_pack_manifest(path).await;
+    }
+
     let data = tokio::fs::read_to_string(path)
         .await
         .map_err(|err| path_io_error("read workflow bundle at", path, err))?;
 
     // a .wdl file is compiled into a single-workflow bundle.
-    if path.extension().and_then(|ext| ext.to_str()) == Some("wdl") {
-        let definition =
-            runinator_wdl::compile_str(&data, &runinator_wdl::CompileOptions::default()).map_err(
-                |err| -> DynError {
-                    format!(
-                        "failed to compile {}:\n{}",
-                        path.display(),
-                        err.render(&data)
-                    )
-                    .into()
-                },
-            )?;
+    if extension == Some("wdl") {
+        let definition = compile_wdl(path, &data, 1)?;
         return Ok(WorkflowBundle {
             workflows: vec![definition],
             triggers: Vec::new(),
@@ -366,6 +368,112 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     }
 
     Ok(serde_json::from_value(raw.into())?)
+}
+
+// compile one .wdl source into a definition, rendering diagnostics against the source on error.
+// imported workflows are enabled so a pack is live as soon as it lands.
+fn compile_wdl(
+    path: &Path,
+    data: &str,
+    default_version: i64,
+) -> Result<WorkflowDefinition, DynError> {
+    let options = runinator_wdl::CompileOptions {
+        enabled: true,
+        default_version,
+    };
+    runinator_wdl::compile_str(data, &options).map_err(|err| -> DynError {
+        format!(
+            "failed to compile {}:\n{}",
+            path.display(),
+            err.render(data)
+        )
+        .into()
+    })
+}
+
+// compile every *.wdl in a directory (sorted for deterministic ids) into one bundle.
+async fn load_wdl_directory(dir: &Path) -> Result<WorkflowBundle, DynError> {
+    let mut wdl_paths = Vec::new();
+    let mut entries = tokio::fs::read_dir(dir)
+        .await
+        .map_err(|err| path_io_error("read workflow directory at", dir, err))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|err| path_io_error("read directory entry in", dir, err))?
+    {
+        let entry_path = entry.path();
+        if entry_path.extension().and_then(|ext| ext.to_str()) == Some("wdl") {
+            wdl_paths.push(entry_path);
+        }
+    }
+    wdl_paths.sort();
+    if wdl_paths.is_empty() {
+        return Err(format!("no .wdl files found in {}", dir.display()).into());
+    }
+
+    let mut workflows = Vec::with_capacity(wdl_paths.len());
+    for wdl_path in &wdl_paths {
+        let data = tokio::fs::read_to_string(wdl_path)
+            .await
+            .map_err(|err| path_io_error("read workflow at", wdl_path, err))?;
+        workflows.push(compile_wdl(wdl_path, &data, 1)?);
+    }
+    Ok(WorkflowBundle {
+        workflows,
+        triggers: Vec::new(),
+    })
+}
+
+// resolve a .wdlp manifest: compile each referenced .wdl (relative to the manifest) and
+// pass through any declared triggers.
+async fn load_wdl_pack_manifest(path: &Path) -> Result<WorkflowBundle, DynError> {
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|err| path_io_error("read workflow pack manifest at", path, err))?;
+    let manifest: Value = serde_json::from_str(&data)?;
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+
+    let version = manifest
+        .get("version")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| v.as_i64())
+        })
+        .unwrap_or(1);
+
+    let entries = manifest
+        .get("workflows")
+        .and_then(Value::as_array)
+        .ok_or_else(|| -> DynError { "wdl pack manifest missing 'workflows' array".into() })?;
+
+    let mut workflows = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let rel = entry
+            .as_str()
+            .or_else(|| entry.get("path").and_then(Value::as_str))
+            .ok_or_else(|| -> DynError {
+                "each manifest workflow entry must be a path string or have a 'path'".into()
+            })?;
+        let wdl_path = base_dir.join(rel);
+        let source = tokio::fs::read_to_string(&wdl_path)
+            .await
+            .map_err(|err| path_io_error("read manifest workflow at", &wdl_path, err))?;
+        workflows.push(compile_wdl(&wdl_path, &source, version)?);
+    }
+
+    let triggers = match manifest.get("triggers").cloned() {
+        Some(value) if !value.is_null() => {
+            serde_json::from_value::<Vec<WorkflowTrigger>>(value.into())?
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(WorkflowBundle {
+        workflows,
+        triggers,
+    })
 }
 
 fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {

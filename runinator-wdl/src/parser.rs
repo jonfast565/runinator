@@ -210,6 +210,8 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::fail_stmt => Ok(StmtKind::Fail(parse_fail(inner)?)),
         Rule::if_stmt => Ok(StmtKind::If(parse_if(inner)?)),
         Rule::for_stmt => Ok(StmtKind::For(parse_for(inner)?)),
+        Rule::while_stmt => Ok(StmtKind::While(parse_while(inner, false)?)),
+        Rule::until_stmt => Ok(StmtKind::While(parse_while(inner, true)?)),
         Rule::match_stmt => Ok(StmtKind::Match(parse_match(inner)?)),
         Rule::parallel_stmt => Ok(StmtKind::Parallel(parse_parallel(inner)?)),
         Rule::try_stmt => Ok(StmtKind::Try(parse_try(inner)?)),
@@ -226,7 +228,7 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
     let mut modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::ident => idents.push(inner.as_str().to_string()),
+            Rule::action_ident => idents.push(inner.as_str().to_string()),
             Rule::arg_list => args = parse_arg_list(inner)?,
             Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
@@ -366,19 +368,27 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, WdlError> {
 }
 
 fn parse_wait(pair: Pair<Rule>) -> Result<WaitStmt, WdlError> {
-    let mut seconds = 0;
+    let mut amount = WaitAmount::Seconds(0);
     let mut until_status = None;
     let mut initial_status = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::duration => seconds = parse_duration(inner.as_str(), span_of(&inner))?,
+            Rule::wait_amount => {
+                let value = first_inner(inner)?;
+                amount = match value.as_rule() {
+                    Rule::duration => {
+                        WaitAmount::Seconds(parse_duration(value.as_str(), span_of(&value))?)
+                    }
+                    _ => WaitAmount::Expr(parse_expr(value)?),
+                };
+            }
             Rule::wait_until => until_status = Some(plain_string(first_inner(inner)?)?),
             Rule::wait_initial => initial_status = Some(plain_string(first_inner(inner)?)?),
             _ => {}
         }
     }
     Ok(WaitStmt {
-        seconds,
+        amount,
         until_status,
         initial_status,
     })
@@ -500,6 +510,29 @@ fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
     Ok(ForStmt {
         var,
         items,
+        limit,
+        body,
+    })
+}
+
+fn parse_while(pair: Pair<Rule>, negate: bool) -> Result<WhileStmt, WdlError> {
+    let mut cond = None;
+    let mut limit = None;
+    let mut body = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::cond => cond = Some(parse_cond(inner)?),
+            Rule::for_limit => {
+                let int = first_inner(inner)?;
+                limit = Some(parse_i64(int.as_str(), span_of(&int))?);
+            }
+            Rule::block => body = parse_block(inner)?,
+            _ => {}
+        }
+    }
+    Ok(WhileStmt {
+        cond: cond.ok_or_else(|| WdlError::lower("while loop missing condition"))?,
+        negate,
         limit,
         body,
     })

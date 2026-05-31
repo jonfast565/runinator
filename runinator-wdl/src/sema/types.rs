@@ -92,6 +92,10 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
             check_block(&for_stmt.body, env, diagnostics);
             env.scope.pop();
         }
+        StmtKind::While(while_stmt) => {
+            check_cond(&while_stmt.cond, env, diagnostics);
+            check_block(&while_stmt.body, env, diagnostics);
+        }
         StmtKind::Map(map_stmt) => {
             let element = check_iterable(&map_stmt.items, env, "map", diagnostics);
             env.scope.push((map_stmt.var.clone(), element));

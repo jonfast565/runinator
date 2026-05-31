@@ -37,6 +37,73 @@ fn assert_round_trips(src: &str) {
     );
 }
 
+/// like `assert_round_trips`, but compares the node *set* rather than array order. node order
+/// carries no execution meaning (the graph is followed via `start` + transitions), and a
+/// decompiler that re-nests branches legitimately emits nodes in a different order.
+fn assert_round_trips_unordered(src: &str) {
+    let first = compile(src);
+    let wdl = decompile(&first).expect("decompile");
+    let second = compile_str(&wdl, &CompileOptions::default())
+        .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{wdl}"));
+
+    let sorted_nodes = |definition: &runinator_models::workflows::WorkflowGraph| {
+        let normalized = runinator_workflows::normalize_definition(definition.clone());
+        let value = serde_json::to_value(&normalized).expect("serialize graph");
+        let mut nodes = value
+            .get("nodes")
+            .and_then(|n| n.as_array())
+            .cloned()
+            .unwrap_or_default();
+        nodes.sort_by(|a, b| {
+            let id = |v: &serde_json::Value| {
+                v.get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            id(a).cmp(&id(b))
+        });
+        (value.get("start").cloned(), nodes)
+    };
+
+    assert_eq!(
+        sorted_nodes(&first.definition),
+        sorted_nodes(&second.definition),
+        "round trip diverged (order-insensitive)\n--- decompiled ---\n{wdl}"
+    );
+}
+
+#[test]
+fn decompile_renders_back_edge_as_arrow_without_panicking() {
+    use runinator_models::workflows::WorkflowDefinition;
+    // a linear workflow whose graph we mutate to add a back-edge from `b` to `a`.
+    let definition = compile(
+        r#"
+        workflow "Poller" v1 {
+            let a = console.run(command: "a")
+            let b = console.run(command: "b")
+        }
+    "#,
+    );
+    let mut value = serde_json::to_value(&definition).expect("serialize definition");
+    let nodes = value["definition"]["nodes"]
+        .as_array_mut()
+        .expect("nodes array");
+    for node in nodes.iter_mut() {
+        if node["id"] == serde_json::json!("b") {
+            node["transitions"]["next"] = serde_json::json!({ "$node": "a" });
+            node["transitions"]["on_success"] = serde_json::json!({ "$node": "a" });
+        }
+    }
+    let looped: WorkflowDefinition = serde_json::from_value(value).expect("rebuild definition");
+    // the back-edge must decompile to an explicit `-> a` arrow, never a crash or error.
+    let wdl = decompile(&looped).expect("decompile renders the back-edge");
+    assert!(
+        wdl.contains("-> a"),
+        "expected a back-edge arrow, got:\n{wdl}"
+    );
+}
+
 #[test]
 fn round_trips_concurrency() {
     let src = r#"
@@ -86,6 +153,159 @@ fn round_trips_sdlc() {
             }
         }
     "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_expression_wait() {
+    // wait can take a literal duration or an expression that yields seconds.
+    let src = r#"
+        workflow "DynWait" v1 {
+            input { poll: { interval: int } }
+            let seed = console.run(command: "seed")
+            wait input.poll.interval until "ready"
+            let done = console.run(command: "done")
+        }
+    "#;
+    let definition = compile(src);
+    let nodes = definition.definition.as_value();
+    let wait = nodes
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .unwrap()
+        .iter()
+        .find(|n| n.get("kind").and_then(|k| k.as_str()) == Some("wait"))
+        .expect("wait node");
+    // the dynamic duration lowers to a $ref expression, not an integer.
+    assert!(wait.pointer("/wait/seconds/$ref").is_some(), "{wait:#?}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_hyphenated_provider() {
+    // providers like `ai-command` carry an internal hyphen in the call position.
+    let src = r#"
+        workflow "Hyphen" v1 {
+            let run = ai-command.claude_code(prompt: "hi").timeout(60s)
+        }
+    "#;
+    let definition = compile(src);
+    let nodes = definition.definition.as_value();
+    let action = nodes
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .unwrap()
+        .iter()
+        .find(|n| n.get("kind").and_then(|k| k.as_str()) == Some("action"))
+        .expect("action node");
+    assert_eq!(
+        action.pointer("/action/provider").and_then(|v| v.as_str()),
+        Some("ai-command")
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_fanin_error_handlers_and_convergence() {
+    // mirrors the Ticket Work shape: linear steps with `fail ->` handlers, a poll loop, an
+    // if/approval branch, and several handlers converging on a shared cleanup node. exercises
+    // the decompiler's worklist + back-arrow handling for arbitrary fan-in.
+    let src = r#"
+        workflow "Fanin" v1 {
+            input { poll: { interval: integer } }
+            let prepare = console.run(command: "prepare")
+                fail -> notify_failure
+            let build = console.run(command: "build")
+                fail -> notify_failure
+
+            until check.status == "passed" || check.status == "failed" limit 20 {
+                wait input.poll.interval
+                let check = console.run(command: "poll")
+            }
+
+            if check.status == "passed" {
+                approve "ship it?" type "merge"
+                    ok -> finalize
+                    reject -> rollback
+            } -> notify_failure
+
+            let finalize = console.run(command: "finalize")
+                fail -> notify_failure
+            let report = console.run(command: "report")
+                -> cleanup
+
+            let rollback = console.run(command: "rollback")
+                -> cleanup
+            let notify_failure = console.run(command: "alert")
+                -> cleanup
+            let cleanup = console.run(command: "cleanup")
+                -> done
+        }
+    "#;
+    assert_round_trips_unordered(src);
+}
+
+#[test]
+fn round_trips_while_loop() {
+    let src = r#"
+        workflow "Polling" v1 {
+            let seed = console.run(command: "seed")
+            while seed.status == "pending" limit 30 {
+                console.run(command: "poll")
+            }
+            let done = console.run(command: "done")
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn until_compiles_to_negated_while_condition() {
+    // `until c` must lower to a reentry-enabled condition node whose branch fires while !c.
+    let definition = compile(
+        r#"
+        workflow "Until" v1 {
+            let seed = console.run(command: "seed")
+            until seed.ready == true limit 10 {
+                console.run(command: "poll")
+            }
+        }
+    "#,
+    );
+    let graph = definition.definition.as_value();
+    let nodes = graph.get("nodes").and_then(|n| n.as_array()).unwrap();
+    let header = nodes
+        .iter()
+        .find(|n| {
+            n.get("kind").and_then(|k| k.as_str()) == Some("condition")
+                && n.pointer("/reentry/enabled").and_then(|v| v.as_bool()) == Some(true)
+        })
+        .expect("while/until condition header");
+    assert_eq!(
+        header
+            .pointer("/reentry/max_visits")
+            .and_then(|v| v.as_i64()),
+        Some(10)
+    );
+    // the single branch condition must be negated (a `not` wrapper) for `until`.
+    assert!(
+        header.pointer("/transitions/branches/0/when/not").is_some(),
+        "until condition should be negated: {header:#?}"
+    );
+}
+
+#[test]
+fn round_trips_until_loop() {
+    let src = r#"
+        workflow "UntilReady" v1 {
+            let seed = console.run(command: "seed")
+            until seed.ready == true limit 12 {
+                console.run(command: "poll")
+            }
+            let finish = console.run(command: "finish")
+        }
+    "#;
+    // `until c` round-trips through its negated `while !c` form (graph-equivalent).
     assert_round_trips(src);
 }
 
