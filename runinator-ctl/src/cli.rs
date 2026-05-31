@@ -52,6 +52,29 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
+    /// Compile, decompile, and check the wdl workflow language.
+    Wdl {
+        #[command(subcommand)]
+        command: WdlCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WdlCommands {
+    /// Compile a .wdl file into a workflow definition JSON.
+    Compile {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Decompile a workflow definition JSON file back into .wdl source.
+    Decompile {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Parse, lower, and validate a .wdl file, printing any diagnostics.
+    Check { file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]

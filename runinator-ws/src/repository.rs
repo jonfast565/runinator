@@ -10,8 +10,9 @@ use runinator_models::{
     web::TaskResponse,
     workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
     workflows::{
-        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeKind, WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowNodeKind, WorkflowNodeRun,
+        WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus,
+        WorkflowTrigger,
     },
 };
 

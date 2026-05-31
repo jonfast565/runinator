@@ -16,8 +16,7 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
         WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
-        WorkflowStatus,
-        WorkflowTrigger, WorkflowTriggerKind,
+        WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};

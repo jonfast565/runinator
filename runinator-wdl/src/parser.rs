@@ -1,8 +1,8 @@
 // walks pest pairs into the wdl ast. operator precedence is encoded directly in the
 // grammar (cond_or/and/unary, coalesce/concat), so no separate pratt pass is needed.
 
-use pest::iterators::Pair;
 use pest::Parser;
+use pest::iterators::Pair;
 use pest_derive::Parser;
 
 use crate::ast::*;
@@ -16,7 +16,9 @@ struct WdlParser;
 pub fn parse_document(src: &str) -> Result<Document, WdlError> {
     let mut pairs =
         WdlParser::parse(Rule::document, src).map_err(|err| WdlError::Parse(err.to_string()))?;
-    let document = pairs.next().ok_or_else(|| WdlError::Parse("empty input".into()))?;
+    let document = pairs
+        .next()
+        .ok_or_else(|| WdlError::Parse("empty input".into()))?;
     let workflow = document
         .into_inner()
         .find(|pair| pair.as_rule() == Rule::workflow)
@@ -82,11 +84,7 @@ fn parse_type_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
             _ => {}
         }
     }
-    Ok(TypeField {
-        name,
-        optional,
-        ty,
-    })
+    Ok(TypeField { name, optional, ty })
 }
 
 fn parse_type_expr(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
@@ -150,14 +148,20 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
     let span = span_of(&pair);
     let mut annotations = Annotations::default();
     let mut label = None;
+    let mut label_type = None;
     let mut kind = None;
     let mut transitions = TransitionClause::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::annotation => apply_annotation(&mut annotations, inner)?,
             Rule::binding => {
-                let ident = first_inner(inner)?;
-                label = Some(ident.as_str().to_string());
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::ident => label = Some(part.as_str().to_string()),
+                        Rule::type_expr => label_type = Some(parse_type_expr(part)?),
+                        _ => {}
+                    }
+                }
             }
             Rule::stmt_body => kind = Some(parse_stmt_body(inner)?),
             Rule::transitions => transitions = parse_transitions(inner)?,
@@ -175,6 +179,7 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         span,
         annotations,
         label,
+        label_type,
         kind,
         transitions,
     })
@@ -215,6 +220,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
 }
 
 fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
+    let span = span_of(&pair);
     let mut idents = Vec::new();
     let mut args = Vec::new();
     let mut modifiers = Modifiers::default();
@@ -227,7 +233,7 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
         }
     }
     if idents.len() != 2 {
-        return Err(WdlError::lower("action requires provider.function"));
+        return Err(WdlError::syntax(span, "action requires provider.function"));
     }
     Ok(ActionStmt {
         provider: idents[0].clone(),
@@ -250,6 +256,7 @@ fn parse_arg_list(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlError> {
 }
 
 fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), WdlError> {
+    let span = span_of(&pair);
     let mut inner = pair.into_inner();
     let name = inner
         .next()
@@ -309,7 +316,12 @@ fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), Wdl
                 on_exhausted,
             });
         }
-        other => return Err(WdlError::lower(format!("unknown modifier '{other}'"))),
+        other => {
+            return Err(WdlError::syntax(
+                span,
+                format!("unknown modifier '{other}'"),
+            ));
+        }
     }
     Ok(())
 }
@@ -359,7 +371,7 @@ fn parse_wait(pair: Pair<Rule>) -> Result<WaitStmt, WdlError> {
     let mut initial_status = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::duration => seconds = parse_duration(inner.as_str())?,
+            Rule::duration => seconds = parse_duration(inner.as_str(), span_of(&inner))?,
             Rule::wait_until => until_status = Some(plain_string(first_inner(inner)?)?),
             Rule::wait_initial => initial_status = Some(plain_string(first_inner(inner)?)?),
             _ => {}
@@ -386,7 +398,11 @@ fn parse_emit(pair: Pair<Rule>) -> Result<EmitStmt, WdlError> {
 }
 
 fn parse_approval(pair: Pair<Rule>) -> Result<ApprovalStmt, WdlError> {
-    let mut prompt = Expr::Str(vec![StrPart::Lit("Approval required".into())]);
+    let span = span_of(&pair);
+    let mut prompt = Expr::new(
+        ExprKind::Str(vec![StrPart::Lit("Approval required".into())]),
+        span,
+    );
     let mut approval_type = None;
     let mut metadata = Vec::new();
     for inner in pair.into_inner() {
@@ -466,7 +482,7 @@ fn parse_if(pair: Pair<Rule>) -> Result<IfStmt, WdlError> {
 
 fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
     let mut var = String::new();
-    let mut items = Expr::Null;
+    let mut items = Expr::new(ExprKind::Null, Span::default());
     let mut limit = None;
     let mut body = Vec::new();
     for inner in pair.into_inner() {
@@ -491,7 +507,7 @@ fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
 
 fn parse_map(pair: Pair<Rule>) -> Result<MapStmt, WdlError> {
     let mut var = String::new();
-    let mut items = Expr::Null;
+    let mut items = Expr::new(ExprKind::Null, Span::default());
     let mut concurrency = None;
     let mut body = Vec::new();
     for inner in pair.into_inner() {
@@ -515,7 +531,7 @@ fn parse_map(pair: Pair<Rule>) -> Result<MapStmt, WdlError> {
 }
 
 fn parse_match(pair: Pair<Rule>) -> Result<MatchStmt, WdlError> {
-    let mut subject = Expr::Null;
+    let mut subject = Expr::new(ExprKind::Null, Span::default());
     let mut arms = Vec::new();
     let mut default = None;
     for inner in pair.into_inner() {
@@ -554,11 +570,7 @@ fn parse_match_arm(pair: Pair<Rule>) -> Result<MatchArm, WdlError> {
             _ => {}
         }
     }
-    Ok(MatchArm {
-        equals,
-        when,
-        body,
-    })
+    Ok(MatchArm { equals, when, body })
 }
 
 fn parse_arm_body(pair: Pair<Rule>) -> Result<Block, WdlError> {
@@ -617,11 +629,15 @@ fn parse_try(pair: Pair<Rule>) -> Result<TryStmt, WdlError> {
 }
 
 fn parse_branch_policy(pair: Pair<Rule>) -> Result<BranchPolicy, WdlError> {
+    let span = span_of(&pair);
     match pair.as_str() {
         "all" => Ok(BranchPolicy::All),
         "any" => Ok(BranchPolicy::Any),
         "first_success" => Ok(BranchPolicy::FirstSuccess),
-        other => Err(WdlError::lower(format!("unknown branch policy '{other}'"))),
+        other => Err(WdlError::syntax(
+            span,
+            format!("unknown branch policy '{other}'"),
+        )),
     }
 }
 
@@ -643,6 +659,7 @@ fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, WdlError> {
                 clause.next = Some(target);
             }
             Rule::outcome_arrow => {
+                let arrow_span = span_of(&inner);
                 let mut outcome = String::new();
                 let mut target = None;
                 for part in inner.into_inner() {
@@ -658,7 +675,12 @@ fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, WdlError> {
                     "fail" => clause.on_failure = Some(target),
                     "timeout" => clause.on_timeout = Some(target),
                     "reject" => clause.on_reject = Some(target),
-                    other => return Err(WdlError::lower(format!("unknown outcome '{other}'"))),
+                    other => {
+                        return Err(WdlError::syntax(
+                            arrow_span,
+                            format!("unknown outcome '{other}'"),
+                        ));
+                    }
                 }
             }
             _ => {}
@@ -682,6 +704,7 @@ fn parse_cond(pair: Pair<Rule>) -> Result<Cond, WdlError> {
 }
 
 fn parse_cond_or(pair: Pair<Rule>) -> Result<Cond, WdlError> {
+    let span = span_of(&pair);
     let mut parts = pair
         .into_inner()
         .filter(|p| p.as_rule() == Rule::cond_and)
@@ -690,10 +713,11 @@ fn parse_cond_or(pair: Pair<Rule>) -> Result<Cond, WdlError> {
     if parts.len() == 1 {
         return Ok(parts.remove(0));
     }
-    Ok(Cond::Any(parts))
+    Ok(Cond::new(CondKind::Any(parts), span))
 }
 
 fn parse_cond_and(pair: Pair<Rule>) -> Result<Cond, WdlError> {
+    let span = span_of(&pair);
     let mut parts = pair
         .into_inner()
         .filter(|p| p.as_rule() == Rule::cond_unary)
@@ -702,15 +726,19 @@ fn parse_cond_and(pair: Pair<Rule>) -> Result<Cond, WdlError> {
     if parts.len() == 1 {
         return Ok(parts.remove(0));
     }
-    Ok(Cond::All(parts))
+    Ok(Cond::new(CondKind::All(parts), span))
 }
 
 fn parse_cond_unary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
+    let span = span_of(&pair);
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::not_cond => {
             let nested = first_inner(inner)?;
-            Ok(Cond::Not(Box::new(parse_cond_unary(nested)?)))
+            Ok(Cond::new(
+                CondKind::Not(Box::new(parse_cond_unary(nested)?)),
+                span,
+            ))
         }
         Rule::cond_primary => parse_cond_primary(inner),
         other => Err(WdlError::lower(format!("unexpected cond unary {other:?}"))),
@@ -718,16 +746,23 @@ fn parse_cond_unary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
 }
 
 fn parse_cond_primary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
+    let span = span_of(&pair);
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::paren_cond => parse_cond(first_inner(inner)?),
-        Rule::cond_exists => Ok(Cond::Exists(parse_expr(first_inner(inner)?)?)),
+        Rule::cond_exists => Ok(Cond::new(
+            CondKind::Exists(parse_expr(first_inner(inner)?)?),
+            span,
+        )),
         Rule::cond_cmp => parse_cond_cmp(inner),
-        other => Err(WdlError::lower(format!("unexpected cond primary {other:?}"))),
+        other => Err(WdlError::lower(format!(
+            "unexpected cond primary {other:?}"
+        ))),
     }
 }
 
 fn parse_cond_cmp(pair: Pair<Rule>) -> Result<Cond, WdlError> {
+    let span = span_of(&pair);
     let mut left = None;
     let mut op = None;
     let mut right = None;
@@ -740,18 +775,21 @@ fn parse_cond_cmp(pair: Pair<Rule>) -> Result<Cond, WdlError> {
                     right = Some(parse_expr(inner)?);
                 }
             }
-            Rule::cmp_op => op = Some(parse_cmp_op(inner.as_str())?),
+            Rule::cmp_op => op = Some(parse_cmp_op(inner.as_str(), span_of(&inner))?),
             _ => {}
         }
     }
-    Ok(Cond::Cmp {
-        left: left.ok_or_else(|| WdlError::lower("comparison missing left"))?,
-        op: op.ok_or_else(|| WdlError::lower("comparison missing operator"))?,
-        right: right.ok_or_else(|| WdlError::lower("comparison missing right"))?,
-    })
+    Ok(Cond::new(
+        CondKind::Cmp {
+            left: left.ok_or_else(|| WdlError::lower("comparison missing left"))?,
+            op: op.ok_or_else(|| WdlError::lower("comparison missing operator"))?,
+            right: right.ok_or_else(|| WdlError::lower("comparison missing right"))?,
+        },
+        span,
+    ))
 }
 
-fn parse_cmp_op(text: &str) -> Result<CmpOp, WdlError> {
+fn parse_cmp_op(text: &str, span: Span) -> Result<CmpOp, WdlError> {
     Ok(match text {
         "==" => CmpOp::Eq,
         "!=" => CmpOp::Ne,
@@ -763,7 +801,12 @@ fn parse_cmp_op(text: &str) -> Result<CmpOp, WdlError> {
         "in" => CmpOp::In,
         "starts_with" => CmpOp::StartsWith,
         "ends_with" => CmpOp::EndsWith,
-        other => return Err(WdlError::lower(format!("unknown operator '{other}'"))),
+        other => {
+            return Err(WdlError::syntax(
+                span,
+                format!("unknown operator '{other}'"),
+            ));
+        }
     })
 }
 
@@ -775,6 +818,7 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, WdlError> {
 }
 
 fn parse_coalesce(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
     let mut parts = pair
         .into_inner()
         .filter(|p| p.as_rule() == Rule::concat_expr)
@@ -783,10 +827,11 @@ fn parse_coalesce(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     if parts.len() == 1 {
         return Ok(parts.remove(0));
     }
-    Ok(Expr::Coalesce(parts))
+    Ok(Expr::new(ExprKind::Coalesce(parts), span))
 }
 
 fn parse_concat(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
     let mut parts = pair
         .into_inner()
         .filter(|p| p.as_rule() == Rule::primary)
@@ -795,27 +840,30 @@ fn parse_concat(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     if parts.len() == 1 {
         return Ok(parts.remove(0));
     }
-    Ok(Expr::Concat(parts))
+    Ok(Expr::new(ExprKind::Concat(parts), span))
 }
 
 fn parse_primary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::paren_expr => parse_expr(first_inner(inner)?),
-        Rule::func_call => parse_func_call(inner),
-        Rule::object => parse_object(inner),
-        Rule::array => parse_array(inner),
-        Rule::duration => Ok(Expr::Int(parse_duration(inner.as_str())?)),
-        Rule::number => parse_number(inner.as_str()),
-        Rule::boolean => Ok(Expr::Bool(inner.as_str() == "true")),
-        Rule::null_lit => Ok(Expr::Null),
-        Rule::string => Ok(Expr::Str(string_parts(inner)?)),
-        Rule::path => parse_path(inner),
-        other => Err(WdlError::lower(format!("unexpected primary {other:?}"))),
-    }
+    let span = span_of(&inner);
+    let kind = match inner.as_rule() {
+        Rule::paren_expr => return parse_expr(first_inner(inner)?),
+        Rule::func_call => return parse_func_call(inner),
+        Rule::object => return parse_object(inner),
+        Rule::array => return parse_array(inner),
+        Rule::duration => ExprKind::Int(parse_duration(inner.as_str(), span)?),
+        Rule::number => parse_number(inner.as_str(), span)?,
+        Rule::boolean => ExprKind::Bool(inner.as_str() == "true"),
+        Rule::null_lit => ExprKind::Null,
+        Rule::string => ExprKind::Str(string_parts(inner)?),
+        Rule::path => return parse_path(inner),
+        other => return Err(WdlError::lower(format!("unexpected primary {other:?}"))),
+    };
+    Ok(Expr::new(kind, span))
 }
 
 fn parse_func_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
     let mut name = String::new();
     let mut arg = None;
     for inner in pair.into_inner() {
@@ -825,15 +873,23 @@ fn parse_func_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
             _ => {}
         }
     }
-    let arg = Box::new(arg.ok_or_else(|| WdlError::lower("function call missing argument"))?);
-    match name.as_str() {
-        "string" => Ok(Expr::ToString(arg)),
-        "json" => Ok(Expr::ToJson(arg)),
-        other => Err(WdlError::lower(format!("unknown function '{other}'"))),
-    }
+    let arg =
+        Box::new(arg.ok_or_else(|| WdlError::syntax(span, "function call missing argument"))?);
+    let kind = match name.as_str() {
+        "string" => ExprKind::ToString(arg),
+        "json" => ExprKind::ToJson(arg),
+        other => {
+            return Err(WdlError::syntax(
+                span,
+                format!("unknown function '{other}'"),
+            ));
+        }
+    };
+    Ok(Expr::new(kind, span))
 }
 
 fn parse_path(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
     let mut segs = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -863,18 +919,25 @@ fn parse_path(pair: Pair<Rule>) -> Result<Expr, WdlError> {
         }
     }
     if segs.is_empty() {
-        return Err(WdlError::lower("empty path"));
+        return Err(WdlError::syntax(span, "empty path"));
     }
-    Ok(Expr::Path(segs))
+    Ok(Expr::new(ExprKind::Path(segs), span))
 }
 
 fn parse_object(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    Ok(Expr::Object(parse_object_entries(pair)?))
+    let span = span_of(&pair);
+    Ok(Expr::new(
+        ExprKind::Object(parse_object_entries(pair)?),
+        span,
+    ))
 }
 
 fn parse_object_entries(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlError> {
     let mut entries = Vec::new();
-    for entry in pair.into_inner().filter(|p| p.as_rule() == Rule::object_entry) {
+    for entry in pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::object_entry)
+    {
         let inner = first_inner(entry)?;
         match inner.as_rule() {
             Rule::object_pair => {
@@ -888,15 +951,16 @@ fn parse_object_entries(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlErro
                         _ => {}
                     }
                 }
-                entries.push((
-                    key,
-                    value.ok_or_else(|| WdlError::lower("object value"))?,
-                ));
+                entries.push((key, value.ok_or_else(|| WdlError::lower("object value"))?));
             }
             Rule::object_shorthand => {
                 let ident = first_inner(inner)?;
+                let span = span_of(&ident);
                 let name = ident.as_str().to_string();
-                entries.push((name.clone(), Expr::Path(vec![PathSeg::Key(name)])));
+                entries.push((
+                    name.clone(),
+                    Expr::new(ExprKind::Path(vec![PathSeg::Key(name)]), span),
+                ));
             }
             _ => {}
         }
@@ -905,39 +969,45 @@ fn parse_object_entries(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlErro
 }
 
 fn parse_array(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
     let items = pair
         .into_inner()
         .filter(|p| p.as_rule() == Rule::expr)
         .map(parse_expr)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Expr::Array(items))
+    Ok(Expr::new(ExprKind::Array(items), span))
 }
 
 // scalars and strings -------------------------------------------------------
 
-fn parse_number(text: &str) -> Result<Expr, WdlError> {
+fn parse_number(text: &str, span: Span) -> Result<ExprKind, WdlError> {
     if text.contains('.') {
         text.parse::<f64>()
-            .map(Expr::Float)
-            .map_err(|_| WdlError::lower(format!("invalid number '{text}'")))
+            .map(ExprKind::Float)
+            .map_err(|_| WdlError::syntax(span, format!("invalid number '{text}'")))
     } else {
         text.parse::<i64>()
-            .map(Expr::Int)
-            .map_err(|_| WdlError::lower(format!("invalid integer '{text}'")))
+            .map(ExprKind::Int)
+            .map_err(|_| WdlError::syntax(span, format!("invalid integer '{text}'")))
     }
 }
 
-fn parse_duration(text: &str) -> Result<i64, WdlError> {
+fn parse_duration(text: &str, span: Span) -> Result<i64, WdlError> {
     let (digits, unit) = text.split_at(text.len() - 1);
     let amount = digits
         .parse::<i64>()
-        .map_err(|_| WdlError::lower(format!("invalid duration '{text}'")))?;
+        .map_err(|_| WdlError::syntax(span, format!("invalid duration '{text}'")))?;
     let multiplier = match unit {
         "s" => 1,
         "m" => 60,
         "h" => 3600,
         "d" => 86400,
-        other => return Err(WdlError::lower(format!("unknown duration unit '{other}'"))),
+        other => {
+            return Err(WdlError::syntax(
+                span,
+                format!("unknown duration unit '{other}'"),
+            ));
+        }
     };
     Ok(amount * multiplier)
 }
@@ -999,7 +1069,7 @@ fn plain_string(pair: Pair<Rule>) -> Result<String, WdlError> {
             StrPart::Expr(_) => {
                 return Err(WdlError::lower(
                     "interpolation is not allowed in this position",
-                ))
+                ));
             }
         }
     }
@@ -1009,15 +1079,15 @@ fn plain_string(pair: Pair<Rule>) -> Result<String, WdlError> {
 // helpers used by modifier interpretation -----------------------------------
 
 fn expect_int(value: Option<&Expr>, label: &str) -> Result<i64, WdlError> {
-    match value {
-        Some(Expr::Int(int)) => Ok(*int),
+    match value.map(|value| &value.kind) {
+        Some(ExprKind::Int(int)) => Ok(*int),
         _ => Err(WdlError::lower(format!("{label} expects an integer"))),
     }
 }
 
 fn expect_string(value: &Expr, label: &str) -> Result<String, WdlError> {
-    match value {
-        Expr::Str(parts) if parts.len() == 1 => match &parts[0] {
+    match &value.kind {
+        ExprKind::Str(parts) if parts.len() == 1 => match &parts[0] {
             StrPart::Lit(text) => Ok(text.clone()),
             StrPart::Expr(_) => Err(WdlError::lower(format!("{label} expects a literal string"))),
         },
@@ -1026,8 +1096,8 @@ fn expect_string(value: &Expr, label: &str) -> Result<String, WdlError> {
 }
 
 fn value_to_target(value: &Expr) -> Result<Target, WdlError> {
-    match value {
-        Expr::Path(segs) if segs.len() == 1 => {
+    match &value.kind {
+        ExprKind::Path(segs) if segs.len() == 1 => {
             if let PathSeg::Key(name) = &segs[0] {
                 return Ok(match name.as_str() {
                     "done" => Target::Done,
@@ -1037,7 +1107,7 @@ fn value_to_target(value: &Expr) -> Result<Target, WdlError> {
             }
             Err(WdlError::lower("invalid target"))
         }
-        Expr::Str(parts) if parts.len() == 1 => {
+        ExprKind::Str(parts) if parts.len() == 1 => {
             if let StrPart::Lit(name) = &parts[0] {
                 return Ok(Target::Label(name.clone()));
             }

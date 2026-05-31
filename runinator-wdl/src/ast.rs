@@ -26,6 +26,8 @@ pub struct Stmt {
     pub annotations: Annotations,
     /// `let <label> = ...`; the binding doubles as the generated node id.
     pub label: Option<String>,
+    /// an optional `let <label>: <type> = ...` annotation declaring the step's output type.
+    pub label_type: Option<TypeExpr>,
     pub kind: StmtKind,
     pub transitions: TransitionClause,
 }
@@ -207,8 +209,22 @@ pub enum BranchPolicy {
 
 // expressions ---------------------------------------------------------------
 
+/// an expression paired with the source span it was parsed from, so diagnostics can
+/// anchor to the offending sub-expression rather than the enclosing statement.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
     Null,
     Bool(bool),
     Int(i64),
@@ -243,16 +259,25 @@ pub enum PathSeg {
 
 // conditions ----------------------------------------------------------------
 
+/// a condition paired with the source span it was parsed from.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cond {
+pub struct Cond {
+    pub kind: CondKind,
+    pub span: Span,
+}
+
+impl Cond {
+    pub fn new(kind: CondKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CondKind {
     All(Vec<Cond>),
     Any(Vec<Cond>),
     Not(Box<Cond>),
-    Cmp {
-        left: Expr,
-        op: CmpOp,
-        right: Expr,
-    },
+    Cmp { left: Expr, op: CmpOp, right: Expr },
     Exists(Expr),
 }
 

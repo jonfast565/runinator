@@ -20,7 +20,7 @@ use tokio::time;
 use crate::{
     cli::{
         ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, TriggerCommands,
-        WorkflowCommands,
+        WdlCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -41,6 +41,7 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Approvals { command } => approvals(client, command, cli.json).await,
         Commands::Triggers { command } => triggers(client, command, cli.json).await,
         Commands::Providers { command } => providers(client, command, cli.json).await,
+        Commands::Wdl { command } => wdl(command, cli.json),
     }
 }
 
@@ -182,6 +183,74 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
                 return output::json(&run);
             }
             print_run_summary(&run);
+        }
+    }
+    Ok(())
+}
+
+fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
+    let options = runinator_wdl::CompileOptions::default();
+    match command {
+        WdlCommands::Compile { file, output } => {
+            let source = fs::read_to_string(file)?;
+            let definition = runinator_wdl::compile_str(&source, &options)
+                .map_err(|e| err(e.render(&source)))?;
+            if json_output {
+                return output::json(&definition);
+            }
+            let rendered = serde_json::to_string_pretty(&definition)?;
+            match output {
+                Some(path) => {
+                    fs::write(path, rendered)?;
+                    println!("wrote {}", path.display());
+                }
+                None => println!("{rendered}"),
+            }
+        }
+        WdlCommands::Decompile { file, output } => {
+            let definition = read_workflow_definition(file)?;
+            let source = runinator_wdl::decompile(&definition).map_err(|e| err(e.to_string()))?;
+            match output {
+                Some(path) => {
+                    fs::write(path, &source)?;
+                    println!("wrote {}", path.display());
+                }
+                None => print!("{source}"),
+            }
+        }
+        WdlCommands::Check { file } => {
+            let source = fs::read_to_string(file)?;
+            // analyze first so every error and warning is reported, not just the first.
+            let diagnostics =
+                runinator_wdl::analyze_source(&source).map_err(|e| err(e.render(&source)))?;
+            let error_count = diagnostics.iter().filter(|d| d.is_error()).count();
+            if json_output {
+                return output::json(&json!({
+                    "ok": error_count == 0,
+                    "diagnostics": diagnostics
+                        .iter()
+                        .map(|d| json!({
+                            "severity": if d.is_error() { "error" } else { "warning" },
+                            "message": d.message,
+                            "start": d.span.start,
+                            "end": d.span.end,
+                        }))
+                        .collect::<Vec<_>>(),
+                }));
+            }
+            for diagnostic in &diagnostics {
+                eprintln!("{}\n", diagnostic.render(&source));
+            }
+            if error_count > 0 {
+                return Err(err(format!(
+                    "{error_count} error(s) found in {}",
+                    file.display()
+                )));
+            }
+            // no errors: run the full compile (validator included) for the summary line.
+            let definition = runinator_wdl::compile_str(&source, &options)
+                .map_err(|e| err(e.render(&source)))?;
+            println!("{} v{} ok", definition.name, definition.version);
         }
     }
     Ok(())

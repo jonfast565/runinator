@@ -55,13 +55,21 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
         .strip_prefix(RESOURCE_WORKFLOW_URI_PREFIX)
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return Some(api_workflow(workflow_id).trim_start_matches('/').to_string());
+        return Some(
+            api_workflow(workflow_id)
+                .trim_start_matches('/')
+                .to_string(),
+        );
     }
     if let Some(workflow_run_id) = uri
         .strip_prefix(RESOURCE_WORKFLOW_RUN_URI_PREFIX)
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return Some(api_workflow_run(workflow_run_id).trim_start_matches('/').to_string());
+        return Some(
+            api_workflow_run(workflow_run_id)
+                .trim_start_matches('/')
+                .to_string(),
+        );
     }
     if let Some(raw) = uri.strip_prefix(RESOURCE_RUN_URI_PREFIX) {
         if let Some(run_id) = raw
@@ -79,7 +87,11 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
             .strip_suffix("/artifacts")
             .and_then(|id| id.parse::<i64>().ok())
         {
-            return Some(api_run_artifacts(run_id).trim_start_matches('/').to_string());
+            return Some(
+                api_run_artifacts(run_id)
+                    .trim_start_matches('/')
+                    .to_string(),
+            );
         }
         if let Ok(run_id) = raw.parse::<i64>() {
             return Some(api_run(run_id).trim_start_matches('/').to_string());

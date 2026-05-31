@@ -66,7 +66,11 @@ fn expand_local_defs_refs(value: &mut Value, stack: &mut Vec<String>) -> Result<
     expand_refs_in_value(value, &defs, stack)
 }
 
-fn expand_refs_in_value(value: &mut Value, defs: &Value, stack: &mut Vec<String>) -> Result<(), String> {
+fn expand_refs_in_value(
+    value: &mut Value,
+    defs: &Value,
+    stack: &mut Vec<String>,
+) -> Result<(), String> {
     match value {
         Value::Object(map) => {
             if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string) {
@@ -321,7 +325,9 @@ impl<'de> Deserialize<'de> for WorkflowCondition {
         let value = Value::deserialize(deserializer)?;
         match value {
             Value::Null | Value::Object(_) => Ok(Self(value)),
-            _ => Err(serde::de::Error::custom("condition must be null or an object")),
+            _ => Err(serde::de::Error::custom(
+                "condition must be null or an object",
+            )),
         }
     }
 }

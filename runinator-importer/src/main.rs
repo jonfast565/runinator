@@ -339,6 +339,26 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     let data = tokio::fs::read_to_string(path)
         .await
         .map_err(|err| path_io_error("read workflow bundle at", path, err))?;
+
+    // a .wdl file is compiled into a single-workflow bundle.
+    if path.extension().and_then(|ext| ext.to_str()) == Some("wdl") {
+        let definition =
+            runinator_wdl::compile_str(&data, &runinator_wdl::CompileOptions::default()).map_err(
+                |err| -> DynError {
+                    format!(
+                        "failed to compile {}:\n{}",
+                        path.display(),
+                        err.render(&data)
+                    )
+                    .into()
+                },
+            )?;
+        return Ok(WorkflowBundle {
+            workflows: vec![definition],
+            triggers: Vec::new(),
+        });
+    }
+
     let raw: Value = serde_json::from_str(&data)?;
 
     if raw.get("item_type").and_then(Value::as_str) == Some("workflow_pack") {

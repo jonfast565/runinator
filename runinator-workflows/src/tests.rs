@@ -651,9 +651,11 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
     assert_eq!(definition["start"], "start");
     assert_eq!(definition["ui"]["layout"]["nodes"]["build"]["x"], 10);
     let (_, nodes) = validate_workflow(&normalized).expect("normalized workflow is valid");
-    assert!(nodes
-        .iter()
-        .any(|node| node.kind == WorkflowNodeKind::Start));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.kind == WorkflowNodeKind::Start)
+    );
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::End));
     assert!(nodes.iter().any(|node| node.kind == WorkflowNodeKind::Fail));
     let build = nodes.iter().find(|node| node.id == "build").unwrap();
@@ -670,22 +672,24 @@ fn normalizes_legacy_workflow_with_start_and_end_nodes() {
 fn typed_provider() -> ProviderMetadata {
     ProviderMetadata {
         name: "typed".into(),
-        actions: vec![ActionMetadata::new("make", "make typed output")
-            .with_parameters(vec![ParameterMetadata::required(
-                "name",
-                RuninatorType::String,
-            )])
-            .with_results(vec![
-                ResultMetadata::new("count", RuninatorType::Integer),
-                ResultMetadata::new("payload", RuninatorType::Any),
-                ResultMetadata::new(
-                    "items",
-                    RuninatorType::array(RuninatorType::structure([(
-                        "key",
-                        RuninatorType::String,
-                    )])),
-                ),
-            ])],
+        actions: vec![
+            ActionMetadata::new("make", "make typed output")
+                .with_parameters(vec![ParameterMetadata::required(
+                    "name",
+                    RuninatorType::String,
+                )])
+                .with_results(vec![
+                    ResultMetadata::new("count", RuninatorType::Integer),
+                    ResultMetadata::new("payload", RuninatorType::Any),
+                    ResultMetadata::new(
+                        "items",
+                        RuninatorType::array(RuninatorType::structure([(
+                            "key",
+                            RuninatorType::String,
+                        )])),
+                    ),
+                ]),
+        ],
         metadata: ProviderRuntimeMetadata::default(),
     }
 }
@@ -878,8 +882,10 @@ fn action_workflow(configuration: runinator_models::value::Value) -> WorkflowDef
 fn check_provider(param_type: RuninatorType) -> ProviderMetadata {
     ProviderMetadata {
         name: "typed".into(),
-        actions: vec![ActionMetadata::new("check", "check typed input")
-            .with_parameters(vec![ParameterMetadata::required("config", param_type)])],
+        actions: vec![
+            ActionMetadata::new("check", "check typed input")
+                .with_parameters(vec![ParameterMetadata::required("config", param_type)]),
+        ],
         metadata: ProviderRuntimeMetadata::default(),
     }
 }
@@ -905,9 +911,10 @@ fn typed_validation_rejects_provider_default_value_mismatch() {
     }));
 
     let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("provider 'typed.check' parameter 'count' expected integer, got string"));
+    assert!(
+        err.to_string()
+            .contains("provider 'typed.check' parameter 'count' expected integer, got string")
+    );
 }
 
 #[test]
@@ -924,9 +931,10 @@ fn typed_validation_reports_missing_required_nested_literal_field() {
     }));
 
     let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("action parameter 'config.env.API_KEY' is missing required field"));
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.env.API_KEY' is missing required field")
+    );
     let diagnostic = err
         .type_diagnostic()
         .expect("type diagnostic is structured");
@@ -960,9 +968,10 @@ fn typed_validation_rejects_closed_struct_additional_literal_fields() {
     }));
 
     let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("action parameter 'config.extra' is not allowed"));
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.extra' is not allowed")
+    );
 }
 
 #[test]
@@ -981,9 +990,10 @@ fn typed_validation_validates_open_struct_additional_literal_fields() {
         "config": { "name": "build", "extra": 1 }
     }));
     let err = validate_workflow_with_providers(&invalid, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("action parameter 'config.extra' expected string, got integer"));
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.extra' expected string, got integer")
+    );
 }
 
 #[test]
@@ -1009,9 +1019,10 @@ fn typed_validation_reports_nested_literal_errors_inside_dynamic_configs() {
     )]);
 
     let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("action parameter 'config.env.API_KEY' expected string, got integer"));
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.env.API_KEY' expected string, got integer")
+    );
 }
 
 #[test]
@@ -1031,9 +1042,10 @@ fn typed_validation_reports_nested_dynamic_expression_type_errors() {
     )]);
 
     let err = validate_workflow_with_providers(&wf, &[provider]).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("action parameter 'config.branch' expected string, got integer"));
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config.branch' expected string, got integer")
+    );
 }
 
 #[test]

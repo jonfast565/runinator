@@ -11,7 +11,7 @@ use runinator_models::{
         WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use sqlx::{postgres::PgRow, sqlite::SqliteRow, Row};
+use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
 
 fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
