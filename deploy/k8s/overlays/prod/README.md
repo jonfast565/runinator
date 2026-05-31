@@ -29,3 +29,10 @@ Manual `kubectl apply -k` expects image names in `kustomization.yaml` to have
 already been changed from the `REPLACE_REGISTRY/...` placeholders. The
 PowerShell deploy path renders those image changes in `target/k8s-render`
 without modifying the checked-in overlay.
+
+Launch the Tauri command center through a local port-forward to the prod
+Service with:
+
+```sh
+bash scripts/run-k8s.sh ui --context my-prod-context --namespace runinator
+```

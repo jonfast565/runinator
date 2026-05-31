@@ -8,6 +8,7 @@ use runinator_models::workflows::WorkflowDefinition;
 pub mod ast;
 mod decompile;
 mod errors;
+mod format;
 mod lower;
 mod parser;
 pub mod sema;
@@ -66,6 +67,12 @@ pub fn compile_str_with_diagnostics(
 pub fn analyze_source(src: &str) -> Result<Vec<Diagnostic>, WdlError> {
     let document = parse_document(src)?;
     Ok(sema::analyze(&document))
+}
+
+/// parse wdl source and render it with canonical whitespace and indentation.
+pub fn format_str(src: &str) -> Result<String, WdlError> {
+    let document = parse_document(src)?;
+    Ok(format::format_document(&document))
 }
 
 /// compile without running the shared validator. useful for diagnostics tooling that

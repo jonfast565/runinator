@@ -18,9 +18,10 @@ const CONTROL = [
 ];
 const OUTCOMES = ["ok", "fail", "timeout", "reject", "done", "winner"];
 const VALUES = ["all", "any", "first_success", "true", "false", "null", "string", "json"];
+const TYPES = ["any", "boolean", "integer", "map", "number", "string"];
 const BUILTINS = ["exists", "contains", "starts_with", "ends_with", "detached", "reuse"];
 
-const KEYWORDS = new Set([...STRUCTURE, ...CONTROL, ...OUTCOMES, ...VALUES, ...BUILTINS]);
+const KEYWORDS = new Set([...STRUCTURE, ...CONTROL, ...OUTCOMES, ...VALUES, ...TYPES, ...BUILTINS]);
 
 interface WdlState {
   inBlockComment: boolean;

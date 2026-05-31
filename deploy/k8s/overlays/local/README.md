@@ -20,6 +20,12 @@ registry reachable from the cluster:
 pwsh ./build.ps1 -DeployKube -LocalRegistry localhost:5000
 ```
 
+Open the Tauri command center against the deployed local cluster with:
+
+```sh
+bash scripts/run-k8s.sh ui
+```
+
 If images are already available and you only need to apply the overlay:
 
 ```sh

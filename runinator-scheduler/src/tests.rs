@@ -974,6 +974,97 @@ async fn legacy_subflow_defaults_to_waiting_child() {
     );
 }
 
+#[tokio::test]
+async fn subflow_setup_failure_marks_node_failed_without_retrying() {
+    let run = workflow_run(json!({}), json!({}), "spawn");
+    let api = MockWorkflowApi::with_workflow_run(simple_workflow(), run.clone());
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "retry": { "max_attempts": 3 },
+        "subflow": {
+            "workflow_name": "Missing Workflow"
+        },
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+
+    process_subflow_node(&api, &run, &node, None, &[])
+        .await
+        .unwrap();
+
+    assert!(api.created_workflow_runs().is_empty());
+    assert_eq!(api.last_node_update().status, WorkflowStatus::Failed);
+    assert_eq!(api.last_run_update().status, WorkflowStatus::Failed);
+    assert_eq!(
+        api.last_run_update().active_node_id.as_deref(),
+        Some("spawn")
+    );
+}
+
+#[tokio::test]
+async fn waiting_subflow_times_out_after_timeout_seconds() {
+    let run = workflow_run(json!({}), json!({}), "spawn");
+    let child = WorkflowRun {
+        id: 99,
+        workflow_id: 42,
+        workflow_snapshot: Some(workflow_definition_with_id(42, "Ticket Work")),
+        status: WorkflowStatus::Waiting,
+        active_node_id: Some("approval".into()),
+        parameters: json!({ "ticket": "ITP-123" }),
+        state: json!({ "phase": "approval" }),
+        created_at: Utc::now(),
+        started_at: None,
+        finished_at: None,
+        message: None,
+        name: Some("Ticket Work: ITP-123".into()),
+    };
+    let api = MockWorkflowApi {
+        state: Mutex::new(MockWorkflowState {
+            workflow_run: Some(run.clone()),
+            workflow_runs: vec![child],
+            ..Default::default()
+        }),
+    };
+    let node = node(json!({
+        "id": "spawn",
+        "kind": "subflow",
+        "subflow_id": 42,
+        "timeout_seconds": 1,
+        "transitions": { "on_success": { "$node": "done" } }
+    }));
+    let mut node_run = node_run_with_id(
+        7,
+        "spawn",
+        WorkflowStatus::Waiting,
+        None,
+        json!({
+            "subflow_run_id": 99,
+            "subflow_workflow_id": 42,
+            "run_name": "Ticket Work: ITP-123",
+            "reused": false
+        }),
+    );
+    node_run.created_at = Utc::now() - chrono::Duration::seconds(2);
+
+    process_subflow_node(&api, &run, &node, Some(&node_run), &[node_run.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(api.last_node_update().status, WorkflowStatus::TimedOut);
+    assert_eq!(
+        api.last_node_update().output_json,
+        json!({
+            "subflow_run_id": 99,
+            "status": "waiting"
+        })
+    );
+    assert_eq!(api.last_run_update().status, WorkflowStatus::TimedOut);
+    assert_eq!(
+        api.last_run_update().active_node_id.as_deref(),
+        Some("spawn")
+    );
+}
+
 #[derive(Debug, Clone)]
 struct WorkflowRunUpdate {
     status: WorkflowStatus,
@@ -1252,14 +1343,25 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
 
     async fn fetch_workflow_run(
         &self,
-        _workflow_run_id: i64,
+        workflow_run_id: i64,
     ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>), SendableError> {
         let state = self.state.lock().unwrap();
-        let run = state
+        if let Some(run) = state
             .workflow_run
             .clone()
-            .ok_or_else(|| test_error("unexpected workflow run fetch"))?;
-        Ok((run, state.node_runs.clone()))
+            .filter(|run| run.id == workflow_run_id)
+        {
+            return Ok((run, state.node_runs.clone()));
+        }
+        if let Some(run) = state
+            .workflow_runs
+            .iter()
+            .find(|run| run.id == workflow_run_id)
+            .cloned()
+        {
+            return Ok((run, Vec::new()));
+        }
+        Err(test_error("unexpected workflow run fetch"))
     }
 
     async fn set_workflow_run_name(

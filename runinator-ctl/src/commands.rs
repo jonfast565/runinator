@@ -218,6 +218,29 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
                 None => print!("{source}"),
             }
         }
+        WdlCommands::Format {
+            file,
+            output,
+            check,
+        } => {
+            let source = fs::read_to_string(file)?;
+            let formatted =
+                runinator_wdl::format_str(&source).map_err(|e| err(e.render(&source)))?;
+            if *check {
+                if formatted == source {
+                    println!("{} ok", file.display());
+                    return Ok(());
+                }
+                return Err(err(format!("{} is not formatted", file.display())));
+            }
+            match output {
+                Some(path) => {
+                    fs::write(path, formatted)?;
+                    println!("wrote {}", path.display());
+                }
+                None => print!("{formatted}"),
+            }
+        }
         WdlCommands::Check { file } => {
             let source = fs::read_to_string(file)?;
             // analyze first so every error and warning is reported, not just the first.

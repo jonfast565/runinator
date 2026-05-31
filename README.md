@@ -6,6 +6,7 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 
 - Rust toolchain with Cargo.
 - PowerShell 7+ if using `build.ps1`.
+- kubectl if deploying to Kubernetes or launching the UI against a K8s stack.
 - pnpm if you want to build or run the Tauri `runinator-command-center` app.
 
 ## Run Locally
@@ -214,24 +215,37 @@ pwsh ./build.ps1 -DeployKube \
 
 See `deploy/k8s/overlays/{local,prod}/README.md` for details.
 
+Launch the Tauri command center against the deployed K8s stack with one
+command. The script starts a local port-forward to the `runinator-ws` Service,
+waits for the API, passes the forwarded service URL to the app, and stops the
+forward when the UI exits:
+
+```bash
+bash scripts/run-k8s.sh ui
+```
+
+Use `--context` or `--namespace` when the stack is not in the current kubectl
+context's `runinator` namespace:
+
+```bash
+bash scripts/run-k8s.sh ui --context my-prod-context --namespace runinator
+```
+
 ## Build Command Center
 
 `runinator-command-center` is a Tauri client. Run it against the local stack with:
 
 ```bash
-pnpm --dir runinator-command-center tauri dev
+bash scripts/run-local.sh ui
 ```
 
 The default local stack advertises and serves the API on `127.0.0.1:8080`.
 For Kubernetes, gossip is disabled and the web service is available through the
-`runinator-ws` Service instead. Point the command center at a concrete API URL:
+`runinator-ws` Service instead. Use the K8s UI launcher to create the
+port-forward and pass the concrete API URL:
 
 ```bash
-# terminal 1
-kubectl -n runinator port-forward svc/runinator-ws 8080:8080
-
-# terminal 2
-RUNINATOR_COMMAND_CENTER_SERVICE_URL=http://127.0.0.1:8080/ pnpm --dir runinator-command-center tauri dev
+bash scripts/run-k8s.sh ui
 ```
 
 The command center checks `RUNINATOR_COMMAND_CENTER_SERVICE_URL`,

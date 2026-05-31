@@ -118,6 +118,11 @@ pub fn analyze_wdl(source: String) -> CommandResult<Vec<DiagnosticSummary>> {
     Ok(summaries)
 }
 
+#[tauri::command]
+pub fn format_wdl(source: String) -> CommandResult<String> {
+    runinator_wdl::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
 /// flatten a `WdlError` into a single error diagnostic anchored to its span when it has one.
 fn wdl_error_to_summary(err: runinator_wdl::WdlError, source: &str) -> DiagnosticSummary {
     use runinator_wdl::WdlError;

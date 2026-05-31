@@ -90,6 +90,10 @@ export async function analyzeWdl(source: string) {
   return command<WdlDiagnostic[]>("analyze_wdl", { source });
 }
 
+export async function formatWdl(source: string) {
+  return command<string>("format_wdl", { source });
+}
+
 export async function decompileToWdl(workflow: WorkflowDefinition) {
   return command<string>("decompile_to_wdl", { workflow });
 }

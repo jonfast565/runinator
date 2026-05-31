@@ -52,7 +52,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
-    /// Compile, decompile, and check the wdl workflow language.
+    /// Compile, decompile, format, and check the wdl workflow language.
     Wdl {
         #[command(subcommand)]
         command: WdlCommands,
@@ -72,6 +72,14 @@ pub enum WdlCommands {
         file: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Format a .wdl file.
+    Format {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
     },
     /// Parse, lower, and validate a .wdl file, printing any diagnostics.
     Check { file: PathBuf },

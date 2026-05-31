@@ -18,6 +18,7 @@ pub fn run() {
             crate::commands::save_workflow_bundle,
             crate::commands::compile_wdl,
             crate::commands::analyze_wdl,
+            crate::commands::format_wdl,
             crate::commands::decompile_to_wdl,
             crate::commands::delete_workflow,
             crate::commands::fetch_run_chunks,

@@ -1,6 +1,9 @@
 <template>
   <details class="wdl-editor-shell" open>
-    <summary>{{ title }}</summary>
+    <summary>
+      <span>{{ title }}</span>
+      <button type="button" :disabled="readonly" @click.stop.prevent="formatDocument">Format</button>
+    </summary>
     <div ref="editorContainer" class="wdl-editor-container"></div>
   </details>
 </template>
@@ -11,7 +14,8 @@ import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
-import { analyzeWdl } from '../../api/commandCenterApi';
+import { analyzeWdl, formatWdl } from '../../api/commandCenterApi';
+import { useAppStore } from '../../stores/app';
 
 const props = defineProps<{
   modelValue: string;
@@ -26,6 +30,7 @@ const emit = defineEmits<{
 const editorContainer = ref<HTMLElement | null>(null);
 let view: EditorView | null = null;
 const title = props.title ?? "WDL";
+const app = useAppStore();
 
 // async linter backed by the rust runinator-wdl compiler, so editor diagnostics match
 // what the importer would report. codemirror debounces this by default.
@@ -52,6 +57,22 @@ const wdlLinter = linter(async (linterView): Promise<Diagnostic[]> => {
     };
   });
 });
+
+async function formatDocument() {
+  if (!view || props.readonly) return;
+  const source = view.state.doc.toString();
+  let formatted: string;
+  try {
+    formatted = await formatWdl(source);
+  } catch (err) {
+    app.setError(`WDL format error: ${String(err)}`);
+    return;
+  }
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: formatted }
+  });
+  emit('update:modelValue', formatted);
+}
 
 onMounted(() => {
   if (!editorContainer.value) return;
@@ -110,6 +131,26 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   font-weight: 600;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wdl-editor-shell summary button {
+  border: 1px solid #b8c3cf;
+  border-radius: 4px;
+  background: #f7f9fb;
+  color: #1c2938;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 3px 8px;
+}
+
+.wdl-editor-shell summary button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .wdl-editor-container {

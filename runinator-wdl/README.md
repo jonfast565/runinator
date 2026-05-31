@@ -137,6 +137,7 @@ rich rendering).
 ```
 runinatorctl wdl compile  workflow.wdl [-o out.json]
 runinatorctl wdl decompile workflow.json [-o out.wdl]
+runinatorctl wdl format   workflow.wdl [-o out.wdl] [--check]
 runinatorctl wdl check    workflow.wdl
 ```
 

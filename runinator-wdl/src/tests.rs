@@ -1,6 +1,6 @@
 use crate::{
     CompileOptions, WdlError, analyze_source, compile_str, compile_str_with_diagnostics, decompile,
-    parse_document,
+    format_str, parse_document,
 };
 
 /// compile and return the `Semantic` error's span and message, failing otherwise.
@@ -101,6 +101,143 @@ fn decompile_renders_back_edge_as_arrow_without_panicking() {
     assert!(
         wdl.contains("-> a"),
         "expected a back-edge arrow, got:\n{wdl}"
+    );
+}
+
+#[test]
+fn format_normalizes_wdl_source() {
+    let src = r#"workflow "Fmt"   v1{input{jira:{base_url:string,email?:string}, "odd-key": map<string[]>, fallback?: string, enabled: boolean, retry: integer, transitions:{done:string,in_progress:string,in_review:string}}
+@skip let first: { output: string, status: string, items: string[] } = console.run(command:"echo ${input.jira.base_url}"++(input.fallback??"none"), transitions:{done:"done",in_progress:"progress",in_review:"review"}).timeout(30s).retry(2).tags("ci","fmt").mcp()
+fail -> cleanup
+timeout -> fail
+if input.enabled==true&&exists first.output{emit "ready"{value:first.output}}else{wait 5s}
+match first.status{"ok"->console.run(command:"ok") when input.retry > 0 -> {console.run(command:"retry")} else -> fail "bad"}
+parallel{branch{console.run(command:"a")}branch{console.run(command:"b")}}join any
+try{console.run(command:"risky")}catch{console.run(command:"recover")}finally{console.run(command:"done")}
+race winner first_success{branch{console.run(command:"primary")}branch{console.run(command:"backup")}}
+map item in first.items concurrency 2{console.run(command:string(item))}
+let cleanup = console.run(command:"cleanup")
+jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.output,token:"secret",transition_id:input.transitions.in_progress).timeout(30s)
+}"#;
+
+    let formatted = format_str(src).expect("format");
+    let expected = r#"workflow "Fmt" v1 {
+    input {
+        jira: {
+            base_url: string,
+            email?: string
+        }
+        "odd-key": map<string[]>
+        fallback?: string
+        enabled: boolean
+        retry: integer
+        transitions: {
+            done: string,
+            in_progress: string,
+            in_review: string
+        }
+    }
+
+    @skip
+    let first: { output: string, status: string, items: string[] } = console.run(
+        command: "echo ${input.jira.base_url}" ++ (input.fallback ?? "none"),
+        transitions: {
+            done: "done",
+            in_progress: "progress",
+            in_review: "review"
+        }
+    )
+        .timeout(30s)
+        .retry(2)
+        .tags("ci", "fmt")
+        .mcp()
+        fail -> cleanup
+        timeout -> fail
+    if input.enabled == true && exists first.output {
+        emit "ready" {
+            value: first.output
+        }
+    } else {
+        wait 5s
+    }
+    match first.status {
+        "ok" -> {
+            console.run(
+                command: "ok"
+            )
+        }
+        when input.retry > 0 -> {
+            console.run(
+                command: "retry"
+            )
+        }
+        else -> {
+            fail "bad"
+        }
+    }
+    parallel {
+        branch {
+            console.run(
+                command: "a"
+            )
+        }
+        branch {
+            console.run(
+                command: "b"
+            )
+        }
+    } join any
+    try {
+        console.run(
+            command: "risky"
+        )
+    } catch {
+        console.run(
+            command: "recover"
+        )
+    } finally {
+        console.run(
+            command: "done"
+        )
+    }
+    race winner first_success {
+        branch {
+            console.run(
+                command: "primary"
+            )
+        }
+        branch {
+            console.run(
+                command: "backup"
+            )
+        }
+    }
+    map item in first.items concurrency 2 {
+        console.run(
+            command: string(item)
+        )
+    }
+    let cleanup = console.run(
+        command: "cleanup"
+    )
+    jira.transition(
+        base_url: input.jira.base_url,
+        email: input.jira.email,
+        key: first.output,
+        token: "secret",
+        transition_id: input.transitions.in_progress
+    )
+        .timeout(30s)
+}
+"#;
+
+    assert_eq!(formatted, expected);
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+    let first = compile(src);
+    let second = compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");
+    assert_eq!(
+        runinator_workflows::normalize_definition(first.definition),
+        runinator_workflows::normalize_definition(second.definition)
     );
 }
 
