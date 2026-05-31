@@ -70,6 +70,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .json-editor-shell {
+  display: flex;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 220px;
+  min-width: 0;
+  flex-direction: column;
   border: 1px solid #ccd4dd;
   border-radius: 6px;
   background-color: #fff;
@@ -84,7 +90,8 @@ onBeforeUnmount(() => {
 }
 
 .json-editor-container {
-  height: 220px;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   border-top: 1px solid #e3e8ee;
   overflow: hidden;

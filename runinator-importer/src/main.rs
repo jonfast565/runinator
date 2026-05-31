@@ -370,7 +370,7 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
     Ok(serde_json::from_value(raw.into())?)
 }
 
-// compile one .wdl source into a definition, rendering diagnostics against the source on error.
+// format and compile one .wdl source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
 fn compile_wdl(
     path: &Path,
@@ -381,11 +381,19 @@ fn compile_wdl(
         enabled: true,
         default_version,
     };
-    runinator_wdl::compile_str(data, &options).map_err(|err| -> DynError {
+    let formatted = runinator_wdl::format_str(data).map_err(|err| -> DynError {
+        format!(
+            "failed to format {} before import:\n{}",
+            path.display(),
+            err.render(data)
+        )
+        .into()
+    })?;
+    runinator_wdl::compile_str(&formatted, &options).map_err(|err| -> DynError {
         format!(
             "failed to compile {}:\n{}",
             path.display(),
-            err.render(data)
+            err.render(&formatted)
         )
         .into()
     })

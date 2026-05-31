@@ -144,7 +144,8 @@
 }
 
 .workflow-graph,
-.workflow-json-editor {
+.workflow-json-editor,
+.workflow-wdl-editor {
   min-height: 0;
   flex: 1;
   border: 0;
@@ -262,8 +263,9 @@
   max-height: 190px;
 }
 
-.workflow-json-editor {
-  height: 100%;
+.workflow-json-editor,
+.workflow-wdl-editor {
+  height: auto;
   padding: 12px;
 }
 
