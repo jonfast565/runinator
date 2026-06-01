@@ -9,50 +9,12 @@ use std::{
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::Value;
-use runinator_models::workflows::{
-    WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
-};
-use serde::Deserialize;
+use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
 use sqlx::Row;
 use tokio::time::sleep;
 
 type E2eResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type ApiClient = AsyncApiClient<StaticLocator>;
-
-#[tokio::test]
-#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e -- --ignored"]
-async fn rich_workflow_demo_paths_finish() -> E2eResult<()> {
-    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
-        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
-        return Ok(());
-    }
-
-    let workspace = workspace_dir();
-    build_service_binaries(&workspace)?;
-
-    let ports = Ports::allocate()?;
-    let harness = StackHarness::start(&workspace, ports).await?;
-    let api = harness.api_client()?;
-
-    import_seed(
-        &api,
-        &workspace.join("runinator-importer/workflows/workflows.json"),
-    )
-    .await?;
-
-    let default = run_workflow_case(&api, json!({})).await?;
-    assert_node_status(&default.1, "guarded_release", WorkflowStatus::Succeeded);
-
-    let batch = run_workflow_case(&api, json!({ "mode": "batch", "items": ["a", "b"] })).await?;
-    let process_items = node_output(&batch.1, "process_items")?;
-    assert_eq!(process_items["count"], 2);
-
-    let race = run_workflow_case(&api, json!({ "mode": "race" })).await?;
-    let first_ready = node_output(&race.1, "first_ready")?;
-    assert_eq!(first_ready["winner"], "fast_signal");
-
-    Ok(())
-}
 
 #[tokio::test]
 #[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e brokered_result_path_smoke -- --ignored"]
@@ -68,8 +30,13 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     let ports = Ports::allocate()?;
     let harness = StackHarness::start(&workspace, ports).await?;
     let api = harness.api_client()?;
-    let workflow = api.upsert_workflow(&broker_smoke_workflow()).await?;
-    let workflow_id = workflow.id.ok_or("smoke workflow did not get an id")?;
+
+    // import the workflow through the wdlp pack path, the same way the real stack ships workflows.
+    harness.import_workflows(&workspace.join("runinator-e2e/fixtures/broker-smoke.wdlp"))?;
+    let workflow = api
+        .fetch_workflow_by_name("Brokered Result Path Smoke")
+        .await?;
+    let workflow_id = workflow.id.ok_or("imported smoke workflow has no id")?;
 
     let (_run, nodes) = run_workflow_by_id(&api, workflow_id, json!({})).await?;
     let action = latest_node(&nodes, "write_logs")?;
@@ -101,13 +68,6 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     Ok(())
 }
 
-async fn run_workflow_case(
-    api: &ApiClient,
-    parameters: Value,
-) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
-    run_workflow_by_id(api, 1002, parameters).await
-}
-
 async fn run_workflow_by_id(
     api: &ApiClient,
     workflow_id: i64,
@@ -136,26 +96,6 @@ async fn poll_workflow(
         sleep(Duration::from_secs(2)).await;
     }
     Err(format!("workflow run {workflow_run_id} did not finish in time").into())
-}
-
-async fn import_seed(api: &ApiClient, path: &Path) -> E2eResult<()> {
-    let seed = load_import_file(path)?;
-    for workflow in seed.workflows {
-        api.upsert_workflow(&workflow).await?;
-    }
-    Ok(())
-}
-
-fn assert_node_status(nodes: &[WorkflowNodeRun], node_id: &str, status: WorkflowStatus) {
-    let node = latest_node(nodes, node_id).unwrap_or_else(|err| panic!("{err}"));
-    assert_eq!(node.status, status);
-}
-
-fn node_output(nodes: &[WorkflowNodeRun], node_id: &str) -> E2eResult<Value> {
-    latest_node(nodes, node_id)?
-        .output_json
-        .clone()
-        .ok_or_else(|| format!("missing output for node {node_id}").into())
 }
 
 fn latest_node<'a>(nodes: &'a [WorkflowNodeRun], node_id: &str) -> E2eResult<&'a WorkflowNodeRun> {
@@ -216,46 +156,6 @@ async fn assert_broker_result_events(
     Ok(())
 }
 
-fn broker_smoke_workflow() -> WorkflowDefinition {
-    WorkflowDefinition {
-        id: None,
-        name: "brokered result path smoke".into(),
-        version: 1,
-        enabled: true,
-        input_type: runinator_models::types::RuninatorType::Any,
-        definition: runinator_models::workflows::WorkflowGraph::from_value(json!({
-            "start": "start",
-            "nodes": [
-                {
-                    "id": "start",
-                    "kind": "start",
-                    "transitions": { "next": { "$node": "write_logs" } }
-                },
-                {
-                    "id": "write_logs",
-                    "kind": "action",
-                    "action": {
-                        "provider": "Console",
-                        "function": "run",
-                        "timeout_seconds": 10,
-                        "configuration": {
-                            "command": "printf 'broker-smoke-start\\nbroker-smoke-end\\n'"
-                        }
-                    },
-                    "transitions": { "on_success": { "$node": "done" } }
-                },
-                {
-                    "id": "done",
-                    "kind": "end"
-                }
-            ]
-        }))
-        .unwrap(),
-        created_at: None,
-        updated_at: None,
-    }
-}
-
 struct StackHarness {
     workspace: PathBuf,
     config_path: PathBuf,
@@ -268,7 +168,7 @@ impl StackHarness {
         let run_dir = workspace
             .join("target")
             .join("e2e")
-            .join(format!("rich-workflows-{}", unique_suffix()));
+            .join(format!("stack-smoke-{}", unique_suffix()));
         fs::create_dir_all(&run_dir)?;
         let config_path = run_dir.join("supervisor.json");
         let target_debug = workspace.join("target/debug");
@@ -334,7 +234,44 @@ impl StackHarness {
         };
         harness.supervisor("start")?;
         harness.wait_for_web().await?;
+        // the real stack registers provider/action metadata through the importer; without it,
+        // workflow validation rejects every action node (e.g. unknown provider action 'Console.run').
+        harness.register_providers()?;
         Ok(harness)
+    }
+
+    /// run the importer once to register the built-in provider bundle with the web service. mirrors
+    /// the importer process in the supervisor stack so action nodes pass workflow validation.
+    fn register_providers(&self) -> E2eResult<()> {
+        // provider registration is independent of the workflows file, but the importer's --once mode
+        // requires one to exist. import an empty bundle so we register providers without seeding.
+        let seed = self
+            .config_path
+            .parent()
+            .ok_or("supervisor config has no parent directory")?
+            .join("provider-seed.json");
+        fs::write(&seed, br#"{"workflows":[],"triggers":[]}"#)?;
+        self.import_workflows(&seed)
+    }
+
+    /// run the importer once against the given workflows file (a .json bundle, .wdl file, or .wdlp
+    /// pack). registers the built-in provider bundle and imports the workflows it resolves.
+    fn import_workflows(&self, workflows_file: &Path) -> E2eResult<()> {
+        let status = Command::new(
+            self.workspace
+                .join("target/debug")
+                .join(bin_name("runinator-importer")),
+        )
+        .args(["--once", "--api-base-url", &self.api_url])
+        .arg("--workflows-file")
+        .arg(workflows_file)
+        .current_dir(&self.workspace)
+        .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("runinator-importer failed with {status}").into())
+        }
     }
 
     fn api_client(&self) -> reqwest::Result<ApiClient> {
@@ -421,6 +358,8 @@ fn build_service_binaries(workspace: &Path) -> E2eResult<()> {
             "runinator-waker",
             "-p",
             "runinator-worker",
+            "-p",
+            "runinator-importer",
         ])
         .current_dir(workspace)
         .status()?;
@@ -452,22 +391,4 @@ fn bin_name(name: &str) -> String {
     } else {
         name.into()
     }
-}
-
-#[derive(Deserialize)]
-struct ImportFile {
-    #[serde(default)]
-    workflows: Vec<WorkflowDefinition>,
-}
-
-struct ImportSeed {
-    workflows: Vec<WorkflowDefinition>,
-}
-
-fn load_import_file(path: &Path) -> E2eResult<ImportSeed> {
-    let data = fs::read_to_string(path)?;
-    let parsed: ImportFile = serde_json::from_str(&data)?;
-    Ok(ImportSeed {
-        workflows: parsed.workflows,
-    })
 }

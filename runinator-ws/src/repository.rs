@@ -465,7 +465,15 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
         return Ok(None);
     };
     let workflow_run_id = ready_node.workflow_run_id;
-    let disposition = crate::orchestration::process_ready_node(db, &ready_node).await?;
+    let disposition = match crate::orchestration::process_ready_node(db, &ready_node).await {
+        Ok(disposition) => disposition,
+        Err(err) => {
+            // a reducer hard-error would otherwise leave the row claimed and get re-driven every
+            // lease period (a poison pill). fail the run and settle the row so it stops looping.
+            fail_driven_ready_node(db, &ready_node, driver_id, err.as_ref()).await?;
+            return Ok(Some(workflow_run_id));
+        }
+    };
     if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
         // not yet settled; return it to the queue so a later wake re-drives it.
         db.release_ready_node(ready_node_id, driver_id).await?;
@@ -473,6 +481,36 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
     }
     db.complete_ready_node(ready_node_id, driver_id).await?;
     Ok(Some(workflow_run_id))
+}
+
+/// settle a ready node whose reducer hard-errored: mark the run failed and complete the row so the
+/// drive loop does not re-claim and re-run it every lease period.
+async fn fail_driven_ready_node<T: DatabaseImpl>(
+    db: &T,
+    ready_node: &ReadyNodeRecord,
+    driver_id: String,
+    err: &(dyn std::error::Error + Send + Sync),
+) -> Result<(), SendableError> {
+    log::error!(
+        "Reducer failed for ready node {} (workflow run {}, node {}): {}",
+        ready_node.id,
+        ready_node.workflow_run_id,
+        ready_node.node_id,
+        err
+    );
+    db.update_workflow_run_status(
+        ready_node.workflow_run_id,
+        WorkflowStatus::Failed,
+        Some(ready_node.node_id.clone()),
+        None,
+        Some(format!(
+            "Reducer error driving node {}: {}",
+            ready_node.node_id, err
+        )),
+    )
+    .await?;
+    db.complete_ready_node(ready_node.id, driver_id).await?;
+    Ok(())
 }
 
 const READY_NODE_DRIVE_LEASE_SECONDS: i64 = 60;

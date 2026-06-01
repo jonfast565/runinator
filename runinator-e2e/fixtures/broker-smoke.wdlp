@@ -1,0 +1,9 @@
+{
+  "item_type": "wdl_pack",
+  "name": "Brokered Result Path Smoke Pack",
+  "version": 1,
+  "workflows": [
+    "wdl/broker-smoke.wdl"
+  ],
+  "triggers": []
+}
