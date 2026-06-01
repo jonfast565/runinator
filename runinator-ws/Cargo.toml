@@ -27,6 +27,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-supervisor = { path = "../runinator-supervisor" }
+runinator-wdl = { path = "../runinator-wdl" }
 
 [dev-dependencies]
 async-trait = "0.1"

@@ -9,6 +9,7 @@ mod keys;
 mod normalize;
 mod parameters;
 mod refs;
+mod run_state;
 mod types;
 mod typing;
 mod validation;
@@ -23,6 +24,10 @@ pub use parameters::{
     parse_switch_parameters, parse_try_parameters, parse_wait_parameters,
 };
 pub use refs::expand_workflow_refs;
+pub use run_state::{
+    append_completed_map_item, branch_policy_name, join_satisfied, latest_node_run, latest_status,
+    race_winner,
+};
 pub use types::{
     ApprovalParameters, BranchPolicy, EmitParameters, JoinParameters, LoopParameters,
     MapParameters, ParallelParameters, RaceParameters, SwitchCase, SwitchParameters, TryParameters,

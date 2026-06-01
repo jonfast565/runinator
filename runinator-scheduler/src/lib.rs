@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod api;
 pub mod config;
 mod context;
@@ -35,6 +37,8 @@ pub async fn scheduler_loop(
         if let Err(err) = iteration::publish_pending_action_dispatches(
             broker.as_ref(),
             &api,
+            &config.scheduler_id,
+            config.scheduler_lease_seconds,
             config.scheduler_claim_limit,
         )
         .await
@@ -47,6 +51,8 @@ pub async fn scheduler_loop(
         if let Err(err) = iteration::publish_pending_action_dispatches(
             broker.as_ref(),
             &api,
+            &config.scheduler_id,
+            config.scheduler_lease_seconds,
             config.scheduler_claim_limit,
         )
         .await

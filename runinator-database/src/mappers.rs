@@ -4,6 +4,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
     notifications::Notification,
+    orchestration::{OrchestrationEvent, ReadyNodeRecord},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     types::RuninatorType,
     workflows::{
@@ -378,6 +379,15 @@ macro_rules! action_dispatch_from_row {
                 .get::<Option<i64>, _>("published_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             last_error: $row.get("last_error"),
+            claimed_by: $row
+                .try_get::<Option<String>, _>("claimed_by")
+                .ok()
+                .flatten(),
+            claimed_until: $row
+                .try_get::<Option<i64>, _>("claimed_until")
+                .ok()
+                .flatten()
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
         })
     }};
 }
@@ -399,6 +409,83 @@ pub fn sqlite_row_to_action_dispatch(
 
 pub fn postgres_row_to_action_dispatch(row: &PgRow) -> Result<ActionDispatchRecord, SendableError> {
     action_dispatch_from_row!(row)
+}
+
+macro_rules! orchestration_event_from_row {
+    ($row:expr) => {{
+        let event_id = $row.get::<String, _>("event_id").parse().map_err(|err| {
+            Box::new(RuntimeError::new(
+                "database.orchestration_event.invalid_event_id".into(),
+                format!("Stored orchestration event id is invalid: {err}"),
+            )) as SendableError
+        })?;
+        Ok(OrchestrationEvent {
+            event_id,
+            workflow_run_id: $row.get("workflow_run_id"),
+            workflow_node_run_id: $row.get("workflow_node_run_id"),
+            node_id: $row.get("node_id"),
+            event_type: $row.get("event_type"),
+            payload: parse_json($row.get::<String, _>("payload")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        })
+    }};
+}
+
+pub fn sqlite_row_to_orchestration_event(
+    row: &SqliteRow,
+) -> Result<OrchestrationEvent, SendableError> {
+    orchestration_event_from_row!(row)
+}
+
+pub fn postgres_row_to_orchestration_event(
+    row: &PgRow,
+) -> Result<OrchestrationEvent, SendableError> {
+    orchestration_event_from_row!(row)
+}
+
+macro_rules! ready_node_from_row {
+    ($row:expr) => {{
+        let source_event_id = $row
+            .get::<String, _>("source_event_id")
+            .parse()
+            .map_err(|err| {
+                Box::new(RuntimeError::new(
+                    "database.ready_node.invalid_source_event_id".into(),
+                    format!("Stored ready-node source event id is invalid: {err}"),
+                )) as SendableError
+            })?;
+        Ok(ReadyNodeRecord {
+            id: $row.get("id"),
+            source_event_id,
+            workflow_run_id: $row.get("workflow_run_id"),
+            node_id: $row.get("node_id"),
+            status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(WorkflowStatus::Failed),
+            ready_at: DateTime::<Utc>::from_timestamp($row.get("ready_at"), 0)
+                .unwrap_or_else(Utc::now),
+            attempts: $row.get("attempts"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+            claimed_by: $row.get("claimed_by"),
+            claimed_until: $row
+                .get::<Option<i64>, _>("claimed_until")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            completed_at: $row
+                .get::<Option<i64>, _>("completed_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+        })
+    }};
+}
+
+pub fn sqlite_row_to_ready_node(row: &SqliteRow) -> Result<ReadyNodeRecord, SendableError> {
+    ready_node_from_row!(row)
+}
+
+pub fn postgres_row_to_ready_node(row: &PgRow) -> Result<ReadyNodeRecord, SendableError> {
+    ready_node_from_row!(row)
 }
 
 macro_rules! notification_from_row {

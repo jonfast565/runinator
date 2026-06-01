@@ -13,6 +13,8 @@ import type {
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
+  WdlCompletionRequest,
+  WdlCompletionResponse,
   WdlDiagnostic,
   WorkflowBundle,
   WorkflowDefinition,
@@ -88,6 +90,10 @@ export async function compileWdl(source: string, enabled: boolean) {
 
 export async function analyzeWdl(source: string) {
   return command<WdlDiagnostic[]>("analyze_wdl", { source });
+}
+
+export async function completeWdl(request: WdlCompletionRequest) {
+  return command<WdlCompletionResponse>("complete_wdl", { request });
 }
 
 export async function formatWdl(source: string) {

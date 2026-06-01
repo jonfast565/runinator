@@ -5287,6 +5287,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5562,6 +5563,7 @@ dependencies = [
  "runinator-models",
  "runinator-supervisor",
  "runinator-utilities",
+ "runinator-wdl",
  "runinator-workflows",
  "serde",
  "serde_json",

@@ -6,6 +6,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
+    orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -299,6 +300,49 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         event: &WorkflowResultEvent,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Append an internal orchestration event once; returns false for duplicate event ids.
+    fn append_orchestration_event(
+        &self,
+        event: &NewOrchestrationEvent,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Fetch internal orchestration events for a workflow run.
+    fn fetch_orchestration_events(
+        &self,
+        workflow_run_id: i64,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<OrchestrationEvent>, SendableError>> + Send;
+
+    /// Enqueue a state-machine node for scheduler processing.
+    fn enqueue_ready_node(
+        &self,
+        event: NewOrchestrationEvent,
+        node_id: String,
+        ready_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Claim ready nodes for scheduler processing until the supplied lease instant.
+    fn claim_ready_nodes(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Fetch a ready-node row by identifier.
+    fn fetch_ready_node(
+        &self,
+        ready_node_id: i64,
+    ) -> impl Future<Output = Result<Option<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Mark a claimed ready-node row complete.
+    fn complete_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(
         &self,
@@ -372,6 +416,15 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     /// Fetch unpublished action dispatch intents.
     fn fetch_pending_action_dispatches(
         &self,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ActionDispatchRecord>, SendableError>> + Send;
+
+    /// Claim unpublished action dispatch intents for one publisher.
+    fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<ActionDispatchRecord>, SendableError>> + Send;
 

@@ -11,5 +11,6 @@ pub(crate) mod providers;
 pub(crate) mod runs;
 pub(crate) mod supervisor;
 pub(crate) mod triggers;
+pub(crate) mod wdl;
 pub(crate) mod webhook;
 pub(crate) mod workflows;

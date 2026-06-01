@@ -116,6 +116,65 @@ async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn ready_node_processing_reduces_start_to_action_dispatch() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "ready-reducer");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+            {
+                "id": "run",
+                "kind": "action",
+                "action": {
+                    "provider": "test",
+                    "function": "execute",
+                    "configuration": { "message": "hello" }
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run =
+        crate::repository::create_workflow_run(&db, workflow.id.unwrap(), json!({}), false, None)
+            .await
+            .unwrap();
+    let ready = crate::repository::claim_ready_nodes(
+        &db,
+        "scheduler-a".into(),
+        chrono::Utc::now() + chrono::Duration::seconds(30),
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(ready.len(), 1);
+
+    crate::repository::complete_ready_node(&db, ready[0].id, "scheduler-a".into(), None)
+        .await
+        .unwrap();
+
+    let (updated, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.status, WorkflowStatus::Running);
+    assert_eq!(updated.active_node_id.as_deref(), Some("run"));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.node_id == "run" && node.status == WorkflowStatus::Running)
+    );
+    let dispatches = db.fetch_pending_action_dispatches(10).await.unwrap();
+    assert_eq!(dispatches.len(), 1);
+    assert_eq!(dispatches[0].command.node_id, "run");
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn merges_json_objects() {
     let defaults = json!({ "a": 1, "b": 2 });
@@ -896,5 +955,345 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
         crate::repository::validate_workflow_definition_with_catalog(&db, &valid_workflow).await;
     assert!(result.is_ok());
 
+    let _ = std::fs::remove_file(path);
+}
+
+// --- rich control-flow reducer coverage --------------------------------------
+
+/// claim and process every currently-ready node until the queue drains.
+async fn drain_ready_nodes(db: &SqliteDb) {
+    for _ in 0..256 {
+        let ready = crate::repository::claim_ready_nodes(
+            db,
+            "test".into(),
+            chrono::Utc::now() + chrono::Duration::seconds(30),
+            50,
+        )
+        .await
+        .unwrap();
+        if ready.is_empty() {
+            break;
+        }
+        for node in ready {
+            crate::repository::complete_ready_node(db, node.id, "test".into(), None)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+/// drive a run to a terminal state, simulating workers that succeed every dispatched action.
+async fn run_to_completion(db: &SqliteDb, run_id: i64) -> runinator_models::workflows::WorkflowRun {
+    for _ in 0..64 {
+        drain_ready_nodes(db).await;
+        let (run, _) = crate::repository::fetch_workflow_run(db, run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if run.status.is_terminal() {
+            return run;
+        }
+        let dispatches = db.fetch_pending_action_dispatches(50).await.unwrap();
+        if dispatches.is_empty() {
+            // parked on something with no pending action (e.g. an unresolved approval).
+            return run;
+        }
+        for dispatch in dispatches {
+            db.mark_action_dispatch_published(dispatch.id)
+                .await
+                .unwrap();
+            let event = WorkflowResultEvent::status(
+                &dispatch.command,
+                WorkflowStatus::Succeeded,
+                Some(json!({ "ok": true })),
+                None,
+            );
+            crate::repository::apply_workflow_result_event(db, &event)
+                .await
+                .unwrap();
+        }
+    }
+    let (run, _) = crate::repository::fetch_workflow_run(db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    run
+}
+
+async fn seed_run(db: &SqliteDb, name: &str, definition: Value) -> i64 {
+    let mut workflow = workflow(None, name);
+    workflow.definition = WorkflowGraph::from_value(definition).unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    crate::repository::create_workflow_run(db, workflow.id.unwrap(), json!({}), false, None)
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn reducer_runs_loop_node_over_all_items() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "loop-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "loop" } } },
+                {
+                    "id": "loop",
+                    "kind": "loop",
+                    "parameters": { "items": ["a", "b", "c"] },
+                    "transitions": { "next": { "$node": "body" }, "on_success": { "$node": "done" } }
+                },
+                { "id": "body", "kind": "emit", "transitions": { "on_success": { "$node": "loop" } } },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    let loop_succeeded = nodes
+        .iter()
+        .filter(|n| n.node_id == "loop" && n.status == WorkflowStatus::Succeeded)
+        .count();
+    let body_succeeded = nodes
+        .iter()
+        .filter(|n| n.node_id == "body" && n.status == WorkflowStatus::Succeeded)
+        .count();
+    // three iterations plus the exhausted visit that exits the loop; the body runs once per item.
+    assert_eq!(loop_succeeded, 4);
+    assert_eq!(body_succeeded, 3);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_fans_out_parallel_branches_and_joins() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "parallel-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "fork" } } },
+                {
+                    "id": "fork",
+                    "kind": "parallel",
+                    "parameters": { "branches": [{ "$node": "a" }, { "$node": "b" }] },
+                    "transitions": {}
+                },
+                {
+                    "id": "a",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "join" } }
+                },
+                {
+                    "id": "b",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "join" } }
+                },
+                {
+                    "id": "join",
+                    "kind": "join",
+                    "parameters": { "wait_for": [{ "$node": "a" }, { "$node": "b" }], "mode": "all" },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    for branch in ["a", "b", "join"] {
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.node_id == branch && n.status == WorkflowStatus::Succeeded),
+            "branch {branch} should have succeeded"
+        );
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_maps_items_through_target_node() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "map-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+                {
+                    "id": "map",
+                    "kind": "map",
+                    "parameters": { "items": [1, 2], "target": { "$node": "each" } },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "each", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    let each_succeeded = nodes
+        .iter()
+        .filter(|n| n.node_id == "each" && n.status == WorkflowStatus::Succeeded)
+        .count();
+    assert_eq!(each_succeeded, 2);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_try_node_runs_body_then_finally() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "try-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "try" } } },
+                {
+                    "id": "try",
+                    "kind": "try",
+                    "parameters": { "body": { "$node": "body" }, "finally": { "$node": "cleanup" } },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "body", "kind": "emit", "transitions": { "on_success": { "$node": "try" } } },
+                { "id": "cleanup", "kind": "emit", "transitions": { "on_success": { "$node": "try" } } },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    for stage in ["body", "cleanup"] {
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.node_id == stage && n.status == WorkflowStatus::Succeeded),
+            "{stage} should have run"
+        );
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_parks_approval_then_resolution_wakes_and_completes() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "approval-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "gate" } } },
+                {
+                    "id": "gate",
+                    "kind": "approval",
+                    "parameters": { "prompt": "approve?" },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    // the approval node parks the run waiting for an external decision.
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::ApprovalRequired);
+    assert_eq!(run.active_node_id.as_deref(), Some("gate"));
+
+    // resolve the approval the way the api handler would.
+    let approvals = db
+        .fetch_automation_records("approval_requests".into(), Some(run_id), None)
+        .await
+        .unwrap();
+    assert_eq!(approvals.len(), 1);
+    let approval_id = approvals[0].get("id").and_then(Value::as_i64).unwrap();
+    crate::repository::resolve_approval(&db, approval_id, true, None, None, None)
+        .await
+        .unwrap();
+
+    // resolution should have enqueued a ready node; draining now completes the run.
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_subflow_waits_for_child_and_child_terminal_wakes_parent() {
+    let (db, path) = test_db().await;
+
+    // child workflow that completes on its own.
+    let mut child = workflow(None, "child-flow");
+    child.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let child = db.upsert_workflow(&child).await.unwrap();
+    let child_id = child.id.unwrap();
+
+    // parent that launches the child as a waiting subflow.
+    let mut parent = workflow(None, "parent-flow");
+    parent.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "sub" } } },
+            {
+                "id": "sub",
+                "kind": "subflow",
+                "subflow_id": child_id,
+                "subflow": { "type": "wait" },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let parent = db.upsert_workflow(&parent).await.unwrap();
+    let parent_run =
+        crate::repository::create_workflow_run(&db, parent.id.unwrap(), json!({}), false, None)
+            .await
+            .unwrap();
+
+    // draining drives the parent to launch + the child to completion; the terminal child wakes the
+    // parent's subflow node, which then transitions to its end.
+    drain_ready_nodes(&db).await;
+    let (run, _) = crate::repository::fetch_workflow_run(&db, parent_run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        run.status,
+        WorkflowStatus::Succeeded,
+        "parent run should complete after child finishes, got {:?}",
+        run.status
+    );
     let _ = std::fs::remove_file(path);
 }

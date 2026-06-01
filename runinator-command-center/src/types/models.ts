@@ -255,6 +255,27 @@ export interface WdlDiagnostic {
   message: string;
 }
 
+export interface WdlCompletionRequest {
+  source: string;
+  cursor_byte: number;
+  providers: ProviderMetadata[];
+}
+
+export interface WdlCompletionResponse {
+  replace_start_byte: number;
+  replace_end_byte: number;
+  items: WdlCompletionItem[];
+}
+
+export interface WdlCompletionItem {
+  label: string;
+  kind: string;
+  detail?: string | null;
+  documentation?: string | null;
+  insert_text: string;
+  is_snippet: boolean;
+}
+
 export type WorkflowTriggerKind = "cron" | "manual";
 
 export interface WorkflowTrigger {

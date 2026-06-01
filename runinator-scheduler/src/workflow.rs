@@ -19,50 +19,26 @@ use crate::{
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
 
 pub async fn run_workflow_iteration(
-    broker: &dyn Broker,
+    _broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
     config: &Config,
 ) -> Result<(), SendableError> {
-    let statuses = [
-        WorkflowStatus::Queued,
-        WorkflowStatus::Running,
-        WorkflowStatus::DebugPaused,
-        WorkflowStatus::Waiting,
-        WorkflowStatus::ApprovalRequired,
-        WorkflowStatus::Blocked,
-    ];
     let lease_until = Utc::now() + Duration::seconds(config.scheduler_lease_seconds as i64);
-    let runs = api
-        .claim_workflow_runs_for_scheduler(
+    let ready_nodes = api
+        .claim_ready_nodes(
             &config.scheduler_id,
-            &statuses,
             lease_until,
             config.scheduler_claim_limit,
         )
         .await?;
-    for run in runs {
-        let renewed = api
-            .renew_workflow_run_claim(
-                run.id,
-                &config.scheduler_id,
-                Utc::now() + Duration::seconds(config.scheduler_lease_seconds as i64),
-            )
-            .await?;
-        if renewed {
-            process_workflow_run(broker, api, run.clone()).await?;
-        } else {
-            warn!(
-                "Scheduler {} lost workflow run claim {}; skipping",
-                config.scheduler_id, run.id
-            );
-        }
+    for ready_node in ready_nodes {
         if let Err(err) = api
-            .release_workflow_run_claim(run.id, &config.scheduler_id)
+            .process_ready_node(ready_node.id, &config.scheduler_id, None, None, None)
             .await
         {
             warn!(
-                "Scheduler {} failed releasing workflow run claim {}: {}",
-                config.scheduler_id, run.id, err
+                "Scheduler {} failed completing ready node {}: {}",
+                config.scheduler_id, ready_node.id, err
             );
         }
     }

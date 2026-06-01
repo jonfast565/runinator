@@ -7,6 +7,7 @@ use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
+    orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
     workflows::{
@@ -152,6 +153,29 @@ pub trait WorkflowSchedulerApi: Send + Sync {
 
     async fn fetch_pending_action_dispatches(
         &self,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError>;
+
+    async fn claim_ready_nodes(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError>;
+
+    async fn process_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: &str,
+        workflow_run_id: Option<i64>,
+        node_id: Option<String>,
+        next_ready_at: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError>;
+
+    async fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<ActionDispatchRecord>, SendableError>;
 
@@ -539,6 +563,51 @@ impl SchedulerApi {
             .map_err(|err| -> SendableError { Box::new(err) })
     }
 
+    pub async fn claim_ready_nodes(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        self.client
+            .claim_ready_nodes(scheduler_id, lease_until, limit)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
+    pub async fn process_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: &str,
+        workflow_run_id: Option<i64>,
+        node_id: Option<String>,
+        next_ready_at: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        self.client
+            .process_ready_node(
+                ready_node_id,
+                scheduler_id,
+                workflow_run_id,
+                node_id,
+                next_ready_at,
+            )
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        Ok(())
+    }
+
+    pub async fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        self.client
+            .claim_pending_action_dispatches(scheduler_id, lease_until, limit)
+            .await
+            .map_err(|err| -> SendableError { Box::new(err) })
+    }
+
     pub async fn mark_action_dispatch_published(
         &self,
         dispatch_id: i64,
@@ -773,6 +842,43 @@ impl WorkflowSchedulerApi for SchedulerApi {
         limit: i64,
     ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
         SchedulerApi::fetch_pending_action_dispatches(self, limit).await
+    }
+
+    async fn claim_ready_nodes(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        SchedulerApi::claim_ready_nodes(self, scheduler_id, lease_until, limit).await
+    }
+
+    async fn process_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: &str,
+        workflow_run_id: Option<i64>,
+        node_id: Option<String>,
+        next_ready_at: Option<DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        SchedulerApi::process_ready_node(
+            self,
+            ready_node_id,
+            scheduler_id,
+            workflow_run_id,
+            node_id,
+            next_ready_at,
+        )
+        .await
+    }
+
+    async fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        SchedulerApi::claim_pending_action_dispatches(self, scheduler_id, lease_until, limit).await
     }
 
     async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {

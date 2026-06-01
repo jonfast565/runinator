@@ -1,6 +1,10 @@
 use crate::{
-    CompileOptions, WdlError, analyze_source, compile_str, compile_str_with_diagnostics, decompile,
-    format_str, parse_document,
+    CompileOptions, WdlCompletionRequest, WdlError, analyze_source, compile_str,
+    compile_str_with_diagnostics, complete_source, decompile, format_str, parse_document,
+};
+use runinator_models::providers::{
+    ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
+    RuninatorType,
 };
 
 /// compile and return the `Semantic` error's span and message, failing otherwise.
@@ -13,6 +17,63 @@ fn expect_semantic(src: &str) -> (crate::Span, String) {
 
 fn compile(src: &str) -> runinator_models::workflows::WorkflowDefinition {
     compile_str(src, &CompileOptions::default()).expect("compile")
+}
+
+fn completion_labels(src: &str, marker: &str) -> Vec<String> {
+    let cursor = src.find(marker).expect("marker");
+    let source = src.replacen(marker, "", 1);
+    complete_source(WdlCompletionRequest {
+        source,
+        cursor_byte: cursor,
+        providers: completion_providers(),
+    })
+    .items
+    .into_iter()
+    .map(|item| item.label)
+    .collect()
+}
+
+fn completion_providers() -> Vec<ProviderMetadata> {
+    let issue_type = RuninatorType::open_structure(
+        [
+            ("key", RuninatorType::String),
+            (
+                "fields",
+                RuninatorType::open_structure(
+                    [("summary", RuninatorType::String)],
+                    RuninatorType::Any,
+                ),
+            ),
+        ],
+        RuninatorType::Any,
+    );
+    vec![
+        ProviderMetadata {
+            name: "jira".into(),
+            actions: vec![
+                ActionMetadata::new("search", "Search Jira issues")
+                    .with_parameters(vec![
+                        ParameterMetadata::required("base_url", RuninatorType::String),
+                        ParameterMetadata::required("token", RuninatorType::String).secret(),
+                        ParameterMetadata::optional("email", RuninatorType::String),
+                        ParameterMetadata::required("jql", RuninatorType::String),
+                    ])
+                    .with_results(vec![
+                        ResultMetadata::new("issues", RuninatorType::array(issue_type)),
+                        ResultMetadata::new("total", RuninatorType::Integer),
+                    ]),
+                ActionMetadata::new("transition", "Transition a Jira issue").with_parameters(vec![
+                    ParameterMetadata::required("key", RuninatorType::String),
+                ]),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+        ProviderMetadata {
+            name: "slack".into(),
+            actions: vec![ActionMetadata::new("send_message", "Send a Slack message")],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+    ]
 }
 
 /// compile and require a semantic error, returning its message.
@@ -816,6 +877,169 @@ fn parses_minimal_workflow() {
     assert_eq!(doc.workflow.name, "Hello");
     assert_eq!(doc.workflow.version, Some(1));
     assert_eq!(doc.workflow.body.len(), 1);
+}
+
+#[test]
+fn completes_provider_names_at_action_position() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            ji<>
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"jira".to_string()));
+    assert!(labels.contains(&"slack".to_string()));
+}
+
+#[test]
+fn completes_provider_actions_after_dot() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            jira.<>
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"search".to_string()));
+    assert!(labels.contains(&"transition".to_string()));
+}
+
+#[test]
+fn completes_missing_action_arguments() {
+    let response = complete_source(WdlCompletionRequest {
+        source: r#"
+        workflow "Complete" v1 {
+            jira.search(base_url: input.base, <>)
+        }
+        "#
+        .replace("<>", ""),
+        cursor_byte: r#"
+        workflow "Complete" v1 {
+            jira.search(base_url: input.base, <>)
+        }
+        "#
+        .find("<>")
+        .expect("marker"),
+        providers: completion_providers(),
+    });
+    let labels = response
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(!labels.contains(&"base_url"));
+    assert!(labels.contains(&"token"));
+    assert!(
+        response.items.iter().any(|item| item.label == "token"
+            && item.is_snippet
+            && item.insert_text == "token: ${}")
+    );
+}
+
+#[test]
+fn completes_nested_input_fields() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            input {
+                jira: { base_url: string, token: string }
+            }
+            jira.search(base_url: input.jira.<>, token: input.jira.token, jql: "x")
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"base_url".to_string()));
+    assert!(labels.contains(&"token".to_string()));
+}
+
+#[test]
+fn completes_provider_result_outputs() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+            emit "tickets" { issues: tickets.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"issues".to_string()));
+    assert!(labels.contains(&"total".to_string()));
+}
+
+#[test]
+fn explicit_binding_type_overrides_provider_results() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            let tickets: { custom: string } = jira.search(base_url: "https://jira", token: "t", jql: "x")
+            emit "tickets" { value: tickets.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"custom".to_string()));
+    assert!(!labels.contains(&"issues".to_string()));
+}
+
+#[test]
+fn completes_loop_variable_fields_from_array_source() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+            for item in tickets.issues limit 10 {
+                emit "ticket" { key: item.<> }
+            }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"key".to_string()));
+    assert!(labels.contains(&"fields".to_string()));
+}
+
+#[test]
+fn completes_provider_actions_in_incomplete_source() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            jira.<>
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"search".to_string()));
+}
+
+#[test]
+fn suppresses_completion_inside_plain_string() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            emit "jira.<>"
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.is_empty());
+}
+
+#[test]
+fn completes_run_context_fields() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            emit "run" { id: run.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"run_id".to_string()));
+    assert!(labels.contains(&"workflow_id".to_string()));
 }
 
 #[test]

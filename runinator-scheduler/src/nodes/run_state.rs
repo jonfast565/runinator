@@ -15,10 +15,13 @@ use runinator_models::workflow_state::{
     ControlFrame, DebugFrame, LoopFrame, MapFrame, ParallelFrame, RaceFrame, TryFrame,
     WorkflowRunState,
 };
-use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
-use runinator_workflows::BranchPolicy;
+use runinator_models::workflows::WorkflowRun;
 
-use crate::context::latest_node_run;
+// the node-run-history predicates now live in `runinator-workflows` so both the scheduler and the
+// web-service reducer share one copy. re-export them here so existing handler imports keep working.
+pub use runinator_workflows::{
+    append_completed_map_item, branch_policy_name, join_satisfied, latest_status, race_winner,
+};
 
 /// typed read/builder over a workflow run's `state` container.
 #[derive(Clone, Default)]
@@ -138,78 +141,5 @@ impl RunState {
     /// pop the head of the race frame's `remaining` queue, leaving the rest in place.
     pub fn pop_race_remaining(&mut self) -> Option<String> {
         self.inner.race.as_mut()?.pop_remaining()
-    }
-}
-
-/// true when the join's `wait_for` branches satisfy `mode`.
-pub fn join_satisfied(
-    wait_for: &[String],
-    mode: BranchPolicy,
-    node_runs: &[WorkflowNodeRun],
-) -> bool {
-    match mode {
-        BranchPolicy::All => wait_for
-            .iter()
-            .all(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded)),
-        BranchPolicy::Any | BranchPolicy::FirstSuccess => wait_for
-            .iter()
-            .any(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded)),
-    }
-}
-
-/// resolve the winning branch for a race, per `winner` policy.
-pub fn race_winner(
-    branches: &[String],
-    winner: BranchPolicy,
-    node_runs: &[WorkflowNodeRun],
-) -> Option<String> {
-    match winner {
-        BranchPolicy::All => {
-            if branches
-                .iter()
-                .all(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
-            {
-                branches.last().cloned()
-            } else {
-                None
-            }
-        }
-        BranchPolicy::Any | BranchPolicy::FirstSuccess => branches
-            .iter()
-            .find(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
-            .cloned(),
-    }
-}
-
-pub fn latest_status(node_id: &str, node_runs: &[WorkflowNodeRun]) -> Option<WorkflowStatus> {
-    latest_node_run(node_runs, node_id).map(|run| run.status)
-}
-
-/// append the target's latest succeeded output into the map frame's `outputs` and advance `index`.
-pub fn append_completed_map_item(
-    mut frame: MapFrame,
-    target: &str,
-    node_runs: &[WorkflowNodeRun],
-) -> MapFrame {
-    let Some(latest) = latest_node_run(node_runs, target) else {
-        return frame;
-    };
-    if latest.status != WorkflowStatus::Succeeded {
-        return frame;
-    }
-    if (frame.outputs.len() as i64) <= frame.index {
-        frame
-            .outputs
-            .push(latest.output_json.clone().unwrap_or(Value::Null));
-        frame.index += 1;
-    }
-    frame
-}
-
-pub fn branch_policy_name(policy: BranchPolicy) -> &'static str {
-    match policy {
-        BranchPolicy::All => "all",
-        BranchPolicy::Any => "any",
-        BranchPolicy::FirstSuccess => "first_success",
     }
 }

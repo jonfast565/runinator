@@ -8,6 +8,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
+    orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
@@ -1003,6 +1004,166 @@ impl DatabaseImpl for PostgresDb {
         Ok(true)
     }
 
+    async fn append_orchestration_event(
+        &self,
+        event: &NewOrchestrationEvent,
+    ) -> Result<bool, SendableError> {
+        let insert = sqlx::query(
+            "INSERT INTO workflow_orchestration_events (event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(event_id) DO NOTHING",
+        )
+        .bind(event.event_id.to_string())
+        .bind(event.workflow_run_id)
+        .bind(event.workflow_node_run_id)
+        .bind(&event.node_id)
+        .bind(&event.event_type)
+        .bind(event.payload.to_string())
+        .bind(event.created_at.timestamp())
+        .execute(&self.pool)
+        .await?;
+        Ok(insert.rows_affected() > 0)
+    }
+
+    async fn fetch_orchestration_events(
+        &self,
+        workflow_run_id: i64,
+        limit: i64,
+    ) -> Result<Vec<OrchestrationEvent>, SendableError> {
+        let rows = sqlx::query(
+            "SELECT event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at
+             FROM workflow_orchestration_events
+             WHERE workflow_run_id = $1
+             ORDER BY created_at, event_id
+             LIMIT $2",
+        )
+        .bind(workflow_run_id)
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(mappers::postgres_row_to_orchestration_event)
+            .collect()
+    }
+
+    async fn enqueue_ready_node(
+        &self,
+        event: NewOrchestrationEvent,
+        node_id: String,
+        ready_at: DateTime<Utc>,
+    ) -> Result<Option<ReadyNodeRecord>, SendableError> {
+        let mut tx = self.pool.begin().await?;
+        let inserted_event = sqlx::query(
+            "INSERT INTO workflow_orchestration_events (event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(event_id) DO NOTHING",
+        )
+        .bind(event.event_id.to_string())
+        .bind(event.workflow_run_id)
+        .bind(event.workflow_node_run_id)
+        .bind(&event.node_id)
+        .bind(&event.event_type)
+        .bind(event.payload.to_string())
+        .bind(event.created_at.timestamp())
+        .execute(&mut *tx)
+        .await?;
+        if inserted_event.rows_affected() == 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+
+        let now = Utc::now().timestamp();
+        let row = sqlx::query(
+            "INSERT INTO workflow_ready_nodes (source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at)
+             VALUES ($1, $2, $3, 'queued', $4, 0, $5, $6)
+             ON CONFLICT(source_event_id, workflow_run_id, node_id) DO NOTHING
+             RETURNING id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at",
+        )
+        .bind(event.event_id.to_string())
+        .bind(event.workflow_run_id)
+        .bind(node_id)
+        .bind(ready_at.timestamp())
+        .bind(now)
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        row.as_ref()
+            .map(mappers::postgres_row_to_ready_node)
+            .transpose()
+    }
+
+    async fn claim_ready_nodes(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        let rows = sqlx::query(
+            "UPDATE workflow_ready_nodes
+             SET claimed_by = $1, claimed_until = $2, attempts = attempts + 1, status = 'running', updated_at = $3
+             WHERE id IN (
+                 SELECT id FROM workflow_ready_nodes
+                 WHERE completed_at IS NULL
+                   AND ready_at <= $4
+                   AND (claimed_until IS NULL OR claimed_until <= $5 OR claimed_by = $1)
+                 ORDER BY ready_at, id
+                 LIMIT $6
+                 FOR UPDATE SKIP LOCKED
+             )
+             RETURNING id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at",
+        )
+        .bind(&scheduler_id)
+        .bind(lease_until.timestamp())
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(mappers::postgres_row_to_ready_node)
+            .collect()
+    }
+
+    async fn fetch_ready_node(
+        &self,
+        ready_node_id: i64,
+    ) -> Result<Option<ReadyNodeRecord>, SendableError> {
+        let row = sqlx::query(
+            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at
+             FROM workflow_ready_nodes
+             WHERE id = $1",
+        )
+        .bind(ready_node_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref()
+            .map(mappers::postgres_row_to_ready_node)
+            .transpose()
+    }
+
+    async fn complete_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+    ) -> Result<bool, SendableError> {
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(
+            "UPDATE workflow_ready_nodes
+             SET completed_at = $1, status = 'succeeded', updated_at = $2
+             WHERE id = $3 AND claimed_by = $4",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(ready_node_id)
+        .bind(scheduler_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let row = sqlx::query(
@@ -1203,7 +1364,7 @@ impl DatabaseImpl for PostgresDb {
             "INSERT INTO workflow_action_dispatches (dedupe_key, command_json, attempts, created_at, updated_at)
              VALUES ($1, $2, 0, $3, $4)
              ON CONFLICT(dedupe_key) DO UPDATE SET command_json = workflow_action_dispatches.command_json
-             RETURNING id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error",
+             RETURNING id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until",
         )
         .bind(dedupe_key)
         .bind(serde_json::to_string(&command)?)
@@ -1219,7 +1380,7 @@ impl DatabaseImpl for PostgresDb {
         limit: i64,
     ) -> Result<Vec<runinator_comm::ActionDispatchRecord>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error
+            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until
              FROM workflow_action_dispatches
              WHERE published_at IS NULL
              ORDER BY updated_at ASC, id ASC
@@ -1233,11 +1394,43 @@ impl DatabaseImpl for PostgresDb {
             .collect()
     }
 
+    async fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<runinator_comm::ActionDispatchRecord>, SendableError> {
+        let rows = sqlx::query(
+            "UPDATE workflow_action_dispatches
+             SET claimed_by = $1, claimed_until = $2, updated_at = $3
+             WHERE id IN (
+                 SELECT id FROM workflow_action_dispatches
+                 WHERE published_at IS NULL
+                   AND (claimed_until IS NULL OR claimed_until <= $4 OR claimed_by = $1)
+                 ORDER BY updated_at ASC, id ASC
+                 LIMIT $5
+                 FOR UPDATE SKIP LOCKED
+             )
+             RETURNING id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until",
+        )
+        .bind(&scheduler_id)
+        .bind(lease_until.timestamp())
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(mappers::postgres_row_to_action_dispatch)
+            .collect()
+    }
+
     async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
         sqlx::query(
             "UPDATE workflow_action_dispatches
-             SET published_at = $1, updated_at = $2, last_error = NULL
+             SET published_at = $1, updated_at = $2, last_error = NULL, claimed_by = NULL, claimed_until = NULL
              WHERE id = $3",
         )
         .bind(now)
@@ -1256,7 +1449,7 @@ impl DatabaseImpl for PostgresDb {
         let now = Utc::now().timestamp();
         sqlx::query(
             "UPDATE workflow_action_dispatches
-             SET attempts = attempts + 1, updated_at = $1, last_error = $2
+             SET attempts = attempts + 1, updated_at = $1, last_error = $2, claimed_by = NULL, claimed_until = NULL
              WHERE id = $3",
         )
         .bind(now)

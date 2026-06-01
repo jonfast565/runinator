@@ -223,7 +223,7 @@ fn broker_smoke_workflow() -> WorkflowDefinition {
         version: 1,
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
-        definition: json!({
+        definition: runinator_models::workflows::WorkflowGraph::from_value(json!({
             "start": "start",
             "nodes": [
                 {
@@ -249,7 +249,8 @@ fn broker_smoke_workflow() -> WorkflowDefinition {
                     "kind": "end"
                 }
             ]
-        }),
+        }))
+        .unwrap(),
         created_at: None,
         updated_at: None,
     }

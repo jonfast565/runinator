@@ -6,16 +6,21 @@
 use runinator_models::workflows::WorkflowDefinition;
 
 pub mod ast;
+pub mod completion;
 mod decompile;
 mod errors;
 mod format;
-mod lower;
+pub(crate) mod lower;
 mod parser;
 pub mod sema;
 
 pub use errors::{Span, WdlError};
 pub use parser::parse_document;
 pub use sema::{Diagnostic, Severity};
+
+pub use completion::{
+    WdlCompletionItem, WdlCompletionRequest, WdlCompletionResponse, complete_source,
+};
 
 /// options that fill in the WorkflowDefinition fields that the source does not carry.
 #[derive(Debug, Clone)]

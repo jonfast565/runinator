@@ -9,7 +9,7 @@ fn mock_workflow(id: i64, name: &str, enabled: bool) -> WorkflowDefinition {
         input_type: runinator_models::types::RuninatorType::from_json_schema(
             &json!({ "type": "object" }),
         ),
-        definition: json!({}),
+        definition: runinator_models::workflows::WorkflowGraph::default(),
         created_at: None,
         updated_at: None,
     }

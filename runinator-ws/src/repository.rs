@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
 use runinator_broker::{Broker, ControlCommand};
-use runinator_comm::{ControlKind, DebugVerb, WorkflowResultEvent};
+use runinator_comm::{ControlKind, DebugVerb, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
     debug::{DEBUG_RERUN, DEBUG_SKIPPED, DEBUG_SUPERSEDED},
     errors::{RuntimeError, SendableError},
+    orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk},
     web::TaskResponse,
     workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
@@ -252,8 +253,13 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     scheduler_id: String,
     limit: i64,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
-    db.claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit)
-        .await
+    let runs = db
+        .claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit)
+        .await?;
+    for run in &runs {
+        enqueue_start_ready_node(db, run).await?;
+    }
+    Ok(runs)
 }
 
 pub async fn delete_workflow_trigger<T: DatabaseImpl>(
@@ -291,14 +297,17 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
             object.insert("debug".into(), debug_state);
         }
     }
-    db.create_workflow_run(
-        trigger.workflow_id,
-        workflow_snapshot,
-        parameters,
-        state,
-        None,
-    )
-    .await
+    let run = db
+        .create_workflow_run(
+            trigger.workflow_id,
+            workflow_snapshot,
+            parameters,
+            state,
+            None,
+        )
+        .await?;
+    enqueue_start_ready_node(db, &run).await?;
+    Ok(run)
 }
 
 async fn fetch_workflow_snapshot<T: DatabaseImpl>(
@@ -348,8 +357,94 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
         runinator_models::json!({ "control": { "pause_requested": false } })
     };
     let trimmed = normalized_run_name(name);
-    db.create_workflow_run(workflow_id, workflow_snapshot, parameters, state, trimmed)
+    let run = db
+        .create_workflow_run(workflow_id, workflow_snapshot, parameters, state, trimmed)
+        .await?;
+    enqueue_start_ready_node(db, &run).await?;
+    Ok(run)
+}
+
+async fn enqueue_start_ready_node<T: DatabaseImpl>(
+    db: &T,
+    run: &WorkflowRun,
+) -> Result<(), SendableError> {
+    let workflow = run.workflow_snapshot.as_ref().ok_or_else(|| {
+        Box::new(RuntimeError::new(
+            "workflow_run.snapshot_missing".into(),
+            format!("Workflow run {} is missing its workflow snapshot", run.id),
+        )) as SendableError
+    })?;
+    let (start, _) = runinator_workflows::parse_nodes(workflow)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let event = NewOrchestrationEvent::new(
+        run.id,
+        Some(start.clone()),
+        "workflow_run_created",
+        runinator_models::json!({
+            "workflow_id": run.workflow_id,
+            "node_id": start.clone(),
+        }),
+    );
+    db.enqueue_ready_node(event, start, Utc::now()).await?;
+    Ok(())
+}
+
+pub async fn claim_ready_nodes<T: DatabaseImpl>(
+    db: &T,
+    scheduler_id: String,
+    lease_until: chrono::DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+    db.claim_ready_nodes(scheduler_id, Utc::now(), lease_until, limit)
         .await
+}
+
+pub async fn complete_ready_node<T: DatabaseImpl>(
+    db: &T,
+    ready_node_id: i64,
+    scheduler_id: String,
+    next_ready: Option<(i64, String, chrono::DateTime<Utc>)>,
+) -> Result<TaskResponse, SendableError> {
+    let Some(ready_node) = db.fetch_ready_node(ready_node_id).await? else {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.ready_node.not_found".into(),
+            format!("Ready node {ready_node_id} not found"),
+        )));
+    };
+    if ready_node.claimed_by.as_deref() != Some(scheduler_id.as_str()) {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.ready_node.not_claimed".into(),
+            format!("Ready node {ready_node_id} is not claimed by this scheduler"),
+        )));
+    }
+    let disposition = crate::orchestration::process_ready_node(db, &ready_node).await?;
+    if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
+        return Ok(TaskResponse {
+            success: true,
+            message: "Ready node remains claimed until it is due".into(),
+        });
+    }
+    if !db.complete_ready_node(ready_node_id, scheduler_id).await? {
+        return Err(Box::new(RuntimeError::new(
+            "workflow.ready_node.not_claimed".into(),
+            format!("Ready node {ready_node_id} is not claimed by this scheduler"),
+        )));
+    }
+    if let Some((workflow_run_id, node_id, ready_at)) = next_ready {
+        enqueue_node_ready(
+            db,
+            workflow_run_id,
+            node_id.clone(),
+            "node_waiting",
+            ready_at,
+            runinator_models::json!({ "node_id": node_id }),
+        )
+        .await?;
+    }
+    Ok(TaskResponse {
+        success: true,
+        message: "Ready node processed".into(),
+    })
 }
 
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
@@ -1300,7 +1395,45 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     db: &T,
     event: &WorkflowResultEvent,
 ) -> Result<bool, SendableError> {
-    db.apply_workflow_result_event(event).await
+    let applied = db.apply_workflow_result_event(event).await?;
+    if !applied {
+        return Ok(false);
+    }
+    if let WorkflowResultEventKind::Status { status, .. } = &event.kind
+        && status.is_terminal()
+    {
+        enqueue_node_ready(
+            db,
+            event.workflow_run_id,
+            event.node_id.clone(),
+            "workflow_result_status",
+            Utc::now(),
+            runinator_models::json!({
+                "workflow_node_run_id": event.workflow_node_run_id,
+                "status": status,
+            }),
+        )
+        .await?;
+    }
+    Ok(true)
+}
+
+async fn enqueue_node_ready<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: i64,
+    node_id: String,
+    event_type: &str,
+    ready_at: chrono::DateTime<Utc>,
+    payload: Value,
+) -> Result<(), SendableError> {
+    let event = NewOrchestrationEvent::new(
+        workflow_run_id,
+        Some(node_id.clone()),
+        event_type.to_string(),
+        payload,
+    );
+    db.enqueue_ready_node(event, node_id, ready_at).await?;
+    Ok(())
 }
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(
@@ -1484,6 +1617,19 @@ pub async fn resolve_approval<T: DatabaseImpl>(
             None,
         )
         .await?;
+        // wake the reducer so it re-processes the now-resolved approval node and transitions it.
+        // the event-driven ready queue would otherwise never re-visit the parked node.
+        if approved {
+            enqueue_node_ready(
+                db,
+                workflow_run_id,
+                node_id.to_string(),
+                "approval_resolved",
+                Utc::now(),
+                runinator_models::json!({ "approval_id": approval_id }),
+            )
+            .await?;
+        }
     }
 
     Ok(updated)

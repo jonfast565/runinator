@@ -9,17 +9,19 @@ use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::api_routes::{
     API_ARTIFACTS, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
-    API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-    API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
-    API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
+    API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+    API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+    API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WDL_COMPLETE, API_WORKFLOW_RUNS,
+    API_WORKFLOW_TRIGGERS_DUE, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
+    API_WORKFLOWS_VALIDATE,
 };
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::events::EventSender;
 use crate::handlers::{
     action_dispatches::{
-        enqueue_action_dispatch, mark_action_dispatch_failed, mark_action_dispatch_published,
-        pending_action_dispatches,
+        claim_action_dispatches, enqueue_action_dispatch, mark_action_dispatch_failed,
+        mark_action_dispatch_published, pending_action_dispatches,
     },
     artifacts::{
         add_run_artifact, download_artifact, get_run_artifacts, list_artifacts, upload_artifact,
@@ -49,11 +51,12 @@ use crate::handlers::{
     },
     providers::{get_providers, import_provider_bundle, upsert_provider},
     runs::{
-        append_run_chunk, cancel_workflow_run, claim_workflow_runs_for_scheduler,
-        create_workflow_run, create_workflow_trigger_run, get_run_chunks, get_runs,
-        get_workflow_run, get_workflow_runs, pause_workflow_run, release_workflow_run_claim,
-        rename_workflow_run, renew_workflow_run_claim, replay_workflow_run, resume_workflow_run,
-        update_run, update_workflow_run,
+        append_run_chunk, cancel_workflow_run, claim_ready_nodes,
+        claim_workflow_runs_for_scheduler, create_workflow_run, create_workflow_trigger_run,
+        get_run_chunks, get_runs, get_workflow_run, get_workflow_runs, pause_workflow_run,
+        process_ready_node, release_workflow_run_claim, rename_workflow_run,
+        renew_workflow_run_claim, replay_workflow_run, resume_workflow_run, update_run,
+        update_workflow_run,
     },
     supervisor::get_supervisor_status,
     triggers::{
@@ -61,6 +64,7 @@ use crate::handlers::{
         get_workflow_trigger, get_workflow_triggers, update_workflow_trigger,
         upsert_workflow_trigger,
     },
+    wdl::complete_wdl,
     webhook::webhook_wake,
     workflows::{
         delete_workflow, export_single_workflow_bundle, export_workflow_bundle, get_workflow,
@@ -101,6 +105,7 @@ pub fn build_router<T: DatabaseImpl>(
             API_WORKFLOWS_VALIDATE,
             post(validate_workflow::<T>).layer(Extension(pool.clone())),
         )
+        .route(API_WDL_COMPLETE, post(complete_wdl))
         .route(
             API_WORKFLOWS_IMPORT,
             post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),
@@ -152,6 +157,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            API_SCHEDULER_READY_NODES_CLAIM,
+            post(claim_ready_nodes::<T>).layer(Extension(pool.clone())),
         )
         .route(API_RUNS, get(get_runs::<T>).layer(Extension(pool.clone())))
         .route(
@@ -223,12 +232,20 @@ pub fn build_router<T: DatabaseImpl>(
             get(pending_action_dispatches::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
+            post(claim_action_dispatches::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/scheduler/action_dispatches/{id}/published",
             post(mark_action_dispatch_published::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/scheduler/action_dispatches/{id}/failed",
             post(mark_action_dispatch_failed::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/ready_nodes/{id}/process",
+            post(process_ready_node::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_runs/{id}/debug/command",

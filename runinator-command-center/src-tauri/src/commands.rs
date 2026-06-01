@@ -119,6 +119,13 @@ pub fn analyze_wdl(source: String) -> CommandResult<Vec<DiagnosticSummary>> {
 }
 
 #[tauri::command]
+pub fn complete_wdl(
+    request: runinator_wdl::WdlCompletionRequest,
+) -> CommandResult<runinator_wdl::WdlCompletionResponse> {
+    Ok(runinator_wdl::complete_source(request))
+}
+
+#[tauri::command]
 pub fn format_wdl(source: String) -> CommandResult<String> {
     runinator_wdl::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
 }

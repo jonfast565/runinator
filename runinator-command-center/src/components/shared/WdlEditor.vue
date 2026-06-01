@@ -37,14 +37,16 @@ import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
+import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
 import { analyzeWdl, formatWdl } from '../../api/commandCenterApi';
 import { useAppStore } from '../../stores/app';
-import type { WdlDiagnostic } from '../../types/models';
+import type { ProviderMetadata, WdlDiagnostic } from '../../types/models';
 
 const props = defineProps<{
   modelValue: string;
   readonly?: boolean;
   title?: string;
+  providers?: ProviderMetadata[];
 }>();
 
 const emit = defineEmits<{
@@ -131,7 +133,7 @@ onMounted(() => {
     doc: props.modelValue,
     extensions: [
       basicSetup,
-      wdl(),
+      wdl(wdlProviderCompletionSource(() => props.providers ?? [])),
       wdlLinter,
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {

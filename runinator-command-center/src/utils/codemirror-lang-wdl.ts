@@ -124,8 +124,8 @@ const wdlParser = StreamLanguage.define<WdlState>({
   },
 });
 
-// keyword + snippet completion. provider/action-aware completion is intentionally out of
-// scope here; this is keyword/syntax only.
+// keyword + snippet completion. provider/action-aware completion is supplied by the
+// command-center editor as an async source backed by runinator-wdl.
 const keywordCompletions = [...KEYWORDS].map((label) => ({ label, type: "keyword" }));
 
 const snippets = [
@@ -157,8 +157,8 @@ const wdlCompletion: CompletionSource = completeFromList([
 ]);
 
 /// codemirror language support for wdl: highlighting + keyword/snippet completion.
-export function wdl(): LanguageSupport {
+export function wdl(providerCompletion?: CompletionSource): LanguageSupport {
   return new LanguageSupport(wdlParser, [
-    wdlParser.data.of({ autocomplete: wdlCompletion }),
+    wdlParser.data.of({ autocomplete: providerCompletion ? [providerCompletion, wdlCompletion] : wdlCompletion }),
   ]);
 }

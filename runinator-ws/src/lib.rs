@@ -2,6 +2,7 @@ mod config;
 mod events;
 mod handlers;
 mod models;
+mod orchestration;
 mod repository;
 mod repository_runs;
 mod repository_state;

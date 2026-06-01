@@ -12,6 +12,7 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
     errors::{RuntimeError, SendableError},
+    orchestration::ReadyNodeRecord,
     providers::{ActionMetadata, ProviderMetadata, ProviderRuntimeMetadata},
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
@@ -1495,6 +1496,8 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             updated_at: Utc::now(),
             published_at: None,
             last_error: None,
+            claimed_by: None,
+            claimed_until: None,
         };
         state.action_dispatches.push(record.clone());
         Ok(record)
@@ -1514,6 +1517,35 @@ impl WorkflowSchedulerApi for MockWorkflowApi {
             .take(limit.max(1) as usize)
             .cloned()
             .collect())
+    }
+
+    async fn claim_ready_nodes(
+        &self,
+        _scheduler_id: &str,
+        _lease_until: chrono::DateTime<Utc>,
+        _limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn process_ready_node(
+        &self,
+        _ready_node_id: i64,
+        _scheduler_id: &str,
+        _workflow_run_id: Option<i64>,
+        _node_id: Option<String>,
+        _next_ready_at: Option<chrono::DateTime<Utc>>,
+    ) -> Result<(), SendableError> {
+        Ok(())
+    }
+
+    async fn claim_pending_action_dispatches(
+        &self,
+        _scheduler_id: &str,
+        _lease_until: chrono::DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
+        self.fetch_pending_action_dispatches(limit).await
     }
 
     async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {

@@ -434,6 +434,154 @@ async fn malformed_action_dispatch_command_returns_error() {
     let _ = fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn ready_nodes_are_claimed_once_until_lease_expires() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-ready-nodes-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow_id = db
+        .upsert_workflow(&workflow("ready-node-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+        )
+        .await
+        .unwrap();
+    let event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("start".into()),
+        "workflow_run_created",
+        runinator_models::json!({}),
+    );
+    let ready = db
+        .enqueue_ready_node(event, "start".into(), Utc::now())
+        .await
+        .unwrap()
+        .expect("ready node should be inserted");
+
+    let first = db
+        .claim_ready_nodes(
+            "scheduler-a".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].id, ready.id);
+
+    let second = db
+        .claim_ready_nodes(
+            "scheduler-b".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(second.is_empty());
+
+    let reclaimed = db
+        .claim_ready_nodes(
+            "scheduler-b".into(),
+            Utc::now() + Duration::seconds(31),
+            Utc::now() + Duration::seconds(60),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(reclaimed.len(), 1);
+    assert_eq!(reclaimed[0].claimed_by.as_deref(), Some("scheduler-b"));
+
+    assert!(
+        db.complete_ready_node(ready.id, "scheduler-b".into())
+            .await
+            .unwrap()
+    );
+
+    let after_complete = db
+        .claim_ready_nodes(
+            "scheduler-a".into(),
+            Utc::now() + Duration::seconds(61),
+            Utc::now() + Duration::seconds(90),
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(after_complete.is_empty());
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn action_dispatch_claims_respect_publisher_leases() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-action-dispatch-claim-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let node_run = create_node_run(&db).await;
+    let command = action_command(node_run.workflow_run_id, node_run.id, &node_run.node_id);
+    let dispatch = db
+        .enqueue_action_dispatch("dispatch-key".into(), command)
+        .await
+        .unwrap();
+
+    let first = db
+        .claim_pending_action_dispatches(
+            "scheduler-a".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].id, dispatch.id);
+
+    let second = db
+        .claim_pending_action_dispatches(
+            "scheduler-b".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(second.is_empty());
+
+    db.mark_action_dispatch_failed(dispatch.id, "publish failed".into())
+        .await
+        .unwrap();
+    let retry = db
+        .claim_pending_action_dispatches(
+            "scheduler-b".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry.len(), 1);
+    assert_eq!(retry[0].claimed_by.as_deref(), Some("scheduler-b"));
+
+    let _ = fs::remove_file(path);
+}
+
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,

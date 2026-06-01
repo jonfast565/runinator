@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use log::{debug, error};
 use runinator_broker::{Broker, BrokerError, BrokerMessage};
 use runinator_comm::ActionCommand;
@@ -45,9 +45,15 @@ pub async fn enqueue_action_with_dedupe(
 pub async fn publish_pending_action_dispatches(
     broker: &dyn Broker,
     api: &dyn WorkflowSchedulerApi,
+    scheduler_id: &str,
+    lease_seconds: u64,
     limit: i64,
 ) -> Result<(), SendableError> {
-    for dispatch in api.fetch_pending_action_dispatches(limit).await? {
+    let lease_until = Utc::now() + Duration::seconds(lease_seconds as i64);
+    for dispatch in api
+        .claim_pending_action_dispatches(scheduler_id, lease_until, limit)
+        .await?
+    {
         let dispatch_id = dispatch.id;
         let dedupe_key = dispatch.dedupe_key.clone();
         let message = BrokerMessage {

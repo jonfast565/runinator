@@ -3,15 +3,18 @@ pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
+pub const API_WDL_COMPLETE: &str = "/wdl/complete";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";
 pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
+pub const API_SCHEDULER_READY_NODES_CLAIM: &str = "/scheduler/ready_nodes/claim";
 pub const API_RUNS: &str = "/runs";
 pub const API_ARTIFACTS: &str = "/artifacts";
 pub const API_SCHEDULER_ACTION_DISPATCHES: &str = "/scheduler/action_dispatches";
 pub const API_SCHEDULER_ACTION_DISPATCHES_PENDING: &str = "/scheduler/action_dispatches/pending";
+pub const API_SCHEDULER_ACTION_DISPATCHES_CLAIM: &str = "/scheduler/action_dispatches/claim";
 pub const API_WORKFLOW_NODE_RUNS: &str = "/workflow_node_runs";
 pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";
@@ -68,6 +71,10 @@ pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: i64) -> String {
 
 pub fn api_scheduler_workflow_run_claim_release(workflow_run_id: i64) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/release")
+}
+
+pub fn api_scheduler_ready_node_process(ready_node_id: i64) -> String {
+    format!("/scheduler/ready_nodes/{ready_node_id}/process")
 }
 
 pub fn api_scheduler_action_dispatch_published(dispatch_id: i64) -> String {

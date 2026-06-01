@@ -1,6 +1,7 @@
-use crate::value::Value;
+use crate::{value::Value, workflows::WorkflowStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalItem {
@@ -153,4 +154,97 @@ pub struct IdempotencyKey {
     #[serde(default)]
     pub result: Value,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestrationEvent {
+    pub event_id: Uuid,
+    pub workflow_run_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_node_run_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub event_type: String,
+    #[serde(default)]
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewOrchestrationEvent {
+    pub event_id: Uuid,
+    pub workflow_run_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_node_run_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub event_type: String,
+    #[serde(default)]
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+impl NewOrchestrationEvent {
+    pub fn new(
+        workflow_run_id: i64,
+        node_id: Option<String>,
+        event_type: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        Self {
+            event_id: Uuid::new_v4(),
+            workflow_run_id,
+            workflow_node_run_id: None,
+            node_id,
+            event_type: event_type.into(),
+            payload,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyNodeRecord {
+    pub id: i64,
+    pub source_event_id: Uuid,
+    pub workflow_run_id: i64,
+    pub node_id: String,
+    pub status: WorkflowStatus,
+    pub ready_at: DateTime<Utc>,
+    pub attempts: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_until: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyNodeClaimRequest {
+    pub scheduler_id: String,
+    pub lease_until: DateTime<Utc>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyNodeProcessRequest {
+    pub scheduler_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_ready_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionDispatchClaimRequest {
+    pub scheduler_id: String,
+    pub lease_until: DateTime<Utc>,
+    #[serde(default)]
+    pub limit: Option<i64>,
 }

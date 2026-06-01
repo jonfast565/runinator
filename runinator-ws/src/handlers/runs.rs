@@ -7,6 +7,7 @@ use axum::{
 };
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::orchestration::{ReadyNodeClaimRequest, ReadyNodeProcessRequest};
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
 
@@ -108,6 +109,54 @@ pub(crate) async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
     .await
     {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn claim_ready_nodes<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<ReadyNodeClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::claim_ready_nodes(
+        db.as_ref(),
+        request.scheduler_id,
+        request.lease_until,
+        request.limit.unwrap_or(50),
+    )
+    .await
+    {
+        Ok(nodes) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!(nodes))),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn process_ready_node<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(ready_node_id): Path<i64>,
+    Json(request): Json<ReadyNodeProcessRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let next_ready = match (
+        request.workflow_run_id,
+        request.node_id,
+        request.next_ready_at,
+    ) {
+        (Some(workflow_run_id), Some(node_id), Some(next_ready_at)) => {
+            Some((workflow_run_id, node_id, next_ready_at))
+        }
+        _ => None,
+    };
+    match repository::complete_ready_node(
+        db.as_ref(),
+        ready_node_id,
+        request.scheduler_id,
+        next_ready,
+    )
+    .await
+    {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => api_error(err.to_string()),
     }
 }

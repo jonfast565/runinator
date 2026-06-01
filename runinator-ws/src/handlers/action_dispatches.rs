@@ -7,6 +7,7 @@ use axum::{
 };
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::orchestration::ActionDispatchClaimRequest;
 use runinator_models::web::TaskResponse;
 use serde::Deserialize;
 
@@ -48,6 +49,21 @@ pub(crate) async fn pending_action_dispatches<T: DatabaseImpl>(
         .await
         .map(Json)
         .map_err(|err| api_error(err.to_string()))
+}
+
+pub(crate) async fn claim_action_dispatches<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Json(request): Json<ActionDispatchClaimRequest>,
+) -> Result<Json<Vec<ActionDispatchRecord>>, (StatusCode, Json<crate::models::ApiResponse>)> {
+    db.claim_pending_action_dispatches(
+        request.scheduler_id,
+        chrono::Utc::now(),
+        request.lease_until,
+        request.limit.unwrap_or(100),
+    )
+    .await
+    .map(Json)
+    .map_err(|err| api_error(err.to_string()))
 }
 
 pub(crate) async fn mark_action_dispatch_published<T: DatabaseImpl>(

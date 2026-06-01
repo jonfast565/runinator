@@ -161,6 +161,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => arg<string>(args, "endpoint")
   },
+  complete_wdl: {
+    method: "POST",
+    path: () => "wdl/complete",
+    body: (args) => arg(args, "request")
+  },
   fetch_providers: { method: "GET", path: () => "providers" },
   fetch_credentials: { method: "GET", path: () => "credentials" },
   save_credential: {

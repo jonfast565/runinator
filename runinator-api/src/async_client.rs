@@ -7,18 +7,20 @@ use runinator_models::{
     api_routes::{
         api_approval_command, api_run, api_run_artifacts, api_run_chunks,
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
-        api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
-        api_workflow, api_workflow_node_run, api_workflow_node_run_artifacts,
-        api_workflow_node_run_chunks, api_workflow_run, api_workflow_run_command,
-        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
-        api_workflow_runs, api_workflow_trigger, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PROVIDERS, API_RUNS,
-        API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
-        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
-        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_VALIDATE,
-        API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
+        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_node_run,
+        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_run,
+        api_workflow_run_command, api_workflow_run_nodes, api_workflow_run_rename,
+        api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
+        api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_CREDENTIALS,
+        API_IDEMPOTENCY_KEYS, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
+        API_WORKFLOWS_EXPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
     },
     bundles::{Bundle, ProviderBundle, SecretBundle},
+    orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
     web::TaskResponse,
@@ -577,6 +579,76 @@ where
         url.query_pairs_mut()
             .append_pair("limit", &limit.to_string());
         let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
+    }
+
+    pub async fn claim_ready_nodes(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>> {
+        let url = self.build_url(API_SCHEDULER_READY_NODES_CLAIM).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({
+                "scheduler_id": scheduler_id,
+                "lease_until": lease_until,
+                "limit": limit,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ReadyNodeRecord>>().await?)
+    }
+
+    pub async fn process_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: &str,
+        workflow_run_id: Option<i64>,
+        node_id: Option<String>,
+        next_ready_at: Option<DateTime<Utc>>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_scheduler_ready_node_process(ready_node_id))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({
+                "scheduler_id": scheduler_id,
+                "workflow_run_id": workflow_run_id,
+                "node_id": node_id,
+                "next_ready_at": next_ready_at,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn claim_pending_action_dispatches(
+        &self,
+        scheduler_id: &str,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ActionDispatchRecord>> {
+        let url = self
+            .build_url(API_SCHEDULER_ACTION_DISPATCHES_CLAIM)
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({
+                "scheduler_id": scheduler_id,
+                "lease_until": lease_until,
+                "limit": limit,
+            }))
+            .send()
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
     }
