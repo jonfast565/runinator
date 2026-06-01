@@ -4,7 +4,13 @@ metadata:
   name: runinator-importer
   namespace: runinator
 spec:
-  backoffLimit: 3
+  # the importer is a one-shot that fails hard if runinator-ws is not yet
+  # serving. ws waits on its own db-migrate init container and postgres, so it
+  # can take ~30s+ to come up. a higher backoffLimit lets the OnFailure restart
+  # loop absorb that startup race; activeDeadlineSeconds bounds total runtime.
+  backoffLimit: 12
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
