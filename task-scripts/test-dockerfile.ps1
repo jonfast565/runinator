@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('broker', 'scheduler', 'worker', 'importer', 'ws')]
+    [ValidateSet('broker', 'waker', 'worker', 'importer', 'ws')]
     [string]$Service,
     [string]$Workspace = (Split-Path -Parent $PSScriptRoot),
     [string]$Tag = 'dev-selftest',
@@ -42,8 +42,8 @@ switch ($Service) {
         $env.RUNINATOR_BROKER_ADDR = '0.0.0.0:7070'
         $ports += '127.0.0.1::7070'
     }
-    'scheduler' {
-        $cmd = @('--broker-backend', 'in-memory', '--gossip-targets', '')
+    'waker' {
+        $cmd = @('--broker-backend', 'in-memory')
     }
     'worker' {
         $cmd = @(

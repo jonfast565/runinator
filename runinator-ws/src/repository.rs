@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
-use runinator_broker::{Broker, ControlCommand};
+use chrono::{DateTime, Duration, Utc};
+use runinator_broker::{Broker, BrokerError, BrokerMessage, ControlCommand};
 use runinator_comm::{ControlKind, DebugVerb, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
@@ -445,6 +445,102 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
         success: true,
         message: "Ready node processed".into(),
     })
+}
+
+/// drive a single ready node by id over the broker ingress path. the web service claims the row
+/// itself (the waker has no database), runs the reducer, then completes or releases it. returns the
+/// workflow run id on success so the caller can emit a ui event. a `None` means the row was already
+/// completed or claimed elsewhere and there was nothing to do.
+pub async fn drive_ready_node<T: DatabaseImpl>(
+    db: &T,
+    ready_node_id: i64,
+    driver_id: String,
+) -> Result<Option<i64>, SendableError> {
+    let now = Utc::now();
+    let lease_until = now + Duration::seconds(READY_NODE_DRIVE_LEASE_SECONDS);
+    let Some(ready_node) = db
+        .claim_ready_node(ready_node_id, driver_id.clone(), now, lease_until)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let workflow_run_id = ready_node.workflow_run_id;
+    let disposition = crate::orchestration::process_ready_node(db, &ready_node).await?;
+    if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
+        // not yet settled; return it to the queue so a later wake re-drives it.
+        db.release_ready_node(ready_node_id, driver_id).await?;
+        return Ok(Some(workflow_run_id));
+    }
+    db.complete_ready_node(ready_node_id, driver_id).await?;
+    Ok(Some(workflow_run_id))
+}
+
+const READY_NODE_DRIVE_LEASE_SECONDS: i64 = 60;
+
+/// drain durable action-dispatch intents and publish them to the broker action channel. moved into
+/// the web service (which owns the database and the reducer) so the waker no longer relays them.
+pub async fn publish_pending_action_dispatches<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    publisher_id: &str,
+    lease_seconds: i64,
+    limit: i64,
+) -> Result<(), SendableError> {
+    let now = Utc::now();
+    let lease_until = now + Duration::seconds(lease_seconds);
+    let dispatches = db
+        .claim_pending_action_dispatches(publisher_id.to_string(), now, lease_until, limit)
+        .await?;
+    for dispatch in dispatches {
+        let dispatch_id = dispatch.id;
+        let message = BrokerMessage {
+            command: dispatch.command,
+            dedupe_key: Some(dispatch.dedupe_key),
+            enqueued_at: Utc::now(),
+        };
+        match broker.publish(message).await {
+            Ok(()) | Err(BrokerError::Duplicate(_)) => {
+                db.mark_action_dispatch_published(dispatch_id).await?;
+            }
+            Err(err) => {
+                db.mark_action_dispatch_failed(dispatch_id, err.to_string())
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// publish a wake for each ready node still pending drive. doubles as the durable backstop: the
+/// broker dedupes wakes already in flight, so re-announcing an undriven node is harmless.
+pub async fn publish_pending_wakes<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    limit: i64,
+) -> Result<(), SendableError> {
+    let now = Utc::now();
+    let pending = db.fetch_pending_ready_nodes(now, limit).await?;
+    for node in pending {
+        let command = runinator_comm::WakeCommand::new(
+            node.id,
+            node.workflow_run_id,
+            node.node_id,
+            node.ready_at,
+            node.source_event_id,
+        );
+        let message = runinator_broker::WakeMessage {
+            command,
+            dedupe_key: None,
+            enqueued_at: Utc::now(),
+        };
+        match broker.publish_wake(message).await {
+            Ok(()) | Err(BrokerError::Duplicate(_)) => {}
+            Err(err) => {
+                log::warn!("Failed to publish wake for ready node {}: {}", node.id, err);
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(

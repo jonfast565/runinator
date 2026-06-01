@@ -200,8 +200,6 @@ fn test_config() -> Config {
         broker_result_topic: "runinator.results".into(),
         broker_client_id: "test-worker".into(),
         broker_consumer_id: "test-consumer".into(),
-        scheduler_control_transport: "disabled".into(),
-        scheduler_control_endpoint: "127.0.0.1:7080".into(),
         max_concurrent_actions: 1,
         shutdown_grace_seconds: 30,
         api_base_url: "http://127.0.0.1:8080/".into(),

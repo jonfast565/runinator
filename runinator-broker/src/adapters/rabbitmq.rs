@@ -1,6 +1,6 @@
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    ResultDelivery, ResultMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -8,6 +8,8 @@ use uuid::Uuid;
 const DEFAULT_ACTION_QUEUE: &str = "runinator.actions";
 const DEFAULT_CONTROL_QUEUE: &str = "runinator.control";
 const DEFAULT_RESULT_QUEUE: &str = "runinator.results";
+const DEFAULT_WAKE_QUEUE: &str = "runinator.wake";
+const DEFAULT_INGRESS_QUEUE: &str = "runinator.ingress";
 const DEFAULT_CLIENT_ID: &str = "runinator";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +18,8 @@ pub struct RabbitMqBrokerConfig {
     pub action_queue: String,
     pub control_queue: String,
     pub result_queue: String,
+    pub wake_queue: String,
+    pub ingress_queue: String,
     pub client_id: String,
 }
 
@@ -26,6 +30,8 @@ impl RabbitMqBrokerConfig {
             action_queue: DEFAULT_ACTION_QUEUE.into(),
             control_queue: DEFAULT_CONTROL_QUEUE.into(),
             result_queue: DEFAULT_RESULT_QUEUE.into(),
+            wake_queue: DEFAULT_WAKE_QUEUE.into(),
+            ingress_queue: DEFAULT_INGRESS_QUEUE.into(),
             client_id: DEFAULT_CLIENT_ID.into(),
         }
     }
@@ -39,6 +45,17 @@ impl RabbitMqBrokerConfig {
         self.action_queue = action_queue.into();
         self.control_queue = control_queue.into();
         self.result_queue = result_queue.into();
+        self
+    }
+
+    /// override the orchestration queues (wake = ws -> waker, ingress = waker/worker -> ws).
+    pub fn with_orchestration_queues(
+        mut self,
+        wake_queue: impl Into<String>,
+        ingress_queue: impl Into<String>,
+    ) -> Self {
+        self.wake_queue = wake_queue.into();
+        self.ingress_queue = ingress_queue.into();
         self
     }
 
@@ -94,6 +111,8 @@ struct RabbitMqBrokerInner {
     action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     control_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    wake_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    ingress_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     pending: Mutex<HashMap<Uuid, lapin::message::Delivery>>,
 }
 
@@ -103,6 +122,8 @@ enum RabbitMqChannel {
     Action,
     Control,
     Result,
+    Wake,
+    Ingress,
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -120,12 +141,16 @@ impl RabbitMqBrokerInner {
         declare_queue(&channel, &config.action_queue).await?;
         declare_queue(&channel, &config.control_queue).await?;
         declare_queue(&channel, &config.result_queue).await?;
+        declare_queue(&channel, &config.wake_queue).await?;
+        declare_queue(&channel, &config.ingress_queue).await?;
 
         Ok(Self {
             channel,
             action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
+            wake_consumers: Mutex::new(HashMap::new()),
+            ingress_consumers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
     }
@@ -140,6 +165,8 @@ impl RabbitMqBrokerInner {
             RabbitMqChannel::Action => &self.action_consumers,
             RabbitMqChannel::Control => &self.control_consumers,
             RabbitMqChannel::Result => &self.result_consumers,
+            RabbitMqChannel::Wake => &self.wake_consumers,
+            RabbitMqChannel::Ingress => &self.ingress_consumers,
         };
 
         if let Some(consumer) = map.lock().get(consumer_id).cloned() {
@@ -272,6 +299,8 @@ fn queue_for(config: &RabbitMqBrokerConfig, channel: RabbitMqChannel) -> &str {
         RabbitMqChannel::Action => &config.action_queue,
         RabbitMqChannel::Control => &config.control_queue,
         RabbitMqChannel::Result => &config.result_queue,
+        RabbitMqChannel::Wake => &config.wake_queue,
+        RabbitMqChannel::Ingress => &config.ingress_queue,
     }
 }
 
@@ -281,6 +310,8 @@ fn channel_name(channel: RabbitMqChannel) -> &'static str {
         RabbitMqChannel::Action => "actions",
         RabbitMqChannel::Control => "control",
         RabbitMqChannel::Result => "results",
+        RabbitMqChannel::Wake => "wake",
+        RabbitMqChannel::Ingress => "ingress",
     }
 }
 
@@ -381,6 +412,60 @@ impl Broker for RabbitMqBroker {
     async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_delivery(self.inner.take_pending(delivery_id)?).await
     }
+
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(&self.inner.channel, &self.config.wake_queue, &key, payload).await
+    }
+
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        let (message, delivery) =
+            receive_json::<WakeMessage>(self, RabbitMqChannel::Wake, consumer).await?;
+        let broker_delivery = WakeDelivery::from(message);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+
+    async fn ack_wake(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn nack_wake(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(
+            &self.inner.channel,
+            &self.config.ingress_queue,
+            &key,
+            payload,
+        )
+        .await
+    }
+
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        let (message, delivery) =
+            receive_json::<IngressMessage>(self, RabbitMqChannel::Ingress, consumer).await?;
+        let broker_delivery = IngressDelivery::from(message);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+
+    async fn ack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn nack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
 }
 
 #[async_trait]
@@ -431,6 +516,38 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn nack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn publish_wake(&self, _message: WakeMessage) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn receive_wake(&self, _consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn ack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn nack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn publish_ingress(&self, _message: IngressMessage) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn receive_ingress(&self, _consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn ack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn nack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(rabbitmq_feature_error())
     }
 }

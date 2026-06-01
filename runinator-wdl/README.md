@@ -3,8 +3,8 @@
 WDL is a human-friendly workflow language that **transpiles to the existing runinator
 JSON workflow model**. It is purely an author-time front end: `compile_str` lowers WDL
 to a `WorkflowDefinition` (with a `WorkflowGraph` `definition` and a `RuninatorType`
-`input_type`), and `decompile` reconstructs WDL from a definition. The scheduler, worker,
-broker, and database are unchanged — they keep consuming the same graph.
+`input_type`), and `decompile` reconstructs WDL from a definition. The web service, waker,
+worker, broker, and database are unchanged — they keep consuming the same graph.
 
 The grammar in [`src/wdl.pest`](src/wdl.pest) is the canonical spec.
 

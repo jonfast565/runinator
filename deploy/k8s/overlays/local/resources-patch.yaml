@@ -20,13 +20,13 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runinator-scheduler
+  name: runinator-waker
   namespace: runinator
 spec:
   template:
     spec:
       containers:
-        - name: scheduler
+        - name: waker
           resources:
             requests:
               cpu: "50m"

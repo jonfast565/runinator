@@ -1,40 +1,32 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runinator-scheduler
+  name: runinator-waker
   namespace: runinator
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: runinator-scheduler
+      app: runinator-waker
   template:
     metadata:
       labels:
-        app: runinator-scheduler
+        app: runinator-waker
     spec:
       containers:
-        - name: scheduler
-          image: runinator-scheduler:dev
+        - name: waker
+          image: runinator-waker:dev
           imagePullPolicy: IfNotPresent
-          command: ["runinator-scheduler"]
+          command: ["runinator-waker"]
           args:
-            - "--scheduler-frequency-seconds"
-            - "1"
-            - "--scheduler-id"
+            - "--waker-id"
             - "$(POD_NAME)"
-            - "--scheduler-lease-seconds"
-            - "60"
-            - "--api-base-url"
-            - "$(WS_API_BASE_URL)"
-            - "--api-timeout-seconds"
-            - "30"
             - "--broker-backend"
             - "rabbitmq"
             - "--broker-endpoint"
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
             - "--broker-client-id"
-            - "runinator-scheduler-$(POD_NAME)"
+            - "runinator-waker-$(POD_NAME)"
           envFrom:
             - configMapRef:
                 name: runinator-common

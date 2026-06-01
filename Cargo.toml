@@ -6,7 +6,7 @@ members = [
     "runinator-models",
     "runinator-database",
     "runinator-migration",
-    "runinator-scheduler",
+    "runinator-waker",
     "runinator-ws",
     "runinator-worker",
     "runinator-ctl",

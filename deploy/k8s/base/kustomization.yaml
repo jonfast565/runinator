@@ -14,7 +14,7 @@ resources:
   - postgres.yaml
   - rabbitmq.yaml
   - ws.yaml
-  - scheduler.yaml
+  - waker.yaml
   - worker.yaml
   - importer.yaml
   - command-center.yaml
@@ -22,7 +22,7 @@ resources:
 images:
   - name: runinator-ws
     newTag: dev
-  - name: runinator-scheduler
+  - name: runinator-waker
     newTag: dev
   - name: runinator-worker
     newTag: dev

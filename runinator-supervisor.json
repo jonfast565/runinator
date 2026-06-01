@@ -35,19 +35,9 @@
       ]
     },
     {
-      "name": "scheduler",
-      "command": "./target/debug/runinator-scheduler",
+      "name": "waker",
+      "command": "./target/debug/runinator-waker",
       "args": [
-        "--scheduler-frequency-seconds",
-        "1",
-        "--gossip-bind",
-        "127.0.0.1",
-        "--gossip-port",
-        "5511",
-        "--gossip-targets",
-        "127.0.0.1:5510,127.0.0.1:5512",
-        "--api-timeout-seconds",
-        "30",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",

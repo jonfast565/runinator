@@ -343,6 +343,30 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scheduler_id: String,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Fetch ready-node rows still pending drive (uncompleted and not currently claimed), so the
+    /// web service can announce them on the wake channel. Includes future `ready_at` rows.
+    fn fetch_pending_ready_nodes(
+        &self,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Claim a single ready-node row by id for drive, leasing it to `scheduler_id`.
+    fn claim_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Release a claimed ready-node row back to the queued state so it can be re-driven.
+    fn release_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(
         &self,

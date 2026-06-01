@@ -14,7 +14,7 @@
 #
 # Manual local images use the overlay's default dev tag:
 #   docker build -t runinator-ws:dev       -f runinator-ws/Dockerfile       .
-#   docker build -t runinator-scheduler:dev -f runinator-scheduler/Dockerfile .
+#   docker build -t runinator-waker:dev     -f runinator-waker/Dockerfile     .
 #   docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
 #   docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
 #   docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
@@ -125,7 +125,7 @@ else
 fi
 
 if [[ "$verb" == "apply" ]]; then
-    rollout_targets=(deployment/runinator-ws deployment/runinator-scheduler deployment/runinator-worker)
+    rollout_targets=(deployment/runinator-ws deployment/runinator-waker deployment/runinator-worker)
     if [[ "$skip_pg" -eq 0 ]]; then
         rollout_targets=(statefulset/runinator-postgres "${rollout_targets[@]}")
     fi

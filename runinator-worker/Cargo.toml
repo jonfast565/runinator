@@ -13,7 +13,6 @@ serde_json = "1.0"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 log-panics = "2.1"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls", "blocking"] }
-prost = "0.13"
 
 runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }

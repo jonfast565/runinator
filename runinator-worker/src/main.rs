@@ -1,6 +1,5 @@
 mod broker;
 mod config;
-mod control_events;
 mod executor;
 mod output_sink;
 mod provider_repository;
@@ -14,7 +13,6 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;
 use runinator_comm::WireCodec;
-use runinator_comm::worker_control::WorkerControlEventKind;
 use runinator_models::errors::{RuntimeError, SendableError};
 use runinator_models::workflow_state::TaskStatusOutput;
 use runinator_models::workflows::WorkflowStatus;
@@ -29,7 +27,6 @@ use tokio::{
 
 use crate::output_sink::RunOutputSink;
 use broker::{broker_error, build_broker};
-use control_events::{EventDetails, SchedulerControlClient};
 use secrets::resolve_secret_refs;
 
 #[cfg(test)]
@@ -55,14 +52,12 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config).await?;
     let api_client = build_api_client(&config)?;
-    let control_client = Arc::new(SchedulerControlClient::new(&config)?);
 
     let shutdown = Arc::new(Notify::new());
     let mut worker_task = {
         let broker = broker.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
-        let control_client = Arc::clone(&control_client);
         let consumer = config.broker_consumer_id.clone();
         let max_concurrent_actions = config.max_concurrent_actions;
         let shutdown_grace = Duration::from_secs(config.shutdown_grace_seconds);
@@ -73,7 +68,6 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
                 consumer,
                 libraries,
                 api_client,
-                control_client,
                 max_concurrent_actions,
                 shutdown_grace,
                 shutdown,
@@ -197,7 +191,6 @@ async fn run_worker_loop(
     consumer_id: String,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
-    control_client: Arc<SchedulerControlClient>,
     max_concurrent_actions: usize,
     shutdown_grace: Duration,
     shutdown: Arc<Notify>,
@@ -208,18 +201,11 @@ async fn run_worker_loop(
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
         consumer_id.clone(),
-        Arc::clone(&control_client),
         Arc::clone(&in_flight),
         shutdown.clone(),
     ));
     let mut deliveries = JoinSet::new();
     info!("Worker processing up to {max_concurrent_actions} concurrent action(s)");
-    send_control_event(
-        &control_client,
-        WorkerControlEventKind::WorkerStarted,
-        EventDetails::empty(),
-    )
-    .await;
 
     loop {
         let permit = tokio::select! {
@@ -259,7 +245,6 @@ async fn run_worker_loop(
         let consumer_id = consumer_id.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
-        let control_client = Arc::clone(&control_client);
         let in_flight = Arc::clone(&in_flight);
         deliveries.spawn(async move {
             let _permit = permit;
@@ -268,7 +253,6 @@ async fn run_worker_loop(
                 &consumer_id,
                 libraries,
                 api_client,
-                control_client,
                 maybe_delivery,
                 in_flight,
             )
@@ -298,13 +282,6 @@ async fn run_worker_loop(
         Err(err) if err.is_cancelled() => {}
         Err(err) => error!("Worker control task join error: {}", err),
     }
-
-    send_control_event(
-        &control_client,
-        WorkerControlEventKind::WorkerStopping,
-        EventDetails::empty(),
-    )
-    .await;
 
     Ok(())
 }
@@ -337,7 +314,6 @@ async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
 async fn run_control_loop(
     broker: Arc<dyn Broker>,
     consumer_id: String,
-    control_client: Arc<SchedulerControlClient>,
     in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
@@ -351,15 +327,13 @@ async fn run_control_loop(
                 result.map_err(|err| broker_error("receive_control", err))?
             }
         };
-        handle_control_delivery(&broker, &consumer_id, &control_client, &in_flight, delivery)
-            .await?;
+        handle_control_delivery(&broker, &consumer_id, &in_flight, delivery).await?;
     }
 }
 
 async fn handle_control_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
-    control_client: &Arc<SchedulerControlClient>,
     in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>,
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
@@ -385,27 +359,17 @@ async fn handle_control_delivery(
         }
         ControlKind::Pause => {
             info!(
-                "Pause control received for workflow run {}; scheduler will stop dispatching at the next boundary",
+                "Pause control received for workflow run {}; the web service will stop dispatching at the next boundary",
                 delivery.command.workflow_run_id
             );
         }
         ControlKind::Resume => {
             info!(
-                "Resume control received for workflow run {}; scheduler controls dispatch resumption",
+                "Resume control received for workflow run {}; the web service controls dispatch resumption",
                 delivery.command.workflow_run_id
             );
         }
     }
-    send_control_event(
-        control_client,
-        WorkerControlEventKind::ControlApplied,
-        EventDetails::for_control(
-            delivery.command.workflow_run_id,
-            control_kind,
-            "Broker control applied by worker",
-        ),
-    )
-    .await;
     broker
         .ack_control(consumer_id, delivery.delivery_id)
         .await
@@ -417,7 +381,6 @@ async fn process_delivery(
     consumer_id: &str,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
-    control_client: Arc<SchedulerControlClient>,
     delivery: runinator_broker::BrokerDelivery,
     in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
 ) -> Result<(), SendableError> {
@@ -428,17 +391,6 @@ async fn process_delivery(
         .lock()
         .await
         .insert(command.workflow_run_id, token.clone());
-    send_control_event(
-        &control_client,
-        WorkerControlEventKind::ActionStarted,
-        EventDetails::for_action(
-            command.workflow_run_id,
-            command.workflow_node_run_id,
-            command.node_id.clone(),
-            "Action started",
-        ),
-    )
-    .await;
     let sink = RunOutputSink::new(
         command.clone(),
         broker.clone(),
@@ -488,17 +440,6 @@ async fn process_delivery(
                 .await
                 .map_err(|err| broker_error("ack", err))?;
             in_flight.lock().await.remove(&command.workflow_run_id);
-            send_control_event(
-                &control_client,
-                WorkerControlEventKind::ActionFinished,
-                EventDetails::for_action(
-                    command.workflow_run_id,
-                    command.workflow_node_run_id,
-                    command.node_id.clone(),
-                    message,
-                ),
-            )
-            .await;
             return Ok(());
         }
     };
@@ -606,32 +547,10 @@ async fn process_delivery(
         );
     }
 
-    send_control_event(
-        &control_client,
-        WorkerControlEventKind::ActionFinished,
-        EventDetails::for_action(
-            command.workflow_run_id,
-            command.workflow_node_run_id,
-            command.node_id,
-            provider_message.unwrap_or_else(|| "Action finished".into()),
-        ),
-    )
-    .await;
-
     broker
         .ack(consumer_id, delivery.delivery_id)
         .await
         .map_err(|err| broker_error("ack", err))
-}
-
-async fn send_control_event(
-    control_client: &SchedulerControlClient,
-    kind: WorkerControlEventKind,
-    details: EventDetails,
-) {
-    if let Err(err) = control_client.send(kind, details).await {
-        warn!("Unable to send scheduler control event: {}", err);
-    }
 }
 
 async fn nack_action_delivery(

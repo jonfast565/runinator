@@ -3,7 +3,7 @@ WORKDIR /workspace
 COPY . .
 RUN rustup install 1.91.1 && \
     rustup default 1.91.1 && \
-    cargo build --release --bin runinator-scheduler --features rabbitmq
+    cargo build --release --bin runinator-waker --features rabbitmq
 
 FROM debian:bookworm-slim
 
@@ -13,11 +13,11 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/runinator
-COPY --from=builder /workspace/target/release/runinator-scheduler /usr/local/bin/runinator-scheduler
-RUN chown -R runinator:runinator /usr/local/bin/runinator-scheduler
-RUN chmod -R 775 /usr/local/bin/runinator-scheduler
+COPY --from=builder /workspace/target/release/runinator-waker /usr/local/bin/runinator-waker
+RUN chown -R runinator:runinator /usr/local/bin/runinator-waker
+RUN chmod -R 775 /usr/local/bin/runinator-waker
 
 ENV RUST_LOG=info \
     RUST_BACKTRACE=1
 USER runinator
-ENTRYPOINT ["/usr/local/bin/runinator-scheduler"]
+ENTRYPOINT ["/usr/local/bin/runinator-waker"]

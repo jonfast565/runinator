@@ -6,7 +6,8 @@ use std::{
 
 use runinator_broker::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    ResultDelivery, ResultMessage, in_memory::InMemoryBroker,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    in_memory::InMemoryBroker,
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
@@ -769,6 +770,38 @@ impl Broker for RecordingBroker {
         self.inner.nack_result(consumer, delivery_id).await?;
         self.result_nacks.lock().unwrap().insert(delivery_id);
         Ok(())
+    }
+
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
+        self.inner.publish_wake(message).await
+    }
+
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        self.inner.receive_wake(consumer).await
+    }
+
+    async fn ack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.ack_wake(consumer, delivery_id).await
+    }
+
+    async fn nack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.nack_wake(consumer, delivery_id).await
+    }
+
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
+        self.inner.publish_ingress(message).await
+    }
+
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        self.inner.receive_ingress(consumer).await
+    }
+
+    async fn ack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.ack_ingress(consumer, delivery_id).await
+    }
+
+    async fn nack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.nack_ingress(consumer, delivery_id).await
     }
 }
 

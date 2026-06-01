@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::{ActionCommand, ControlCommand, WorkflowResultEvent};
+use runinator_comm::{
+    ActionCommand, ControlCommand, WakeCommand, WorkflowResultEvent, WsIngressCommand,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -50,6 +52,86 @@ pub struct ResultDelivery {
     pub dedupe_key: String,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
+}
+
+/// Wake event queued for waker delivery (delayed reducer drive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeMessage {
+    pub command: WakeCommand,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// Wake delivery returned when polling the wake channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeDelivery {
+    pub delivery_id: Uuid,
+    pub command: WakeCommand,
+    pub dedupe_key: String,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// Ingress message queued for web-service consumption (drive / control request).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressMessage {
+    pub command: WsIngressCommand,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// Ingress delivery returned when polling the ingress channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngressDelivery {
+    pub delivery_id: Uuid,
+    pub command: WsIngressCommand,
+    pub dedupe_key: String,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+impl WakeMessage {
+    pub fn dedupe_key_or_hash(&self) -> String {
+        self.dedupe_key
+            .clone()
+            .unwrap_or_else(|| self.command.dedupe_key())
+    }
+}
+
+impl IngressMessage {
+    pub fn dedupe_key_or_hash(&self) -> String {
+        self.dedupe_key
+            .clone()
+            .unwrap_or_else(|| self.command.dedupe_key())
+    }
+}
+
+impl From<WakeMessage> for WakeDelivery {
+    fn from(message: WakeMessage) -> Self {
+        let dedupe = message.dedupe_key_or_hash();
+        Self {
+            delivery_id: Uuid::new_v4(),
+            dedupe_key: dedupe,
+            enqueued_at: message.enqueued_at,
+            command: message.command,
+        }
+    }
+}
+
+impl From<IngressMessage> for IngressDelivery {
+    fn from(message: IngressMessage) -> Self {
+        let dedupe = message.dedupe_key_or_hash();
+        Self {
+            delivery_id: Uuid::new_v4(),
+            dedupe_key: dedupe,
+            enqueued_at: message.enqueued_at,
+            command: message.command,
+        }
+    }
 }
 
 impl BrokerMessage {

@@ -1,5 +1,6 @@
 use crate::{
-    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, ResultDelivery, ResultMessage,
+    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, IngressDelivery,
+    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -37,6 +38,26 @@ pub struct PublishResultRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveResultResponse {
     pub delivery: ResultDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishWakeRequest {
+    pub message: WakeMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveWakeResponse {
+    pub delivery: WakeDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishIngressRequest {
+    pub message: IngressMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveIngressResponse {
+    pub delivery: IngressDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -8,9 +8,9 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 
 Primary runtime flow:
 
-1. `runinator-ws` owns the HTTP API and persists scheduled tasks, workflow runs, and orchestration records through `runinator-database`.
-2. `runinator-scheduler` discovers the web service, fetches due state-machine nodes through `runinator-api`, and publishes task commands to `runinator-broker`.
-3. `runinator-worker` polls the broker, resolves a provider/plugin, executes the task, and records results back through `runinator-api`.
+1. `runinator-ws` owns the HTTP API and the reducer, persists scheduled tasks/workflow runs/orchestration records through `runinator-database`, publishes scheduled work on the broker `wake` channel, publishes `ActionCommand`s on the broker action channel, consumes the broker `ingress` channel (drive + control requests), and runs the trigger-firing, action-dispatch, wake-publisher, and reconcile loops in-process.
+2. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each ready node is due, then publishes a drive on the `ingress` channel. It has no database, no HTTP client to the web service, and shares no channel with the worker.
+3. `runinator-worker` polls the broker action channel, resolves a provider/plugin, executes the task, and publishes results on the broker result channel (records also reachable through `runinator-api` compatibility endpoints).
 4. `runinator-importer` imports task definitions and workflow packs into the web service.
 5. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
@@ -22,11 +22,11 @@ Keep dependency direction boring and predictable, structured with domains in min
 
 - `runinator-models`: shared domain and wire structs only. Avoid service logic, database details, HTTP clients, broker behavior, or runtime configuration here.
 - `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
-- `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through scheduler, worker, or importer code.
+- `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through worker or importer code.
 - `runinator-database`: persistence interfaces and concrete SQLite/Postgres implementations. Database-specific mapping belongs here, not in `runinator-ws`.
-- `runinator-ws`: API server and repository orchestration. It should depend on the database trait, not on worker/scheduler/provider internals.
-- `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Scheduler and worker should talk to the `Broker` trait where practical.
-- `runinator-scheduler`: scheduling loop and state-machine node dispatch. It should not execute task providers directly and should not write to the database directly.
+- `runinator-ws`: API server, reducer, and repository orchestration. It should depend on the database trait, not on worker/waker/provider internals.
+- `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Channels are `action`, `control` (ws→worker), `result` (worker→ws), `wake` (ws→waker), and `ingress` (waker/worker→ws). Waker, worker, and web service should talk to the `Broker` trait where practical. A new channel must be implemented across every backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports.
+- `runinator-waker`: broker-only timer/relay. It consumes the `wake` channel, sleeps until due, and publishes a drive on the `ingress` channel. It must not execute task providers, must not write to the database, and must not depend on `runinator-api` or the worker.
 - `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
 - `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
@@ -49,13 +49,14 @@ If a change requires a dependency from a lower-level/shared crate back into a se
 Preserve the command lifecycle:
 
 - Workflows are executed as state-machines with nodes like `task`, `wait`, `condition`, `approval`, `loop`, and `subflow`.
-- Scheduler publishes `ActionCommand` values through `runinator-broker` for `task` nodes.
+- The web service owns the reducer and publishes `ActionCommand` values through `runinator-broker` for `task` nodes (drained from the durable `workflow_action_dispatches` outbox by an in-process publisher loop). The waker never publishes `ActionCommand`s.
+- The web service publishes a `WakeCommand` on the `wake` channel for every pending ready node (the wake-publisher loop doubles as the durable reconcile backstop; the broker dedupes wakes already in flight). The waker relays a due wake to a `WsIngressCommand::Drive` on the `ingress` channel, which the web service consumes to run the reducer.
 - Workflow run states (`queued`, `running`, `waiting`, etc.) are persisted separately from individual task run statuses.
 - Workers acknowledge broker deliveries only after processing and any required result logging has completed.
 - Worker outputs, logs, artifacts, and node-run status/results may be delivered as broker result events consumed by `runinator-ws`, or through compatibility endpoints in `runinator-api`; only `runinator-ws` persists them through `runinator-database`, and workers must not write directly to the database.
 - Broker messages should remain serializable and backend-neutral.
-- Any command or control payload that crosses the broker/scheduler/worker boundary must use the shared contracts in `runinator-comm` end to end. Do not add broker-local, scheduler-local, or worker-local duplicates for the same control path; extend `ActionCommand` or `ControlCommand`/`ControlKind` and thread that type through every relevant backend and delivery wrapper.
-- Do not add direct scheduler-to-worker request/response channels. The only direct worker-to-scheduler path is the optional protobuf control-event ingress for lightweight lifecycle/control events. If a worker response needs to become durable or observable, put it on the existing `runinator-api` result/log/artifact path unless there is a documented reason it cannot use that path.
+- Any command or control payload that crosses the broker/waker/worker boundary must use the shared contracts in `runinator-comm` end to end. Do not add broker-local, waker-local, or worker-local duplicates for the same path; extend `ActionCommand`, `ControlCommand`/`ControlKind`, `WakeCommand`, or `WsIngressCommand` and thread that type through every relevant backend and delivery wrapper.
+- Do not add direct waker-to-worker or worker-to-waker channels. Worker-originated control requests travel worker→`ingress`→web service (`WsIngressCommand::Control`); web-service control travels ws→`control`→worker (`ControlCommand`). The two directions use distinct channels so neither consumes its own messages.
 - Discovery/gossip types in `runinator-comm` should stay transport-friendly and serde-compatible.
 
 When adding fields to shared structs, check every boundary that serializes, persists, or maps that type:
@@ -150,6 +151,6 @@ Before adding code, ask:
 
 - Does this crate own the behavior I am changing?
 - Is the dependency direction still from services toward shared contracts, not the reverse?
-- Are scheduler, worker, web service, broker, and database responsibilities still distinct?
+- Are waker, worker, web service, broker, and database responsibilities still distinct?
 - Have all serializers, mappers, API clients, and config files been updated for shared contract changes?
 - Can the local supervisor stack still run after this change?

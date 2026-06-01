@@ -305,14 +305,9 @@ impl StackHarness {
                     ]
                 },
                 {
-                    "name": "scheduler",
-                    "command": target_debug.join(bin_name("runinator-scheduler")),
+                    "name": "waker",
+                    "command": target_debug.join(bin_name("runinator-waker")),
                     "args": [
-                        "--scheduler-frequency-seconds", "1",
-                        "--gossip-bind", "127.0.0.1",
-                        "--gossip-port", ports.scheduler_gossip.to_string(),
-                        "--gossip-targets", format!("127.0.0.1:{}", ports.web_gossip),
-                        "--api-timeout-seconds", "30",
                         "--broker-backend", "tcp",
                         "--broker-endpoint", format!("127.0.0.1:{}", ports.broker)
                     ]
@@ -423,7 +418,7 @@ fn build_service_binaries(workspace: &Path) -> E2eResult<()> {
             "-p",
             "runinator-ws",
             "-p",
-            "runinator-scheduler",
+            "runinator-waker",
             "-p",
             "runinator-worker",
         ])

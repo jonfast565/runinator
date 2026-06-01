@@ -1,6 +1,6 @@
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    ResultDelivery, ResultMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -8,6 +8,8 @@ use uuid::Uuid;
 const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
 const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
+const DEFAULT_WAKE_TOPIC: &str = "runinator.wake";
+const DEFAULT_INGRESS_TOPIC: &str = "runinator.ingress";
 const DEFAULT_CLIENT_ID: &str = "runinator";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +18,8 @@ pub struct KafkaBrokerConfig {
     pub action_topic: String,
     pub control_topic: String,
     pub result_topic: String,
+    pub wake_topic: String,
+    pub ingress_topic: String,
     pub client_id: String,
 }
 
@@ -26,6 +30,8 @@ impl KafkaBrokerConfig {
             action_topic: DEFAULT_ACTION_TOPIC.into(),
             control_topic: DEFAULT_CONTROL_TOPIC.into(),
             result_topic: DEFAULT_RESULT_TOPIC.into(),
+            wake_topic: DEFAULT_WAKE_TOPIC.into(),
+            ingress_topic: DEFAULT_INGRESS_TOPIC.into(),
             client_id: DEFAULT_CLIENT_ID.into(),
         }
     }
@@ -39,6 +45,17 @@ impl KafkaBrokerConfig {
         self.action_topic = action_topic.into();
         self.control_topic = control_topic.into();
         self.result_topic = result_topic.into();
+        self
+    }
+
+    /// override the orchestration topics (wake = ws -> waker, ingress = waker/worker -> ws).
+    pub fn with_orchestration_topics(
+        mut self,
+        wake_topic: impl Into<String>,
+        ingress_topic: impl Into<String>,
+    ) -> Self {
+        self.wake_topic = wake_topic.into();
+        self.ingress_topic = ingress_topic.into();
         self
     }
 
@@ -85,6 +102,8 @@ struct KafkaBrokerInner {
     action_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     control_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    wake_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    ingress_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     pending: Mutex<HashMap<Uuid, PendingDelivery>>,
 }
 
@@ -108,6 +127,8 @@ enum KafkaChannel {
     Action,
     Control,
     Result,
+    Wake,
+    Ingress,
 }
 
 #[cfg(feature = "kafka")]
@@ -126,6 +147,8 @@ impl KafkaBrokerInner {
             action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
+            wake_consumers: Mutex::new(HashMap::new()),
+            ingress_consumers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
     }
@@ -140,6 +163,8 @@ impl KafkaBrokerInner {
             KafkaChannel::Action => &self.action_consumers,
             KafkaChannel::Control => &self.control_consumers,
             KafkaChannel::Result => &self.result_consumers,
+            KafkaChannel::Wake => &self.wake_consumers,
+            KafkaChannel::Ingress => &self.ingress_consumers,
         };
 
         if let Some(consumer) = map.lock().get(consumer_id).cloned() {
@@ -320,6 +345,8 @@ fn topic_for(config: &KafkaBrokerConfig, channel: KafkaChannel) -> &str {
         KafkaChannel::Action => &config.action_topic,
         KafkaChannel::Control => &config.control_topic,
         KafkaChannel::Result => &config.result_topic,
+        KafkaChannel::Wake => &config.wake_topic,
+        KafkaChannel::Ingress => &config.ingress_topic,
     }
 }
 
@@ -329,6 +356,8 @@ fn channel_name(channel: KafkaChannel) -> &'static str {
         KafkaChannel::Action => "actions",
         KafkaChannel::Control => "control",
         KafkaChannel::Result => "results",
+        KafkaChannel::Wake => "wake",
+        KafkaChannel::Ingress => "ingress",
     }
 }
 
@@ -444,6 +473,70 @@ impl Broker for KafkaBroker {
     async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_pending(self.inner.take_pending(delivery_id)?)
     }
+
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(&self.inner.producer, &self.config.wake_topic, &key, payload).await
+    }
+
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        let (message, pending) =
+            receive_json::<WakeMessage>(self, KafkaChannel::Wake, consumer).await?;
+        let delivery = WakeDelivery::from(message);
+        self.inner.track_delivery(
+            delivery.delivery_id,
+            pending.consumer,
+            pending.topic,
+            pending.partition,
+            pending.offset,
+        );
+        Ok(delivery)
+    }
+
+    async fn ack_wake(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn nack_wake(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(
+            &self.inner.producer,
+            &self.config.ingress_topic,
+            &key,
+            payload,
+        )
+        .await
+    }
+
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        let (message, pending) =
+            receive_json::<IngressMessage>(self, KafkaChannel::Ingress, consumer).await?;
+        let delivery = IngressDelivery::from(message);
+        self.inner.track_delivery(
+            delivery.delivery_id,
+            pending.consumer,
+            pending.topic,
+            pending.partition,
+            pending.offset,
+        );
+        Ok(delivery)
+    }
+
+    async fn ack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn nack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
 }
 
 #[async_trait]
@@ -494,6 +587,38 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn publish_wake(&self, _message: WakeMessage) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn receive_wake(&self, _consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn ack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn nack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn publish_ingress(&self, _message: IngressMessage) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn receive_ingress(&self, _consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn ack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn nack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(kafka_feature_error())
     }
 }

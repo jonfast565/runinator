@@ -147,7 +147,7 @@ jobs:
           New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 
           $rustBins = @(
-            "runinator-scheduler",
+            "runinator-waker",
             "runinator-worker",
             "runinator-importer",
             "runinator-ws",

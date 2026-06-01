@@ -1125,6 +1125,73 @@ impl DatabaseImpl for SqliteDb {
         Ok(result.rows_affected() > 0)
     }
 
+    async fn fetch_pending_ready_nodes(
+        &self,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        let rows = sqlx::query(
+            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at
+             FROM workflow_ready_nodes
+             WHERE completed_at IS NULL
+               AND (claimed_until IS NULL OR claimed_until <= ?)
+             ORDER BY ready_at, id
+             LIMIT ?",
+        )
+        .bind(now.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(mappers::sqlite_row_to_ready_node).collect()
+    }
+
+    async fn claim_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+    ) -> Result<Option<ReadyNodeRecord>, SendableError> {
+        let row = sqlx::query(
+            "UPDATE workflow_ready_nodes
+             SET claimed_by = ?, claimed_until = ?, attempts = attempts + 1, status = 'running', updated_at = ?
+             WHERE id = ?
+               AND completed_at IS NULL
+               AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)
+             RETURNING id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at",
+        )
+        .bind(&scheduler_id)
+        .bind(lease_until.timestamp())
+        .bind(now.timestamp())
+        .bind(ready_node_id)
+        .bind(now.timestamp())
+        .bind(&scheduler_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref()
+            .map(mappers::sqlite_row_to_ready_node)
+            .transpose()
+    }
+
+    async fn release_ready_node(
+        &self,
+        ready_node_id: i64,
+        scheduler_id: String,
+    ) -> Result<bool, SendableError> {
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(
+            "UPDATE workflow_ready_nodes
+             SET claimed_by = NULL, claimed_until = NULL, status = 'queued', updated_at = ?
+             WHERE id = ? AND claimed_by = ? AND completed_at IS NULL",
+        )
+        .bind(now)
+        .bind(ready_node_id)
+        .bind(scheduler_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let row = sqlx::query(

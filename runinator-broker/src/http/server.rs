@@ -1,8 +1,9 @@
 use crate::{
     http::types::{
-        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishRequest,
-        PublishResultRequest, ReceiveControlResponse, ReceiveRequest, ReceiveResponse,
-        ReceiveResultResponse,
+        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishIngressRequest,
+        PublishRequest, PublishResultRequest, PublishWakeRequest, ReceiveControlResponse,
+        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
+        ReceiveWakeResponse,
     },
     Broker, BrokerError,
 };
@@ -55,6 +56,14 @@ where
         .route("/results/receive", post(receive_result::<B>))
         .route("/results/ack", post(ack_result::<B>))
         .route("/results/nack", post(nack_result::<B>))
+        .route("/wake/publish", post(publish_wake::<B>))
+        .route("/wake/receive", post(receive_wake::<B>))
+        .route("/wake/ack", post(ack_wake::<B>))
+        .route("/wake/nack", post(nack_wake::<B>))
+        .route("/ingress/publish", post(publish_ingress::<B>))
+        .route("/ingress/receive", post(receive_ingress::<B>))
+        .route("/ingress/ack", post(ack_ingress::<B>))
+        .route("/ingress/nack", post(nack_ingress::<B>))
         .route("/receive", post(receive::<B>))
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
@@ -176,6 +185,116 @@ where
         state
             .broker
             .ack_control(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn publish_wake<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishWakeRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_wake(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_wake<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_wake(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveWakeResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
+async fn ack_wake<B>(State(state): State<AppState<B>>, Json(request): Json<AckRequest>) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_wake(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_wake<B>(State(state): State<AppState<B>>, Json(request): Json<AckRequest>) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_wake(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn publish_ingress<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishIngressRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_ingress(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_ingress<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_ingress(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveIngressResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
+async fn ack_ingress<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_ingress(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_ingress<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_ingress(&request.consumer, request.delivery_id)
             .await,
         StatusCode::OK,
     )

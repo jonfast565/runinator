@@ -1,6 +1,6 @@
 # runinator
 
-Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, scheduler, worker, and importer together.
+Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, waker, worker, and importer together.
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ This uses `runinator-supervisor.json` to start:
 
 - `runinator-broker`
 - `runinator-ws`
-- `runinator-scheduler`
+- `runinator-waker`
 - `runinator-worker`
 - `runinator-importer`
 
@@ -65,30 +65,34 @@ The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
 workflow action pickup.
 
-The scheduler supports active/active scale-out when the web service is backed by
-Postgres. Each scheduler claims workflow runs through the web service before
-advancing them, so multiple scheduler replicas can run at the same time. SQLite
-remains intended for local development and single-process stacks.
+The web service owns the reducer and drives workflows over the broker: it
+publishes scheduled work on the `wake` channel, and the `runinator-waker` (a
+small, broker-only timer/relay) sleeps until each ready node is due and then
+publishes a `drive` on the `ingress` channel that the web service consumes to
+advance the run. The waker holds no state and reaches the web service only over
+the broker, so multiple waker replicas can run active/active. SQLite remains
+intended for local development and single-process stacks; Postgres is intended
+for multi-replica deployments.
 
 The local stack uses the built-in broker over raw TCP by default. The standalone
 broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
 `http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
 Kafka and RabbitMQ are available as feature-gated direct backends for the
-scheduler, worker, and web service. Build those binaries with `--features kafka`
+waker, worker, and web service. Build those binaries with `--features kafka`
 or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
-override `--broker-action-topic`, `--broker-control-topic`, or
-`--broker-result-topic` when not using the default `runinator.*` topics/queues.
+override `--broker-action-topic`, `--broker-control-topic`,
+`--broker-result-topic`, `--broker-wake-topic`, or `--broker-ingress-topic` when
+not using the default `runinator.*` topics/queues.
 Do not scale the built-in `runinator-broker` process horizontally: each instance
 has its own in-memory queue. For multi-broker high availability, run Kafka or
-RabbitMQ and point every web-service, scheduler, and worker instance at the same
+RabbitMQ and point every web-service, waker, and worker instance at the same
 shared broker topics or queues.
 
-The optional direct worker-to-scheduler control-event channel is disabled by
-default. Enable it on the scheduler with `--worker-control-transport http|tcp`
-plus bind/port flags, and on workers with `--scheduler-control-transport
-http|tcp` plus the matching endpoint.
+Worker-originated control requests travel to the web service over the broker
+`ingress` channel; the web service issues `cancel`/`pause`/`resume` to workers
+over the `control` channel. There is no direct worker-to-waker channel.
 
 Local runtime files are written under `~/.runinator/` by default. This includes
 the SQLite database at `~/.runinator/runinator.db`, credentials at
@@ -173,7 +177,7 @@ deploy/k8s/
 ```
 
 The K8s stack uses **Postgres** in-cluster (StatefulSet + PVC) and **RabbitMQ**
-as the broker (via the `rabbitmq` Cargo feature, baked into the ws/scheduler/
+as the broker (via the `rabbitmq` Cargo feature, baked into the ws/waker/
 worker images). The standalone `runinator-broker` binary is not deployed in K8s.
 
 Schema is applied by the `runinator-migration` image, which uses sqlx's built-in
@@ -266,7 +270,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 scripts/package-macos-backend-apps.sh --release
 ```
 
-The script creates `.app` bundles for broker, web service, scheduler, worker,
+The script creates `.app` bundles for broker, web service, waker, worker,
 importer, and supervisor under `target/macos-apps`.
 
 ## Verification

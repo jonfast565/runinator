@@ -13,8 +13,6 @@ pub struct Config {
     pub broker_result_topic: String,
     pub broker_client_id: String,
     pub broker_consumer_id: String,
-    pub scheduler_control_transport: String,
-    pub scheduler_control_endpoint: String,
     pub max_concurrent_actions: usize,
     pub shutdown_grace_seconds: u64,
     pub api_base_url: String,
@@ -47,12 +45,6 @@ struct CliArgs {
 
     #[arg(long)]
     broker_consumer_id: Option<String>,
-
-    #[arg(long, default_value = "disabled")]
-    scheduler_control_transport: String,
-
-    #[arg(long, default_value = "127.0.0.1:7080")]
-    scheduler_control_endpoint: String,
 
     #[arg(long, default_value_t = 4)]
     max_concurrent_actions: usize,
@@ -93,8 +85,6 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_result_topic: args.broker_result_topic,
         broker_client_id: args.broker_client_id,
         broker_consumer_id: consumer_id,
-        scheduler_control_transport: args.scheduler_control_transport,
-        scheduler_control_endpoint: args.scheduler_control_endpoint,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
         shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
         api_base_url: args.api_base_url,

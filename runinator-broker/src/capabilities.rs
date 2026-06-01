@@ -40,7 +40,7 @@ mod tests {
     use super::*;
     use crate::{
         in_memory::InMemoryBroker, BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery,
-        ResultDelivery, ResultMessage,
+        IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
     };
 
     #[test]
@@ -131,6 +131,46 @@ mod tests {
         }
 
         async fn nack_result(
+            &self,
+            _consumer: &str,
+            _delivery_id: Uuid,
+        ) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn publish_wake(&self, _message: WakeMessage) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn receive_wake(&self, _consumer: &str) -> Result<WakeDelivery, BrokerError> {
+            unreachable!()
+        }
+
+        async fn ack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn nack_wake(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn publish_ingress(&self, _message: IngressMessage) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn receive_ingress(&self, _consumer: &str) -> Result<IngressDelivery, BrokerError> {
+            unreachable!()
+        }
+
+        async fn ack_ingress(
+            &self,
+            _consumer: &str,
+            _delivery_id: Uuid,
+        ) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn nack_ingress(
             &self,
             _consumer: &str,
             _delivery_id: Uuid,

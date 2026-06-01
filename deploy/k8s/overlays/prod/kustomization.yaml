@@ -12,8 +12,8 @@ images:
   - name: runinator-ws
     newName: REPLACE_REGISTRY/runinator-ws
     newTag: latest
-  - name: runinator-scheduler
-    newName: REPLACE_REGISTRY/runinator-scheduler
+  - name: runinator-waker
+    newName: REPLACE_REGISTRY/runinator-waker
     newTag: latest
   - name: runinator-worker
     newName: REPLACE_REGISTRY/runinator-worker

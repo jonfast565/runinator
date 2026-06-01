@@ -21,8 +21,8 @@ images:
   - name: runinator-ws
     newName: runinator-ws
     newTag: dev
-  - name: runinator-scheduler
-    newName: runinator-scheduler
+  - name: runinator-waker
+    newName: runinator-waker
     newTag: dev
   - name: runinator-worker
     newName: runinator-worker

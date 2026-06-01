@@ -1,3 +1,4 @@
+mod background;
 mod config;
 mod events;
 mod handlers;

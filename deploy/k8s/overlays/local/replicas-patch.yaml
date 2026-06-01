@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runinator-scheduler
+  name: runinator-waker
   namespace: runinator
 spec:
   replicas: 1

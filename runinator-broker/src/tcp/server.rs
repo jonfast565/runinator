@@ -100,6 +100,49 @@ where
             .nack_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::PublishWake { message }) => {
+            broker.publish_wake(message).await.map(|_| TcpResponse::Ok)
+        }
+        Ok(TcpRequest::PublishIngress { message }) => broker
+            .publish_ingress(message)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::ReceiveWake { consumer }) => broker
+            .receive_wake(&consumer)
+            .await
+            .map(|delivery| TcpResponse::WakeDelivery { delivery }),
+        Ok(TcpRequest::ReceiveIngress { consumer }) => broker
+            .receive_ingress(&consumer)
+            .await
+            .map(|delivery| TcpResponse::IngressDelivery { delivery }),
+        Ok(TcpRequest::AckWake {
+            consumer,
+            delivery_id,
+        }) => broker
+            .ack_wake(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::AckIngress {
+            consumer,
+            delivery_id,
+        }) => broker
+            .ack_ingress(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::NackWake {
+            consumer,
+            delivery_id,
+        }) => broker
+            .nack_wake(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::NackIngress {
+            consumer,
+            delivery_id,
+        }) => broker
+            .nack_ingress(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
         Err(err) => Ok(TcpResponse::Error {
             message: err.to_string(),
         }),

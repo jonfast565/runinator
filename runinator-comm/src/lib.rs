@@ -1,6 +1,5 @@
 pub mod discovery;
 pub mod wire;
-pub mod worker_control;
 
 pub use wire::{WireCodec, WireError};
 
@@ -88,6 +87,88 @@ pub enum ControlKind {
 pub struct ControlCommand {
     pub workflow_run_id: i64,
     pub kind: ControlKind,
+}
+
+/// a request to run the web-service reducer for one ready-queue row at a future time. the web
+/// service publishes this when it enqueues a ready node (and the reconcile backstop re-publishes
+/// overdue ones); the waker is the sole consumer and relays a [`WsIngressCommand::Drive`] once
+/// `ready_at` arrives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeCommand {
+    pub ready_node_id: i64,
+    pub workflow_run_id: i64,
+    pub node_id: String,
+    pub ready_at: DateTime<Utc>,
+    pub source_event_id: Uuid,
+}
+
+impl WakeCommand {
+    pub fn new(
+        ready_node_id: i64,
+        workflow_run_id: i64,
+        node_id: String,
+        ready_at: DateTime<Utc>,
+        source_event_id: Uuid,
+    ) -> Self {
+        Self {
+            ready_node_id,
+            workflow_run_id,
+            node_id,
+            ready_at,
+            source_event_id,
+        }
+    }
+
+    /// stable identity for broker deduplication while a wake is in flight.
+    pub fn dedupe_key(&self) -> String {
+        format!("{}:{}", self.ready_node_id, self.source_event_id)
+    }
+}
+
+/// a message addressed to the web service from a waker or a worker, carried on the ingress
+/// channel. the web service is the sole consumer, so producers never depend on each other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WsIngressCommand {
+    /// waker -> ws: run the reducer for a now-due ready node.
+    Drive {
+        ready_node_id: i64,
+        workflow_run_id: i64,
+        node_id: String,
+    },
+    /// worker -> ws: a control request raised by an executing action.
+    Control {
+        workflow_run_id: i64,
+        kind: ControlKind,
+    },
+}
+
+impl WsIngressCommand {
+    pub fn drive(ready_node_id: i64, workflow_run_id: i64, node_id: String) -> Self {
+        Self::Drive {
+            ready_node_id,
+            workflow_run_id,
+            node_id,
+        }
+    }
+
+    pub fn control(workflow_run_id: i64, kind: ControlKind) -> Self {
+        Self::Control {
+            workflow_run_id,
+            kind,
+        }
+    }
+
+    /// stable identity for broker deduplication while a message is in flight.
+    pub fn dedupe_key(&self) -> String {
+        match self {
+            Self::Drive { ready_node_id, .. } => format!("drive:{ready_node_id}"),
+            Self::Control {
+                workflow_run_id,
+                kind,
+            } => format!("control:{workflow_run_id}:{kind:?}"),
+        }
+    }
 }
 
 /// the canonical set of debugger operations against a run. one tagged contract replaces the prior

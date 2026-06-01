@@ -1,10 +1,11 @@
 use crate::{
     http::types::{
-        AckRequest, PublishControlRequest, PublishRequest, ReceiveControlResponse, ReceiveRequest,
-        ReceiveResponse, ReceiveResultResponse,
+        AckRequest, PublishControlRequest, PublishIngressRequest, PublishRequest,
+        PublishWakeRequest, ReceiveControlResponse, ReceiveIngressResponse, ReceiveRequest,
+        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    ResultDelivery, ResultMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -245,5 +246,113 @@ impl Broker for HttpBroker {
 
     async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("results/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
+        let url = self.endpoint("wake/publish")?;
+        let dedupe_key = message.dedupe_key_or_hash();
+        let response = self
+            .client
+            .post(url)
+            .json(&PublishWakeRequest { message })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            StatusCode::CONFLICT => Err(BrokerError::Duplicate(dedupe_key)),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected wake publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        let url = self.endpoint("wake/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveWakeResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected wake receive status: {status}"
+            ))),
+        }
+    }
+
+    async fn ack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("wake/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("wake/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
+        let url = self.endpoint("ingress/publish")?;
+        let dedupe_key = message.dedupe_key_or_hash();
+        let response = self
+            .client
+            .post(url)
+            .json(&PublishIngressRequest { message })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            StatusCode::CONFLICT => Err(BrokerError::Duplicate(dedupe_key)),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected ingress publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        let url = self.endpoint("ingress/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveIngressResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected ingress receive status: {status}"
+            ))),
+        }
+    }
+
+    async fn ack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("ingress/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("ingress/nack", consumer, delivery_id).await
     }
 }

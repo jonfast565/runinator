@@ -12,6 +12,10 @@ use tokio::{
     sync::{Notify, broadcast},
 };
 
+use crate::background::{
+    instance_id, run_action_dispatch_publisher, run_ingress_consumer, run_trigger_loop,
+    run_wake_publisher,
+};
 use crate::events::AppEvent;
 use crate::handlers::catalog::seed_builtin_catalog;
 use crate::result_consumer::run_result_consumer;
@@ -26,12 +30,39 @@ pub async fn run_webserver<T: DatabaseImpl>(
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
     let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
-    let result_consumer = tokio::spawn(run_result_consumer(
-        pool.clone(),
-        broker.clone(),
-        events_tx.clone(),
-        notify.clone(),
-    ));
+    let instance = instance_id();
+    let background = vec![
+        tokio::spawn(run_result_consumer(
+            pool.clone(),
+            broker.clone(),
+            events_tx.clone(),
+            notify.clone(),
+        )),
+        tokio::spawn(run_ingress_consumer(
+            pool.clone(),
+            broker.clone(),
+            events_tx.clone(),
+            instance.clone(),
+            notify.clone(),
+        )),
+        tokio::spawn(run_wake_publisher(
+            pool.clone(),
+            broker.clone(),
+            notify.clone(),
+        )),
+        tokio::spawn(run_trigger_loop(
+            pool.clone(),
+            events_tx.clone(),
+            instance.clone(),
+            notify.clone(),
+        )),
+        tokio::spawn(run_action_dispatch_publisher(
+            pool.clone(),
+            broker.clone(),
+            instance.clone(),
+            notify.clone(),
+        )),
+    ];
     let app = build_router(pool, events_tx, broker);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
@@ -40,7 +71,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
 
     tokio::select! {
         result = server => {
-            result_consumer.abort();
+            abort_all(&background);
             if let Err(err) = result {
                 log::error!("Webserver error: {}", err);
                 return Err(Box::new(err));
@@ -49,8 +80,14 @@ pub async fn run_webserver<T: DatabaseImpl>(
         }
         _ = notify.notified() => {
             info!("Shutting down web server...");
-            result_consumer.abort();
+            abort_all(&background);
             Ok(())
         }
+    }
+}
+
+fn abort_all(handles: &[tokio::task::JoinHandle<()>]) {
+    for handle in handles {
+        handle.abort();
     }
 }

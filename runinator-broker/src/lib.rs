@@ -10,8 +10,11 @@ pub use capabilities::{
     ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
 };
 pub use errors::BrokerError;
-pub use runinator_comm::ControlCommand;
-pub use types::{BrokerDelivery, BrokerMessage, ControlDelivery, ResultDelivery, ResultMessage};
+pub use runinator_comm::{ControlCommand, WakeCommand, WsIngressCommand};
+pub use types::{
+    BrokerDelivery, BrokerMessage, ControlDelivery, IngressDelivery, IngressMessage,
+    ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+};
 
 use async_trait::async_trait;
 
@@ -57,4 +60,33 @@ pub trait Broker: Send + Sync + 'static {
     /// Return the workflow result delivery to the queue for another attempt.
     async fn nack_result(&self, consumer: &str, delivery_id: uuid::Uuid)
         -> Result<(), BrokerError>;
+
+    /// Publish a delayed wake on the wake channel (web service -> waker).
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError>;
+
+    /// Wait for and retrieve the next wake delivery for the supplied consumer group.
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError>;
+
+    /// Acknowledge successful processing of a wake delivery.
+    async fn ack_wake(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
+
+    /// Return the wake delivery to the queue for another attempt.
+    async fn nack_wake(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
+
+    /// Publish a message on the web-service ingress channel (waker/worker -> web service).
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError>;
+
+    /// Wait for and retrieve the next ingress delivery for the supplied consumer group.
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError>;
+
+    /// Acknowledge successful processing of an ingress delivery.
+    async fn ack_ingress(&self, consumer: &str, delivery_id: uuid::Uuid)
+        -> Result<(), BrokerError>;
+
+    /// Return the ingress delivery to the queue for another attempt.
+    async fn nack_ingress(
+        &self,
+        consumer: &str,
+        delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError>;
 }

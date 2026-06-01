@@ -269,7 +269,7 @@ function Publish-Binaries {
     Ensure-Directory -Path $ArtifactsDir
 
     $binaries = @(
-        'runinator-scheduler',
+        'runinator-waker',
         'runinator-worker',
         'runinator-importer',
         'runinator-ws',
@@ -629,15 +629,12 @@ function Write-LocalSupervisorConfig {
             }
         }
         [ordered]@{
-            name = 'Runinator Scheduler'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-scheduler'))
+            name = 'Runinator Waker'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-waker'))
             cwd = $WorkspacePath
-            args = (Get-GossipArguments -Port $gossipPorts.Scheduler -AllTargets $allGossipTargets) + @(
-                '--scheduler-frequency-seconds', '1',
-                '--api-timeout-seconds', '30',
+            args = @(
                 '--broker-backend', 'http',
-                '--broker-endpoint', 'http://127.0.0.1:7070/',
-                '--broker-poll-timeout-seconds', '5'
+                '--broker-endpoint', 'http://127.0.0.1:7070/'
             )
             env = @{
                 RUST_LOG = 'info'
@@ -769,7 +766,7 @@ function Build-ContainerImages {
     Test-ToolAvailable -Name 'docker'
 
     $images = @(
-        @{ Name = 'runinator-scheduler'; Dockerfile = 'runinator-scheduler/Dockerfile' },
+        @{ Name = 'runinator-waker'; Dockerfile = 'runinator-waker/Dockerfile' },
         @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
         @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
         @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
@@ -993,7 +990,7 @@ function Deploy-KubernetesStack {
     $rolloutTargets = [System.Collections.Generic.List[string]]::new()
     if (-not $skipPg) { [void]$rolloutTargets.Add('statefulset/runinator-postgres') }
     if (-not $skipMq) { [void]$rolloutTargets.Add('statefulset/runinator-rabbitmq') }
-    foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-scheduler', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
+    foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-waker', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
         [void]$rolloutTargets.Add($t)
     }
 

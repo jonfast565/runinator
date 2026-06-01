@@ -1,7 +1,7 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    ResultDelivery, ResultMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use std::time::Duration;
@@ -81,15 +81,7 @@ impl TcpBroker {
         match response {
             TcpResponse::Ok => Ok(()),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-            TcpResponse::Delivery { .. } => {
-                Err(BrokerError::Internal("unexpected delivery response".into()))
-            }
-            TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected control delivery response".into(),
-            )),
-            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected result delivery response".into(),
-            )),
+            _ => Err(BrokerError::Internal("unexpected delivery response".into())),
         }
     }
 }
@@ -114,12 +106,8 @@ impl Broker for TcpBroker {
         {
             TcpResponse::Delivery { delivery } => Ok(delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-            TcpResponse::Ok => Err(BrokerError::Internal("unexpected ok response".into())),
-            TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected control delivery response".into(),
-            )),
-            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected result delivery response".into(),
+            _ => Err(BrokerError::Internal(
+                "unexpected action delivery response".into(),
             )),
         }
     }
@@ -158,12 +146,8 @@ impl Broker for TcpBroker {
         {
             TcpResponse::ControlDelivery { delivery } => Ok(delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-            TcpResponse::Ok => Err(BrokerError::Internal("unexpected ok response".into())),
-            TcpResponse::Delivery { .. } => Err(BrokerError::Internal(
-                "unexpected action delivery response".into(),
-            )),
-            TcpResponse::ResultDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected result delivery response".into(),
+            _ => Err(BrokerError::Internal(
+                "unexpected control delivery response".into(),
             )),
         }
     }
@@ -192,12 +176,8 @@ impl Broker for TcpBroker {
         {
             TcpResponse::ResultDelivery { delivery } => Ok(delivery),
             TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-            TcpResponse::Ok => Err(BrokerError::Internal("unexpected ok response".into())),
-            TcpResponse::Delivery { .. } => Err(BrokerError::Internal(
-                "unexpected action delivery response".into(),
-            )),
-            TcpResponse::ControlDelivery { .. } => Err(BrokerError::Internal(
-                "unexpected control delivery response".into(),
+            _ => Err(BrokerError::Internal(
+                "unexpected result delivery response".into(),
             )),
         }
     }
@@ -215,6 +195,86 @@ impl Broker for TcpBroker {
     async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let response = self
             .request(TcpRequest::NackResult {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
+        let response = self.request(TcpRequest::PublishWake { message }).await?;
+        Self::expect_ok(response)
+    }
+
+    async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveWake {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::WakeDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected wake delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::AckWake {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn nack_wake(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::NackWake {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn publish_ingress(&self, message: IngressMessage) -> Result<(), BrokerError> {
+        let response = self.request(TcpRequest::PublishIngress { message }).await?;
+        Self::expect_ok(response)
+    }
+
+    async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveIngress {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::IngressDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected ingress delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::AckIngress {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn nack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::NackIngress {
                 consumer: consumer.to_string(),
                 delivery_id,
             })

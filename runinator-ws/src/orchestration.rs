@@ -553,10 +553,9 @@ async fn process_skipped_node<T: DatabaseImpl>(
 
 // --- rich control-flow nodes -------------------------------------------------
 //
-// these mirror the scheduler node handlers (runinator-scheduler/src/nodes/handlers) but call
-// `DatabaseImpl` directly instead of routing through the scheduler api. control-flow bookkeeping
-// lives in named frames inside `workflow_run.state` (the typed `WorkflowRunState` from
-// runinator-models). predicates that read sibling node-run history come from runinator-workflows.
+// the reducer lives here and calls `DatabaseImpl` directly. control-flow bookkeeping lives in
+// named frames inside `workflow_run.state` (the typed `WorkflowRunState` from runinator-models).
+// predicates that read sibling node-run history come from runinator-workflows.
 
 async fn process_loop_node<T: DatabaseImpl>(
     db: &T,
@@ -1594,7 +1593,7 @@ fn resolve_optional_string(
     Ok(name)
 }
 
-// --- shared db-direct reducer helpers (mirrors scheduler driver.rs) ----------
+// --- shared db-direct reducer helpers -----------------------------------------
 
 /// settle a node run, retrying while attempts remain, otherwise transitioning.
 #[allow(clippy::too_many_arguments)]
