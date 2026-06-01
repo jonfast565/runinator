@@ -37,7 +37,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor starts the importer in one-shot mode, so the workflow file configured in `runinator-supervisor.json` is pushed into the API once after the web service is discovered. The checked-in local config imports `packs/sdlc/workflow-pack.json`. If the stack is already running and you want another sync, run:
+The supervisor starts the importer in one-shot mode, so the workflow file configured in `runinator-supervisor.json` is pushed into the API once after the web service is discovered. The checked-in local config imports the WDL pack manifest at `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files before sending the bundle to the API. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -95,7 +95,7 @@ the SQLite database at `~/.runinator/runinator.db`, credentials at
 `~/.runinator/credentials.enc.json`, application logs under
 `~/.runinator/logs/`, and supervisor state under `~/.runinator/supervisor/`.
 When the importer is started without `--workflows-file`, it reads
-`~/.runinator/workflows/workflow-pack.json`.
+`~/.runinator/workflows/sdlc.wdlp`.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
@@ -123,21 +123,26 @@ PowerShell can build and run a local artifact layout:
 ./build.ps1 -Mode Local -Run
 ```
 
-This publishes binaries under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state and the default workflow import file still go under `~/.runinator/` unless you pass explicit paths. Stop it with `Ctrl+C`.
+This publishes binaries under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state still goes under `~/.runinator/` by default. The default workflow import is `packs/sdlc/sdlc.wdlp`, and any referenced `.wdl` files are copied into `target/artifacts/workflows/` with the manifest. Stop it with `Ctrl+C`.
 
 ## Workflow Import
 
-The importer binary reads `~/.runinator/workflows/workflow-pack.json` by default
-when `--workflows-file` is not set. The local supervisor config passes `--once`
-and `--workflows-file ./packs/sdlc/workflow-pack.json`. Put a secret bundle at
-`~/.runinator/secrets.json` to load local credentials during importer startup.
-You can seed the app-data workflow bundle from the repository sample pack if
-needed:
+The importer binary reads `~/.runinator/workflows/sdlc.wdlp` by default when
+`--workflows-file` is not set. A `.wdlp` manifest lists the `.wdl` files that
+make up the pack, and those paths are resolved relative to the manifest. The
+local supervisor config passes `--once` and `--workflows-file
+./packs/sdlc/sdlc.wdlp`. Put a secret bundle at `~/.runinator/secrets.json` to
+load local credentials during importer startup. You can seed the app-data
+workflow manifest from the repository sample pack if needed:
 
 ```bash
 mkdir -p ~/.runinator/workflows
-cp packs/sdlc/workflow-pack.json ~/.runinator/workflows/workflow-pack.json
+cp packs/sdlc/sdlc.wdlp ~/.runinator/workflows/sdlc.wdlp
+cp -R packs/sdlc/wdl ~/.runinator/workflows/wdl
 ```
+
+Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlp` plus the
+referenced `.wdl` sources for imports.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 
@@ -269,7 +274,7 @@ importer, and supervisor under `target/macos-apps`.
 For importer workflow import changes, run:
 
 ```bash
-jq empty packs/sdlc/workflow-pack.json
+jq empty packs/sdlc/sdlc.wdlp
 cargo test -p runinator-importer
 ```
 

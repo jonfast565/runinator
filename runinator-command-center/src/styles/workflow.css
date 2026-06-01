@@ -147,7 +147,7 @@
 .workflow-json-editor,
 .workflow-wdl-editor {
   min-height: 0;
-  flex: 1;
+  flex: 1 1 0;
   border: 0;
   border-radius: 0 0 8px 8px;
   background: #f8fafc;
@@ -265,8 +265,20 @@
 
 .workflow-json-editor,
 .workflow-wdl-editor {
-  height: auto;
+  --workflow-editor-diagnostics-height: 136px;
+  display: flex;
+  height: 100%;
+  max-height: 100%;
   padding: 12px;
+}
+
+.workflow-json-editor .json-editor-container,
+.workflow-wdl-editor .wdl-editor-container {
+  flex: 1 1 0;
+}
+
+.workflow-wdl-editor .wdl-diagnostics {
+  flex-basis: var(--workflow-editor-diagnostics-height);
 }
 
 .workflow-run-graph-panel {

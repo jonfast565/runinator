@@ -4,8 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUPERVISOR_ARGS=(-p runinator-supervisor --)
 COMMAND="${1:-start}"
-RUNINATOR_DATA_DIR="${RUNINATOR_HOME:-${HOME:?HOME must be set}/.runinator}"
-WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$RUNINATOR_DATA_DIR/workflows/workflow-pack.json}"
+WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$ROOT_DIR/packs/sdlc/sdlc.wdlp}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 IMPORTER_GOSSIP_PORT="${RUNINATOR_IMPORTER_ONCE_GOSSIP_PORT:-5513}"

@@ -13,8 +13,7 @@ use runinator_comm::discovery::{WebServiceDiscovery, start_web_service_listener}
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{ProviderBundle, SecretBundle},
-    types::RuninatorType,
-    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowTrigger},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_plugin::provider::Provider;
 use runinator_provider_ai::AiCommandProvider;
@@ -329,9 +328,8 @@ fn workflow_bundle_path(config: &Config) -> std::path::PathBuf {
         .as_ref()
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            app_data::app_data_path("workflows/workflow-pack.json").unwrap_or_else(|_| {
-                std::path::PathBuf::from(".runinator/workflows/workflow-pack.json")
-            })
+            app_data::app_data_path("workflows/sdlc.wdlp")
+                .unwrap_or_else(|_| std::path::PathBuf::from(".runinator/workflows/sdlc.wdlp"))
         })
 }
 
@@ -361,13 +359,7 @@ async fn load_import_file(path: &Path) -> Result<WorkflowBundle, DynError> {
         });
     }
 
-    let raw: Value = serde_json::from_str(&data)?;
-
-    if raw.get("item_type").and_then(Value::as_str) == Some("workflow_pack") {
-        return unwrap_workflow_pack(raw);
-    }
-
-    Ok(serde_json::from_value(raw.into())?)
+    Ok(serde_json::from_str(&data)?)
 }
 
 // format and compile one .wdl source into a definition.
@@ -489,71 +481,4 @@ fn path_io_error(action: &str, path: &Path, err: io::Error) -> io::Error {
         err.kind(),
         format!("failed to {action} {}: {err}", path.display()),
     )
-}
-
-// remove a timestamp field from a pack body and parse it as a UTC datetime.
-fn take_pack_timestamp(body: &mut Value, key: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    body.as_object_mut()
-        .and_then(|object| object.remove(key))
-        .and_then(|value| serde_json::from_value(value.into()).ok())
-}
-
-fn unwrap_workflow_pack(envelope: Value) -> Result<WorkflowBundle, DynError> {
-    let version = envelope
-        .get("version")
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| v.as_i64())
-        })
-        .unwrap_or(1);
-
-    let document = envelope
-        .get("document")
-        .ok_or_else(|| -> DynError { "workflow pack envelope missing 'document'".into() })?;
-
-    let workflows_map = document
-        .get("workflows")
-        .and_then(Value::as_object)
-        .ok_or_else(|| -> DynError {
-            "workflow pack envelope missing document.workflows map".into()
-        })?;
-
-    let mut workflows = Vec::with_capacity(workflows_map.len());
-    for (name, body) in workflows_map {
-        let mut body = body.clone();
-        let input_type_value = body
-            .as_object_mut()
-            .and_then(|o| o.remove("input_type").or_else(|| o.remove("input_schema")))
-            .unwrap_or(Value::Null);
-        let input_type = serde_json::from_value(input_type_value.clone().into())
-            .unwrap_or_else(|_| RuninatorType::from_json_schema(&input_type_value));
-        // lift timestamps out of the definition body so import reconciliation can
-        // compare them; their absence keeps the existing copy untouched on import.
-        let created_at = take_pack_timestamp(&mut body, "created_at");
-        let updated_at = take_pack_timestamp(&mut body, "updated_at");
-        workflows.push(WorkflowDefinition {
-            id: None,
-            name: name.clone(),
-            version,
-            enabled: true,
-            input_type,
-            definition: WorkflowGraph::from_value(body)
-                .map_err(|err| format!("workflow '{name}' definition is invalid: {err}"))?,
-            created_at,
-            updated_at,
-        });
-    }
-
-    let triggers = match document.get("triggers").cloned() {
-        Some(value) if !value.is_null() => {
-            serde_json::from_value::<Vec<WorkflowTrigger>>(value.into())?
-        }
-        _ => Vec::new(),
-    };
-
-    Ok(WorkflowBundle {
-        workflows,
-        triggers,
-    })
 }

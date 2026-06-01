@@ -59,4 +59,6 @@ When `state_dir` is omitted, supervisor state defaults to
 
 The repository's local supervisor config runs the importer once on startup. When
 started without an explicit workflow path, the importer uses its normal app-data
-default at `~/.runinator/workflows/workflow-pack.json`.
+default at `~/.runinator/workflows/sdlc.wdlp`. The checked-in supervisor config
+uses `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files during
+import.

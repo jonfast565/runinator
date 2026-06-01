@@ -13,7 +13,7 @@ param(
     [string]$LocalDatabasePath = (Join-Path -Path $HOME -ChildPath ".runinator/runinator.db"),
 
     [ValidateNotNullOrEmpty()]
-    [string]$LocalWorkflowsFile = (Join-Path -Path $HOME -ChildPath ".runinator/workflows/workflow-pack.json"),
+    [string]$LocalWorkflowsFile = "packs/sdlc/sdlc.wdlp",
 
     [ValidateRange(1024, 65535)]
     [int]$GossipBasePort = 5500,
@@ -353,6 +353,30 @@ function Prepare-LocalArtifacts {
             $workflowsTargetDir = Join-Path -Path $ArtifactsDir -ChildPath 'workflows'
             Ensure-Directory -Path $workflowsTargetDir
             Copy-Item -Path $WorkflowsFileSource -Destination (Join-Path -Path $workflowsTargetDir -ChildPath (Split-Path -Leaf $WorkflowsFileSource)) -Force
+            if ([System.IO.Path]::GetExtension($WorkflowsFileSource) -eq '.wdlp') {
+                $manifestBase = Split-Path -Path $WorkflowsFileSource -Parent
+                $manifest = Get-Content -Path $WorkflowsFileSource -Raw | ConvertFrom-Json
+                foreach ($entry in @($manifest.workflows)) {
+                    $relativePath = $null
+                    if ($entry -is [string]) {
+                        $relativePath = $entry
+                    } elseif ($null -ne $entry -and $entry.PSObject.Properties['path']) {
+                        $relativePath = $entry.PSObject.Properties['path'].Value
+                    }
+                    if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+                    $sourcePath = Join-Path -Path $manifestBase -ChildPath $relativePath
+                    if (-not (Test-Path -LiteralPath $sourcePath)) {
+                        Write-Warning "Manifest workflow file not found: $sourcePath"
+                        continue
+                    }
+                    $targetPath = Join-Path -Path $workflowsTargetDir -ChildPath $relativePath
+                    $targetParent = Split-Path -Path $targetPath -Parent
+                    if ($targetParent) {
+                        Ensure-Directory -Path $targetParent
+                    }
+                    Copy-Item -Path $sourcePath -Destination $targetPath -Force
+                }
+            }
         } else {
             Write-Warning "Workflows file not found: $WorkflowsFileSource"
         }

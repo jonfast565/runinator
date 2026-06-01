@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.6
-
 FROM node:22-alpine AS builder
 WORKDIR /workspace
 RUN corepack enable && corepack prepare pnpm@latest --activate

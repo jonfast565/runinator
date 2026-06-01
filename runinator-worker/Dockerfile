@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.19.0
-
 FROM rust:1.91.1-bookworm AS builder
 WORKDIR /workspace
 COPY . .

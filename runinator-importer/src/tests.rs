@@ -6,7 +6,7 @@ use runinator_models::json;
 use super::{
     ImporterServiceLocator, WorkflowBundleImporter, build_provider_bundle, build_service_locator,
     config::Config, load_import_file, load_secret_bundle, sync_workflows_if_changed,
-    unwrap_workflow_pack,
+    workflow_bundle_path,
 };
 use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
 use runinator_models::workflows::WorkflowBundle;
@@ -122,56 +122,26 @@ async fn configured_api_base_url_uses_static_locator_without_binding_gossip() {
     assert!(matches!(locator, ImporterServiceLocator::Static(_)));
 }
 
-#[tokio::test]
-async fn load_import_file_unwraps_workflow_pack_envelope() {
-    let path = std::env::temp_dir().join(format!(
-        "runinator-importer-pack-{}.json",
-        uuid::Uuid::new_v4()
-    ));
-    let envelope = json!({
-        "uri": "runinator://packs/sample",
-        "item_type": "workflow_pack",
-        "name": "Sample Pack",
-        "version": "4",
-        "document": {
-            "workflows": {
-                "alpha": {
-                    "metadata": { "description": "first" },
-                    "input_type": { "type": "object" },
-                    "start": "n1",
-                    "nodes": [{ "id": "n1", "kind": "end" }]
-                },
-                "beta": {
-                    "input_type": { "type": "object" },
-                    "start": "x",
-                    "nodes": [{ "id": "x", "kind": "end" }]
-                }
-            }
-        }
-    });
-    tokio::fs::write(&path, serde_json::to_vec(&envelope).unwrap())
-        .await
-        .unwrap();
+#[test]
+fn workflow_bundle_default_path_uses_wdlp_manifest() {
+    let config = Config {
+        api_base_url: None,
+        workflows_file: None,
+        secrets_file: None,
+        poll_interval_seconds: 10,
+        gossip_bind: "127.0.0.1".into(),
+        gossip_port: 5000,
+        gossip_targets: Vec::new(),
+        once: true,
+    };
 
-    let bundle = load_import_file(&path).await.unwrap();
+    let path = workflow_bundle_path(&config);
 
-    assert_eq!(bundle.workflows.len(), 2);
-    assert!(bundle.triggers.is_empty());
-    let alpha = bundle
-        .workflows
-        .iter()
-        .find(|w| w.name == "alpha")
-        .expect("alpha workflow present");
-    assert_eq!(alpha.version, 4);
-    assert!(alpha.enabled);
     assert_eq!(
-        alpha.input_type,
-        runinator_models::types::RuninatorType::from_json_schema(&json!({ "type": "object" }))
+        path.file_name().and_then(|name| name.to_str()),
+        Some("sdlc.wdlp")
     );
-    assert_eq!(alpha.definition.start.as_deref(), Some("n1"));
-    assert_eq!(alpha.definition.metadata["description"], json!("first"));
-
-    let _ = tokio::fs::remove_file(path).await;
+    assert!(path.to_string_lossy().contains("workflows"));
 }
 
 #[tokio::test]
@@ -260,45 +230,6 @@ async fn sdlc_wdlp_pack_compiles_both_workflows() {
     assert!(names.contains(&"Core Team SDLC Pipeline".to_string()));
     assert!(names.contains(&"Ticket Work".to_string()));
     assert!(bundle.workflows.iter().all(|w| w.enabled));
-}
-
-#[test]
-fn unwrap_workflow_pack_rejects_missing_document() {
-    let envelope = json!({
-        "uri": "runinator://packs/broken",
-        "item_type": "workflow_pack",
-        "name": "Broken Pack",
-        "version": "1"
-    });
-    let err = unwrap_workflow_pack(envelope).expect_err("missing document should error");
-    assert!(err.to_string().contains("document"));
-}
-
-#[test]
-fn sdlc_pack_unwraps_to_workflow_bundle() {
-    let raw = include_str!("../../packs/sdlc/workflow-pack.json");
-    let envelope: runinator_models::value::Value =
-        serde_json::from_str(raw).expect("pack file parses");
-    let bundle = unwrap_workflow_pack(envelope).expect("pack unwraps");
-    assert!(
-        !bundle.workflows.is_empty(),
-        "pack has at least one workflow"
-    );
-    let names = bundle
-        .workflows
-        .iter()
-        .map(|workflow| workflow.name.as_str())
-        .collect::<Vec<_>>();
-    assert!(names.contains(&"Core Team SDLC Pipeline"));
-    assert!(names.contains(&"Ticket Work"));
-    let provider_bundle = build_provider_bundle();
-    for workflow in &bundle.workflows {
-        assert!(workflow.enabled);
-        assert!(workflow.version >= 1);
-        assert!(workflow.definition.as_value().is_object());
-        runinator_workflows::validate_workflow_with_providers(workflow, &provider_bundle.providers)
-            .expect("sdlc workflow validates");
-    }
 }
 
 #[test]

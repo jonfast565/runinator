@@ -13,8 +13,8 @@ WDL and compiled to JSON, not hand-edited as JSON.
   pack. This is what the importer loads.
 - `wdl/core-team-sdlc-pipeline.wdl` — the fan-out driver, as WDL.
 - `wdl/ticket-work.wdl` — the per-ticket pipeline, as WDL, including its CI-poll loop.
-- `workflow-pack.json` — the older hand-built JSON pack, retained for reference. The local
-  supervisor and importer now load `sdlc.wdlp`.
+
+Compiled JSON workflow packs are no longer checked in; WDL is the source of truth.
 
 Compile or import:
 

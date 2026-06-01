@@ -1,8 +1,8 @@
 <template>
-  <details class="json-editor-shell" open>
-    <summary>{{ title }}</summary>
+  <section class="json-editor-shell">
+    <header class="json-editor-title">{{ title }}</header>
     <div ref="editorContainer" class="json-editor-container"></div>
-  </details>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -33,7 +33,6 @@ onMounted(() => {
     extensions: [
       basicSetup,
       json(),
-      EditorView.lineWrapping,
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -82,8 +81,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.json-editor-shell summary {
-  cursor: pointer;
+.json-editor-title {
   padding: 8px 10px;
   font-weight: 600;
   user-select: none;
@@ -99,5 +97,10 @@ onBeforeUnmount(() => {
 
 :deep(.cm-editor) {
   height: 100%;
+  min-height: 0;
+}
+
+:deep(.cm-scroller) {
+  overflow: auto;
 }
 </style>

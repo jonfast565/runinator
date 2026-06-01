@@ -1,9 +1,9 @@
 <template>
-  <details class="wdl-editor-shell" open>
-    <summary>
+  <section class="wdl-editor-shell">
+    <header class="wdl-editor-title">
       <span>{{ title }}</span>
       <button type="button" :disabled="readonly" @click.stop.prevent="formatDocument">Format</button>
-    </summary>
+    </header>
     <div ref="editorContainer" class="wdl-editor-container"></div>
     <div class="wdl-diagnostics">
       <table v-if="diagnostics.length">
@@ -28,7 +28,7 @@
       </table>
       <div v-else class="wdl-diagnostics-empty">No WDL diagnostics.</div>
     </div>
-  </details>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -133,7 +133,6 @@ onMounted(() => {
       basicSetup,
       wdl(),
       wdlLinter,
-      EditorView.lineWrapping,
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -182,8 +181,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.wdl-editor-shell summary {
-  cursor: pointer;
+.wdl-editor-title {
   padding: 8px 10px;
   font-weight: 600;
   user-select: none;
@@ -193,7 +191,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.wdl-editor-shell summary button {
+.wdl-editor-title button {
   border: 1px solid #b8c3cf;
   border-radius: 4px;
   background: #f7f9fb;
@@ -204,7 +202,7 @@ onBeforeUnmount(() => {
   padding: 3px 8px;
 }
 
-.wdl-editor-shell summary button:disabled {
+.wdl-editor-title button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -290,5 +288,10 @@ onBeforeUnmount(() => {
 
 :deep(.cm-editor) {
   height: 100%;
+  min-height: 0;
+}
+
+:deep(.cm-scroller) {
+  overflow: auto;
 }
 </style>

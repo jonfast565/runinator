@@ -19,7 +19,7 @@ spec:
           args:
             - "--once"
             - "--workflows-file"
-            - "/home/runinator/.runinator/workflows/workflow-pack.json"
+            - "/home/runinator/.runinator/workflows/sdlc.wdlp"
             - "--api-base-url"
             - "$(WS_API_BASE_URL)"
           envFrom:

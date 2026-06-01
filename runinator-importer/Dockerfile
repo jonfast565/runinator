@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.19.0
-
 FROM rust:1.91.1-bookworm AS builder
 WORKDIR /workspace
 COPY . .
@@ -17,7 +15,8 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-importer /usr/local/bin/runinator-importer
-COPY packs/sdlc/workflow-pack.json /home/runinator/.runinator/workflows/workflow-pack.json
+COPY packs/sdlc/sdlc.wdlp /home/runinator/.runinator/workflows/sdlc.wdlp
+COPY packs/sdlc/wdl /home/runinator/.runinator/workflows/wdl
 RUN chown -R runinator:runinator /usr/local/bin/runinator-importer
 RUN chmod -R 775 /usr/local/bin/runinator-importer
 
