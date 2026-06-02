@@ -106,6 +106,11 @@ impl Lowerer {
             "input" => Ok(scoped_ref("input", rest)),
             "prev" => Ok(scoped_ref("prev", rest)),
             "run" => Ok(scoped_ref("workflow", rest)),
+            // config resolves eagerly in the web service, so it is a plain ref.
+            "config" => Ok(scoped_ref("config", rest)),
+            // secrets resolve late at the worker; lower to the `secret://scope/name` form it
+            // already understands. the whole value must be a single secret (no interpolation).
+            "secret" => lower_secret(rest),
             // any other head is treated as a reference to that node's output.
             _ => Ok(node_ref_expr(&head, rest)),
         }
@@ -142,6 +147,26 @@ impl Lowerer {
             }
         }
     }
+}
+
+/// lower `secret.<scope>.<name…>` to the `secret://<scope>/<name>` string the worker resolves.
+/// requires at least a scope and a name; extra segments join into the name with `/`.
+fn lower_secret(rest: &[PathSeg]) -> Result<Value, WdlError> {
+    let parts = rest
+        .iter()
+        .map(|seg| match seg {
+            PathSeg::Key(key) => key.clone(),
+            PathSeg::Index(index) => index.to_string(),
+        })
+        .collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return Err(WdlError::lower(
+            "secret reference must be `secret.<scope>.<name>`",
+        ));
+    }
+    let scope = &parts[0];
+    let name = parts[1..].join("/");
+    Ok(Value::String(format!("secret://{scope}/{name}")))
 }
 
 fn cmp_key(op: CmpOp) -> &'static str {

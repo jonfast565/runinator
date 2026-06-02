@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
 
+use runinator_models::settings::SettingKind;
+use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun};
 use serde::{Deserialize, Serialize};
 
@@ -32,13 +34,20 @@ pub struct WorkflowRunCreated {
 pub struct CredentialSummary {
     pub scope: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: SettingKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialPutRequest {
     pub scope: String,
     pub name: String,
-    pub secret: String,
+    #[serde(alias = "secret")]
+    pub value: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+    #[serde(default)]
+    pub kind: SettingKind,
 }
 
 /// a wdl diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.

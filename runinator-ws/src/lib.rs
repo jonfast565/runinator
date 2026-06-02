@@ -11,6 +11,7 @@ mod responses;
 mod result_consumer;
 mod router;
 mod server;
+mod settings;
 mod stability;
 #[cfg(test)]
 mod tests;

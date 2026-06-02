@@ -31,6 +31,7 @@ pub enum WorkflowRefSource {
     Input,
     Prev,
     Workflow,
+    Config,
     NodeOutput(WorkflowNodeRef),
 }
 

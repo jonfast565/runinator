@@ -126,6 +126,19 @@ fn resolves_value_refs() {
 }
 
 #[test]
+fn resolves_config_refs() {
+    // config is injected into the context by the web service as `{ scope: { name: value } }`.
+    let context = runinator_models::json!({
+        "config": { "api": { "settings": { "url": "https://example.test" } } }
+    });
+    let value = runinator_models::json!({ "$ref": { "config": ["api", "settings", "url"] } });
+    assert_eq!(
+        resolve_value_refs(&value, &context).unwrap(),
+        runinator_models::value::Value::String("https://example.test".into())
+    );
+}
+
+#[test]
 fn accepts_structurally_valid_refs_without_schema_path_validation() {
     let wf = WorkflowDefinition {
         id: Some(1),

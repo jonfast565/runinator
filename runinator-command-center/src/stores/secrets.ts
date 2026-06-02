@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import { deleteCredential, fetchCredentials, saveCredential } from "../api/commandCenterApi";
-import type { CredentialSummary } from "../types/models";
+import type { CredentialSummary, SettingKind } from "../types/models";
 import { secretKey } from "../utils/secrets";
 import { useAppStore } from "./app";
 
@@ -11,7 +11,10 @@ export const useSecretsStore = defineStore("secrets", () => {
   const draft = reactive({
     scope: "",
     name: "",
-    secret: ""
+    secret: "",
+    kind: "secret" as SettingKind,
+    // json-schema text for config values; required on the first write of a config slot.
+    schema: ""
   });
   const app = useAppStore();
 
@@ -43,19 +46,41 @@ export const useSecretsStore = defineStore("secrets", () => {
   async function saveDraft() {
     const scope = draft.scope.trim();
     const name = draft.name.trim();
-    if (!scope || !name || !draft.secret) return app.setError("Secret scope, name, and value are required");
-    await app.runOperation("Saving secret", () => saveCredential(scope, name, draft.secret));
+    const kind = draft.kind;
+    const label = kind === "config" ? "Config" : "Secret";
+    if (!scope || !name || !draft.secret) return app.setError(`${label} scope, name, and value are required`);
+
+    // config values and schemas are json; secrets are sent as a plain string.
+    let value: unknown = draft.secret;
+    let schema: unknown;
+    if (kind === "config") {
+      try {
+        value = JSON.parse(draft.secret);
+      } catch {
+        return app.setError("Config value must be valid JSON");
+      }
+      if (draft.schema.trim()) {
+        try {
+          schema = JSON.parse(draft.schema);
+        } catch {
+          return app.setError("Config schema must be valid JSON");
+        }
+      }
+    }
+
+    await app.runOperation(`Saving ${kind}`, () => saveCredential(scope, name, value, kind, schema));
     draft.secret = "";
-    selectedSecretKey.value = secretKey({ scope, name });
-    app.setStatus(`Secret saved: ${scope}/${name}`);
+    selectedSecretKey.value = secretKey({ scope, name, kind });
+    app.setStatus(`${label} saved: ${scope}/${name}`);
     await refreshSecrets();
   }
 
   async function deleteSelectedSecret() {
     const secret = selectedSecret.value;
-    if (!secret) return app.setError("No secret selected");
-    await app.runOperation("Deleting secret", () => deleteCredential(secret.scope, secret.name));
-    app.setStatus(`Secret deleted: ${secret.scope}/${secret.name}`);
+    if (!secret) return app.setError("No setting selected");
+    const kind = secret.kind ?? "secret";
+    await app.runOperation(`Deleting ${kind}`, () => deleteCredential(secret.scope, secret.name, kind));
+    app.setStatus(`${kind === "config" ? "Config" : "Secret"} deleted: ${secret.scope}/${secret.name}`);
     selectedSecretKey.value = "";
     clearDraft();
     await refreshSecrets();
@@ -66,12 +91,16 @@ export const useSecretsStore = defineStore("secrets", () => {
     draft.scope = secret.scope;
     draft.name = secret.name;
     draft.secret = "";
+    draft.kind = secret.kind ?? "secret";
+    draft.schema = "";
   }
 
   function clearDraft() {
     draft.scope = "";
     draft.name = "";
     draft.secret = "";
+    draft.kind = "secret";
+    draft.schema = "";
   }
 
   function moveSecretSelection(delta: number) {

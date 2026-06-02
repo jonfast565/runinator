@@ -4,7 +4,8 @@ use runinator_models::workflows::WorkflowNodeRef;
 use crate::errors::WorkflowValidationError;
 use crate::keys::{
     EXPR_COALESCE, EXPR_CONCAT, EXPR_LITERAL, EXPR_NODE, EXPR_REF, EXPR_TO_JSON_STRING,
-    EXPR_TO_STRING, EXPR_VALUE, REF_INPUT, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
+    EXPR_TO_STRING, EXPR_VALUE, REF_CONFIG, REF_INPUT, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS,
+    REF_WORKFLOW,
 };
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
 
@@ -230,6 +231,12 @@ pub(crate) fn parse_value_ref(value: &Value) -> Result<WorkflowValueRef, Workflo
             path: parse_path(path)?,
         });
     }
+    if let Some(path) = object.get(REF_CONFIG) {
+        return Ok(WorkflowValueRef {
+            source: WorkflowRefSource::Config,
+            path: parse_path(path)?,
+        });
+    }
     if let (Some(node), Some(output)) = (object.get(REF_NODE), object.get(REF_OUTPUT)) {
         let node = node
             .as_str()
@@ -273,6 +280,7 @@ pub(crate) fn resolve_value_ref(
         WorkflowRefSource::Input => context.get(REF_INPUT),
         WorkflowRefSource::Prev => context.get(REF_PREV),
         WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
+        WorkflowRefSource::Config => context.get(REF_CONFIG),
         WorkflowRefSource::NodeOutput(node) => context
             .get(REF_STEPS)
             .and_then(|steps| steps.get(node.as_str()))
@@ -315,6 +323,7 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
         WorkflowRefSource::Input => runinator_models::json!({ (REF_INPUT): path }),
         WorkflowRefSource::Prev => runinator_models::json!({ (REF_PREV): path }),
         WorkflowRefSource::Workflow => runinator_models::json!({ (REF_WORKFLOW): path }),
+        WorkflowRefSource::Config => runinator_models::json!({ (REF_CONFIG): path }),
         WorkflowRefSource::NodeOutput(node) => {
             runinator_models::json!({ (REF_NODE): node.as_str(), (REF_OUTPUT): path })
         }

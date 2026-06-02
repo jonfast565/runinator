@@ -29,4 +29,5 @@ pub(crate) const REF_OUTPUT: &str = "output";
 pub(crate) const REF_INPUT: &str = "input";
 pub(crate) const REF_PREV: &str = "prev";
 pub(crate) const REF_WORKFLOW: &str = "workflow";
+pub(crate) const REF_CONFIG: &str = "config";
 pub(crate) const REF_STEPS: &str = "steps";

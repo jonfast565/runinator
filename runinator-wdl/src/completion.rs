@@ -231,6 +231,10 @@ fn root_type(name: &str, context: &CompletionContext) -> Option<RuninatorType> {
     if name == "run" {
         return Some(workflow_context_type());
     }
+    // config and secret are opaque roots: recognized, but with no statically-known fields.
+    if name == "config" || name == "secret" {
+        return Some(RuninatorType::Any);
+    }
     context
         .scoped
         .get(name)

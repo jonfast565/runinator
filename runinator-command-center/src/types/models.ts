@@ -329,9 +329,12 @@ export interface TaskResponse {
 }
 
 
+export type SettingKind = "secret" | "config";
+
 export interface CredentialSummary {
   scope: string;
   name: string;
+  kind?: SettingKind;
 }
 
 export interface WorkflowRunCreated {

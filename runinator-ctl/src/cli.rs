@@ -1,6 +1,24 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use runinator_models::settings::SettingKind;
+
+/// cli-facing setting kind, mapped to the shared `SettingKind`.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliSettingKind {
+    #[default]
+    Secret,
+    Config,
+}
+
+impl From<CliSettingKind> for SettingKind {
+    fn from(kind: CliSettingKind) -> Self {
+        match kind {
+            CliSettingKind::Secret => SettingKind::Secret,
+            CliSettingKind::Config => SettingKind::Config,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,6 +74,47 @@ pub enum Commands {
     Wdl {
         #[command(subcommand)]
         command: WdlCommands,
+    },
+    /// Manage the unified settings store: secrets and config.
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SettingsCommands {
+    /// List stored settings (secrets and config) without their values.
+    List {
+        /// Only show one kind.
+        #[arg(long, value_enum)]
+        kind: Option<CliSettingKind>,
+    },
+    /// Get a setting value. Config returns json; secrets return the stored string.
+    Get {
+        scope: String,
+        name: String,
+        #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
+        kind: CliSettingKind,
+    },
+    /// Store a setting value. For config, VALUE is parsed as json and validated against
+    /// the schema (required once per slot via --schema; reused on later updates).
+    Set {
+        scope: String,
+        name: String,
+        value: String,
+        #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
+        kind: CliSettingKind,
+        /// JSON-schema for a config value (json text), required on first write of a config slot.
+        #[arg(long)]
+        schema: Option<String>,
+    },
+    /// Delete a setting.
+    Delete {
+        scope: String,
+        name: String,
+        #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
+        kind: CliSettingKind,
     },
 }
 

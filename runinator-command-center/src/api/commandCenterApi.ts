@@ -10,6 +10,7 @@ import type {
   RunChunk,
   RunSummary,
   SaveTaskResponse,
+  SettingKind,
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
@@ -337,12 +338,18 @@ export async function fetchCredentials() {
   return command<CredentialSummary[]>("fetch_credentials");
 }
 
-export async function saveCredential(scope: string, name: string, secret: string) {
-  return command<any>("save_credential", { request: { scope, name, secret } });
+export async function saveCredential(
+  scope: string,
+  name: string,
+  value: unknown,
+  kind: SettingKind = "secret",
+  schema?: unknown
+) {
+  return command<any>("save_credential", { request: { scope, name, value, kind, schema } });
 }
 
-export async function deleteCredential(scope: string, name: string) {
-  return command<any>("delete_credential", { scope, name });
+export async function deleteCredential(scope: string, name: string, kind: SettingKind = "secret") {
+  return command<any>("delete_credential", { scope, name, kind });
 }
 
 export async function approveApproval(approvalId: number) {

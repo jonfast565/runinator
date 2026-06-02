@@ -7,6 +7,7 @@ pub mod notifications;
 pub mod orchestration;
 pub mod providers;
 pub mod runs;
+pub mod settings;
 pub mod types;
 pub mod value;
 pub mod web;

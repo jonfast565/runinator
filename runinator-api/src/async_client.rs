@@ -23,6 +23,7 @@ use runinator_models::{
     orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
+    settings::{SettingKind, SettingSummary},
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -926,6 +927,71 @@ where
             .and_then(Value::as_str)
             .map(str::to_owned)
             .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
+    }
+
+    /// list every stored setting (secrets and config) without their values.
+    pub async fn list_settings(&self) -> Result<Vec<SettingSummary>> {
+        let url = self.build_url(API_CREDENTIALS).await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<SettingSummary>>().await?)
+    }
+
+    /// fetch a single setting's value. config returns parsed json; secrets return a string.
+    pub async fn get_setting(&self, kind: SettingKind, scope: &str, name: &str) -> Result<Value> {
+        let mut url = self.build_url(API_CREDENTIALS).await?;
+        url.query_pairs_mut()
+            .append_pair("kind", kind.as_str())
+            .append_pair("scope", scope)
+            .append_pair("name", name);
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        let body = response.json::<Value>().await?;
+        body.get("value")
+            .cloned()
+            .ok_or_else(|| ApiError::UnexpectedResponse("missing setting value".into()))
+    }
+
+    /// store a setting value of the given kind. config values carry a declared json-schema
+    /// (required once per slot) validated by the web service.
+    pub async fn put_setting(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+        value: &Value,
+        schema: Option<&Value>,
+    ) -> Result<Value> {
+        let url = self.build_url(API_CREDENTIALS).await?;
+        let mut body = json!({
+            "scope": scope,
+            "name": name,
+            "value": value,
+            "kind": kind.as_str(),
+        });
+        if let (Some(schema), Some(object)) = (schema, body.as_object_mut()) {
+            object.insert("schema".into(), schema.clone());
+        }
+        let response = self.client.post(url.clone()).json(&body).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// delete a setting of the given kind.
+    pub async fn delete_setting(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Value> {
+        let mut url = self.build_url(API_CREDENTIALS).await?;
+        url.query_pairs_mut()
+            .append_pair("kind", kind.as_str())
+            .append_pair("scope", scope)
+            .append_pair("name", name);
+        let response = self.client.delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
     }
 
     /// Record execution metadata for a scheduled task run.

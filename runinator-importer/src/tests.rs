@@ -61,7 +61,9 @@ async fn load_secret_bundle_reads_credentials() {
         secrets: vec![SecretBundleEntry {
             scope: "github".into(),
             name: "main".into(),
-            secret: "token".into(),
+            value: runinator_models::value::Value::String("token".into()),
+            schema: None,
+            kind: Default::default(),
             updated_at: None,
         }],
     };

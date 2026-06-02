@@ -1977,6 +1977,9 @@ fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) ->
         if let Some(prev) = prev_output {
             object.insert("prev".into(), prev);
         }
+        // config refs (`{"$ref":{"config":[...]}}`) resolve here, before any action command
+        // is published; secrets stay unresolved until the worker.
+        object.insert("config".into(), crate::handlers::credentials::config_tree());
     }
     context
 }

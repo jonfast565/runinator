@@ -14,7 +14,7 @@ impl Decompiler<'_> {
             Value::Null => Ok("null".to_string()),
             Value::Bool(b) => Ok(b.to_string()),
             Value::Number(_) => Ok(value.to_string()),
-            Value::String(text) => Ok(quote(text)),
+            Value::String(text) => Ok(secret_path(text).unwrap_or_else(|| quote(text))),
             Value::Array(items) => {
                 let parts = items
                     .iter()
@@ -70,6 +70,9 @@ impl Decompiler<'_> {
         }
         if let Some(path) = object.get("workflow") {
             return Ok(self.dotted("run", path));
+        }
+        if let Some(path) = object.get("config") {
+            return Ok(self.dotted("config", path));
         }
         if let (Some(node), Some(output)) = (object.get("node"), object.get("output")) {
             let node_id = node
@@ -195,6 +198,32 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
             format!("{{ {} }}", parts.join(", "))
         }
     }
+}
+
+/// recognize a `secret://<scope>/<name>` literal and render it as `secret.<scope>.<name…>`.
+/// returns None (so the caller quotes it as a plain string) unless every segment is a bare
+/// ident, keeping the result a clean round-trip with the lowering.
+fn secret_path(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("secret://")?;
+    let (scope, name) = rest.split_once('/')?;
+    if scope.is_empty() || name.is_empty() {
+        return None;
+    }
+    let mut out = String::from("secret");
+    for seg in std::iter::once(scope).chain(name.split('/')) {
+        if !is_ident(seg) {
+            return None;
+        }
+        out.push('.');
+        out.push_str(seg);
+    }
+    Some(out)
+}
+
+fn is_ident(seg: &str) -> bool {
+    let mut chars = seg.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn quote(text: &str) -> String {

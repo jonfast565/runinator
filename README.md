@@ -135,8 +135,11 @@ The importer binary reads `~/.runinator/workflows/sdlc.wdlp` by default when
 `--workflows-file` is not set. A `.wdlp` manifest lists the `.wdl` files that
 make up the pack, and those paths are resolved relative to the manifest. The
 local supervisor config passes `--once` and `--workflows-file
-./packs/sdlc/sdlc.wdlp`. Put a secret bundle at `~/.runinator/secrets.json` to
-load local credentials during importer startup. You can seed the app-data
+./packs/sdlc/sdlc.wdlp`. Put a settings bundle at `~/.runinator/secrets.json` to
+load local credentials and config during importer startup. Each entry carries a
+`kind` (`secret` — the default — or `config`) and a `value`; secret values stay
+encrypted and resolve late at the worker, while config values are arbitrary JSON
+read by the web service. You can seed the app-data
 workflow manifest from the repository sample pack if needed:
 
 ```bash
@@ -158,6 +161,37 @@ Workflow syntax now includes richer declarative control-flow nodes:
 - `race` starts branch roots until one satisfies the winner policy; v1 does not cancel already dispatched work.
 - `emit` records structured node output without calling a provider.
 - `reentry` allows explicit bounded cycles back to a node and can route to `on_exhausted`.
+
+WDL references resolve runtime values into action arguments. Alongside `input.*`,
+`prev.*`, `run.*`, and bare node-output names, two roots read from the unified
+settings store:
+
+- `config.<scope>.<name>` — non-sensitive JSON, resolved eagerly by the web
+  service. It interpolates freely (e.g. `"${config.api.base}/v2"`) and can drill
+  into stored JSON (`config.api.settings.url`).
+- `secret.<scope>.<name>` — sensitive values, lowered to the `secret://scope/name`
+  form and resolved late at the worker so plaintext never reaches the web
+  service, database, or broker. A secret must be passed as a whole argument value
+  (it cannot be interpolated mid-string).
+
+Stored settings are typed. Config values are validated on write against a declared
+JSON-schema (required once per `scope/name`, then reused for value-only updates);
+a value that does not match the schema is rejected. Secrets are validated as
+non-empty strings. Manage them with `runinatorctl`:
+
+```bash
+# declare + store a config value (schema required on first write)
+runinatorctl settings set api base '"https://api.example.com"' \
+  --kind config --schema '{ "type": "string" }'
+# later value-only update reuses the stored schema
+runinatorctl settings set api base '"https://api.example.com/v2"' --kind config
+
+# store a secret (string)
+runinatorctl settings set github token "ghp_xxx"
+
+runinatorctl settings list            # all settings, no values
+runinatorctl settings get api base --kind config
+```
 
 The v1 control-flow runtime is controller-driven and still uses one `active_node_id`.
 `parallel` and `race` advance branch roots sequentially through persisted workflow state,

@@ -5,6 +5,7 @@ use runinator_models::{
     notifications::Notification,
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
+    settings::SettingKind,
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -218,13 +219,21 @@ pub struct IdempotencyRequest {
 pub struct CredentialQuery {
     pub scope: Option<String>,
     pub name: Option<String>,
+    #[serde(default)]
+    pub kind: SettingKind,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CredentialPutRequest {
     pub scope: String,
     pub name: String,
-    pub secret: String,
+    #[serde(alias = "secret")]
+    pub value: Value,
+    // declared json-schema, required once per config slot; ignored for secrets.
+    #[serde(default)]
+    pub schema: Option<Value>,
+    #[serde(default)]
+    pub kind: SettingKind,
 }
 
 #[derive(Debug, Deserialize)]

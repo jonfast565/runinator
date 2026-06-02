@@ -14,7 +14,7 @@ use super::{Diagnostic, child_blocks, effective_id};
 const RESERVED: [&str; 3] = ["start", "end", "fail"];
 
 /// reserved path roots that always resolve regardless of declared labels.
-const ROOTS: [&str; 3] = ["input", "prev", "run"];
+const ROOTS: [&str; 5] = ["input", "prev", "run", "config", "secret"];
 
 /// the declared-label table shared with later passes.
 pub(super) struct Symbols {

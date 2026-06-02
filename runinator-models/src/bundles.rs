@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::providers::ProviderMetadata;
+use crate::settings::SettingKind;
+use crate::value::Value;
 
 /// Marker trait for typed import bundles posted to the web service.
 ///
@@ -27,12 +29,24 @@ pub struct SecretBundle {
     pub secrets: Vec<SecretBundleEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 pub struct SecretBundleEntry {
     pub scope: String,
     pub name: String,
-    pub secret: String,
-    // modification time used to reconcile imports: an existing secret is only
+    // the typed payload: a JSON string for secrets, or arbitrary JSON for config.
+    // a bare string still deserializes into `Value::String`, and `secret` is accepted
+    // as an alias so back-compat bundles keep working.
+    #[serde(alias = "secret")]
+    pub value: Value,
+    // declared json-schema for the value, required once per (scope, name) for config and
+    // validated on write; secrets are implicitly string-typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+    // distinguishes a redacted secret from a non-sensitive config value; defaults to
+    // secret so existing bundles import unchanged.
+    #[serde(default)]
+    pub kind: SettingKind,
+    // modification time used to reconcile imports: an existing entry is only
     // overwritten when an incoming entry is strictly newer.
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,

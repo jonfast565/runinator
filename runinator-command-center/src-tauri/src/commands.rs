@@ -593,11 +593,13 @@ pub async fn delete_credential(
     state: State<'_, CommandCenterState>,
     scope: String,
     name: String,
+    kind: Option<String>,
 ) -> CommandResult<Value> {
     let mut url = build_state_url(&state, "credentials").await?;
     url.query_pairs_mut()
         .append_pair("scope", &scope)
-        .append_pair("name", &name);
+        .append_pair("name", &name)
+        .append_pair("kind", kind.as_deref().unwrap_or("secret"));
     let response = state.client.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<Value>().await?)

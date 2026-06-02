@@ -404,6 +404,61 @@ fn round_trips_hyphenated_provider() {
 }
 
 #[test]
+fn lowers_config_and_secret_references() {
+    let src = r#"
+        workflow "Settings" v1 {
+            let go = console.run(command: "x", url: config.api.url, token: secret.github.token)
+        }
+    "#;
+    let definition = compile(src);
+    let nodes = definition.definition.as_value();
+    let action = nodes
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .unwrap()
+        .iter()
+        .find(|n| n.get("kind").and_then(|k| k.as_str()) == Some("action"))
+        .expect("action node");
+    // config lowers to an eager `$ref` resolved in the web service.
+    assert_eq!(
+        action
+            .pointer("/action/configuration/url/$ref/config/0")
+            .and_then(|v| v.as_str()),
+        Some("api"),
+        "{action:#?}"
+    );
+    assert_eq!(
+        action
+            .pointer("/action/configuration/url/$ref/config/1")
+            .and_then(|v| v.as_str()),
+        Some("url")
+    );
+    // secret lowers to the late-resolved `secret://scope/name` string form.
+    assert_eq!(
+        action
+            .pointer("/action/configuration/token")
+            .and_then(|v| v.as_str()),
+        Some("secret://github/token")
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn secret_reference_requires_scope_and_name() {
+    let src = r#"
+        workflow "BadSecret" v1 {
+            let go = console.run(command: "x", token: secret.github)
+        }
+    "#;
+    match compile_str(src, &CompileOptions::default()) {
+        Err(WdlError::Lower(message)) => {
+            assert!(message.contains("secret"), "{message}")
+        }
+        other => panic!("expected lower error, got {other:?}"),
+    }
+}
+
+#[test]
 fn round_trips_fanin_error_handlers_and_convergence() {
     // mirrors the Ticket Work shape: linear steps with `fail ->` handlers, a poll loop, an
     // if/approval branch, and several handlers converging on a shared cleanup node. exercises

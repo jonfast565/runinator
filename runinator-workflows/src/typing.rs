@@ -445,6 +445,8 @@ fn resolve_ref_type(
         WorkflowRefSource::Input => &context.input,
         WorkflowRefSource::Workflow => &context.workflow,
         WorkflowRefSource::Prev => &WorkflowType::Any,
+        // config holds runtime-supplied json; its shape is unknown at compile time.
+        WorkflowRefSource::Config => &WorkflowType::Any,
         WorkflowRefSource::NodeOutput(node) => {
             context.node_outputs.get(node.as_str()).ok_or_else(|| {
                 WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
@@ -465,6 +467,8 @@ fn resolve_path_type<'a>(
     let mut current = base;
     for segment in path {
         current = match (segment, current) {
+            // an `any` base absorbs any path: drilling into the unknown stays unknown.
+            (_, WorkflowType::Any) => return Some(&WorkflowType::Any),
             (WorkflowPathSegment::Key(key), WorkflowType::Struct { .. } | WorkflowType::Map(_)) => {
                 current.field(key)?
             }

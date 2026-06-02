@@ -10,6 +10,7 @@ use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
     providers::ProviderMetadata,
+    settings::SettingKind,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
         WorkflowTrigger,
@@ -19,8 +20,8 @@ use tokio::time;
 
 use crate::{
     cli::{
-        ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, TriggerCommands,
-        WdlCommands, WorkflowCommands,
+        ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, SettingsCommands,
+        TriggerCommands, WdlCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -42,6 +43,7 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Triggers { command } => triggers(client, command, cli.json).await,
         Commands::Providers { command } => providers(client, command, cli.json).await,
         Commands::Wdl { command } => wdl(command, cli.json),
+        Commands::Settings { command } => settings(client, command, cli.json).await,
     }
 }
 
@@ -480,6 +482,88 @@ async fn providers(client: &Client, command: &ProviderCommands, json_output: boo
         }
     }
     Ok(())
+}
+
+async fn settings(client: &Client, command: &SettingsCommands, json_output: bool) -> Result<()> {
+    match command {
+        SettingsCommands::List { kind } => {
+            let mut entries = client.list_settings().await?;
+            if let Some(kind) = kind {
+                let kind = SettingKind::from(*kind);
+                entries.retain(|entry| entry.kind == kind);
+            }
+            if json_output {
+                return output::json(&entries);
+            }
+            print_settings(&entries);
+        }
+        SettingsCommands::Get { scope, name, kind } => {
+            let value = client
+                .get_setting(SettingKind::from(*kind), scope, name)
+                .await?;
+            if json_output {
+                return output::json(&value);
+            }
+            match &value {
+                Value::String(text) => println!("{text}"),
+                other => println!("{}", serde_json::to_string_pretty(other)?),
+            }
+        }
+        SettingsCommands::Set {
+            scope,
+            name,
+            value,
+            kind,
+            schema,
+        } => {
+            let kind = SettingKind::from(*kind);
+            // config values are json; secrets are passed through as a plain string.
+            let value = match kind {
+                SettingKind::Config => serde_json::from_str::<Value>(value)
+                    .map_err(|e| err(format!("config value must be valid json: {e}")))?,
+                SettingKind::Secret => Value::String(value.clone()),
+            };
+            let schema = match schema {
+                Some(text) => Some(
+                    serde_json::from_str::<Value>(text)
+                        .map_err(|e| err(format!("--schema must be valid json: {e}")))?,
+                ),
+                None => None,
+            };
+            let response = client
+                .put_setting(kind, scope, name, &value, schema.as_ref())
+                .await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("stored {} {scope}/{name}", kind.as_str());
+        }
+        SettingsCommands::Delete { scope, name, kind } => {
+            let response = client
+                .delete_setting(SettingKind::from(*kind), scope, name)
+                .await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!(
+                "deleted {} {scope}/{name}",
+                SettingKind::from(*kind).as_str()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {
+    println!("{:<8} {:<20} name", "kind", "scope");
+    for entry in entries {
+        println!(
+            "{:<8} {:<20} {}",
+            entry.kind.as_str(),
+            output::truncate(&entry.scope, 20),
+            entry.name
+        );
+    }
 }
 
 async fn fetch_workflow_ref(client: &Client, workflow: &str) -> Result<WorkflowDefinition> {

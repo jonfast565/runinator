@@ -6,27 +6,46 @@ use std::{
 };
 
 use runinator_models::errors::SendableError;
+pub use runinator_models::settings::SettingKind;
 use serde::{Deserialize, Serialize};
 
 use crate::app_data;
 
 pub trait CredentialStore: Send + Sync {
-    /// store a secret, stamping it with the current time.
-    fn put(&self, scope: &str, name: &str, secret: &[u8]) -> Result<(), SendableError> {
-        self.put_at(scope, name, secret, now_unix())
-    }
-    /// store a secret with an explicit modification time (unix seconds).
-    fn put_at(
+    /// store a value of the given kind, stamping it with the current time.
+    fn put(
         &self,
+        kind: SettingKind,
         scope: &str,
         name: &str,
-        secret: &[u8],
+        value: &[u8],
+    ) -> Result<(), SendableError> {
+        self.put_at(kind, scope, name, value, now_unix())
+    }
+    /// store a value with an explicit modification time (unix seconds).
+    fn put_at(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+        value: &[u8],
         updated_at: i64,
     ) -> Result<(), SendableError>;
-    fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError>;
-    /// modification time (unix seconds) of a stored secret, or None when it does not exist.
-    fn entry_updated_at(&self, scope: &str, name: &str) -> Result<Option<i64>, SendableError>;
-    fn delete(&self, scope: &str, name: &str) -> Result<(), SendableError>;
+    fn get(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, SendableError>;
+    /// modification time (unix seconds) of a stored value, or None when it does not exist.
+    fn entry_updated_at(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Option<i64>, SendableError>;
+    fn delete(&self, kind: SettingKind, scope: &str, name: &str) -> Result<(), SendableError>;
+    /// list every stored entry across kinds, each tagged with its kind.
     fn list(&self) -> Result<Vec<CredentialEntry>, SendableError>;
 }
 
@@ -41,6 +60,8 @@ fn now_unix() -> i64 {
 pub struct CredentialEntry {
     pub scope: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: SettingKind,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +72,12 @@ pub struct LocalEncryptedCredentialStore {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CredentialFile {
+    // secret entries, keyed `scope:name`. legacy files carry only this map.
     entries: BTreeMap<String, StoredSecret>,
+    // config entries, keyed `scope:name`; separate map so config and secrets never
+    // collide and old files keep working.
+    #[serde(default)]
+    config: BTreeMap<String, StoredSecret>,
 }
 
 // stored entry format. legacy files hold a bare hex string with no timestamp;
@@ -129,57 +155,91 @@ impl LocalEncryptedCredentialStore {
     }
 }
 
+// select the map for a kind within a credential file.
+fn map_for(file: &CredentialFile, kind: SettingKind) -> &BTreeMap<String, StoredSecret> {
+    match kind {
+        SettingKind::Secret => &file.entries,
+        SettingKind::Config => &file.config,
+    }
+}
+
+fn map_for_mut(
+    file: &mut CredentialFile,
+    kind: SettingKind,
+) -> &mut BTreeMap<String, StoredSecret> {
+    match kind {
+        SettingKind::Secret => &mut file.entries,
+        SettingKind::Config => &mut file.config,
+    }
+}
+
 impl CredentialStore for LocalEncryptedCredentialStore {
     fn put_at(
         &self,
+        kind: SettingKind,
         scope: &str,
         name: &str,
-        secret: &[u8],
+        value: &[u8],
         updated_at: i64,
     ) -> Result<(), SendableError> {
         let mut file = self.load()?;
-        file.entries.insert(
+        map_for_mut(&mut file, kind).insert(
             Self::entry_key(scope, name),
             StoredSecret::Versioned {
-                secret: hex_encode(&self.crypt(secret)),
+                secret: hex_encode(&self.crypt(value)),
                 updated_at,
             },
         );
         self.save(&file)
     }
 
-    fn get(&self, scope: &str, name: &str) -> Result<Option<Vec<u8>>, SendableError> {
+    fn get(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, SendableError> {
         let file = self.load()?;
-        let Some(stored) = file.entries.get(&Self::entry_key(scope, name)) else {
+        let Some(stored) = map_for(&file, kind).get(&Self::entry_key(scope, name)) else {
             return Ok(None);
         };
         Ok(Some(self.crypt(&hex_decode(stored.secret_hex())?)))
     }
 
-    fn entry_updated_at(&self, scope: &str, name: &str) -> Result<Option<i64>, SendableError> {
+    fn entry_updated_at(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+    ) -> Result<Option<i64>, SendableError> {
         let file = self.load()?;
-        Ok(file
-            .entries
+        Ok(map_for(&file, kind)
             .get(&Self::entry_key(scope, name))
             .map(StoredSecret::updated_at))
     }
 
-    fn delete(&self, scope: &str, name: &str) -> Result<(), SendableError> {
+    fn delete(&self, kind: SettingKind, scope: &str, name: &str) -> Result<(), SendableError> {
         let mut file = self.load()?;
-        file.entries.remove(&Self::entry_key(scope, name));
+        map_for_mut(&mut file, kind).remove(&Self::entry_key(scope, name));
         self.save(&file)
     }
 
     fn list(&self) -> Result<Vec<CredentialEntry>, SendableError> {
         let file = self.load()?;
-        Ok(file
-            .entries
-            .keys()
-            .filter_map(|key| {
-                let (scope, name) = key.split_once(':')?;
-                Some(CredentialEntry {
-                    scope: scope.to_string(),
-                    name: name.to_string(),
+        let entries = [
+            (SettingKind::Secret, &file.entries),
+            (SettingKind::Config, &file.config),
+        ];
+        Ok(entries
+            .into_iter()
+            .flat_map(|(kind, map)| {
+                map.keys().filter_map(move |key| {
+                    let (scope, name) = key.split_once(':')?;
+                    Some(CredentialEntry {
+                        scope: scope.to_string(),
+                        name: name.to_string(),
+                        kind,
+                    })
                 })
             })
             .collect())
