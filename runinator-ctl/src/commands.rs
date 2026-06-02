@@ -9,6 +9,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
+    bundles::SecretBundle,
     providers::ProviderMetadata,
     settings::SettingKind,
     workflows::{
@@ -513,15 +514,17 @@ async fn settings(client: &Client, command: &SettingsCommands, json_output: bool
             scope,
             name,
             value,
+            value_file,
             kind,
             schema,
         } => {
             let kind = SettingKind::from(*kind);
+            let raw = resolve_set_value(value.as_deref(), value_file.as_deref())?;
             // config values are json; secrets are passed through as a plain string.
             let value = match kind {
-                SettingKind::Config => serde_json::from_str::<Value>(value)
+                SettingKind::Config => serde_json::from_str::<Value>(&raw)
                     .map_err(|e| err(format!("config value must be valid json: {e}")))?,
-                SettingKind::Secret => Value::String(value.clone()),
+                SettingKind::Secret => Value::String(raw),
             };
             let schema = match schema {
                 Some(text) => Some(
@@ -538,6 +541,19 @@ async fn settings(client: &Client, command: &SettingsCommands, json_output: bool
             }
             println!("stored {} {scope}/{name}", kind.as_str());
         }
+        SettingsCommands::Import { file } => {
+            let value = params::load_json_file(file)?;
+            let bundle: SecretBundle = serde_json::from_value(value.into())?;
+            let imported = client.import_secret_bundle(&bundle).await?;
+            if json_output {
+                return output::json(&imported);
+            }
+            println!(
+                "imported {} setting(s) from {}",
+                imported.secrets.len(),
+                file.display()
+            );
+        }
         SettingsCommands::Delete { scope, name, kind } => {
             let response = client
                 .delete_setting(SettingKind::from(*kind), scope, name)
@@ -552,6 +568,16 @@ async fn settings(client: &Client, command: &SettingsCommands, json_output: bool
         }
     }
     Ok(())
+}
+
+// resolves a set value from the inline argument or a file, requiring exactly one.
+fn resolve_set_value(inline: Option<&str>, file: Option<&Path>) -> Result<String> {
+    match (inline, file) {
+        (Some(value), None) => Ok(value.to_string()),
+        (None, Some(path)) => Ok(fs::read_to_string(path)?),
+        (Some(_), Some(_)) => Err(err("provide either VALUE or --value-file, not both")),
+        (None, None) => Err(err("a VALUE argument or --value-file is required")),
+    }
 }
 
 fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {

@@ -4,7 +4,7 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2>Settings</h2>
+            <h2>Config &amp; Secrets</h2>
             <div class="btn-row">
               <button class="btn" @click="secrets.refreshSecrets">
                 <Icon name="refresh" />
@@ -52,13 +52,17 @@
               <span>Clear</span>
             </button>
           </div>
-          <label>
-            Kind
-            <select v-model="secrets.draft.kind">
-              <option value="secret">Secret (encrypted, resolved at the worker)</option>
-              <option value="config">Config (plain JSON, resolved by the web service)</option>
-            </select>
-          </label>
+          <fieldset class="kind-field">
+            <legend>Kind</legend>
+            <label class="kind-option">
+              <input type="radio" name="setting-kind" value="secret" v-model="secrets.draft.kind" />
+              Secret (encrypted, resolved at the worker)
+            </label>
+            <label class="kind-option">
+              <input type="radio" name="setting-kind" value="config" v-model="secrets.draft.kind" />
+              Config (plain JSON, resolved by the web service)
+            </label>
+          </fieldset>
           <label>
             Scope
             <input v-model="secrets.draft.scope" list="secret-scopes" placeholder="github" />
@@ -73,10 +77,6 @@
           <label>
             {{ isConfig ? "Config Value (JSON)" : "Secret Value" }}
             <textarea v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
-          </label>
-          <label v-if="isConfig">
-            Schema (JSON Schema)
-            <textarea v-model="secrets.draft.schema" placeholder='{ "type": "string" } — required on first write, reused after.' />
           </label>
           <p class="hint">{{ hint }}</p>
           <button class="btn btn-primary" type="submit">
@@ -109,7 +109,7 @@ const valuePlaceholder = computed(() =>
 );
 const hint = computed(() =>
   isConfig.value
-    ? "Config values are plain JSON read by the web service. Reference them in WDL as config.scope.name."
+    ? "Config values are plain JSON read by the web service. The schema is inferred from the first value; later writes must stay consistent with it. Reference them in WDL as config.scope.name."
     : "Secret values are not shown after saving. Select an existing secret, enter a new value, and save to replace it."
 );
 
@@ -142,6 +142,31 @@ onMounted(() => {
 
 .secret-form textarea {
   min-height: 130px;
+}
+
+.kind-field {
+  border: 1px solid #d7dce3;
+  border-radius: 6px;
+  color: #4b5663;
+  display: grid;
+  font-size: 12px;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.kind-field legend {
+  padding: 0 4px;
+}
+
+.kind-option {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.kind-option input {
+  margin: 0;
 }
 
 .hint {

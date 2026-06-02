@@ -46,9 +46,11 @@ fn secret_must_be_a_non_empty_string() {
 }
 
 #[test]
-fn config_requires_a_declared_schema() {
+fn config_infers_schema_from_value_when_undeclared() {
     let (store, path) = temp_store();
-    let err = validate_and_encode(
+
+    // first write with no schema infers one from the value and persists it.
+    let bytes = validate_and_encode(
         &store,
         SettingKind::Config,
         "api",
@@ -56,8 +58,80 @@ fn config_requires_a_declared_schema() {
         &Value::String("https://x".into()),
         None,
     )
+    .unwrap();
+    store
+        .put(SettingKind::Config, "api", "url", &bytes)
+        .unwrap();
+
+    // a value of the same inferred type is accepted.
+    assert!(
+        validate_and_encode(
+            &store,
+            SettingKind::Config,
+            "api",
+            "url",
+            &Value::String("https://y".into()),
+            None,
+        )
+        .is_ok()
+    );
+
+    // a value that contradicts the inferred type is rejected.
+    let err = validate_and_encode(
+        &store,
+        SettingKind::Config,
+        "api",
+        "url",
+        &Value::from(7),
+        None,
+    )
     .unwrap_err();
-    assert!(err.contains("requires a declared schema"), "{err}");
+    assert!(err.contains("does not match schema"), "{err}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn config_object_shape_can_evolve_but_known_fields_type_check() {
+    let (store, path) = temp_store();
+
+    // first write infers an open struct from the object's fields.
+    let bytes = validate_and_encode(
+        &store,
+        SettingKind::Config,
+        "svc",
+        "options",
+        &runinator_models::json!({ "url": "https://x", "retries": 3 }),
+        None,
+    )
+    .unwrap();
+    store
+        .put(SettingKind::Config, "svc", "options", &bytes)
+        .unwrap();
+
+    // adding and dropping fields is allowed (shape can evolve).
+    assert!(
+        validate_and_encode(
+            &store,
+            SettingKind::Config,
+            "svc",
+            "options",
+            &runinator_models::json!({ "url": "https://y", "timeout": 30 }),
+            None,
+        )
+        .is_ok()
+    );
+
+    // a known field with the wrong type is still rejected.
+    let err = validate_and_encode(
+        &store,
+        SettingKind::Config,
+        "svc",
+        "options",
+        &runinator_models::json!({ "url": "https://y", "retries": "lots" }),
+        None,
+    )
+    .unwrap_err();
+    assert!(err.contains("does not match schema"), "{err}");
     let _ = std::fs::remove_file(path);
 }
 

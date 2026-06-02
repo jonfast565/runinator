@@ -32,7 +32,7 @@ export const navSections: NavSection[] = [
       { tab: "ChangeSets", label: "Change Sets", icon: "list", endpoint: "change_sets" },
       { tab: "Workspaces", label: "Workspaces", icon: "folder", endpoint: "workspaces" },
       { tab: "Gates", label: "Gates", icon: "gate", endpoint: "gates" },
-      { tab: "Secrets", label: "Secrets", icon: "key" }
+      { tab: "Secrets", label: "Config & Secrets", icon: "key" }
     ]
   }
 ];

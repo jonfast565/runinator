@@ -12,9 +12,7 @@ export const useSecretsStore = defineStore("secrets", () => {
     scope: "",
     name: "",
     secret: "",
-    kind: "secret" as SettingKind,
-    // json-schema text for config values; required on the first write of a config slot.
-    schema: ""
+    kind: "secret" as SettingKind
   });
   const app = useAppStore();
 
@@ -50,25 +48,18 @@ export const useSecretsStore = defineStore("secrets", () => {
     const label = kind === "config" ? "Config" : "Secret";
     if (!scope || !name || !draft.secret) return app.setError(`${label} scope, name, and value are required`);
 
-    // config values and schemas are json; secrets are sent as a plain string.
+    // config values are json; secrets are sent as a plain string. the web service infers a
+    // config slot's schema from its first value, so the client never sends one.
     let value: unknown = draft.secret;
-    let schema: unknown;
     if (kind === "config") {
       try {
         value = JSON.parse(draft.secret);
       } catch {
         return app.setError("Config value must be valid JSON");
       }
-      if (draft.schema.trim()) {
-        try {
-          schema = JSON.parse(draft.schema);
-        } catch {
-          return app.setError("Config schema must be valid JSON");
-        }
-      }
     }
 
-    await app.runOperation(`Saving ${kind}`, () => saveCredential(scope, name, value, kind, schema));
+    await app.runOperation(`Saving ${kind}`, () => saveCredential(scope, name, value, kind));
     draft.secret = "";
     selectedSecretKey.value = secretKey({ scope, name, kind });
     app.setStatus(`${label} saved: ${scope}/${name}`);
@@ -92,7 +83,6 @@ export const useSecretsStore = defineStore("secrets", () => {
     draft.name = secret.name;
     draft.secret = "";
     draft.kind = secret.kind ?? "secret";
-    draft.schema = "";
   }
 
   function clearDraft() {
@@ -100,7 +90,6 @@ export const useSecretsStore = defineStore("secrets", () => {
     draft.name = "";
     draft.secret = "";
     draft.kind = "secret";
-    draft.schema = "";
   }
 
   function moveSecretSelection(delta: number) {

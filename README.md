@@ -189,9 +189,20 @@ runinatorctl settings set api base '"https://api.example.com/v2"' --kind config
 # store a secret (string)
 runinatorctl settings set github token "ghp_xxx"
 
+# read a value from a file instead of passing it inline
+runinatorctl settings set github deploy-key --value-file ./id_ed25519
+
+# bulk import secrets and config from a bundle file
+runinatorctl settings import ./secrets.json
+
 runinatorctl settings list            # all settings, no values
 runinatorctl settings get api base --kind config
 ```
+
+The import file is a `{ "secrets": [...] }` document; each entry carries
+`scope`, `name`, and `value`, plus optional `kind` (`secret` or `config`) and
+`schema`. Existing entries are only overwritten when an incoming `updated_at` is
+strictly newer.
 
 The v1 control-flow runtime is controller-driven and still uses one `active_node_id`.
 `parallel` and `race` advance branch roots sequentially through persisted workflow state,

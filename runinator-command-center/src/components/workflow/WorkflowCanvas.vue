@@ -36,6 +36,19 @@
         <WorkflowEdge v-bind="edgeProps" />
       </template>
     </VueFlow>
+    <div v-if="workflows.workflowEditorMode === 'graph' && nodeIssueGroups.length" class="workflow-issues-panel">
+      <header class="workflow-issues-header">
+        {{ issueCount }} configuration {{ issueCount === 1 ? "issue" : "issues" }} to fix
+      </header>
+      <ul class="workflow-issues-list">
+        <li v-for="group in nodeIssueGroups" :key="group.nodeId" :class="['workflow-issue-item', `severity-${group.severity}`]">
+          <button type="button" class="workflow-issue-node" @click="focusIssueNode(group.nodeId)">{{ group.title }}</button>
+          <ul class="workflow-issue-messages">
+            <li v-for="(issue, index) in group.issues" :key="index" :class="`severity-${issue.severity}`">{{ issue.message }}</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
     <div v-if="showCommandBar" class="workflow-command-bar">
       <template v-if="workflows.selectedGraphEdge">
         <button @click="editSelectedEdge">Edit</button>
@@ -157,7 +170,7 @@
 <script setup lang="ts">
 import { watch, nextTick, ref, computed, provide } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
-import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption } from "../../types/models";
+import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
 import { optionIdForSourceHandle } from "../../utils/workflows";
@@ -208,6 +221,35 @@ const selectedEdgeDraft = computed(() => workflows.selectedGraphEdgeId ? workflo
 const selectedEdgeCanMoveUp = computed(() => Boolean(selectedEdgeDraft.value?.canMove && selectedEdgeDraft.value.orderIndex > 0));
 const selectedEdgeCanMoveDown = computed(() => Boolean(selectedEdgeDraft.value?.canMove && selectedEdgeDraft.value.orderIndex < selectedEdgeDraft.value.orderCount - 1));
 const showCommandBar = computed(() => Boolean(workflows.selectedGraphEdge || workflows.selectedNode));
+
+// group validation issues by node so misconfigured nodes can be listed under the graph.
+const nodeIssueGroups = computed(() => {
+  const titles = new Map(workflows.graphNodes.map((node: any) => [node.id, String(node.data?.title ?? node.id)]));
+  const groups = new Map<string, { nodeId: string; title: string; issues: WorkflowValidationIssue[]; severity: WorkflowValidationSeverity }>();
+  for (const issue of workflows.graphValidationIssues) {
+    const existing = groups.get(issue.nodeId);
+    if (existing) {
+      existing.issues.push(issue);
+      if (issue.severity === "error") existing.severity = "error";
+      continue;
+    }
+    groups.set(issue.nodeId, {
+      nodeId: issue.nodeId,
+      title: titles.get(issue.nodeId) ?? issue.nodeId,
+      issues: [issue],
+      severity: issue.severity
+    });
+  }
+  // surface errors before warnings.
+  return [...groups.values()].sort((a, b) => Number(b.severity === "error") - Number(a.severity === "error"));
+});
+const issueCount = computed(() => workflows.graphValidationIssues.length);
+
+// select the node and recenter the graph on it so the user can fix it.
+function focusIssueNode(nodeId: string) {
+  workflows.populateStepEditor(nodeId);
+  nextTick(() => fitView({ nodes: [nodeId], duration: 400, maxZoom: 1.2 }));
+}
 
 async function recenter() {
   await nextTick();

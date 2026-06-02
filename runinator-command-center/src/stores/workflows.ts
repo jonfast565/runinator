@@ -344,6 +344,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       stepEditorOpen.value = false;
     }
     isDirty.value = false;
+    // graph and json derive from the draft, but the wdl text is decompiled lazily; refresh it so
+    // the wdl tab reflects the newly selected workflow instead of the previous one.
+    if (workflowEditorMode.value === "wdl") return refreshWorkflowWdl();
     return Promise.resolve();
   }
 

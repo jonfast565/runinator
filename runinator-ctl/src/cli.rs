@@ -97,18 +97,26 @@ pub enum SettingsCommands {
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
     },
-    /// Store a setting value. For config, VALUE is parsed as json and validated against
-    /// the schema (required once per slot via --schema; reused on later updates).
+    /// Store a setting value. Provide VALUE inline or read it from --value-file. For config,
+    /// the value is parsed as json and validated against the schema (required once per slot via
+    /// --schema; reused on later updates); for secrets the value is stored verbatim.
     Set {
         scope: String,
         name: String,
-        value: String,
+        /// inline value; omit when reading from --value-file.
+        value: Option<String>,
+        /// read the value from a file instead of the VALUE argument.
+        #[arg(long, value_name = "PATH", conflicts_with = "value")]
+        value_file: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
         /// JSON-schema for a config value (json text), required on first write of a config slot.
         #[arg(long)]
         schema: Option<String>,
     },
+    /// Import a bundle of settings from a json file (a `{ "secrets": [...] }` document with
+    /// scope/name/value, and optional kind and schema per entry).
+    Import { file: PathBuf },
     /// Delete a setting.
     Delete {
         scope: String,

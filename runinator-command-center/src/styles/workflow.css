@@ -207,6 +207,63 @@
   white-space: nowrap;
 }
 
+.workflow-issues-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 168px;
+  overflow: auto;
+  border-top: 1px solid #f3c7c7;
+  background: #fdf4f4;
+  font-size: 12px;
+}
+
+.workflow-issues-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  border-bottom: 1px solid #f3c7c7;
+  background: #fbe7e7;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.workflow-issues-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.workflow-issue-item {
+  padding: 4px 10px;
+}
+
+.workflow-issue-node {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b91c1c;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.workflow-issue-item.severity-warning .workflow-issue-node {
+  color: #92600a;
+}
+
+.workflow-issue-messages {
+  margin: 2px 0 0;
+  padding-left: 20px;
+  list-style: disc;
+  color: #7f1d1d;
+}
+
+.workflow-issue-messages li.severity-warning {
+  color: #92600a;
+}
+
 .workflow-edge-popover {
   position: fixed;
   z-index: 21;

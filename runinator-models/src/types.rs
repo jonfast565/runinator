@@ -674,6 +674,37 @@ impl RuninatorType {
         Self::dedupe_union(non_structs)
     }
 
+    /// infer a schema type from a concrete value, used when no schema is declared for a config
+    /// slot. objects become open structs whose known fields are optional and typed (so the shape
+    /// can evolve while known fields still type-check), arrays become arrays over the union of
+    /// their element types, and primitives map to their narrowest type.
+    pub fn infer_from_value(value: &Value) -> Self {
+        match value {
+            Value::Null => Self::Null,
+            Value::Bool(_) => Self::Boolean,
+            Value::Number(number) if number.as_i64().is_some() || number.as_u64().is_some() => {
+                Self::Integer
+            }
+            Value::Number(_) => Self::Number,
+            Value::String(_) => Self::String,
+            Value::Array(items) => {
+                Self::array(Self::dedupe_union(items.iter().map(Self::infer_from_value)))
+            }
+            Value::Object(object) => Self::Struct {
+                fields: object
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            RuninatorField::optional(Self::infer_from_value(value)),
+                        )
+                    })
+                    .collect(),
+                additional: Some(Box::new(Self::Any)),
+            },
+        }
+    }
+
     fn from_json_value(value: &Value) -> Self {
         match value {
             Value::Null => Self::Null,

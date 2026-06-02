@@ -38,8 +38,8 @@ pub struct SecretBundleEntry {
     // as an alias so back-compat bundles keep working.
     #[serde(alias = "secret")]
     pub value: Value,
-    // declared json-schema for the value, required once per (scope, name) for config and
-    // validated on write; secrets are implicitly string-typed.
+    // optional declared json-schema for a config value; when omitted the web service infers one
+    // from the first value and pins it per (scope, name). secrets are implicitly string-typed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
     // distinguishes a redacted secret from a non-sensitive config value; defaults to

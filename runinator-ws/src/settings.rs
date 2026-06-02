@@ -1,6 +1,7 @@
-// typed encoding and validation for the unified settings store. config values carry a declared
-// json-schema, validated on every write (hard error on mismatch or when no schema is known);
-// secrets are implicitly string-typed.
+// typed encoding and validation for the unified settings store. config values carry a json-schema
+// (declared on the request, else inferred from the value on first write) that is pinned per
+// (scope, name) and validated on every later write (hard error on mismatch); secrets are
+// implicitly string-typed.
 
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
@@ -34,9 +35,10 @@ fn stored_config_schema(store: &dyn CredentialStore, scope: &str, name: &str) ->
         .map(|stored| stored.schema)
 }
 
-/// validate a value for its kind and produce the bytes to persist. config requires a declared
-/// schema (from the request, else the previously stored one) and must conform to it; secrets must
-/// be a non-empty string. returns a human-readable error on any violation.
+/// validate a value for its kind and produce the bytes to persist. config validates against a
+/// schema (the request's, else the previously stored one, else one inferred from the value on
+/// first write) and must conform to it; secrets must be a non-empty string. returns a
+/// human-readable error on any violation.
 pub(crate) fn validate_and_encode(
     store: &dyn CredentialStore,
     kind: SettingKind,
@@ -59,23 +61,22 @@ pub(crate) fn validate_and_encode(
             Ok(text.clone().into_bytes())
         }
         SettingKind::Config => {
-            let schema = schema
-                .cloned()
-                .or_else(|| stored_config_schema(store, scope, name))
-                .ok_or_else(|| {
-                    format!(
-                        "config '{scope}/{name}' requires a declared schema; \
-                         provide `schema` on first write"
-                    )
-                })?;
-            let ty = RuninatorType::from_json_schema_checked(&schema)
-                .map_err(|err| format!("invalid config schema for '{scope}/{name}': {err}"))?;
+            // a caller-supplied schema is checked as untrusted input; a stored schema (pinned on
+            // the first write) is trusted; with neither, infer the schema from the value itself.
+            let ty = match schema {
+                Some(schema) => RuninatorType::from_json_schema_checked(schema)
+                    .map_err(|err| format!("invalid config schema for '{scope}/{name}': {err}"))?,
+                None => match stored_config_schema(store, scope, name) {
+                    Some(stored) => RuninatorType::from_json_schema(&stored),
+                    None => RuninatorType::infer_from_value(value),
+                },
+            };
             ty.validate_value(value).map_err(|violation| {
                 format!("config '{scope}/{name}' value does not match schema: {violation}")
             })?;
             serde_json::to_vec(&StoredConfig {
                 value: value.clone(),
-                schema,
+                schema: ty.to_json_schema(),
             })
             .map_err(|err| format!("failed to encode config '{scope}/{name}': {err}"))
         }
