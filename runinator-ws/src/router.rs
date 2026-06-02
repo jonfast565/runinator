@@ -11,7 +11,8 @@ use runinator_models::api_routes::{
     API_ARTIFACTS, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
     API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
     API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-    API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WDL_COMPLETE, API_WORKFLOW_RUNS,
+    API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WDL_ANALYZE, API_WDL_COMPILE,
+    API_WDL_COMPLETE, API_WDL_DECOMPILE, API_WDL_FORMAT, API_WORKFLOW_RUNS,
     API_WORKFLOW_TRIGGERS_DUE, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
     API_WORKFLOWS_VALIDATE,
 };
@@ -64,7 +65,7 @@ use crate::handlers::{
         get_workflow_trigger, get_workflow_triggers, update_workflow_trigger,
         upsert_workflow_trigger,
     },
-    wdl::complete_wdl,
+    wdl::{analyze_wdl, compile_wdl, complete_wdl, decompile_to_wdl, format_wdl},
     webhook::webhook_wake,
     workflows::{
         delete_workflow, export_single_workflow_bundle, export_workflow_bundle, get_workflow,
@@ -106,6 +107,10 @@ pub fn build_router<T: DatabaseImpl>(
             post(validate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(API_WDL_COMPLETE, post(complete_wdl))
+        .route(API_WDL_COMPILE, post(compile_wdl))
+        .route(API_WDL_ANALYZE, post(analyze_wdl))
+        .route(API_WDL_FORMAT, post(format_wdl))
+        .route(API_WDL_DECOMPILE, post(decompile_to_wdl))
         .route(
             API_WORKFLOWS_IMPORT,
             post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),

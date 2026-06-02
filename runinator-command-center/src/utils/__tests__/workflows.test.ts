@@ -17,6 +17,7 @@ import {
   removeEditableEdge,
   setConditionBranch,
   setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelOffset,
   stampWorkflowTaskConfiguration,
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
@@ -74,7 +75,7 @@ describe("workflow graph utils", () => {
       null
     );
 
-    expect(nodes[0].data.summary).toBe("Action: Console.run");
+    expect(nodes[0].data.summary).toBe("Console.run");
   });
 
   it("resolves run result metadata from workflow node action configuration", () => {
@@ -116,8 +117,8 @@ describe("workflow graph utils", () => {
   });
 
   it("builds transition edges", () => {
-    expect(buildGraphEdges(workflow)).toMatchObject([{ source: "a", target: "b", label: "next" }]);
-    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", sourceHandle: "source:direct.next", targetHandle: "target:in", editable: true });
+    expect(buildGraphEdges(workflow)).toMatchObject([{ source: "a", target: "b", label: "next", type: "workflow" }]);
+    expect(buildGraphEdges(workflow)[0].data).toMatchObject({ kind: "direct", transitionKey: "next", sourceHandle: "source:direct.next", targetHandle: "target:in", edgeStyle: "square", editable: true });
   });
 
   it("persists connection handle choices in edge data", () => {
@@ -127,6 +128,36 @@ describe("workflow graph utils", () => {
     expect(edge.sourceHandle).toBe("right");
     expect(edge.targetHandle).toBe("left");
     expect(edge.data).toMatchObject({ sourceHandle: "right", targetHandle: "left" });
+  });
+
+  it("persists edge style choices in edge data", () => {
+    const draft: WorkflowDefinition = JSON.parse(JSON.stringify(workflow));
+    setWorkflowEdgeHandles(draft.definition, "a", "next", "right", "left", "bezier");
+    let edge = buildGraphEdges(draft)[0];
+    expect(edge.type).toBe("workflow");
+    expect(edge.data).toMatchObject({ edgeStyle: "bezier" });
+    const edgeDraft = workflowEdgeEditorDraft(draft, edge)!;
+    edgeDraft.edgeStyle = "straight";
+    expect(applyWorkflowEdgeEditorDraft(draft.definition, edge, edgeDraft)).toEqual({ ok: true, semanticKey: "next" });
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.type).toBe("workflow");
+    expect(edge.data).toMatchObject({ edgeStyle: "straight" });
+  });
+
+  it("persists and clears manual edge label offsets", () => {
+    const draft: WorkflowDefinition = JSON.parse(JSON.stringify(workflow));
+    setWorkflowEdgeHandles(draft.definition, "a", "next", "right", "left", "bezier");
+    let edge = buildGraphEdges(draft)[0];
+    setWorkflowEdgeLabelOffset(draft.definition, edge, { x: 24, y: -12 });
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data).toMatchObject({ labelOffset: { x: 24, y: -12 }, edgeStyle: "bezier", sourceHandle: "right" });
+    // changing handles keeps the manual placement.
+    setWorkflowEdgeHandles(draft.definition, "a", "next", "bottom", "top", "square");
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data).toMatchObject({ labelOffset: { x: 24, y: -12 } });
+    setWorkflowEdgeLabelOffset(draft.definition, edge, null);
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data.labelOffset).toBeUndefined();
   });
 
   it("generates semantic handles for rich workflow nodes", () => {
@@ -593,11 +624,12 @@ describe("workflow graph utils", () => {
       ui: { layout: { nodes: { approve: { x: 20, y: 40 } } } }
     };
 
-    expect(applyWorkflowInlineNodeEdit(definition, "approve", "review", "New prompt")).toEqual({ ok: true, nodeId: "review" });
+    expect(applyWorkflowInlineNodeEdit(definition, "approve", "review", "Review Step")).toEqual({ ok: true, nodeId: "review" });
     definition.ui.layout.nodes.review = definition.ui.layout.nodes.approve;
     delete definition.ui.layout.nodes.approve;
 
-    expect(definition.nodes[1]).toMatchObject({ id: "review", parameters: { prompt: "New prompt" } });
+    // inline edits only rename the node and set its display name; activity stays untouched.
+    expect(definition.nodes[1]).toMatchObject({ id: "review", name: "Review Step", parameters: { prompt: "Old prompt" } });
     expect(definition.nodes[0].transitions.next).toEqual({ "$node": "review" });
     expect(definition.ui.layout.nodes.review).toEqual({ x: 20, y: 40 });
   });

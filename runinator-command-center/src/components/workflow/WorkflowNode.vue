@@ -5,17 +5,13 @@
     <span v-if="data.skipped" class="skip-dot" :class="{ shifted: data.locked }" title="Skipped node"><Icon name="skip" :size="11" /></span>
     <div class="node-topline">
       <span class="node-kind">{{ data.kind }}</span>
+      <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
       <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
     </div>
     <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
-      <input v-model="inlineId" aria-label="Node ID" />
-      <input
-        v-if="data.inlineEdit"
-        v-model="inlineValue"
-        :type="data.inlineEdit.valueKind === 'number' ? 'number' : 'text'"
-        :aria-label="data.inlineEdit.label"
-      />
+      <input v-model="inlineId" aria-label="Node ID" placeholder="Step ID" />
+      <input v-model="inlineValue" type="text" aria-label="Node name" placeholder="Name" />
       <div class="node-inline-actions">
         <button type="submit" class="node-icon-btn">Apply</button>
         <button type="button" class="node-icon-btn" @click="workflows.openStepEditor(id)">Edit</button>
@@ -81,6 +77,7 @@ const props = defineProps<{
   selected?: boolean;
   data: {
     title: string;
+    nodeId?: string;
     kind: string;
     summary?: string;
     semanticHandles?: WorkflowSemanticHandle[];
@@ -125,6 +122,8 @@ const isDebugActive = computed(() => {
   return debug.current_node_id === props.id;
 });
 const isSelected = computed(() => workflows.selectedStepId === props.id);
+// surface the step id in the topline whenever a custom display name hides it from the title.
+const showNodeId = computed(() => props.data.title !== props.id);
 const compassHandles = computed(() => [
   { id: "top", position: Position.Top, style: { left: "50%", top: "0" } },
   { id: "right", position: Position.Right, style: { right: "0", top: "50%" } },
@@ -312,6 +311,15 @@ async function resolveApproval(action: ApprovalAction) {
   color: #66717e;
   font-size: 10px;
   text-transform: uppercase;
+}
+
+.node-id {
+  flex: 1;
+  overflow: hidden;
+  color: #95a0ad;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-title {

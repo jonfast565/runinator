@@ -32,6 +32,9 @@
       <template #node-workflow="nodeProps">
         <WorkflowNode v-bind="nodeProps" />
       </template>
+      <template #edge-workflow="edgeProps">
+        <WorkflowEdge v-bind="edgeProps" />
+      </template>
     </VueFlow>
     <div v-if="showCommandBar" class="workflow-command-bar">
       <template v-if="workflows.selectedGraphEdge">
@@ -96,6 +99,12 @@
           <option v-for="nodeId in workflowNodeIds" :key="nodeId" :value="nodeId">{{ nodeId }}</option>
         </select>
       </label>
+      <label>
+        Edge style
+        <select v-model="edgeEditor.edgeStyle">
+          <option v-for="option in edgeStyleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </label>
       <label v-if="edgeEditorCanEditLabel">
         Label
         <input v-model="edgeEditor.label" placeholder="Uses default label when empty" />
@@ -146,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch, nextTick, ref, computed } from "vue";
+import { watch, nextTick, ref, computed, provide } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
 import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
@@ -156,6 +165,10 @@ import JsonEditor from "../shared/JsonEditor.vue";
 import WdlEditor from "../shared/WdlEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
+import WorkflowEdge from "./WorkflowEdge.vue";
+
+// edges in the editable canvas allow manual label repositioning.
+provide("workflowEdgeInteractive", true);
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -169,6 +182,11 @@ const nodeHeight = 64;
 const popoverMargin = 12;
 const edgeEditorWidth = 340;
 const edgeEditorMinVisibleHeight = 260;
+const edgeStyleOptions = [
+  { value: "bezier", label: "Bezier" },
+  { value: "straight", label: "Straight" },
+  { value: "square", label: "Square" }
+];
 const workflowNodeIds = computed(() => {
   const nodes = workflows.workflowDraft.definition?.nodes;
   return Array.isArray(nodes) ? nodes.map((node: any) => String(node.id ?? "")).filter(Boolean) : [];

@@ -58,6 +58,26 @@
         <Icon name="save" />
         <span>Save</span>
       </button>
+      <div class="toolbar-menu">
+        <button
+          type="button"
+          class="btn"
+          aria-haspopup="menu"
+          :aria-expanded="openMenu === 'export'"
+          @click="toggleMenu('export')"
+        >
+          <Icon name="save" />
+          <span>Export</span>
+        </button>
+        <div v-if="openMenu === 'export'" class="toolbar-menu-panel" role="menu">
+          <button type="button" role="menuitem" class="btn btn-ghost" title="Export this workflow as a .wdl file" @click="exportWdl">
+            This workflow (.wdl)
+          </button>
+          <button type="button" role="menuitem" class="btn btn-ghost" title="Export all workflows as a .wdlp pack zip" @click="exportPack">
+            All workflows (.wdlp pack)
+          </button>
+        </div>
+      </div>
       <button class="btn btn-primary" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
         <Icon name="play" />
         <span>Run</span>
@@ -99,7 +119,7 @@ import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 
 const workflows = useWorkflowsStore();
 const toolbarRef = ref<HTMLElement | null>(null);
-const openMenu = ref<"nodes" | "arrange" | null>(null);
+const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
 
 const isActiveDebugRun = computed(() => {
   if (!workflows.isDebugRun) return false;
@@ -108,8 +128,18 @@ const isActiveDebugRun = computed(() => {
   return !["succeeded", "failed", "canceled", "timed_out"].includes(status);
 });
 
-function toggleMenu(menu: "nodes" | "arrange") {
+function toggleMenu(menu: "nodes" | "arrange" | "export") {
   openMenu.value = openMenu.value === menu ? null : menu;
+}
+
+function exportWdl() {
+  closeMenu();
+  workflows.exportWorkflowWdl();
+}
+
+function exportPack() {
+  closeMenu();
+  workflows.exportWorkflowPack();
 }
 
 function closeMenu() {

@@ -4,6 +4,10 @@ pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
 pub const API_WDL_COMPLETE: &str = "/wdl/complete";
+pub const API_WDL_COMPILE: &str = "/wdl/compile";
+pub const API_WDL_ANALYZE: &str = "/wdl/analyze";
+pub const API_WDL_FORMAT: &str = "/wdl/format";
+pub const API_WDL_DECOMPILE: &str = "/wdl/decompile";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";

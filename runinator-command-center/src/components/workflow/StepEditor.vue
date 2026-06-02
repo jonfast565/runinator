@@ -196,7 +196,7 @@ function kindSection(current: JsonRecord): DetailSection {
       ]);
     case "subflow":
       return section("Subflow", [
-        item("Workflow ID", current.subflow_id ?? "-"),
+        item("Workflow", subflowLabel(current.subflow_id)),
         item("Parameters", valueLabel(current.parameters))
       ]);
     case "start":
@@ -298,6 +298,14 @@ function conditionLabel(value: unknown): string {
 
 function refLabel(value: unknown): string {
   return nodeRefId(value) ?? "-";
+}
+
+// prefer the target workflow's name over its raw id, falling back to the id when unresolved.
+function subflowLabel(subflowId: unknown): string {
+  const id = subflowId != null ? Number(subflowId) : null;
+  if (id == null || Number.isNaN(id)) return "-";
+  const name = workflows.workflows.find((workflow) => workflow.id === id)?.name;
+  return name || `Workflow ${id}`;
 }
 
 function valueLabel(value: unknown): string {

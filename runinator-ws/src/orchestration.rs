@@ -347,6 +347,9 @@ async fn process_action_node<T: DatabaseImpl>(
             format!("Action node {} has no action configuration", node.id),
         )) as SendableError
     })?;
+    // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
+    // fresh visit so the action dispatches again instead of transitioning from the stale run.
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Running {
             return Ok(());
@@ -1204,6 +1207,9 @@ async fn process_approval_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
+    // a loop body re-entering this node sees the prior iteration's resolved run; treat it as a
+    // fresh visit so a new approval is requested instead of transitioning from the stale run.
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::ApprovalRequired && timed_out(node, node_run) {
             return time_out(
@@ -1287,6 +1293,9 @@ async fn process_subflow_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
+    // a loop body re-entering this node sees the prior iteration's linked subflow; treat it as a
+    // fresh visit so a new child run is spawned instead of re-linking the stale one.
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest
         && let Ok(subflow_state) = SubflowState::from_wire_value(&node_run.state)
     {
@@ -2000,6 +2009,15 @@ fn latest_node_run<'a>(
         .iter()
         .filter(|run| run.node_id == node_id)
         .max_by_key(|run| run.id)
+}
+
+// true when a resumable node is re-entered with a terminal run from a prior visit. a loop body (or
+// any back-edge) drives control past the node and returns to it, leaving the previous iteration's
+// run as `latest`; the intervening control node always records a newer node run, so a node run
+// created after `latest` means control already left and came back. such a node must start a fresh
+// visit instead of resuming or transitioning from the stale run, otherwise the body only runs once.
+fn is_reentry_stale(latest: &WorkflowNodeRun, node_runs: &[WorkflowNodeRun]) -> bool {
+    latest.status.is_terminal() && node_runs.iter().any(|run| run.id > latest.id)
 }
 
 #[derive(Debug, PartialEq, Eq)]

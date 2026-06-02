@@ -1105,6 +1105,47 @@ async fn reducer_runs_loop_node_over_all_items() {
 }
 
 #[tokio::test]
+async fn reducer_dispatches_loop_body_action_once_per_item() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "loop-action-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "loop" } } },
+                {
+                    "id": "loop",
+                    "kind": "loop",
+                    "parameters": { "items": ["a", "b", "c", "d"] },
+                    "transitions": { "next": { "$node": "body" }, "on_success": { "$node": "done" } }
+                },
+                {
+                    "id": "body",
+                    "kind": "action",
+                    "action": { "provider": "console", "function": "run" },
+                    "transitions": { "on_success": { "$node": "loop" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    // a re-entered loop body must dispatch a fresh action run per iteration, not reuse the first.
+    let body_succeeded = nodes
+        .iter()
+        .filter(|n| n.node_id == "body" && n.status == WorkflowStatus::Succeeded)
+        .count();
+    assert_eq!(body_succeeded, 4);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn reducer_fans_out_parallel_branches_and_joins() {
     let (db, path) = test_db().await;
     let run_id = seed_run(

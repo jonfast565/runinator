@@ -29,6 +29,7 @@ export interface WorkflowNodeRef {
 export type WorkflowPathSegment = string | number;
 
 export type WorkflowEditorEdgeKind = "direct" | "branch" | "control";
+export type WorkflowEdgeStyle = "bezier" | "straight" | "square";
 
 export interface WorkflowEdgeSemanticOption {
   id: string;
@@ -67,6 +68,7 @@ export interface WorkflowEdgeEditorDraft {
   optionId: string;
   sourceHandle?: WorkflowConnectionHandle | null;
   targetHandle?: WorkflowConnectionHandle | null;
+  edgeStyle: WorkflowEdgeStyle;
   label: string;
   whenJson: string;
   matchKind: WorkflowEdgeEditorMatchKind;
@@ -79,6 +81,11 @@ export interface WorkflowEdgeEditorDraft {
   orderCount: number;
 }
 
+export interface WorkflowEdgeLabelOffset {
+  x: number;
+  y: number;
+}
+
 export interface WorkflowEditorEdgeData {
   kind: WorkflowEditorEdgeKind;
   transitionKey?: WorkflowDirectTransitionKey;
@@ -87,6 +94,9 @@ export interface WorkflowEditorEdgeData {
   parameterIndex?: number;
   sourceHandle?: WorkflowConnectionHandle;
   targetHandle?: WorkflowConnectionHandle;
+  edgeStyle?: WorkflowEdgeStyle;
+  labelOffset?: WorkflowEdgeLabelOffset | null;
+  parallelOffset?: number;
   validationCount?: number;
   validationSeverity?: WorkflowValidationSeverity;
   validationMessages?: string[];

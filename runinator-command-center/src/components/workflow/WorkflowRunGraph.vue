@@ -22,6 +22,9 @@
       <template #node-workflow="nodeProps">
         <WorkflowNode v-bind="nodeProps" />
       </template>
+      <template #edge-workflow="edgeProps">
+        <WorkflowEdge v-bind="edgeProps" />
+      </template>
     </VueFlow>
   </div>
 </template>
@@ -32,6 +35,7 @@ import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../stores/workflows";
 import StatusBadge from "../shared/StatusBadge.vue";
 import WorkflowNode from "./WorkflowNode.vue";
+import WorkflowEdge from "./WorkflowEdge.vue";
 
 const workflows = useWorkflowsStore();
 const { fitView, onPaneReady } = useVueFlow();

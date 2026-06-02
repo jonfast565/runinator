@@ -235,6 +235,23 @@ export async function downloadArtifactInBrowser(artifactId: number, defaultName:
   URL.revokeObjectURL(url);
 }
 
+// trigger a client-side download of an in-memory blob (used to save exported workflow files).
+export function downloadBlob(fileName: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+// trigger a client-side download of in-memory text (used to save exported WDL to disk).
+export function downloadTextFile(fileName: string, contents: string, mimeType = "text/plain") {
+  downloadBlob(fileName, new Blob([contents], { type: mimeType }));
+}
+
 export function pickFileFromBrowser(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");

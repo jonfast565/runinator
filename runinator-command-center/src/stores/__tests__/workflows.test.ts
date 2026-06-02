@@ -151,10 +151,11 @@ describe("workflow run detail state", () => {
     workflows.populateStepEditor("task-1");
     workflows.selectedGraphEdgeId = "edge-1";
 
-    expect(workflows.submitInlineNodeEdit("task-1", "renamed", "console.echo")).toBe(true);
+    expect(workflows.submitInlineNodeEdit("task-1", "renamed", "Friendly Name")).toBe(true);
 
+    // inline edits set the display name and never touch the configured action.
     const node = workflows.ensureWorkflowNodes().find((item) => item.id === "renamed");
-    expect(node).toMatchObject({ action_name: "console", action_function: "echo" });
+    expect(node).toMatchObject({ name: "Friendly Name", action_name: "console", action_function: "run" });
     expect(workflows.selectedStepId).toBe("");
     expect(workflows.selectedGraphEdgeId).toBe("");
   });

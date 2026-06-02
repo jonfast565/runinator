@@ -1,18 +1,22 @@
 <template>
-  <div class="modal-backdrop">
+  <div class="modal-backdrop" @click.self="workflows.closeStepEditor">
     <form class="modal step-modal" @submit.prevent="workflows.submitStepEditor">
       <header class="modal-header">
         <div>
           <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>
           <span>{{ workflows.selectedStepId || "New step" }}</span>
         </div>
-        <button type="button" @click="workflows.closeStepEditor">Close</button>
+        <div class="modal-header-actions">
+          <button type="submit" class="primary">Apply Step</button>
+          <button type="button" @click="workflows.closeStepEditor">Close</button>
+        </div>
       </header>
 
       <section class="form-section">
         <h3>Step</h3>
         <div class="form-grid">
           <label>Step ID <input v-model="workflows.stepEditor.id" /></label>
+          <label>Name <input v-model="workflows.stepEditor.name" placeholder="Shown on the node; defaults to the step ID" /></label>
           <label>
             Node Kind
             <select v-model="workflows.stepEditor.kind" :disabled="workflows.selectedStepKindLocked">
@@ -323,7 +327,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { useProvidersStore } from "../../stores/providers";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
@@ -410,7 +414,17 @@ const stepRefs = computed<StepRef[]>(() => {
 
 onMounted(() => {
   if (providersStore.providers.length === 0 && !providersStore.loading) providersStore.fetchProviders();
+  window.addEventListener("keydown", onKeydown);
 });
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
+});
+
+// escape closes the node editor without applying changes.
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") workflows.closeStepEditor();
+}
 
 function onActionNameChange(event: Event) {
   const name = (event.target as HTMLSelectElement).value;
@@ -452,6 +466,17 @@ function onSubflowNameChange(event: Event) {
 .ref-row span {
   color: #66717e;
   font-size: 12px;
+}
+
+.modal-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+}
+
+.modal-header-actions .primary {
+  background: #17202a;
+  color: #ffffff;
 }
 
 .section-title-row {

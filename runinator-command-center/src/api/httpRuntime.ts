@@ -166,6 +166,26 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "wdl/complete",
     body: (args) => arg(args, "request")
   },
+  compile_wdl: {
+    method: "POST",
+    path: () => "wdl/compile",
+    body: (args) => ({ source: arg(args, "source"), enabled: arg(args, "enabled") })
+  },
+  analyze_wdl: {
+    method: "POST",
+    path: () => "wdl/analyze",
+    body: (args) => ({ source: arg(args, "source") })
+  },
+  format_wdl: {
+    method: "POST",
+    path: () => "wdl/format",
+    body: (args) => ({ source: arg(args, "source") })
+  },
+  decompile_to_wdl: {
+    method: "POST",
+    path: () => "wdl/decompile",
+    body: (args) => ({ workflow: arg(args, "workflow") })
+  },
   fetch_providers: { method: "GET", path: () => "providers" },
   fetch_credentials: { method: "GET", path: () => "credentials" },
   save_credential: {

@@ -8,6 +8,8 @@ import {
   decompileToWdl,
   deleteWorkflow,
   deleteWorkflowTrigger,
+  downloadBlob,
+  downloadTextFile,
   fetchWorkflowNodeRunArtifacts,
   fetchWorkflowNodeRunChunks,
   fetchWorkflowRun,
@@ -31,6 +33,7 @@ import type { Edge } from "@vue-flow/core";
 import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, ScheduledTask, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
 import { pretty } from "../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
+import { createZip, type ZipEntry } from "../utils/zip";
 import {
   applyWorkflowEdgeEditorDraft,
   applyWorkflowInlineNodeEdit,
@@ -51,6 +54,7 @@ import {
   removeWorkflowNodeReferences,
   setConditionBranch,
   setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelOffset,
   moveWorkflowEdgeEditorDraft,
   optionIdForSourceHandle,
   workflowEdgeOptionId,
@@ -131,6 +135,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const selectedWorkflowNodeRunId = ref(0);
   const stepEditor = reactive({
     id: "",
+    name: "",
     kind: "task" as WorkflowNodeKind,
     approval_type: "generic",
     approval_prompt: "Approval required",
@@ -246,7 +251,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       .map((key) => `${key}:${nodeRefId(transitions[key]) ?? "invalid"}`)
       .join(",");
   });
-  const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, Object.values(workflowTaskDrafts.value)));
+  const subflowNames = computed(
+    () => new Map(workflows.value.filter((w) => w.id != null).map((w) => [w.id as number, w.name]))
+  );
+  const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, Object.values(workflowTaskDrafts.value), subflowNames.value));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
   const graphValidationIssues = computed(() => validateWorkflowIssues(workflowDraft.definition, useProvidersStore().providers));
   const workflowRunWorkflow = computed(() => {
@@ -256,7 +264,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return workflows.value.find((workflow) => workflow.id === workflowId) ?? null;
   });
   const runGraphNodes = computed(() => workflowRunWorkflow.value
-    ? buildGraphNodes(workflowRunWorkflow.value, workflowRunDetail.value, Object.values(workflowTaskDrafts.value)).map((node) => ({
+    ? buildGraphNodes(workflowRunWorkflow.value, workflowRunDetail.value, Object.values(workflowTaskDrafts.value), subflowNames.value).map((node) => ({
         ...node,
         data: { ...(node.data as JsonRecord), readOnly: true }
       }))
@@ -900,6 +908,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       stepEditorError.value = "Step ID is required";
       return false;
     }
+    const trimmedName = stepEditor.name.trim();
+    if (trimmedName) next.name = trimmedName;
+    else delete next.name;
     next.kind = stepEditor.kind;
     if (next.kind === "task" || next.kind === "action") {
       if (next.kind === "action") {
@@ -1083,6 +1094,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (!node) return;
     selectedStepId.value = nodeId;
     stepEditor.id = nodeId;
+    stepEditor.name = String(node.name ?? "");
     stepEditor.kind = node.kind ?? "task";
     stepEditor.task_id = Number(node.task_id ?? 1);
     stepEditor.approval_type = String(node.parameters?.approval_type ?? "generic");
@@ -1159,6 +1171,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function onGraphNodeClick(event: any) {
     const nodeId = event?.node?.id;
     if (nodeId) {
+      dismissStepEditorForCanvasEdit();
       selectedGraphEdgeId.value = "";
       populateStepEditor(nodeId);
     }
@@ -1172,6 +1185,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function onGraphNodeDragStop(event: any) {
     const node = event?.node;
     if (!node?.id) return;
+    dismissStepEditorForCanvasEdit();
     setGraphNodePosition(node.id, node.position);
     syncWorkflowDraftToJson();
   }
@@ -1241,17 +1255,28 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function reverseSelectedEdgeHandles(): boolean {
     const edge = selectedGraphEdge.value;
     if (!edge) return false;
+    dismissStepEditorForCanvasEdit();
     const data = edge.data as any;
     const semanticKey = data?.transitionKey ?? (typeof data?.branchIndex === "number" ? `branches.${data.branchIndex}` : parameterSemanticKey(data?.parameterKey, data?.parameterIndex));
-    setWorkflowEdgeHandles(workflowDraft.definition, edge.source, semanticKey, edge.targetHandle, edge.sourceHandle);
+    setWorkflowEdgeHandles(workflowDraft.definition, edge.source, semanticKey, edge.targetHandle, edge.sourceHandle, data?.edgeStyle);
     syncWorkflowDraftToJson();
     selectedGraphEdgeId.value = "";
+    return true;
+  }
+
+  function setEdgeLabelOffset(edgeId: string, offset: { x: number; y: number } | null): boolean {
+    const edge = graphEdges.value.find((item: Edge) => item.id === edgeId);
+    if (!edge) return false;
+    dismissStepEditorForCanvasEdit();
+    setWorkflowEdgeLabelOffset(workflowDraft.definition, edge, offset);
+    syncWorkflowDraftToJson();
     return true;
   }
 
   function applyGraphEdgeSemantic(connection: any, optionId: string, previousEdgeId = ""): boolean {
     const { source, target, sourceHandle } = connection;
     if (!source || !target) return false;
+    dismissStepEditorForCanvasEdit();
     if (isSameConnectionPointLoop(connection)) {
       app.setError("Cannot connect a node handle back to itself");
       return false;
@@ -1414,6 +1439,63 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (workflowEditorMode.value !== "json") {
       workflowEditorMode.value = "wdl";
     }
+  }
+
+  // export the current workflow draft as a .wdl source file the importer can re-ingest. the web
+  // service decompiles the definition; the caller (this client) writes it to disk via a download.
+  async function exportWorkflowWdl(): Promise<void> {
+    try {
+      const source = await decompileToWdl(cloneJson(workflowDraft));
+      const name = workflowDraft.name?.trim() || "workflow";
+      const fileName = `${name.replace(/[^a-z0-9._-]+/gi, "_")}.wdl`;
+      downloadTextFile(fileName, source, "text/plain");
+      app.setStatus(`Exported ${fileName}`);
+    } catch (err) {
+      app.setError(`Could not export this workflow as WDL (${errorMessage(err)}).`);
+    }
+  }
+
+  // export every workflow as a .wdlp pack: a zip of one decompiled .wdl per workflow plus a
+  // pack.wdlp manifest listing those files and the workflows' triggers, ready for the importer.
+  async function exportWorkflowPack(): Promise<void> {
+    const allWorkflows = workflows.value.filter((workflow) => workflow.id != null);
+    if (allWorkflows.length === 0) {
+      app.setError("No workflows to export.");
+      return;
+    }
+    await app.runOperation("Exporting workflow pack", async () => {
+      const entries: ZipEntry[] = [];
+      const manifestWorkflows: string[] = [];
+      const triggers: WorkflowTrigger[] = [];
+      const usedNames = new Set<string>();
+      const skipped: string[] = [];
+      for (const workflow of allWorkflows) {
+        let source: string;
+        try {
+          source = await decompileToWdl(cloneJson(workflow));
+        } catch {
+          skipped.push(workflow.name || `workflow ${workflow.id}`);
+          continue;
+        }
+        let slug = (workflow.name?.trim() || `workflow-${workflow.id}`).replace(/[^a-z0-9._-]+/gi, "_");
+        while (usedNames.has(slug)) {
+          slug = `${slug}_${workflow.id}`;
+        }
+        usedNames.add(slug);
+        const fileName = `${slug}.wdl`;
+        entries.push({ name: fileName, content: source });
+        manifestWorkflows.push(fileName);
+        triggers.push(...(await fetchWorkflowTriggers(workflow.id!).catch(() => [])));
+      }
+      if (entries.length === 0) {
+        throw new Error("no workflows could be decompiled to WDL");
+      }
+      const manifest = { version: 1, workflows: manifestWorkflows, triggers };
+      entries.unshift({ name: "pack.wdlp", content: pretty(manifest) });
+      downloadBlob("runinator-pack.zip", createZip(entries));
+      const note = skipped.length ? ` (skipped ${skipped.length} non-WDL: ${skipped.join(", ")})` : "";
+      app.setStatus(`Exported ${entries.length - 1} workflow(s) to runinator-pack.zip${note}`);
+    });
   }
 
   function ensureWorkflowNodes(): JsonRecord[] {
@@ -1603,13 +1685,21 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditorOpen.value = true;
   }
 
-  function submitStepEditor() {
-    if (applyStepEditor()) {
-      stepEditorOpen.value = false;
-      stepEditorCreating.value = false;
-      stepEditorCreatedNodeId.value = "";
-      selectedStepId.value = "";
-    }
+  async function submitStepEditor() {
+    if (!applyStepEditor()) return;
+    stepEditorOpen.value = false;
+    stepEditorCreating.value = false;
+    stepEditorCreatedNodeId.value = "";
+    selectedStepId.value = "";
+    // applying a step persists the workflow so canvas edits do not need a manual save.
+    await saveSelectedWorkflowBundle();
+  }
+
+  // dismiss an open node editor when the user starts editing on the canvas instead.
+  function dismissStepEditorForCanvasEdit() {
+    if (!stepEditorOpen.value || stepEditorCreating.value) return;
+    stepEditorOpen.value = false;
+    stepEditorError.value = "";
   }
 
   function closeStepEditor() {
@@ -1843,6 +1933,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     moveEdgeEditorItem,
     moveSelectedEdge,
     reverseSelectedEdgeHandles,
+    setEdgeLabelOffset,
     workflowEdgeOptions,
     applyGraphEdgeSemantic,
     applyStepEditor,
@@ -1862,6 +1953,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     syncWorkflowDraftToJson,
     syncWorkflowWdl,
     enterWdlMode,
+    exportWorkflowWdl,
+    exportWorkflowPack,
     ensureWorkflowNodes,
     addConditionBranchEditor,
     removeConditionBranchEditor,
@@ -1899,6 +1992,7 @@ function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
     source: "",
     target: "",
     optionId: "",
+    edgeStyle: "square",
     label: "",
     whenJson: pretty({ value: valueRef("input", ["value"]), equals: true }),
     matchKind: "equals",
