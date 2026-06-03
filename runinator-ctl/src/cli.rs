@@ -139,6 +139,10 @@ pub enum WdlCommands {
         file: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Emit the canonical fully-explicit form: start edge, ids and arrows on every node,
+        /// and all defaulted values (timeout/retry/limit/concurrency/approval type).
+        #[arg(long)]
+        explicit: bool,
     },
     /// Format a .wdl file.
     Format {

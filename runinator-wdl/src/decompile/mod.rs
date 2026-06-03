@@ -17,10 +17,20 @@ use runinator_models::workflows::{
 
 use crate::errors::WdlError;
 
+/// options controlling how a definition is rendered back to wdl.
+#[derive(Debug, Clone, Default)]
+pub struct DecompileOptions {
+    /// emit the canonical fully-explicit form: a `start ->` line, an id and happy-path arrow on
+    /// every node, and every defaulted value (timeout/retry/limit/concurrency/approval type).
+    pub explicit: bool,
+}
+
 pub(super) struct Decompiler<'a> {
     nodes: HashMap<String, &'a WorkflowNode>,
     end_ids: HashSet<String>,
     fail_ids: HashSet<String>,
+    // surface every implicit construct (ids, edges, defaults) instead of the terse form.
+    explicit: bool,
     loop_vars: Vec<(String, String)>,
     // declared `let <id>: <type>` annotations recovered from graph metadata.
     declared_types: HashMap<String, RuninatorType>,
@@ -35,7 +45,10 @@ pub(super) struct Decompiler<'a> {
     indent: usize,
 }
 
-pub fn decompile_definition(definition: &WorkflowDefinition) -> Result<String, WdlError> {
+pub fn decompile_definition(
+    definition: &WorkflowDefinition,
+    options: &DecompileOptions,
+) -> Result<String, WdlError> {
     let graph = &definition.definition;
     let mut nodes = HashMap::new();
     let mut end_ids = HashSet::new();
@@ -59,6 +72,7 @@ pub fn decompile_definition(definition: &WorkflowDefinition) -> Result<String, W
         nodes,
         end_ids,
         fail_ids,
+        explicit: options.explicit,
         loop_vars: Vec::new(),
         declared_types,
         visited: HashSet::new(),
@@ -86,6 +100,11 @@ pub fn decompile_definition(definition: &WorkflowDefinition) -> Result<String, W
         .and_then(|node| node.transitions.next.as_ref())
         .map(|target| target.as_str().to_string());
     if let Some(entry) = entry {
+        // the explicit form names the otherwise-synthetic start edge.
+        if decompiler.explicit {
+            let label = decompiler.target_label(&entry);
+            decompiler.line(&format!("start -> {label}"));
+        }
         decompiler.emit_region(&entry, None)?;
     }
 
@@ -255,6 +274,23 @@ impl<'a> Decompiler<'a> {
         self.end_ids.contains(id) || self.fail_ids.contains(id)
     }
 
+    /// whether a node is a synthetic join, which has no standalone wdl statement form.
+    fn is_join(&self, id: &str) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|node| matches!(node.kind, WorkflowNodeKind::Join))
+    }
+
+    /// an `@id("...") ` prefix for a control block in the explicit form, empty otherwise. leaf
+    /// nodes already surface their id through `let`/`@id`, so this covers only control headers.
+    fn block_id_prefix(&self, node: &WorkflowNode) -> String {
+        if self.explicit {
+            format!("@id({}) ", quote(&node.id))
+        } else {
+            String::new()
+        }
+    }
+
     fn target_label(&self, id: &str) -> String {
         if self.end_ids.contains(id) {
             "done".to_string()
@@ -285,6 +321,19 @@ impl<'a> Decompiler<'a> {
         cont: Option<String>,
         stop: Option<&str>,
     ) -> Option<String> {
+        // the explicit form always names the block's continuation edge with a `next ->` arrow,
+        // still walking inline into a fresh successor so it is emitted once.
+        if self.explicit {
+            let Some(c) = cont else {
+                self.line(closing);
+                return None;
+            };
+            let label = self.target_label(&c);
+            self.line(&format!("{closing} next -> {label}"));
+            let fresh =
+                !self.is_terminal(&c) && Some(c.as_str()) != stop && !self.visited.contains(&c);
+            return fresh.then_some(c);
+        }
         match cont {
             None => {
                 self.line(closing);
@@ -334,11 +383,14 @@ impl<'a> Decompiler<'a> {
         };
 
         let transitions = &node.transitions;
-        let success = transitions
-            .on_success
-            .as_ref()
-            .or(transitions.next.as_ref())
-            .map(|target| target.as_str().to_string());
+        // the happy path lives in `on_success` (action/subflow/approval) or `next` (wait/emit/
+        // config); the populated field also names the explicit arrow keyword.
+        let (succ_kw, success) = match (transitions.on_success.as_ref(), transitions.next.as_ref())
+        {
+            (Some(target), _) => ("ok", Some(target.as_str().to_string())),
+            (None, Some(target)) => ("next", Some(target.as_str().to_string())),
+            (None, None) => ("ok", None),
+        };
 
         // collect failure-style arrows and queue their targets for top-level emission, since
         // the linear walk never descends into them.
@@ -354,16 +406,23 @@ impl<'a> Decompiler<'a> {
             }
         }
 
-        // the success edge is explicit when it jumps to a terminal or to a node already
-        // emitted elsewhere; otherwise it is the linear successor we keep walking into.
+        // the success edge is explicit when it jumps to a terminal or to a node already emitted
+        // elsewhere; otherwise it is the linear successor we keep walking into. the explicit form
+        // renders it always, even when it is that linear successor or the region boundary.
         let success_arrow = match success.as_deref() {
-            Some(id) if Some(id) == stop => None,
+            Some(id) if Some(id) == stop && !self.explicit => None,
             Some(id) if self.is_terminal(id) => Some(self.target_label(id)),
             Some(id) if self.visited.contains(id) => Some(id.to_string()),
+            // a join has no wdl statement form, so its branch edges stay structural even in the
+            // explicit form (the enclosing `parallel { branch }` already expresses them).
+            Some(id) if self.explicit && !self.is_join(id) => Some(self.target_label(id)),
             _ => None,
         };
 
-        if arrows.is_empty() {
+        // put each outcome on its own line when there are failure arrows, or in the explicit form
+        // whenever a success arrow is shown; otherwise keep the terse inline `text -> label`.
+        let multiline = !arrows.is_empty() || (self.explicit && success_arrow.is_some());
+        if !multiline {
             match &success_arrow {
                 Some(label) => self.line(&format!("{prefix}{text} -> {label}")),
                 None => self.line(&format!("{prefix}{text}")),
@@ -372,7 +431,8 @@ impl<'a> Decompiler<'a> {
             self.line(&format!("{prefix}{text}"));
             self.indent += 1;
             if let Some(label) = &success_arrow {
-                self.line(&format!("ok -> {label}"));
+                let kw = if self.explicit { succ_kw } else { "ok" };
+                self.line(&format!("{kw} -> {label}"));
             }
             for (outcome, label) in &arrows {
                 self.line(&format!("{outcome} -> {label}"));
@@ -413,10 +473,10 @@ impl<'a> Decompiler<'a> {
             action.function,
             args.join(", ")
         );
-        if action.timeout_seconds != 60 {
+        if self.explicit || action.timeout_seconds != 60 {
             text.push_str(&format!(".timeout({}s)", action.timeout_seconds));
         }
-        if node.retry.max_attempts > 1 {
+        if self.explicit || node.retry.max_attempts > 1 {
             text.push_str(&format!(".retry({})", node.retry.max_attempts));
         }
         if !action.tags.is_empty() {
@@ -510,10 +570,13 @@ impl<'a> Decompiler<'a> {
             .cloned()
             .unwrap_or(Value::String("Approval required".into()));
         let mut text = format!("approve {}", self.expr(&prompt)?);
-        if let Some(kind) = node.parameters.get("approval_type").and_then(Value::as_str) {
-            if kind != "generic" {
-                text.push_str(&format!(" type {}", quote(kind)));
-            }
+        let kind = node
+            .parameters
+            .get("approval_type")
+            .and_then(Value::as_str)
+            .unwrap_or("generic");
+        if self.explicit || kind != "generic" {
+            text.push_str(&format!(" type {}", quote(kind)));
         }
         if let Value::Object(params) = node.parameters.as_value() {
             let mut parts = Vec::new();
@@ -562,9 +625,11 @@ impl<'a> Decompiler<'a> {
         let items_text = self.expr(&items)?;
         let var = self.fresh_var();
 
-        let mut header = format!("for {var} in {items_text}");
-        if let Some(limit) = node.max_iterations {
-            header.push_str(&format!(" limit {limit}"));
+        let mut header = format!("{}for {var} in {items_text}", self.block_id_prefix(node));
+        match node.max_iterations {
+            Some(limit) => header.push_str(&format!(" limit {limit}")),
+            None if self.explicit => header.push_str(" limit none"),
+            None => {}
         }
         header.push_str(" {");
         self.line(&header);
@@ -597,7 +662,11 @@ impl<'a> Decompiler<'a> {
             .as_ref()
             .map(|target| target.as_str().to_string());
 
-        let mut header = format!("while {}", self.cond(&branch.when)?);
+        let mut header = format!(
+            "{}while {}",
+            self.block_id_prefix(node),
+            self.cond(&branch.when)?
+        );
         if node.reentry.max_visits > 0 {
             header.push_str(&format!(" limit {}", node.reentry.max_visits));
         }
@@ -640,7 +709,11 @@ impl<'a> Decompiler<'a> {
         let merge_ref = merge.as_deref();
 
         for (index, branch) in branches.iter().enumerate() {
-            let keyword = if index == 0 { "if" } else { "} else if" };
+            let keyword = if index == 0 {
+                format!("{}if", self.block_id_prefix(node))
+            } else {
+                "} else if".to_string()
+            };
             self.line(&format!("{keyword} {} {{", self.cond(&branch.when)?));
             self.indent += 1;
             self.emit_region(branch.target.as_str(), merge_ref)?;
@@ -694,7 +767,11 @@ impl<'a> Decompiler<'a> {
             .or_else(|| stop.map(str::to_string));
         let merge_ref = merge.as_deref();
 
-        self.line(&format!("match {} {{", self.expr(&value)?));
+        self.line(&format!(
+            "{}match {} {{",
+            self.block_id_prefix(node),
+            self.expr(&value)?
+        ));
         self.indent += 1;
         for case in &cases {
             let target = case
@@ -746,9 +823,11 @@ impl<'a> Decompiler<'a> {
         let items_text = self.expr(&items)?;
         let var = self.fresh_var();
 
-        let mut header = format!("map {var} in {items_text}");
-        if let Some(concurrency) = node.parameters.get("concurrency").and_then(Value::as_i64) {
-            header.push_str(&format!(" concurrency {concurrency}"));
+        let mut header = format!("{}map {var} in {items_text}", self.block_id_prefix(node));
+        match node.parameters.get("concurrency").and_then(Value::as_i64) {
+            Some(concurrency) => header.push_str(&format!(" concurrency {concurrency}")),
+            None if self.explicit => header.push_str(" concurrency none"),
+            None => {}
         }
         header.push_str(" {");
         self.line(&header);
@@ -775,7 +854,7 @@ impl<'a> Decompiler<'a> {
         })?;
         let (join_id, mode, cont) = join;
 
-        self.line("parallel {");
+        self.line(&format!("{}parallel {{", self.block_id_prefix(node)));
         self.indent += 1;
         for branch in &branches {
             self.line("branch {");
@@ -808,7 +887,10 @@ impl<'a> Decompiler<'a> {
             .map(|target| target.as_str().to_string());
         let branch_stop = cont.clone();
 
-        self.line(&format!("race winner {winner} {{"));
+        self.line(&format!(
+            "{}race winner {winner} {{",
+            self.block_id_prefix(node)
+        ));
         self.indent += 1;
         for branch in &branches {
             self.line("branch {");
@@ -837,7 +919,7 @@ impl<'a> Decompiler<'a> {
             .map(|target| target.as_str().to_string());
         let branch_stop = cont.clone();
 
-        self.line("try {");
+        self.line(&format!("{}try {{", self.block_id_prefix(node)));
         self.indent += 1;
         if let Some(body) = &body {
             self.emit_region(body, branch_stop.as_deref())?;

@@ -195,7 +195,12 @@ impl Lowerer {
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
-        let join_id = self.fresh("join");
+        // derive the join id from the parallel's id so it stays stable across a round trip: the
+        // join has no surface form, so a counter-based id would drift whenever explicit ids shift
+        // the counter. falls back to a fresh id only on the unlikely collision.
+        let join_id = self
+            .claim(&format!("{id}_join"))
+            .unwrap_or_else(|_| self.fresh("join"));
         let mut branch_refs = Vec::new();
         for branch in &parallel.branches {
             let entry = self.lower_block(branch, &join_id)?;

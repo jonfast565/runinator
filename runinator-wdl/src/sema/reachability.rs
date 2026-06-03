@@ -11,6 +11,10 @@ use super::{Diagnostic, child_blocks, effective_id};
 
 pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
     let mut targeted = HashSet::new();
+    // an explicit `start -> <target>` makes that step the entry, so treat it as targeted.
+    if let Some(start) = &workflow.start {
+        insert_target(start, &mut targeted);
+    }
     collect_targets(&workflow.body, &mut targeted);
     check_block(&workflow.body, &targeted, diagnostics);
 }

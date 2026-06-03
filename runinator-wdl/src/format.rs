@@ -32,6 +32,10 @@ impl Formatter {
                 self.out.push('\n');
             }
         }
+        // preserve an explicit `start -> <target>` entry edge when the source declared one.
+        if let Some(start) = &workflow.start {
+            self.line(&format!("start -> {}", format_target(start)));
+        }
         self.block_body(&workflow.body);
         self.indent -= 1;
         self.line("}");

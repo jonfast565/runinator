@@ -27,6 +27,11 @@ pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) ->
     collect_block(&workflow.body, &mut labels, diagnostics);
     let symbols = Symbols { labels };
 
+    // an explicit `start -> <target>` must name a declared step (or a terminal).
+    if let Some(start) = &workflow.start {
+        resolve_target(start, &symbols, workflow.span, diagnostics);
+    }
+
     let mut scope = Vec::new();
     resolve_block(&workflow.body, &symbols, &mut scope, diagnostics);
     symbols

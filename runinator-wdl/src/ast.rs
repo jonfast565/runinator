@@ -14,6 +14,9 @@ pub struct Workflow {
     pub name: String,
     pub version: Option<i64>,
     pub input: Option<TypeExpr>,
+    /// an optional explicit `start -> <target>` entry edge. when `None` the first body
+    /// statement is the entry; when set it names the entry node directly.
+    pub start: Option<Target>,
     pub body: Block,
     pub span: Span,
 }

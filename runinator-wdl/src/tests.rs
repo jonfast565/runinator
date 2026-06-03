@@ -1,6 +1,7 @@
 use crate::{
-    CompileOptions, WdlCompletionRequest, WdlError, analyze_source, compile_str,
-    compile_str_with_diagnostics, complete_source, decompile, format_str, parse_document,
+    CompileOptions, DecompileOptions, WdlCompletionRequest, WdlError, analyze_source, compile_str,
+    compile_str_with_diagnostics, complete_source, decompile, decompile_with, format_str,
+    parse_document,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
@@ -131,6 +132,194 @@ fn assert_round_trips_unordered(src: &str) {
         sorted_nodes(&first.definition),
         sorted_nodes(&second.definition),
         "round trip diverged (order-insensitive)\n--- decompiled ---\n{wdl}"
+    );
+}
+
+/// decompile in the explicit form, recompile, and assert the normalized graphs match. node
+/// order carries no execution meaning, so this compares the node *set* like the unordered helper.
+fn assert_round_trips_explicit(src: &str) -> String {
+    let first = compile(src);
+    let wdl = decompile_with(&first, &DecompileOptions { explicit: true }).expect("decompile");
+    let second = compile_str(&wdl, &CompileOptions::default())
+        .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- explicit ---\n{wdl}"));
+
+    let sorted_nodes = |definition: &runinator_models::workflows::WorkflowGraph| {
+        let normalized = runinator_workflows::normalize_definition(definition.clone());
+        let value = serde_json::to_value(&normalized).expect("serialize graph");
+        let mut nodes = value
+            .get("nodes")
+            .and_then(|n| n.as_array())
+            .cloned()
+            .unwrap_or_default();
+        nodes.sort_by(|a, b| {
+            let id = |v: &serde_json::Value| {
+                v.get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            id(a).cmp(&id(b))
+        });
+        (value.get("start").cloned(), nodes)
+    };
+
+    assert_eq!(
+        sorted_nodes(&first.definition),
+        sorted_nodes(&second.definition),
+        "explicit round trip diverged\n--- explicit ---\n{wdl}"
+    );
+    wdl
+}
+
+#[test]
+fn explicit_decompile_surfaces_every_implicit_part() {
+    // a single action whose terse form hides start, ids, the success edge, and the defaults.
+    let wdl = assert_round_trips_explicit(
+        r#"
+        workflow "Hello" v1 {
+            let greeting = console.run(command: "echo hi")
+        }
+    "#,
+    );
+    assert!(
+        wdl.contains("start -> greeting"),
+        "missing start edge:\n{wdl}"
+    );
+    assert!(
+        wdl.contains(".timeout(60s)"),
+        "missing default timeout:\n{wdl}"
+    );
+    assert!(wdl.contains(".retry(1)"), "missing default retry:\n{wdl}");
+    assert!(wdl.contains("ok -> done"), "missing success arrow:\n{wdl}");
+}
+
+#[test]
+fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
+    // a for-loop with no limit: the back-edge, the continuation, the block id, and `limit none`.
+    let wdl = assert_round_trips_explicit(
+        r#"
+        workflow "Loop" v1 {
+            let seed = console.run(command: "seed")
+            for item in seed.items {
+                console.run(command: "work ${item}")
+            }
+            map shard in seed.shards {
+                console.run(command: "reindex ${shard}")
+            }
+        }
+    "#,
+    );
+    assert!(
+        wdl.contains("limit none"),
+        "missing explicit for cap:\n{wdl}"
+    );
+    assert!(
+        wdl.contains("concurrency none"),
+        "missing explicit map cap:\n{wdl}"
+    );
+    assert!(wdl.contains("@id("), "missing control-block id:\n{wdl}");
+    assert!(
+        wdl.contains("} next -> "),
+        "missing block continuation arrow:\n{wdl}"
+    );
+}
+
+#[test]
+fn explicit_and_implicit_caps_are_equivalent() {
+    // `limit none` / `concurrency none` must compile to the same graph as omitting them.
+    let explicit = compile(
+        r#"
+        workflow "Caps" v1 {
+            let seed = console.run(command: "seed")
+            for x in seed.items limit none { console.run(command: "a ${x}") }
+            map y in seed.items concurrency none { console.run(command: "b ${y}") }
+        }
+    "#,
+    );
+    let implicit = compile(
+        r#"
+        workflow "Caps" v1 {
+            let seed = console.run(command: "seed")
+            for x in seed.items { console.run(command: "a ${x}") }
+            map y in seed.items { console.run(command: "b ${y}") }
+        }
+    "#,
+    );
+    assert_eq!(
+        runinator_workflows::normalize_definition(explicit.definition),
+        runinator_workflows::normalize_definition(implicit.definition),
+    );
+}
+
+#[test]
+fn explicit_start_and_next_arrows_parse_and_match_implicit() {
+    // an explicit `start ->` plus `next ->`/`ok ->` arrows must produce the same graph as the
+    // implicit sequence they spell out.
+    let explicit = compile(
+        r#"
+        workflow "Explicit" v1 {
+            start -> first
+            @id("first") wait 5s
+                next -> second
+            @id("second") console.run(command: "go")
+                ok -> done
+        }
+    "#,
+    );
+    let implicit = compile(
+        r#"
+        workflow "Explicit" v1 {
+            @id("first") wait 5s
+            @id("second") console.run(command: "go")
+        }
+    "#,
+    );
+    assert_eq!(
+        runinator_workflows::normalize_definition(explicit.definition),
+        runinator_workflows::normalize_definition(implicit.definition),
+    );
+}
+
+#[test]
+fn explicit_start_target_must_resolve() {
+    let message = expect_semantic_error(
+        r#"
+        workflow "Bad" v1 {
+            start -> ghost
+            console.run(command: "x")
+        }
+    "#,
+    );
+    assert!(message.contains("unknown step 'ghost'"), "{message}");
+}
+
+#[test]
+fn explicit_round_trips_control_flow() {
+    // every control construct survives the explicit form's always-on ids, arrows, and defaults.
+    assert_round_trips_explicit(
+        r#"
+        workflow "Control" v1 {
+            let probe = console.run(command: "probe")
+            if probe.count > 0 {
+                console.run(command: "many")
+            } else {
+                console.run(command: "none")
+            }
+            while probe.status == "pending" limit 30 {
+                console.run(command: "poll")
+            }
+            match probe.mode {
+                "fast" -> { console.run(command: "fast") }
+                else -> { console.run(command: "slow") }
+            }
+            parallel {
+                branch { console.run(command: "a") }
+                branch { console.run(command: "b") }
+            } join all
+            approve "ship?" { env: "prod" }
+            let report = console.run(command: "report")
+        }
+    "#,
     );
 }
 

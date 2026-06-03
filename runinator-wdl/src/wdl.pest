@@ -7,8 +7,12 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 document = { SOI ~ workflow ~ EOI }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ stmt* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ start_decl? ~ stmt* ~ "}" }
 version  = @{ "v" ~ ASCII_DIGIT+ }
+
+// optional explicit entry edge. when omitted the first statement is the entry; when present it
+// names the entry node directly, surfacing the otherwise-synthetic `start` node.
+start_decl = { "start" ~ "->" ~ target }
 
 // input typing -------------------------------------------------------------
 
@@ -94,7 +98,8 @@ else_if    = { "else" ~ "if" ~ cond ~ block }
 else_block = { "else" ~ block }
 
 for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit? ~ block }
-for_limit  = { "limit" ~ integer }
+// `limit none` is the explicit form of an uncapped loop; `limit N` caps iterations.
+for_limit  = { "limit" ~ (integer | "none") }
 
 // condition-driven loops. `while c {}` repeats the body while c holds; `until c {}` is
 // sugar for `while !c {}`. an optional `limit` caps iterations (a safety bound).
@@ -102,7 +107,8 @@ while_stmt = { "while" ~ cond ~ for_limit? ~ block }
 until_stmt = { "until" ~ cond ~ for_limit? ~ block }
 
 map_stmt        = { "map" ~ ident ~ "in" ~ expr ~ map_concurrency? ~ block }
-map_concurrency = { "concurrency" ~ integer }
+// `concurrency none` is the explicit form of unbounded fan-out; `concurrency K` caps it.
+map_concurrency = { "concurrency" ~ (integer | "none") }
 
 match_stmt    = { "match" ~ expr ~ "{" ~ match_arm* ~ match_default? ~ "}" }
 match_arm     = { !("else" ~ "->") ~ match_head ~ "->" ~ arm_body }
@@ -130,7 +136,9 @@ block = { "{" ~ stmt* ~ "}" }
 transitions   = { outcome_arrow+ | single_arrow }
 single_arrow  = { "->" ~ target }
 outcome_arrow = { outcome ~ "->" ~ target }
-outcome       = { "ok" | "fail" | "timeout" | "reject" }
+// `next` names the happy-path edge for next-based leaves (wait/emit/config) and control blocks,
+// the named twin of the `-> target` single arrow; `ok` is the happy path for on_success leaves.
+outcome       = { "ok" | "next" | "fail" | "timeout" | "reject" }
 target        = { "done" | "fail" | ident }
 
 // conditions ---------------------------------------------------------------

@@ -38,6 +38,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut name = String::new();
     let mut version = None;
     let mut input = None;
+    let mut start = None;
     let mut body = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -47,6 +48,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                 version = Some(parse_i64(digits, span)?);
             }
             Rule::input_block => input = Some(parse_input_block(inner)?),
+            Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
             Rule::stmt => body.push(parse_stmt(inner)?),
             _ => {}
         }
@@ -55,6 +57,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         name,
         version,
         input,
+        start,
         body,
         span,
     })
@@ -499,10 +502,8 @@ fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
         match inner.as_rule() {
             Rule::ident => var = inner.as_str().to_string(),
             Rule::expr => items = parse_expr(inner)?,
-            Rule::for_limit => {
-                let int = first_inner(inner)?;
-                limit = Some(parse_i64(int.as_str(), span_of(&int))?);
-            }
+            // `limit none` yields no integer child and means uncapped (limit stays None).
+            Rule::for_limit => limit = parse_optional_count(inner)?,
             Rule::block => body = parse_block(inner)?,
             _ => {}
         }
@@ -547,10 +548,8 @@ fn parse_map(pair: Pair<Rule>) -> Result<MapStmt, WdlError> {
         match inner.as_rule() {
             Rule::ident => var = inner.as_str().to_string(),
             Rule::expr => items = parse_expr(inner)?,
-            Rule::map_concurrency => {
-                let int = first_inner(inner)?;
-                concurrency = Some(parse_i64(int.as_str(), span_of(&int))?);
-            }
+            // `concurrency none` yields no integer child and means unbounded (stays None).
+            Rule::map_concurrency => concurrency = parse_optional_count(inner)?,
             Rule::block => body = parse_block(inner)?,
             _ => {}
         }
@@ -704,6 +703,7 @@ fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, WdlError> {
                 }
                 let target = target.ok_or_else(|| WdlError::lower("arrow missing target"))?;
                 match outcome.as_str() {
+                    "next" => clause.next = Some(target),
                     "ok" => clause.on_success = Some(target),
                     "fail" => clause.on_failure = Some(target),
                     "timeout" => clause.on_timeout = Some(target),
@@ -1048,6 +1048,15 @@ fn parse_duration(text: &str, span: Span) -> Result<i64, WdlError> {
 fn parse_i64(text: &str, span: Span) -> Result<i64, WdlError> {
     text.parse::<i64>()
         .map_err(|_| WdlError::syntax(span, format!("invalid integer '{text}'")))
+}
+
+/// parse a `limit`/`concurrency` clause: `Some(n)` for an integer, `None` for `none`. the
+/// `none` literal is not a captured rule, so an absent integer child means uncapped.
+fn parse_optional_count(pair: Pair<Rule>) -> Result<Option<i64>, WdlError> {
+    match pair.into_inner().find(|p| p.as_rule() == Rule::integer) {
+        Some(int) => Ok(Some(parse_i64(int.as_str(), span_of(&int))?)),
+        None => Ok(None),
+    }
 }
 
 fn string_parts(pair: Pair<Rule>) -> Result<Vec<StrPart>, WdlError> {

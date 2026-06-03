@@ -14,6 +14,7 @@ pub(crate) mod lower;
 mod parser;
 pub mod sema;
 
+pub use decompile::DecompileOptions;
 pub use errors::{Span, WdlError};
 pub use parser::parse_document;
 pub use sema::{Diagnostic, Severity};
@@ -97,9 +98,18 @@ pub fn validate(definition: &WorkflowDefinition) -> Result<(), WdlError> {
         .map_err(|err| WdlError::Validation(err.to_string()))
 }
 
-/// decompile a WorkflowDefinition back into wdl source text.
+/// decompile a WorkflowDefinition back into terse wdl source text.
 pub fn decompile(definition: &WorkflowDefinition) -> Result<String, WdlError> {
-    decompile::decompile_definition(definition)
+    decompile::decompile_definition(definition, &DecompileOptions::default())
+}
+
+/// decompile with explicit options. `DecompileOptions { explicit: true }` renders the canonical
+/// fully-expanded form (start edge, ids and happy-path arrows on every node, all defaults shown).
+pub fn decompile_with(
+    definition: &WorkflowDefinition,
+    options: &DecompileOptions,
+) -> Result<String, WdlError> {
+    decompile::decompile_definition(definition, options)
 }
 
 #[cfg(test)]

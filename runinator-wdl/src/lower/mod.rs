@@ -45,11 +45,17 @@ pub fn lower_document(
     let end_id = lowerer.end_id.clone();
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
 
-    // build the start node pointing at the first statement, then append the terminals.
+    // the entry is an explicit `start -> <target>` when present, else the first statement.
+    let entry = match &workflow.start {
+        Some(target) => lowerer.target_id(target),
+        None => body_entry,
+    };
+
+    // build the start node pointing at the entry, then append the terminals.
     let start_node = node(
         &lowerer.start_id,
         "start",
-        vec![("transitions", transitions_next(&body_entry))],
+        vec![("transitions", transitions_next(&entry))],
     );
     let mut nodes = Vec::with_capacity(lowerer.nodes.len() + 3);
     nodes.push(start_node);

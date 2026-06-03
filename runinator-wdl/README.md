@@ -41,7 +41,7 @@ workflow "Core Team SDLC Pipeline" v1 {
 
 **Statements imply edges.** Statements in sequence wire the forward edge (actions use
 `on_success`, control-ish leaves use `next`). A synthetic `start`/`end`/`fail` are always
-emitted.
+emitted. Every implicit part can also be written explicitly — see [Implicit vs explicit](#implicit-vs-explicit).
 
 **Arrows make transitions explicit.** `-> done` (single) or outcome arrows:
 
@@ -92,6 +92,48 @@ maps to `RuninatorType`.
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
 
+## Implicit vs explicit
+
+WDL hides a lot for brevity: the entry edge, sequential edges, node ids, and several defaults
+are inferred. Every one of them can be written explicitly instead, and the two forms compile to
+the **same graph** — implicit is sugar, nothing is required. `decompile --explicit` emits the
+canonical fully-expanded source so a reader never has to guess how a workflow is wired.
+
+| Implicit (inferred) | Explicit form | Default |
+|---|---|---|
+| synthetic `start` → first statement | `start -> <id>` (top of body) | first statement |
+| sequential happy-path edge | `ok -> <id>` (action/subflow/approval) or `next -> <id>` (wait/emit/config, control blocks) | next statement |
+| auto node id (`action_1`, `for_loop_2`…) | `let x = …` (action/subflow) or `@id("x") …` (any statement) | generated |
+| action `.timeout(…)` | `.timeout(60s)` | 60s |
+| action `.retry(…)` | `.retry(1)` | 1 attempt |
+| `while`/`until` cap | `limit 1000` | 1000 |
+| `for` cap / `map` fan-out | `limit none` / `concurrency none` | unbounded |
+| approval kind | `type "generic"` | `generic` |
+| `parallel` / `race` policy | `join all` / `winner first_success` | always shown |
+| control-block continuation | trailing `} next -> <cont>` | next statement |
+
+`until c` is sugar for `while !c`, and `spawn`/`call` pick fire-and-forget vs wait — these stay as
+readable verbs; the canonical form normalizes to `while` and the matching verb. `limit none` /
+`concurrency none` and an omitted cap are identical; the explicit form surfaces `none`.
+
+So this terse workflow:
+
+```
+workflow "Hello" v1 {
+    let greeting = console.run(command: "echo hi")
+}
+```
+
+is exactly this fully-explicit one (`decompile --explicit`):
+
+```
+workflow "Hello" v1 {
+    start -> greeting
+    let greeting = console.run(command: "echo hi").timeout(60s).retry(1)
+        ok -> done
+}
+```
+
 ## Semantic analysis
 
 `compile_str` runs a semantic pass on the AST — after parsing, before lowering — so
@@ -136,7 +178,7 @@ rich rendering).
 
 ```
 runinatorctl wdl compile  workflow.wdl [-o out.json]
-runinatorctl wdl decompile workflow.json [-o out.wdl]
+runinatorctl wdl decompile workflow.json [-o out.wdl] [--explicit]
 runinatorctl wdl format   workflow.wdl [-o out.wdl] [--check]
 runinatorctl wdl check    workflow.wdl
 ```

@@ -210,9 +210,17 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
                 None => println!("{rendered}"),
             }
         }
-        WdlCommands::Decompile { file, output } => {
+        WdlCommands::Decompile {
+            file,
+            output,
+            explicit,
+        } => {
             let definition = read_workflow_definition(file)?;
-            let source = runinator_wdl::decompile(&definition).map_err(|e| err(e.to_string()))?;
+            let options = runinator_wdl::DecompileOptions {
+                explicit: *explicit,
+            };
+            let source = runinator_wdl::decompile_with(&definition, &options)
+                .map_err(|e| err(e.to_string()))?;
             match output {
                 Some(path) => {
                     fs::write(path, &source)?;
