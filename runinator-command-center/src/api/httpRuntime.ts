@@ -92,7 +92,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   create_workflow_run: {
     method: "POST",
     path: (args) => `workflows/${escape(arg<number>(args, "workflowId"))}/runs`,
-    body: (args) => ({ debug: argOpt<boolean>(args, "debug") ?? false }),
+    body: (args) => ({
+      debug: argOpt<boolean>(args, "debug") ?? false,
+      parameters: argOpt(args, "parameters") ?? {}
+    }),
     transform: extractWorkflowRunId
   },
   step_workflow_run: workflowRunDebugAction("step"),

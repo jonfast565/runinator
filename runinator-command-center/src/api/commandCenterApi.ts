@@ -121,8 +121,12 @@ export async function deleteWorkflowTrigger(triggerId: number) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
 }
 
-export async function createWorkflowRun(workflowId: number, options: { debug?: boolean } = {}) {
-  return command<WorkflowRunCreated>("create_workflow_run", { workflowId, debug: Boolean(options.debug) });
+export async function createWorkflowRun(workflowId: number, options: { debug?: boolean; parameters?: unknown } = {}) {
+  return command<WorkflowRunCreated>("create_workflow_run", {
+    workflowId,
+    debug: Boolean(options.debug),
+    parameters: options.parameters ?? {}
+  });
 }
 
 export async function fetchWorkflowRuns(workflowId?: number) {

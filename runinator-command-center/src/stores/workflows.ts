@@ -84,6 +84,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowWdl = ref("");
   const workflowConcurrency = ref(1);
   const workflowSettingsOpen = ref(false);
+  const runInputOpen = ref(false);
+  const runInputDraft = ref<JsonRecord>({});
+  const runInputDebug = ref(false);
   const workflowTriggers = ref<WorkflowTrigger[]>([]);
   const triggerEditorOpen = ref(false);
   const triggerEditorCreating = ref(false);
@@ -182,6 +185,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const app = useAppStore();
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
+  const selectedWorkflowInputType = computed<RuninatorType | null>(() => selectedWorkflow.value?.input_type ?? null);
+  const selectedWorkflowHasInputs = computed(() => {
+    const ty = selectedWorkflowInputType.value;
+    return Boolean(ty && ty.type === "struct" && Object.keys(ty.fields).length > 0);
+  });
   const canManageWorkflowTriggers = computed(() => Boolean(workflowDraft.id));
   const canStepWorkflowRun = computed(() => workflowRunDetail.value?.run.status === "debug_paused");
   const debugState = computed<Record<string, any> | null>(() => {
@@ -356,22 +364,46 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectWorkflow(workflow);
   }
 
+  // open the input form when the workflow declares inputs, otherwise launch immediately.
   async function runSelectedWorkflow(debug = false) {
+    const workflow = selectedWorkflow.value;
+    if (!workflow?.id || !workflow.enabled) return app.setError(workflow ? "Workflow is disabled" : "No workflow selected");
+    if (selectedWorkflowHasInputs.value) {
+      runInputDraft.value = buildInputSkeleton(selectedWorkflowInputType.value);
+      runInputDebug.value = debug;
+      runInputOpen.value = true;
+      return;
+    }
+    await launchWorkflowRun(debug, {});
+  }
+
+  async function runSelectedWorkflowDebug() {
+    return runSelectedWorkflow(true);
+  }
+
+  function closeRunInput() {
+    runInputOpen.value = false;
+  }
+
+  async function confirmRunInput() {
+    const debug = runInputDebug.value;
+    const parameters = runInputDraft.value;
+    runInputOpen.value = false;
+    await launchWorkflowRun(debug, parameters);
+  }
+
+  async function launchWorkflowRun(debug: boolean, parameters: JsonRecord) {
     const workflow = selectedWorkflow.value;
     if (!workflow?.id || !workflow.enabled) return app.setError(workflow ? "Workflow is disabled" : "No workflow selected");
     const response = await app.runOperation(
       debug ? `Running workflow ${workflow.name} in debug mode` : `Running workflow ${workflow.name}`,
-      () => createWorkflowRun(workflow.id!, { debug })
+      () => createWorkflowRun(workflow.id!, { debug, parameters })
     );
     selectedWorkflowRunId.value = response.id;
     app.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);
     await fetchWorkflowRunDetail(response.id);
     await fetchRecentWorkflowRuns();
     app.activeTab = "Runs";
-  }
-
-  async function runSelectedWorkflowDebug() {
-    return runSelectedWorkflow(true);
   }
 
   async function stepSelectedWorkflowRun() {
@@ -1857,6 +1889,13 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowTaskDrafts,
     selectedWorkflow,
     canRunWorkflow,
+    selectedWorkflowInputType,
+    selectedWorkflowHasInputs,
+    runInputOpen,
+    runInputDraft,
+    runInputDebug,
+    closeRunInput,
+    confirmRunInput,
     canManageWorkflowTriggers,
     canRemoveSelectedStep,
     filteredWorkflows,
@@ -2038,6 +2077,38 @@ export function newWorkflowTriggerDraft(workflowId: number, kind: WorkflowTrigge
 function defaultTriggerConfiguration(kind: WorkflowTriggerKind): JsonRecord {
   if (kind === "cron") return { cron: "0 * * * *", parameters: {} };
   return {};
+}
+
+// seed a draft input object from the workflow's input struct so declared fields render pre-populated.
+function buildInputSkeleton(ty: RuninatorType | null): JsonRecord {
+  if (!ty || ty.type !== "struct") return {};
+  const skeleton: JsonRecord = {};
+  for (const [name, field] of Object.entries(ty.fields)) {
+    skeleton[name] = defaultValueForInputType(field.ty);
+  }
+  return skeleton;
+}
+
+function defaultValueForInputType(ty: RuninatorType): unknown {
+  switch (ty.type) {
+    case "string":
+      return "";
+    case "boolean":
+      return false;
+    case "integer":
+    case "number":
+      return 0;
+    case "array":
+      return [];
+    case "map":
+      return {};
+    case "struct":
+      return buildInputSkeleton(ty);
+    case "union":
+      return ty.variants.length ? defaultValueForInputType(ty.variants[0]) : null;
+    default:
+      return null;
+  }
 }
 
 function dateTimeLocalToIso(value: string | null | undefined): string | null {

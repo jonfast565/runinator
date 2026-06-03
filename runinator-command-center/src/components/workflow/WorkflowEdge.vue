@@ -7,6 +7,11 @@
     :interaction-width="interactionWidth"
     :style="style"
   />
+  <!-- leader line + anchor dot tie a displaced label back to the edge it defines. -->
+  <g v-if="connectorPath" class="workflow-edge-label-connector nodrag nopan" :class="severityClass">
+    <path :d="connectorPath" />
+    <circle :cx="anchorPoint.x" :cy="anchorPoint.y" r="2.5" />
+  </g>
   <EdgeLabelRenderer v-if="labelText">
     <div
       class="workflow-edge-label nodrag nopan"
@@ -111,6 +116,31 @@ const labelStyle = computed<CSSProperties>(() => ({
   pointerEvents: interactive ? "all" : "none"
 }));
 
+// the natural label anchor on the path; the leader line points back here.
+const anchorPoint = computed(() => {
+  const [, labelX, labelY] = pathParams.value;
+  return { x: labelX, y: labelY };
+});
+
+// draw a leader from the anchor to the label box border once the label is
+// shifted (auto-avoidance or manual drag) far enough to read as detached.
+const connectorPath = computed(() => {
+  const anchor = anchorPoint.value;
+  const pos = labelPosition.value;
+  const dx = pos.x - anchor.x;
+  const dy = pos.y - anchor.y;
+  const distance = Math.hypot(dx, dy);
+  const { width, height } = labelDimensions.value;
+  // while the label still overlaps its anchor the link is already obvious.
+  const minDistance = Math.min(width, height) / 2 + labelPadding;
+  if (distance <= minDistance) return "";
+  // stop the line at the label box edge so it visibly meets the label.
+  const scale = Math.min(width / 2 / Math.abs(dx || 1e-6), height / 2 / Math.abs(dy || 1e-6));
+  const edgeX = pos.x - dx * scale;
+  const edgeY = pos.y - dy * scale;
+  return `M ${anchor.x},${anchor.y} L ${edgeX},${edgeY}`;
+});
+
 const severityClass = computed(() => props.data?.validationSeverity ?? "");
 const labelTitle = computed(() => {
   const messages = props.data?.validationMessages ?? [];
@@ -199,6 +229,35 @@ onBeforeUnmount(stopDragging);
 </script>
 
 <style scoped>
+.workflow-edge-label-connector {
+  pointer-events: none;
+}
+
+.workflow-edge-label-connector path {
+  fill: none;
+  stroke: #94a3b8;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+}
+
+.workflow-edge-label-connector circle {
+  fill: #94a3b8;
+  opacity: 0.8;
+}
+
+.workflow-edge-label-connector.warning path,
+.workflow-edge-label-connector.warning circle {
+  stroke: #f59e0b;
+  fill: #f59e0b;
+}
+
+.workflow-edge-label-connector.error path,
+.workflow-edge-label-connector.error circle {
+  stroke: #dc2626;
+  fill: #dc2626;
+}
+
 .workflow-edge-label {
   position: absolute;
   padding: 1px 6px;

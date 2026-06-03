@@ -48,6 +48,7 @@
       </template>
     </SplitPane>
     <WorkflowStepEditorModal v-if="workflows.stepEditorOpen" />
+    <WorkflowRunInputModal v-if="workflows.runInputOpen" />
   </section>
 </template>
 
@@ -55,6 +56,7 @@
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
+import WorkflowRunInputModal from "../components/workflow/WorkflowRunInputModal.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
