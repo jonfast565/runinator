@@ -62,7 +62,7 @@
         <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Delete</button>
-        <button @click="workflows.addConnectedWorkflowNode('task')">Add connected node</button>
+        <button @click="workflows.addConnectedWorkflowNode('action')">Add connected node</button>
         <button @click="workflows.autoArrangeWorkflowNodes()">Auto arrange from here</button>
         <span v-if="workflows.selectedNodeIssues.length" class="workflow-command-issues">{{ workflows.selectedNodeIssues[0].message }}</span>
       </template>

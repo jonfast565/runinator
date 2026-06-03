@@ -94,9 +94,8 @@ describe("workflow run detail state", () => {
     await workflows.selectWorkflow(workflowDefinition(7, "nested input"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "prepare",
-      kind: "task",
-      action_name: "workflow-input",
-      action_function: "prepare",
+      kind: "action",
+      action: { provider: "workflow-input", function: "prepare", timeout_seconds: 300, configuration: {} },
       parameters: {},
       transitions: { next: { "$node": "end" } }
     });
@@ -126,7 +125,7 @@ describe("workflow run detail state", () => {
     });
 
     expect(workflows.applyStepEditor()).toBe(true);
-    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "prepare")?.parameters).toEqual({
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "prepare")?.action.configuration).toEqual({
       workflow_input: {
         target: "prod",
         environments: {
@@ -142,9 +141,8 @@ describe("workflow run detail state", () => {
     Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
-      kind: "task",
-      action_name: "console",
-      action_function: "run",
+      kind: "action",
+      action: { provider: "console", function: "run", timeout_seconds: 300, configuration: {} },
       parameters: {},
       transitions: { next: { "$node": "end" } }
     });
@@ -155,7 +153,7 @@ describe("workflow run detail state", () => {
 
     // inline edits set the display name and never touch the configured action.
     const node = workflows.ensureWorkflowNodes().find((item) => item.id === "renamed");
-    expect(node).toMatchObject({ name: "Friendly Name", action_name: "console", action_function: "run" });
+    expect(node).toMatchObject({ name: "Friendly Name", action: { provider: "console", function: "run" } });
     expect(workflows.selectedStepId).toBe("");
     expect(workflows.selectedGraphEdgeId).toBe("");
   });
@@ -165,9 +163,8 @@ describe("workflow run detail state", () => {
     Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
-      kind: "task",
-      action_name: "console",
-      action_function: "run",
+      kind: "action",
+      action: { provider: "console", function: "run", timeout_seconds: 300, configuration: {} },
       parameters: {},
       transitions: { next: { "$node": "end" } }
     });
@@ -199,7 +196,7 @@ describe("workflow run detail state", () => {
     Object.assign(workflows.workflowDraft, workflowDefinition(7, "protected nodes"));
     workflows.populateStepEditor("start");
 
-    workflows.stepEditor.kind = "task";
+    workflows.stepEditor.kind = "action";
 
     expect(workflows.applyStepEditor()).toBe(false);
     expect(workflows.stepEditorError).toBe("start node kind cannot be changed");
@@ -255,10 +252,9 @@ describe("workflow run detail state", () => {
     Object.assign(workflows.workflowDraft, workflowDefinition(7, "locked nodes"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
-      kind: "task",
+      kind: "action",
       locked: true,
-      action_name: "console",
-      action_function: "run",
+      action: { provider: "console", function: "run", timeout_seconds: 300, configuration: {} },
       parameters: {},
       transitions: { next: { "$node": "end" } }
     });
@@ -271,8 +267,8 @@ describe("workflow run detail state", () => {
     workflows.stepEditor.kind = "wait";
 
     expect(workflows.applyStepEditor()).toBe(false);
-    expect(workflows.stepEditorError).toBe("task node kind cannot be changed");
-    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "task-1")?.kind).toBe("task");
+    expect(workflows.stepEditorError).toBe("action node kind cannot be changed");
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "task-1")?.kind).toBe("action");
   });
 });
 

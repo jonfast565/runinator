@@ -39,7 +39,7 @@
         </div>
       </section>
 
-      <section v-if="workflows.stepEditor.kind === 'task' || workflows.stepEditor.kind === 'action'" class="form-section">
+      <section v-if="workflows.stepEditor.kind === 'action'" class="form-section">
         <div class="section-title-row">
           <h3>Action Configuration</h3>
         </div>
@@ -67,7 +67,7 @@
         </p>
       </section>
 
-      <section v-if="workflows.stepEditor.kind === 'task' || workflows.stepEditor.kind === 'action'" class="form-section">
+      <section v-if="workflows.stepEditor.kind === 'action'" class="form-section">
         <h3>Step Parameters</h3>
         <TypedParameterEditor
           v-if="selectedAction"
@@ -334,6 +334,7 @@ import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
+import { workflowNodeActionConfig } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -398,9 +399,10 @@ const stepRefs = computed<StepRef[]>(() => {
   const currentId = workflows.selectedStepId;
   const prev = prevStepId.value;
   for (const node of nodes) {
-    if (node.kind !== "task" || node.id === currentId) continue;
-    const provider = providersStore.providers.find(p => p.name === node.action_name);
-    const action = provider?.actions.find(a => a.function_name === node.action_function);
+    if (node.kind !== "action" || node.id === currentId) continue;
+    const config = workflowNodeActionConfig(node);
+    const provider = providersStore.providers.find(p => p.name === config.provider);
+    const action = provider?.actions.find(a => a.function_name === config.action);
     if (!action?.results?.length) continue;
     for (const result of action.results) {
       const template = node.id === prev

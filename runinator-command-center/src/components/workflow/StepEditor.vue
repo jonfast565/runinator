@@ -20,14 +20,6 @@
         </div>
       </section>
 
-      <section v-if="taskDraft" class="detail-band">
-        <div class="metric">
-          <span>Task</span>
-          <strong>{{ taskDraft.name || `Task ${taskDraft.id ?? "-"}` }}</strong>
-          <small>{{ taskDraft.enabled ? "enabled" : "disabled" }}</small>
-        </div>
-      </section>
-
       <section v-for="section in detailSections" :key="section.title" class="detail-section">
         <h3>{{ section.title }}</h3>
         <div v-if="section.items.length" class="detail-grid">
@@ -65,7 +57,7 @@
       <div class="empty-detail">
         <h2>No Step Selected</h2>
         <p>Select a node on the graph or add a node from the workflow toolbar.</p>
-        <button @click="workflows.addWorkflowNode('task')">Add Task Node</button>
+        <button @click="workflows.addWorkflowNode('action')">Add Node</button>
       </div>
     </template>
   </div>
@@ -74,10 +66,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useProvidersStore } from "../../stores/providers";
-import { useTasksStore } from "../../stores/tasks";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { JsonRecord } from "../../types/models";
-import { directTransitionKeys, nodeRefId, workflowNodeActionConfig } from "../../utils/workflows";
+import { directTransitionKeys, nodeRefId, workflowNodeActionConfig, workflowNodeActionInputs } from "../../utils/workflows";
 
 interface DetailItem {
   label: string;
@@ -96,16 +87,10 @@ interface DetailSection {
 }
 
 const workflows = useWorkflowsStore();
-const tasksStore = useTasksStore();
 const providersStore = useProvidersStore();
 
 const node = computed<JsonRecord | null>(() => workflows.selectedNode);
-const taskDraft = computed(() => {
-  const current = node.value;
-  if (!current || (current.kind !== "task" && current.kind !== "action")) return null;
-  return workflows.workflowTaskDrafts[current.id] ?? tasksStore.tasks.find((task) => task.id === Number(current.task_id)) ?? null;
-});
-const actionConfig = computed(() => (node.value ? workflowNodeActionConfig(node.value, taskDraft.value) : { provider: "", action: "" }));
+const actionConfig = computed(() => (node.value ? workflowNodeActionConfig(node.value) : { provider: "", action: "" }));
 const provider = computed(() => providersStore.providers.find((item) => item.name === actionConfig.value.provider) ?? null);
 const action = computed(() => provider.value?.actions.find((item) => item.function_name === actionConfig.value.action) ?? null);
 
@@ -114,7 +99,6 @@ const headline = computed(() => {
   if (!current) return "";
   switch (current.kind) {
     case "action":
-    case "task":
       return actionConfig.value.provider ? `${actionConfig.value.provider} · ${actionConfig.value.action || "action"}` : "Unconfigured action";
     case "approval":
       return String(current.parameters?.prompt ?? "Approval required");
@@ -147,8 +131,7 @@ const detailSections = computed<DetailSection[]>(() => {
 function kindSection(current: JsonRecord): DetailSection {
   switch (current.kind) {
     case "action":
-    case "task":
-      return taskSection(current);
+      return actionSection(current);
     case "approval":
       return section("Approval", [
         item("Type", current.parameters?.approval_type ?? current.parameters?.type ?? "generic"),
@@ -210,33 +193,17 @@ function kindSection(current: JsonRecord): DetailSection {
   }
 }
 
-function taskSection(current: JsonRecord): DetailSection {
-  const task = taskDraft.value;
-  if (!task) {
-    return section("Action", [
+function actionSection(current: JsonRecord): DetailSection {
+  return section(
+    "Action",
+    [
       item("Provider", actionConfig.value.provider || "-"),
       item("Action", actionConfig.value.action || "-"),
       item("Timeout", `${current.timeout_seconds ?? current.action?.timeout_seconds ?? "-"}s`),
       item("Retries", current.retry?.max_attempts ?? 1),
-      item("Step Parameters", valueLabel(current.parameters))
-    ]);
-  }
-  return section(
-    current.kind === "action" ? "Action" : "Task",
-    [
-      item("Name", task.name || "-"),
-      item("Provider", actionConfig.value.provider || "-"),
-      item("Action", actionConfig.value.action || "-"),
-      item("Schedule", task.cron_schedule || "-"),
-      item("Timeout", `${task.timeout}s`),
-      item("Retries", current.retry?.max_attempts ?? 1),
-      item("Step Parameters", valueLabel(current.parameters))
+      item("Step Parameters", valueLabel(workflowNodeActionInputs(current)))
     ],
-    [
-      task.enabled ? "scheduled" : "workflow-only",
-      task.mcp_enabled ? "mcp" : "",
-      ...(action.value?.parameters ?? []).filter((param) => param.required).map((param) => `requires ${param.name}`)
-    ].filter(Boolean)
+    (action.value?.parameters ?? []).filter((param) => param.required).map((param) => `requires ${param.name}`)
   );
 }
 

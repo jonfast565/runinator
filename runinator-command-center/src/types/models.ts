@@ -3,7 +3,6 @@ export type JsonRecord = Record<string, any>;
 export type WorkflowNodeKind =
   | "start"
   | "action"
-  | "task"
   | "wait"
   | "condition"
   | "switch"

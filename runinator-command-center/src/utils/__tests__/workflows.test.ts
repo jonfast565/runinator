@@ -8,8 +8,6 @@ import {
   autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
-  copyWorkflowTaskDraft,
-  createWorkflowTaskDraft,
   createWorkflowNode,
   isSameConnectionPointLoop,
   normalizeWorkflowDefinition,
@@ -18,7 +16,6 @@ import {
   setConditionBranch,
   setWorkflowEdgeHandles,
   setWorkflowEdgeLabelOffset,
-  stampWorkflowTaskConfiguration,
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
   workflowEdgeEditorDraft,
@@ -40,8 +37,8 @@ describe("workflow graph utils", () => {
     input_type: { type: "any" },
     definition: {
       nodes: [
-        { id: "a", kind: "task", task_id: 1, transitions: { next: { "$node": "b" } } },
-        { id: "b", kind: "task", task_id: 2, transitions: {} }
+        { id: "a", kind: "action", action: { provider: "Console", function: "run", configuration: {} }, transitions: { next: { "$node": "b" } } },
+        { id: "b", kind: "action", action: { provider: "Console", function: "run", configuration: {} }, transitions: {} }
       ],
       ui: { layout: { nodes: { a: { x: 10, y: 20 } } } }
     }
@@ -186,7 +183,7 @@ describe("workflow graph utils", () => {
     expect(workflowNodeSemanticHandles({ id: "batch", kind: "map" })).toEqual(
       expect.arrayContaining([expect.objectContaining({ semanticOptionId: "control:target" })])
     );
-    expect(workflowNodeSemanticHandles({ id: "task", kind: "task" })).toEqual(
+    expect(workflowNodeSemanticHandles({ id: "task", kind: "action" })).toEqual(
       expect.arrayContaining([expect.objectContaining({ semanticOptionId: "direct:next" })])
     );
   });
@@ -255,49 +252,10 @@ describe("workflow graph utils", () => {
     });
     const conditionNode = createWorkflowNode("condition", nodes);
     expect(conditionNode.transitions?.branches).toHaveLength(1);
-    expect(createWorkflowNode("task", nodes, 42)).toMatchObject({ kind: "task", task_id: 42, retry: { max_attempts: 1 } });
-    for (const kind of ["task", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "emit", "subflow"] as const) {
+    expect(createWorkflowNode("action", nodes)).toMatchObject({ kind: "action", action: { provider: "", function: "" }, retry: { max_attempts: 1 } });
+    for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "emit", "subflow"] as const) {
       expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind });
     }
-  });
-
-  it("creates and copies workflow-owned task drafts", () => {
-    const draft = createWorkflowTaskDraft("build_step", -1);
-    expect(draft).toMatchObject({
-      id: -1,
-      name: "Build Step Task",
-      enabled: false,
-      configuration: { task_type: "workflow", workflow_node_id: "build_step" }
-    });
-
-    const copy = copyWorkflowTaskDraft(
-      {
-        ...draft,
-        id: 42,
-        name: "Shared Task",
-        action_name: "console",
-        action_function: "run",
-        configuration: { task_type: "scheduled" }
-      },
-      "copied",
-      -2
-    );
-    expect(copy).toMatchObject({
-      id: -2,
-      name: "Shared Task copy",
-      action_name: "console",
-      action_function: "run",
-      configuration: { task_type: "workflow", workflow_node_id: "copied" }
-    });
-  });
-
-  it("stamps workflow id on owned task configuration", () => {
-    const task = createWorkflowTaskDraft("node", -1);
-    expect(stampWorkflowTaskConfiguration(task, "renamed", 99).configuration).toMatchObject({
-      task_type: "workflow",
-      workflow_node_id: "renamed",
-      workflow_id: 99
-    });
   });
 
   it("creates workflow trigger drafts with kind-specific defaults", () => {
@@ -593,7 +551,7 @@ describe("workflow graph utils", () => {
     const definition: any = {
       start: "missing_start",
       nodes: [
-        { id: "task", kind: "task", action_name: "Unknown", action_function: "run", transitions: { next: { "$node": "missing" } } },
+        { id: "task", kind: "action", action: { provider: "Unknown", function: "run", configuration: {} }, transitions: { next: { "$node": "missing" } } },
         { id: "task", kind: "emit", parameters: { data: { "$ref": { node: "missing" } } } },
         { id: "guard", kind: "condition", transitions: { branches: [{ when: { value: "{{legacy}}" } }] } },
         { id: "route", kind: "switch", parameters: { cases: [{ equals: true }] } }
@@ -660,7 +618,7 @@ describe("workflow graph utils", () => {
   it("normalizes legacy definitions with required start and end nodes", () => {
     const normalized = normalizeWorkflowDefinition(workflow);
     expect(normalized.definition.start).toBe("start");
-    expect(normalized.definition.nodes.map((node: any) => node.kind)).toEqual(["start", "task", "task", "end", "fail"]);
+    expect(normalized.definition.nodes.map((node: any) => node.kind)).toEqual(["start", "action", "action", "end", "fail"]);
     expect(normalized.definition.nodes.find((node: any) => node.id === "b").transitions.next).toEqual({ "$node": "end" });
     expect(normalized.definition.ui.layout.nodes.a).toEqual({ x: 10, y: 20 });
   });
@@ -681,7 +639,7 @@ describe("workflow graph utils", () => {
       start: "start",
       nodes: [
         { id: "start", kind: "start", transitions: { next: { "$node": "task" } } },
-        { id: "task", kind: "task", transitions: { next: { "$node": "end" } } },
+        { id: "task", kind: "action", transitions: { next: { "$node": "end" } } },
         { id: "end", kind: "end" }
       ]
     });
@@ -698,8 +656,8 @@ describe("workflow graph utils", () => {
       nodes: [
         { id: "start", kind: "start", transitions: { next: { "$node": "fanout" } } },
         { id: "fanout", kind: "parallel", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
-        { id: "a", kind: "task", transitions: { next: { "$node": "join" } } },
-        { id: "b", kind: "task", transitions: { next: { "$node": "join" } } },
+        { id: "a", kind: "action", transitions: { next: { "$node": "join" } } },
+        { id: "b", kind: "action", transitions: { next: { "$node": "join" } } },
         { id: "join", kind: "join", parameters: { wait_for: [{ "$node": "a" }, { "$node": "b" }] }, transitions: { next: { "$node": "end" } } },
         { id: "end", kind: "end" }
       ]
@@ -716,8 +674,8 @@ describe("workflow graph utils", () => {
       start: "start",
       nodes: [
         { id: "start", kind: "start", transitions: { next: { "$node": "a" } } },
-        { id: "a", kind: "task", transitions: { next: { "$node": "b" } } },
-        { id: "b", kind: "task", transitions: { next: { "$node": "a" }, on_success: { "$node": "end" } } },
+        { id: "a", kind: "action", transitions: { next: { "$node": "b" } } },
+        { id: "b", kind: "action", transitions: { next: { "$node": "a" }, on_success: { "$node": "end" } } },
         { id: "end", kind: "end" }
       ]
     });

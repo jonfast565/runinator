@@ -19,7 +19,6 @@ import type {
   WorkflowValidationIssue,
   WorkflowValidationSeverity,
   WorkflowRunDetail,
-  ScheduledTask,
   RunSummary,
   ProviderMetadata,
   ActionResultMetadata
@@ -48,14 +47,13 @@ export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "ri
 export const workflowEdgeStyles: WorkflowEdgeStyle[] = ["bezier", "straight", "square"];
 const semanticTargetHandleId = "target:in";
 
-export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, tasks: ScheduledTask[] = [], subflowNames?: Map<number, string>): Node[] {
+export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, subflowNames?: Map<number, string>, providers: ProviderMetadata[] = []): Node[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
-  const issuesByNode = validationIssuesByNode(validateWorkflowIssues(definition));
+  const issuesByNode = validationIssuesByNode(validateWorkflowIssues(definition, providers));
   const layout = workflowLayoutNodes(definition);
   const fallbackLayout = autoArrangeWorkflowLayout(definition);
   const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
-  const taskById = new Map(tasks.filter((task) => task.id !== null).map((task) => [task.id, task]));
   const debug = detail?.run.state?.debug;
   const breakpointSet = new Set<string>(
     Array.isArray(debug?.breakpoints)
@@ -76,7 +74,7 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         title: nodeDisplayName(node, id),
         nodeId: id,
         kind,
-        summary: nodeSummary(node, taskById.get(Number(node.task_id)) ?? null, subflowNames),
+        summary: nodeSummary(node, subflowNames),
         semanticHandles: workflowNodeSemanticHandles(node),
         inlineEdit: workflowInlineEditDescriptor(node),
         validationIssues: issuesByNode.get(id) ?? [],
@@ -722,7 +720,7 @@ export function autoArrangeWorkflowEdgeHandles(definition: JsonRecord, positions
   }
 }
 
-export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], taskId = 1): WorkflowEditorNodeRecord {
+export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]): WorkflowEditorNodeRecord {
   const id = uniqueWorkflowNodeId(nodes, kind);
   const node: WorkflowEditorNodeRecord = {
     id,
@@ -733,10 +731,6 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], 
   switch (kind) {
     case "action":
       node.action = { provider: "", function: "", timeout_seconds: 300, configuration: {} };
-      node.retry = { max_attempts: 1 };
-      break;
-    case "task":
-      node.task_id = taskId;
       node.retry = { max_attempts: 1 };
       break;
     case "approval":
@@ -784,48 +778,6 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[], 
       break;
   }
   return node;
-}
-
-export function createWorkflowTaskDraft(nodeId: string, taskId: number | null): ScheduledTask {
-  return {
-    id: taskId,
-    name: `${titleCase(nodeId)} Task`,
-    cron_schedule: "",
-    action_name: "",
-    action_function: "",
-    enabled: false,
-    timeout: 300,
-    configuration: {
-      task_type: "workflow",
-      workflow_node_id: nodeId
-    }
-  };
-}
-
-export function copyWorkflowTaskDraft(task: ScheduledTask, nodeId: string, taskId: number | null): ScheduledTask {
-  return stampWorkflowTaskConfiguration(
-    {
-      ...task,
-      id: taskId,
-      name: `${task.name || titleCase(nodeId)} copy`,
-      configuration: { ...(task.configuration ?? {}) }
-    },
-    nodeId,
-    null
-  );
-}
-
-export function stampWorkflowTaskConfiguration(task: ScheduledTask, nodeId: string, workflowId: number | null): ScheduledTask {
-  const configuration: JsonRecord = {
-    ...(task.configuration ?? {}),
-    task_type: "workflow",
-    workflow_node_id: nodeId
-  };
-  if (workflowId !== null) configuration.workflow_id = workflowId;
-  return {
-    ...task,
-    configuration
-  };
 }
 
 export function uniqueWorkflowNodeId(nodes: JsonRecord[], base: string): string {
@@ -1475,7 +1427,7 @@ function pushExpressionIssues(
 
 function pushProviderIssues(issues: WorkflowValidationIssue[], node: JsonRecord, providers: ProviderMetadata[], nodeId: string) {
   const kind = workflowNodeKind(node.kind);
-  if (kind !== "task" && kind !== "action") return;
+  if (kind !== "action") return;
   const config = workflowNodeActionConfig(node);
   if (!config.provider || !config.action) {
     issues.push({ severity: "warning", nodeId, message: `${nodeId} has no provider action selected` });
@@ -1487,8 +1439,17 @@ function pushProviderIssues(issues: WorkflowValidationIssue[], node: JsonRecord,
     issues.push({ severity: "error", nodeId, message: `${nodeId} references unknown provider ${config.provider}` });
     return;
   }
-  if (!provider.actions.some((item) => item.function_name === config.action)) {
+  const action = provider.actions.find((item) => item.function_name === config.action);
+  if (!action) {
     issues.push({ severity: "error", nodeId, message: `${nodeId} references unknown action ${config.provider}.${config.action}` });
+    return;
+  }
+  const inputs = workflowNodeActionInputs(node);
+  for (const parameter of action.parameters ?? []) {
+    if (!parameter.required) continue;
+    if (isEmptyInputValue(inputs[parameter.name])) {
+      issues.push({ severity: "error", nodeId, message: `${nodeId}: ${parameter.label || parameter.name} is required` });
+    }
   }
 }
 
@@ -1547,15 +1508,34 @@ export function optionIdForSourceHandle(handleId?: string | null): string | null
 }
 
 function workflowNodeKind(value: unknown): WorkflowNodeKind {
-  return typeof value === "string" && ["start", ...workflowNodeKinds, "loop", "end", "fail"].includes(value) ? (value as WorkflowNodeKind) : "task";
+  return typeof value === "string" && ["start", ...workflowNodeKinds, "loop", "end", "fail"].includes(value) ? (value as WorkflowNodeKind) : "action";
 }
 
-export function workflowNodeActionConfig(node: JsonRecord, task: ScheduledTask | null = null): { provider: string; action: string } {
+export function workflowNodeActionConfig(node: JsonRecord): { provider: string; action: string } {
   const action = isRecord(node.action) ? node.action : {};
   return {
-    provider: String(action.provider ?? node.action_name ?? task?.action_name ?? ""),
-    action: String(action.function ?? node.action_function ?? task?.action_function ?? "")
+    provider: String(action.provider ?? ""),
+    action: String(action.function ?? "")
   };
+}
+
+// effective action inputs, mirroring the runtime merge of action.configuration (base) with node.parameters (override).
+export function workflowNodeActionInputs(node: JsonRecord): JsonRecord {
+  const action = isRecord(node.action) ? node.action : null;
+  const configuration = action && isRecord(action.configuration) ? action.configuration : {};
+  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  return { ...configuration, ...parameters };
+}
+
+// a value sourced from another node/input counts as provided even before it resolves.
+function isExpressionValue(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string", "$node"].some((key) => key in value);
+}
+
+function isEmptyInputValue(value: unknown): boolean {
+  if (isExpressionValue(value)) return false;
+  return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
 }
 
 export function workflowNodeResultMetadata(node: JsonRecord, providers: ProviderMetadata[]): ActionResultMetadata[] {
@@ -1598,12 +1578,11 @@ function describeValue(value: unknown): string {
 }
 
 // each node kind renders a concise, never-"[object Object]" description of its activity.
-function nodeSummary(node: JsonRecord, task: ScheduledTask | null = null, subflowNames?: Map<number, string>): string {
+function nodeSummary(node: JsonRecord, subflowNames?: Map<number, string>): string {
   const parameters = isRecord(node.parameters) ? node.parameters : {};
   switch (workflowNodeKind(node.kind)) {
-    case "action":
-    case "task": {
-      const config = workflowNodeActionConfig(node, task);
+    case "action": {
+      const config = workflowNodeActionConfig(node);
       if (!config.provider) return "Unconfigured action";
       return config.action ? `${config.provider}.${config.action}` : config.provider;
     }
