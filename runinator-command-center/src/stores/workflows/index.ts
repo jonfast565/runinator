@@ -28,12 +28,12 @@ import {
   skipWorkflowNode,
   stepWorkflowRun,
   type WorkflowDebugPatch
-} from "../api/commandCenterApi";
+} from "../../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../types/models";
-import { pretty } from "../utils/format";
-import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../utils/json";
-import { createZip, type ZipEntry } from "../utils/zip";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
+import { pretty } from "../../utils/format";
+import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
+import { createZip, type ZipEntry } from "../../utils/zip";
 import {
   applyWorkflowEdgeEditorDraft,
   applyWorkflowInlineNodeEdit,
@@ -68,14 +68,32 @@ import {
   workflowNodeActionInputs,
   workflowNodeKinds,
   workflowRunSearchText
-} from "../utils/workflows";
-import { useAppStore } from "./app";
-import { useProvidersStore } from "./providers";
-import { useResourcesStore } from "./resources";
-
-type BranchPolicyName = "all" | "any" | "first_success";
-type SwitchCaseEditor = { match_kind: "equals" | "not_equals" | "exists" | "when"; match_json: string; target: string };
-const protectedWorkflowNodeKinds = new Set(["start", "end", "fail"]);
+} from "../../utils/workflows";
+import {
+  branchPolicyName,
+  buildInputSkeleton,
+  boundedIndex,
+  defaultEdgeEditorDraft,
+  defaultTriggerConfiguration,
+  errorMessage,
+  formatMaybeDate,
+  dateTimeLocalToIso,
+  isLockedWorkflowNode,
+  isProtectedWorkflowNode,
+  newWorkflowDraft,
+  newWorkflowTriggerDraft,
+  nextNodePosition,
+  nodeRefArray,
+  normalizeNewNodeTargets,
+  switchCaseEditor,
+  validateJsonValueType,
+  type BranchPolicyName,
+  type SwitchCaseEditor
+} from "./helpers";
+import { useAppStore } from "../app";
+import { useProvidersStore } from "../providers";
+export { buildInputSkeleton, newWorkflowDraft, newWorkflowTriggerDraft } from "./helpers";
+import { useResourcesStore } from "../resources";
 
 export const useWorkflowsStore = defineStore("workflows", () => {
   const workflows = ref<WorkflowDefinition[]>([]);
@@ -2004,228 +2022,3 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     markWorkflowDirty
   };
 });
-
-function nodeRefArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(nodeRefId).filter((item): item is string => Boolean(item)) : [];
-}
-
-function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
-  return {
-    edgeId: "",
-    source: "",
-    target: "",
-    optionId: "",
-    edgeStyle: "square",
-    label: "",
-    whenJson: pretty({ value: valueRef("input", ["value"]), equals: true }),
-    matchKind: "equals",
-    matchJson: pretty(true),
-    canEditLabel: false,
-    canEditCondition: false,
-    canEditSwitchCase: false,
-    canMove: false,
-    orderIndex: -1,
-    orderCount: 0
-  };
-}
-
-function branchPolicyName(value: unknown, fallback: BranchPolicyName): BranchPolicyName {
-  return value === "all" || value === "any" || value === "first_success" ? value : fallback;
-}
-
-function switchCaseEditor(value: JsonRecord): SwitchCaseEditor {
-  const target = nodeRefId(value.target) ?? "";
-  if (value.when !== undefined) return { match_kind: "when", match_json: pretty(value.when), target };
-  if (value.not_equals !== undefined) return { match_kind: "not_equals", match_json: pretty(value.not_equals), target };
-  if (value.exists !== undefined) return { match_kind: "exists", match_json: pretty(Boolean(value.exists)), target };
-  return { match_kind: "equals", match_json: pretty(value.equals ?? ""), target };
-}
-
-export function newWorkflowTriggerDraft(workflowId: number, kind: WorkflowTriggerKind = "cron"): WorkflowTrigger {
-  return {
-    id: null,
-    workflow_id: workflowId,
-    kind,
-    enabled: true,
-    configuration: defaultTriggerConfiguration(kind),
-    next_execution: null,
-    blackout_start: null,
-    blackout_end: null,
-    metadata: {}
-  };
-}
-
-function defaultTriggerConfiguration(kind: WorkflowTriggerKind): JsonRecord {
-  if (kind === "cron") return { cron: "0 * * * *", parameters: {} };
-  return {};
-}
-
-// seed a draft input object from the workflow's input struct so declared fields render pre-populated.
-function buildInputSkeleton(ty: RuninatorType | null): JsonRecord {
-  if (!ty || ty.type !== "struct") return {};
-  const skeleton: JsonRecord = {};
-  for (const [name, field] of Object.entries(ty.fields)) {
-    skeleton[name] = defaultValueForInputType(field.ty);
-  }
-  return skeleton;
-}
-
-function defaultValueForInputType(ty: RuninatorType): unknown {
-  switch (ty.type) {
-    case "string":
-      return "";
-    case "boolean":
-      return false;
-    case "integer":
-    case "number":
-      return 0;
-    case "array":
-      return [];
-    case "map":
-      return {};
-    case "struct":
-      return buildInputSkeleton(ty);
-    case "union":
-      return ty.variants.length ? defaultValueForInputType(ty.variants[0]) : null;
-    default:
-      return null;
-  }
-}
-
-function dateTimeLocalToIso(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
-}
-
-export function newWorkflowDraft(): WorkflowDefinition {
-  return {
-    id: null,
-    name: "New Workflow",
-    version: 1,
-    enabled: true,
-    input_type: { type: "struct", fields: {}, additional: { type: "any" } },
-    definition: {
-      start: "start",
-      nodes: [
-        { id: "start", kind: "start", transitions: { next: nodeRef("end") } },
-        { id: "end", kind: "end" },
-        { id: "fail", kind: "fail" }
-      ],
-      ui: {
-        layout: {
-          nodes: {
-            start: { x: 0, y: 0 },
-            end: { x: 270, y: 0 },
-            fail: { x: 270, y: 150 }
-          }
-        }
-      }
-    }
-  };
-}
-
-function boundedIndex(current: number, delta: number, length: number): number {
-  if (current < 0) return delta > 0 ? 0 : length - 1;
-  return Math.min(length - 1, Math.max(0, current + delta));
-}
-
-// tauri command rejections surface as the serialized CommandError string; fall back to
-// String() for native errors.
-function errorMessage(err: unknown): string {
-  if (typeof err === "string") return err;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-function formatMaybeDate(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function normalizeNewNodeTargets(node: JsonRecord, endId: string) {
-  node.transitions = node.transitions ?? {};
-  for (const key of ["next", "on_success", "on_reject"]) {
-    if (nodeRefId(node.transitions[key]) === "end") node.transitions[key] = nodeRef(endId);
-  }
-  if (Array.isArray(node.transitions.branches)) {
-    for (const branch of node.transitions.branches) {
-      if (nodeRefId(branch.target) === "end") branch.target = nodeRef(endId);
-    }
-  }
-  if (nodeRefId(node.parameters?.target) === "end") node.parameters.target = nodeRef(endId);
-  if (nodeRefId(node.parameters?.default) === "end") node.parameters.default = nodeRef(endId);
-}
-
-function validateJsonValueType(value: unknown, ty: RuninatorType | undefined, label: string): string {
-  if (!ty || ty.type === "any" || isWorkflowExpression(value)) return "";
-  if (ty.type === "null") return value === null ? "" : `${label} must be null`;
-  if (ty.type === "string") return typeof value === "string" ? "" : `${label} must be a string`;
-  if (ty.type === "boolean") return typeof value === "boolean" ? "" : `${label} must be true or false`;
-  if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be an integer`;
-  if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value) ? "" : `${label} must be a number`;
-  if (ty.type === "array") {
-    if (!Array.isArray(value)) return `${label} must be a list`;
-    for (let index = 0; index < value.length; index++) {
-      const error = validateJsonValueType(value[index], ty.items, `${label}[${index}]`);
-      if (error) return error;
-    }
-    return "";
-  }
-  if (ty.type === "map") {
-    if (!isJsonRecord(value)) return `${label} must be an object`;
-    for (const [key, nested] of Object.entries(value)) {
-      const error = validateJsonValueType(nested, ty.values, `${label}.${key}`);
-      if (error) return error;
-    }
-    return "";
-  }
-  if (ty.type === "struct") {
-    if (!isJsonRecord(value)) return `${label} must be an object`;
-    for (const [key, field] of Object.entries(ty.fields)) {
-      const nested = value[key];
-      if (nested === undefined || nested === null || nested === "") {
-        if (field.required) return `${label}.${key} is required`;
-        continue;
-      }
-      const error = validateJsonValueType(nested, field.ty, `${label}.${key}`);
-      if (error) return error;
-    }
-    for (const [key, nested] of Object.entries(value)) {
-      if (ty.fields[key]) continue;
-      if (!ty.additional) return `${label}.${key} is not allowed`;
-      const error = validateJsonValueType(nested, ty.additional, `${label}.${key}`);
-      if (error) return error;
-    }
-    return "";
-  }
-  if (ty.type === "union") {
-    return ty.variants.some((variant) => !validateJsonValueType(value, variant, label))
-      ? ""
-      : `${label} must match one of ${ty.variants.map((variant) => variant.type).join(", ")}`;
-  }
-  return "";
-}
-
-function isJsonRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isProtectedWorkflowNode(node: JsonRecord | null | undefined): boolean {
-  return protectedWorkflowNodeKinds.has(String(node?.kind ?? ""));
-}
-
-function isLockedWorkflowNode(node: JsonRecord | null | undefined): boolean {
-  return isProtectedWorkflowNode(node) || node?.locked === true;
-}
-
-function isWorkflowExpression(value: unknown): boolean {
-  if (!isJsonRecord(value)) return false;
-  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string"].some((key) => key in value);
-}
-
-function nextNodePosition(count: number): { x: number; y: number } {
-  return { x: ((count - 1) % 4) * 230, y: Math.floor((count - 1) / 4) * 130 };
-}

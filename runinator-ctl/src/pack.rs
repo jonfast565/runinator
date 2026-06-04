@@ -1,6 +1,7 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use runinator_models::bundles::SecretBundle;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
 
@@ -19,6 +20,36 @@ pub fn is_pack_source(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()),
         Some("wdl") | Some("wdlp")
     )
+}
+
+// load a settings bundle that ships alongside a pack source: a `.wdlp` manifest's optional
+// "settings" path entry, or a sibling settings.json next to a directory pack. a single .wdl or a
+// pack without a settings file yields None.
+pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
+    let Some(settings_path) = pack_settings_path(path)? else {
+        return Ok(None);
+    };
+    let data = fs::read_to_string(&settings_path)?;
+    let bundle: SecretBundle = serde_json::from_str(&data)?;
+    Ok(Some(bundle))
+}
+
+// resolve the settings file path for a pack source, if one exists.
+fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
+    if path.is_dir() {
+        let candidate = path.join("settings.json");
+        return Ok(candidate.is_file().then_some(candidate));
+    }
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlp") {
+        return Ok(None);
+    }
+    let data = fs::read_to_string(path)?;
+    let manifest: Value = serde_json::from_str(&data)?;
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(manifest
+        .get("settings")
+        .and_then(Value::as_str)
+        .map(|rel| base_dir.join(rel)))
 }
 
 // compile a wdl pack source into a workflow bundle: a single .wdl, a .wdlp manifest, or a

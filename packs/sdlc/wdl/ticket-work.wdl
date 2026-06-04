@@ -5,22 +5,23 @@ workflow "Ticket Work" v1 {
         parent_workflow_run_id: integer
     }
 
+    // reusable connection arg groups: each call spreads these with `...name` and adds its own args.
+    alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
+    alias github_conn = { token: secret.github.token, owner: config.github.owner, repo: config.github.repo }
+    alias slack_conn = { token: secret.slack.token, channel: config.slack.channel }
+
     set name = "Ticket Work: " ++ input.ticket.key
     set meta { parent_workflow_run_id: input.parent_workflow_run_id, ticket_key: input.ticket.key }
 
     let transition_in_progress = jira.transition(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         transition_id: config.transitions.in_progress
     ).timeout(30s)
         fail -> notify_failure
 
     let kickoff_comment = jira.comment(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         body: "Automation started for " ++ input.ticket.key ++ ". Run " ++ string(run.run_id)
     ).timeout(30s)
@@ -61,9 +62,7 @@ workflow "Ticket Work" v1 {
         fail -> notify_failure
 
     let create_pr = github.create_pr(
-        token: secret.github.token,
-        owner: config.github.owner,
-        repo: config.github.repo,
+        ...github_conn,
         base: config.github.base_branch,
         head: "feature/" ++ input.ticket.key,
         title: input.ticket.key ++ ": " ++ input.ticket.fields.summary,
@@ -72,17 +71,13 @@ workflow "Ticket Work" v1 {
         fail -> notify_failure
 
     let link_pr_to_ticket = jira.comment(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         body: "Pull request opened: " ++ create_pr.html_url
     ).timeout(30s)
 
     let transition_in_review = jira.transition(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         transition_id: config.transitions.in_review
     ).timeout(30s)
@@ -91,9 +86,7 @@ workflow "Ticket Work" v1 {
     until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
         wait config.ci_poll.interval_seconds
         let poll_checks = github.checks_summary(
-            token: secret.github.token,
-            owner: config.github.owner,
-            repo: config.github.repo,
+            ...github_conn,
             ref: create_pr.head.sha
         ).timeout(30s)
     }
@@ -106,49 +99,39 @@ workflow "Ticket Work" v1 {
     } -> notify_failure
 
     let merge_pr = github.merge_pr(
-        token: secret.github.token,
-        owner: config.github.owner,
-        repo: config.github.repo,
+        ...github_conn,
         pull_number: string(create_pr.number),
         merge_method: "squash"
     ).timeout(60s)
         fail -> notify_failure
 
     let transition_done = jira.transition(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         transition_id: config.transitions.done
     ).timeout(30s)
 
     let comment_merged = jira.comment(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         body: "Merged " ++ create_pr.html_url
     ).timeout(30s)
 
     let notify_done = slack.send_message(
-        token: secret.slack.token,
-        channel: config.slack.channel,
+        ...slack_conn,
         text: ":white_check_mark: " ++ input.ticket.key ++ " merged and closed."
     ).timeout(15s)
         -> cleanup_workspace
 
     let comment_rejected = jira.comment(
-        base_url: config.jira.base_url,
-        email: config.jira.email,
-        token: secret.jira.token,
+        ...jira_conn,
         key: input.ticket.key,
         body: "Reviewer rejected automated merge. Manual follow-up required."
     ).timeout(30s)
         -> cleanup_workspace
 
     let notify_failure = slack.send_message(
-        token: secret.slack.token,
-        channel: config.slack.channel,
+        ...slack_conn,
         text: ":x: SDLC pipeline failed on " ++ input.ticket.key
     ).timeout(15s)
         -> cleanup_workspace

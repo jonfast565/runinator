@@ -8,6 +8,7 @@ use runinator_models::workflows::WorkflowDefinition;
 pub mod ast;
 pub mod completion;
 mod decompile;
+mod desugar;
 mod errors;
 mod format;
 pub(crate) mod lower;
@@ -52,7 +53,8 @@ pub fn compile_str_with_diagnostics(
     src: &str,
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<Diagnostic>), WdlError> {
-    let document = parse_document(src)?;
+    let mut document = parse_document(src)?;
+    desugar::desugar(&mut document)?;
     let diagnostics = sema::analyze(&document);
     if let Some(error) = sema::first_error(&diagnostics) {
         return Err(WdlError::semantic(error.span, error.message.clone()));
@@ -71,7 +73,8 @@ pub fn compile_str_with_diagnostics(
 /// still surfaces as `WdlError::Parse`. Each `Diagnostic` can be rendered against the source
 /// with `Diagnostic::render`.
 pub fn analyze_source(src: &str) -> Result<Vec<Diagnostic>, WdlError> {
-    let document = parse_document(src)?;
+    let mut document = parse_document(src)?;
+    desugar::desugar(&mut document)?;
     Ok(sema::analyze(&document))
 }
 
@@ -87,7 +90,8 @@ pub fn compile_unchecked(
     src: &str,
     options: &CompileOptions,
 ) -> Result<WorkflowDefinition, WdlError> {
-    let document = parse_document(src)?;
+    let mut document = parse_document(src)?;
+    desugar::desugar(&mut document)?;
     lower::lower_document(&document, options)
 }
 

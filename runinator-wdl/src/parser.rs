@@ -38,6 +38,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut name = String::new();
     let mut version = None;
     let mut input = None;
+    let mut aliases = Vec::new();
     let mut start = None;
     let mut body = Vec::new();
     for inner in pair.into_inner() {
@@ -48,6 +49,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                 version = Some(parse_i64(digits, span)?);
             }
             Rule::input_block => input = Some(parse_input_block(inner)?),
+            Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
             Rule::stmt => body.push(parse_stmt(inner)?),
             _ => {}
@@ -57,8 +59,26 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         name,
         version,
         input,
+        aliases,
         start,
         body,
+        span,
+    })
+}
+
+fn parse_alias_decl(pair: Pair<Rule>) -> Result<Alias, WdlError> {
+    let span = span_of(&pair);
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .ok_or_else(|| WdlError::lower("alias name"))?
+        .as_str()
+        .to_string();
+    let object = inner.next().ok_or_else(|| WdlError::lower("alias body"))?;
+    let entries = parse_object_entries(object)?;
+    Ok(Alias {
+        name,
+        entries,
         span,
     })
 }
@@ -228,11 +248,16 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
     let span = span_of(&pair);
     let mut idents = Vec::new();
     let mut args = Vec::new();
+    let mut arg_spreads = Vec::new();
     let mut modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::action_ident => idents.push(inner.as_str().to_string()),
-            Rule::arg_list => args = parse_arg_list(inner)?,
+            Rule::arg_list => {
+                let (parsed_args, parsed_spreads) = parse_arg_list(inner)?;
+                args = parsed_args;
+                arg_spreads = parsed_spreads;
+            }
             Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
         }
@@ -244,20 +269,41 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
         provider: idents[0].clone(),
         function: idents[1].clone(),
         args,
+        arg_spreads,
         modifiers,
     })
 }
 
-fn parse_arg_list(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlError> {
-    pair.into_inner()
-        .filter(|p| p.as_rule() == Rule::arg)
-        .map(|arg| {
-            let mut inner = arg.into_inner();
-            let name = inner.next().ok_or_else(|| WdlError::lower("arg name"))?;
-            let value = inner.next().ok_or_else(|| WdlError::lower("arg value"))?;
-            Ok((name.as_str().to_string(), parse_expr(value)?))
-        })
-        .collect()
+#[allow(clippy::type_complexity)]
+fn parse_arg_list(pair: Pair<Rule>) -> Result<(Vec<(String, Expr)>, Vec<(String, Span)>), WdlError> {
+    let mut args = Vec::new();
+    let mut spreads = Vec::new();
+    for arg in pair.into_inner().filter(|p| p.as_rule() == Rule::arg) {
+        let entry = arg
+            .into_inner()
+            .next()
+            .ok_or_else(|| WdlError::lower("arg entry"))?;
+        match entry.as_rule() {
+            Rule::arg_spread => {
+                let span = span_of(&entry);
+                let name = entry
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| WdlError::lower("spread alias"))?
+                    .as_str()
+                    .to_string();
+                spreads.push((name, span));
+            }
+            Rule::arg_pair => {
+                let mut inner = entry.into_inner();
+                let name = inner.next().ok_or_else(|| WdlError::lower("arg name"))?;
+                let value = inner.next().ok_or_else(|| WdlError::lower("arg value"))?;
+                args.push((name.as_str().to_string(), parse_expr(value)?));
+            }
+            _ => {}
+        }
+    }
+    Ok((args, spreads))
 }
 
 fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), WdlError> {

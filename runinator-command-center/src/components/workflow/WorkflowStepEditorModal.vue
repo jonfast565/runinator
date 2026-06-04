@@ -292,7 +292,18 @@
             </select>
           </label>
         </div>
-        <label>Parameters <JsonEditor v-model="workflows.stepEditor.subflow_parameters_json" /></label>
+        <h3>Parameters</h3>
+        <TypedValueEditor
+          v-if="selectedSubflowInputType"
+          :ty="selectedSubflowInputType"
+          :model-value="subflowParameters"
+          @update:model-value="onSubflowParametersChange"
+        />
+        <p v-else class="hint">Select a workflow to configure its inputs, or use the advanced editor below.</p>
+        <details class="advanced-params">
+          <summary>Advanced (raw JSON / expressions)</summary>
+          <JsonEditor v-model="workflows.stepEditor.subflow_parameters_json" />
+        </details>
       </section>
 
       <section class="form-section">
@@ -329,11 +340,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import { useProvidersStore } from "../../stores/providers";
-import { useWorkflowsStore } from "../../stores/workflows";
+import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
+import TypedValueEditor from "../shared/TypedValueEditor.vue";
 import { workflowNodeActionConfig } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
@@ -373,6 +385,20 @@ const selectedSubflowName = computed(() => {
 const selectedSubflowMissing = computed(() => {
   return Boolean(workflows.stepEditor.subflow_id && !selectedSubflowName.value);
 });
+
+// the child workflow's declared input schema drives the typed parameter form.
+const selectedSubflowInputType = computed(() => {
+  const workflow = workflows.workflows.find((w) => w.id === workflows.stepEditor.subflow_id);
+  return workflow?.input_type ?? null;
+});
+
+const subflowParameters = computed(() => parseObject(workflows.stepEditor.subflow_parameters_json, {}));
+
+// the typed editor and the raw-json fallback both write back to the same json string.
+function onSubflowParametersChange(value: unknown) {
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  workflows.stepEditor.subflow_parameters_json = pretty(object);
+}
 
 interface StepRef {
   template: string;
@@ -452,8 +478,11 @@ function copyRef(template: string) {
 function onSubflowNameChange(event: Event) {
   const name = (event.target as HTMLSelectElement).value;
   const workflow = workflows.workflows.find(w => w.name === name);
-  if (workflow?.id) {
-    workflows.stepEditor.subflow_id = workflow.id;
+  if (!workflow?.id) return;
+  workflows.stepEditor.subflow_id = workflow.id;
+  // seed declared fields when no parameters are set yet, so the form renders pre-populated.
+  if (Object.keys(subflowParameters.value).length === 0) {
+    onSubflowParametersChange(buildInputSkeleton(workflow.input_type ?? null));
   }
 }
 </script>
@@ -479,6 +508,21 @@ function onSubflowNameChange(event: Event) {
 .modal-header-actions .primary {
   background: #17202a;
   color: #ffffff;
+}
+
+.hint {
+  color: #66717e;
+  font-size: 12px;
+}
+
+.advanced-params {
+  margin-top: 8px;
+}
+
+.advanced-params summary {
+  cursor: pointer;
+  color: #66717e;
+  font-size: 12px;
 }
 
 .section-title-row {

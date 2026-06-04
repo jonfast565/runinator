@@ -14,10 +14,22 @@ pub struct Workflow {
     pub name: String,
     pub version: Option<i64>,
     pub input: Option<TypeExpr>,
+    /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
+    /// action calls by `...name` spreads during desugaring.
+    pub aliases: Vec<Alias>,
     /// an optional explicit `start -> <target>` entry edge. when `None` the first body
     /// statement is the entry; when set it names the entry node directly.
     pub start: Option<Target>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// a header `alias <name> = { k: expr, ... }` binding: a named, reusable group of argument
+/// values spread into action calls with `...name`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alias {
+    pub name: String,
+    pub entries: Vec<(String, Expr)>,
     pub span: Span,
 }
 
@@ -108,6 +120,9 @@ pub struct ActionStmt {
     pub provider: String,
     pub function: String,
     pub args: Vec<(String, Expr)>,
+    /// `...alias` argument spreads, each with its source span for diagnostics. emptied by
+    /// desugaring once expanded into `args`.
+    pub arg_spreads: Vec<(String, Span)>,
     pub modifiers: Modifiers,
 }
 

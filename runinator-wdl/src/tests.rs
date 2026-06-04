@@ -1500,3 +1500,82 @@ fn parses_kitchen_sink() {
     assert!(doc.workflow.input.is_some());
     assert!(doc.workflow.body.len() >= 12);
 }
+
+#[test]
+fn alias_spread_lowers_like_explicit_args() {
+    let aliased = r#"
+        workflow "Aliased" v1 {
+            alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
+            let t = jira.transition(...conn, key: "ABC-1")
+        }
+    "#;
+    let explicit = r#"
+        workflow "Aliased" v1 {
+            let t = jira.transition(base_url: config.jira.base_url, token: secret.jira.token, key: "ABC-1")
+        }
+    "#;
+    assert_eq!(
+        runinator_workflows::normalize_definition(compile(aliased).definition),
+        runinator_workflows::normalize_definition(compile(explicit).definition),
+        "a `...alias` spread should lower identically to the explicit argument list"
+    );
+}
+
+#[test]
+fn explicit_arg_overrides_spread() {
+    // the explicit `base_url` wins over the alias's `base_url` regardless of source order.
+    let aliased = r#"
+        workflow "Override" v1 {
+            alias conn = { base_url: "from-alias", region: "us" }
+            let t = api.call(...conn, base_url: "explicit")
+        }
+    "#;
+    let explicit = r#"
+        workflow "Override" v1 {
+            let t = api.call(base_url: "explicit", region: "us")
+        }
+    "#;
+    assert_eq!(
+        runinator_workflows::normalize_definition(compile(aliased).definition),
+        runinator_workflows::normalize_definition(compile(explicit).definition),
+    );
+}
+
+#[test]
+fn unknown_alias_spread_is_a_semantic_error() {
+    let src = r#"
+        workflow "Bad" v1 {
+            let t = api.call(...missing, key: "x")
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("unknown alias"), "{message}");
+}
+
+#[test]
+fn duplicate_alias_is_a_semantic_error() {
+    let src = r#"
+        workflow "Dup" v1 {
+            alias conn = { a: "1" }
+            alias conn = { b: "2" }
+            let t = api.call(...conn)
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("duplicate alias"), "{message}");
+}
+
+#[test]
+fn format_preserves_alias_and_spread() {
+    let src = r#"
+        workflow "Fmt" v1 {
+            alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
+            let t = jira.transition(...conn, key: "ABC-1")
+        }
+    "#;
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("alias conn = {"), "{formatted}");
+    assert!(formatted.contains("...conn"), "{formatted}");
+    // formatting is idempotent and never expands the sugar.
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+}

@@ -165,8 +165,15 @@ pub enum WorkflowCommands {
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
     /// Import a workflow pack (.wdl, .wdlp, or a directory of .wdl files), or save a workflow
-    /// definition / import a workflow bundle from a JSON file.
-    Apply { file: PathBuf },
+    /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
+    /// bundle (a `.wdlp` "settings" entry or a sibling settings.json) is imported too to seed
+    /// config/secret slots, unless --skip-settings is given.
+    Apply {
+        file: PathBuf,
+        /// Skip importing the pack's settings bundle (config/secret slots).
+        #[arg(long)]
+        skip_settings: bool,
+    },
     /// Export one workflow or the full workflow bundle.
     Export {
         workflow_id: Option<i64>,

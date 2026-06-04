@@ -22,8 +22,8 @@ import type {
   RunSummary,
   ProviderMetadata,
   ActionResultMetadata
-} from "../types/models";
-import { statusClassForNode } from "./status";
+} from "../../types/models";
+import { statusClassForNode } from "../status";
 
 export const workflowNodeKinds: WorkflowNodeKind[] = [
   "action",

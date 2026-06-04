@@ -125,18 +125,36 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             }
             println!("workflow {} v{} validates", workflow.name, workflow.version);
         }
-        WorkflowCommands::Apply { file } => {
+        WorkflowCommands::Apply {
+            file,
+            skip_settings,
+        } => {
             // a .wdl/.wdlp/directory is compiled into a bundle and imported; json is handled below.
             if pack::is_pack_source(file) {
                 let bundle = pack::load_workflow_bundle(file)?;
                 let bundle = client.import_workflow_bundle(&bundle).await?;
+                // seed any settings bundle that ships with the pack in the same step.
+                let settings = if *skip_settings {
+                    None
+                } else {
+                    pack::load_pack_settings(file)?
+                };
+                let imported_settings = match &settings {
+                    Some(settings) => Some(client.import_secret_bundle(settings).await?),
+                    None => None,
+                };
                 if json_output {
                     return output::json(&bundle);
                 }
+                let settings_count = imported_settings
+                    .as_ref()
+                    .map(|bundle| bundle.secrets.len())
+                    .unwrap_or(0);
                 println!(
-                    "imported {} workflows and {} triggers",
+                    "imported {} workflows, {} triggers, and {} settings",
                     bundle.workflows.len(),
-                    bundle.triggers.len()
+                    bundle.triggers.len(),
+                    settings_count
                 );
                 return Ok(());
             }

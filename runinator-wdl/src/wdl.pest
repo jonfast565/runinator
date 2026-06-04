@@ -7,8 +7,14 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 document = { SOI ~ workflow ~ EOI }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ start_decl? ~ stmt* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ alias_decl* ~ start_decl? ~ stmt* ~ "}" }
 version  = @{ "v" ~ ASCII_DIGIT+ }
+
+// reusable named argument groups, declared in the workflow header. an alias binds a name to an
+// object of argument values (typically shared `config.*`/`secret.*` refs); `...name` then spreads
+// those entries into an action call's argument list. purely surface sugar: spreads are expanded
+// before sema and lowering, so the json graph never sees aliases.
+alias_decl = { "alias" ~ ident ~ "=" ~ object }
 
 // optional explicit entry edge. when omitted the first statement is the entry; when present it
 // names the entry node directly, surfacing the otherwise-synthetic `start` node.
@@ -64,7 +70,10 @@ stmt_body = {
 action_stmt  = { action_ident ~ "." ~ action_ident ~ "(" ~ arg_list? ~ ")" ~ modifier* }
 action_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 arg_list     = { arg ~ ("," ~ arg)* ~ ","? }
-arg          = { ident ~ ":" ~ expr }
+arg          = { arg_spread | arg_pair }
+// `...name` spreads a header alias's entries into this call; explicit pairs override spreads.
+arg_spread   = { "..." ~ ident }
+arg_pair     = { ident ~ ":" ~ expr }
 
 modifier      = { "." ~ ident ~ "(" ~ mod_arg_list? ~ ")" }
 mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }

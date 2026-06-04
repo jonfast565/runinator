@@ -28,9 +28,16 @@ impl Formatter {
         self.indent += 1;
         if let Some(input) = &workflow.input {
             self.input(input);
-            if !workflow.body.is_empty() {
+            if !workflow.aliases.is_empty() || !workflow.body.is_empty() {
                 self.out.push('\n');
             }
+        }
+        // preserve header `alias` declarations; they are surface sugar and never reach the graph.
+        for alias in &workflow.aliases {
+            self.alias_decl(alias);
+        }
+        if !workflow.aliases.is_empty() && !workflow.body.is_empty() {
+            self.out.push('\n');
         }
         // preserve an explicit `start -> <target>` entry edge when the source declared one.
         if let Some(start) = &workflow.start {
@@ -52,6 +59,11 @@ impl Formatter {
         }
         self.indent -= 1;
         self.line("}");
+    }
+
+    fn alias_decl(&mut self, alias: &Alias) {
+        let body = format_object_entries_multiline(&alias.entries, self.indent);
+        self.line(&format!("alias {} = {body}", alias.name));
     }
 
     fn type_field(&mut self, field: &TypeField, comma: bool) {
@@ -153,28 +165,42 @@ impl Formatter {
     }
 
     fn action(&self, action: &ActionStmt) -> String {
-        let args = if action.args.is_empty() {
+        let args = if action.args.is_empty() && action.arg_spreads.is_empty() {
             "()".to_string()
         } else {
-            self.action_args_multiline(&action.args)
+            self.action_args_multiline(action)
         };
         let mut text = format!("{}.{}{args}", action.provider, action.function);
         self.action_modifiers(action, &mut text);
         text
     }
 
-    fn action_args_multiline(&self, args: &[(String, Expr)]) -> String {
-        if args.is_empty() {
+    // spreads are emitted first as `...alias`, then the explicit `name: value` arguments.
+    fn action_args_multiline(&self, action: &ActionStmt) -> String {
+        if action.args.is_empty() && action.arg_spreads.is_empty() {
             return "()".to_string();
         }
         let arg_indent = self.indent + 1;
+        let total = action.arg_spreads.len() + action.args.len();
         let mut out = "(\n".to_string();
-        for (index, (name, value)) in args.iter().enumerate() {
+        let mut index = 0;
+        for (name, _span) in &action.arg_spreads {
+            out.push_str(&indent(arg_indent));
+            out.push_str("...");
+            out.push_str(name);
+            index += 1;
+            if index < total {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        for (name, value) in &action.args {
             out.push_str(&indent(arg_indent));
             out.push_str(name);
             out.push_str(": ");
             out.push_str(&format_expr_multiline(value, arg_indent));
-            if index + 1 < args.len() {
+            index += 1;
+            if index < total {
                 out.push(',');
             }
             out.push('\n');
