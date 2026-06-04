@@ -6,6 +6,9 @@ use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTr
 
 use crate::commands::{Result, err};
 
+#[cfg(test)]
+mod tests;
+
 // returns true when the path is a wdl pack source (a directory, a .wdl, or a .wdlp manifest)
 // rather than a raw workflow/bundle json file.
 pub fn is_pack_source(path: &Path) -> bool {

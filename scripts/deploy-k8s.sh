@@ -80,9 +80,62 @@ if [[ -n "$context" ]]; then
     kubectl_ctx_args+=(--context "$context")
 fi
 
+kube() {
+    if [[ "${#kubectl_ctx_args[@]}" -eq 0 ]]; then
+        kubectl "$@"
+        return
+    fi
+
+    kubectl "${kubectl_ctx_args[@]}" "$@"
+}
+
+print_rollout_diagnostics() {
+    local target="$1"
+    local workload_name="${target#*/}"
+    local selector="app=$workload_name"
+    local pod_name
+    local pods=()
+
+    echo "==> rollout diagnostics for $target" >&2
+    echo "==> pod selector: $selector" >&2
+
+    echo "==> selected pods" >&2
+    kube get pods --namespace runinator --selector "$selector" --output wide --sort-by=.metadata.creationTimestamp >&2 || true
+
+    while IFS= read -r pod_name; do
+        if [[ -n "$pod_name" ]]; then
+            pods+=("$pod_name")
+        fi
+    done < <(kube get pods --namespace runinator --selector "$selector" --output jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+
+    echo "==> describe $target" >&2
+    kube describe "$target" --namespace runinator >&2 || true
+
+    for pod_name in "${pods[@]}"; do
+        echo "==> describe pod/$pod_name" >&2
+        kube describe "pod/$pod_name" --namespace runinator >&2 || true
+    done
+
+    echo "==> recent namespace events" >&2
+    kube get events --namespace runinator --sort-by=.metadata.creationTimestamp 2>&1 | tail -n 40 >&2 || true
+
+    if [[ "${#pods[@]}" -eq 0 ]]; then
+        echo "==> no pods found for selector $selector; skipping container logs" >&2
+        return
+    fi
+
+    for pod_name in "${pods[@]}"; do
+        echo "==> recent logs for pod/$pod_name" >&2
+        kube logs "pod/$pod_name" --namespace runinator --all-containers=true --tail=120 --prefix >&2 || true
+
+        echo "==> recent previous logs for pod/$pod_name" >&2
+        kube logs "pod/$pod_name" --namespace runinator --all-containers=true --tail=120 --prefix --previous >&2 || true
+    done
+}
+
 echo "==> kubectl ${kubectl_ctx_args[*]:-} $verb -k $overlay_dir"
 for stale_resource in deployment/runinator-importer job/runinator-importer job/runinator-pack-import service/runinator-gossip; do
-    kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} delete "$stale_resource" --namespace runinator --ignore-not-found=true >/dev/null 2>&1 || true
+    kube delete "$stale_resource" --namespace runinator --ignore-not-found=true >/dev/null 2>&1 || true
 done
 
 # decide which infra StatefulSets to skip on apply. existing ones are preserved
@@ -91,25 +144,25 @@ done
 skip_pg=0
 skip_mq=0
 if [[ "$delete" -eq 0 && "$recreate_infra" -eq 0 ]]; then
-    if kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} get statefulset runinator-postgres --namespace runinator >/dev/null 2>&1; then
+    if kube get statefulset runinator-postgres --namespace runinator >/dev/null 2>&1; then
         skip_pg=1
         echo "==> preserving existing statefulset/runinator-postgres (pass --recreate-infra to override)"
     fi
-    if kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} get statefulset runinator-rabbitmq --namespace runinator >/dev/null 2>&1; then
+    if kube get statefulset runinator-rabbitmq --namespace runinator >/dev/null 2>&1; then
         skip_mq=1
         echo "==> preserving existing statefulset/runinator-rabbitmq (pass --recreate-infra to override)"
     fi
 fi
 
 if [[ "$delete" -eq 1 ]]; then
-    kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} delete -k "$overlay_dir" --ignore-not-found=true
+    kube delete -k "$overlay_dir" --ignore-not-found=true
 elif [[ "$skip_pg" -eq 0 && "$skip_mq" -eq 0 ]]; then
-    kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} apply -k "$overlay_dir"
+    kube apply -k "$overlay_dir"
 else
     # render the overlay and drop the StatefulSet docs we want to preserve.
     # filter is by doc kind + metadata.name match within the same document so
     # the matching Services and Secrets are not affected.
-    kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} kustomize "$overlay_dir" | awk -v skip_pg="$skip_pg" -v skip_mq="$skip_mq" '
+    kube kustomize "$overlay_dir" | awk -v skip_pg="$skip_pg" -v skip_mq="$skip_mq" '
         function flush(d) {
             if (d == "") return
             is_sts = (index(d, "kind: StatefulSet\n") > 0)
@@ -121,7 +174,7 @@ else
         /^---$/ { flush(doc); doc = ""; next }
         { doc = doc $0 "\n" }
         END { flush(doc) }
-    ' | kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} apply -f -
+    ' | kube apply -f -
 fi
 
 if [[ "$verb" == "apply" ]]; then
@@ -132,13 +185,20 @@ if [[ "$verb" == "apply" ]]; then
     if [[ "$skip_mq" -eq 0 ]]; then
         rollout_targets+=(statefulset/runinator-rabbitmq)
     fi
+    rollout_failed=0
     for target in "${rollout_targets[@]}"; do
-        if ! kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} rollout status "$target" --namespace runinator --timeout 120s; then
-            echo "warn: rollout check failed for $target" >&2
+        if ! kube rollout status "$target" --namespace runinator --timeout 120s; then
+            echo "error: rollout check failed for $target" >&2
+            print_rollout_diagnostics "$target"
+            rollout_failed=1
         fi
     done
 
-    if ! kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} wait --for=condition=complete job/runinator-pack-import --namespace runinator --timeout "$pack_import_timeout"; then
+    if [[ "$rollout_failed" -ne 0 ]]; then
+        exit 1
+    fi
+
+    if ! kube wait --for=condition=complete job/runinator-pack-import --namespace runinator --timeout "$pack_import_timeout"; then
         echo "warn: pack-import job did not complete within timeout" >&2
     fi
 fi

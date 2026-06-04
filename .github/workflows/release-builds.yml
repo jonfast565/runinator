@@ -18,13 +18,10 @@ jobs:
         include:
           - os: ubuntu-latest
             asset_suffix: linux-x64
-            qt_arch: gcc_64
           - os: macos-latest
             asset_suffix: macos-x64
-            qt_arch: clang_64
           - os: windows-latest
             asset_suffix: windows-x64
-            qt_arch: win64_msvc2019_64
 
     steps:
       - name: Checkout
@@ -36,23 +33,52 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Linux Qt prerequisites
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
         with:
-          version: "6.6.3"
-          arch: ${{ matrix.qt_arch }}
-          cache: true
+          version: 10
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: runinator-command-center/pnpm-lock.yaml
+
+      - name: Install Command Center dependencies
+        working-directory: runinator-command-center
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
 
       - name: Set up MSVC toolchain
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build Rust workspace
-        run: cargo build --workspace --release
+      - name: Build backend services
+        run: cargo build --workspace --exclude runinator-command-center --release
+
+      - name: Build Command Center
+        working-directory: runinator-command-center
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/runinator-command-center/src-tauri/target
+        run: pnpm tauri build
 
       - name: Install cargo-packager (macOS)
         if: runner.os == 'macOS'
@@ -61,80 +87,6 @@ jobs:
       - name: Bundle backend apps (macOS)
         if: runner.os == 'macOS'
         run: scripts/package-macos-backend-apps.sh --release --skip-build --out-dir target/backend-apps
-
-      - name: Clean Command Center build dir (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $buildDir = Join-Path $PWD "build/command-center"
-          if (Test-Path $buildDir) {
-            Remove-Item -Recurse -Force $buildDir
-          }
-
-      - name: Configure Command Center (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
-          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
-            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
-          }
-
-          cmake -S command-center -B build/command-center -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$qtRoot"
-
-      - name: Configure Command Center (Unix)
-        if: runner.os != 'Windows'
-        run: cmake -S command-center -B build/command-center -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build Command Center (Windows)
-        if: runner.os == 'Windows'
-        run: cmake --build build/command-center --config Release --parallel
-
-      - name: Build Command Center (Unix)
-        if: runner.os != 'Windows'
-        run: cmake --build build/command-center --parallel
-
-      - name: Bundle Qt runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $appExe = Join-Path $PWD "build/command-center/Release/CommandCenter.exe"
-          if (-not (Test-Path $appExe)) {
-            throw "CommandCenter executable was not found at $appExe"
-          }
-
-          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
-          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
-            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
-          }
-
-          $windeployqt = Join-Path $qtRoot "bin/windeployqt.exe"
-          if (Test-Path $windeployqt) {
-            & $windeployqt $appExe
-          } else {
-            Write-Warning "windeployqt not found at $windeployqt; packaging raw binary."
-          }
-
-      - name: Bundle Qt runtime (macOS)
-        if: runner.os == 'macOS'
-        shell: pwsh
-        run: |
-          $appBundle = Join-Path $PWD "build/command-center/CommandCenter.app"
-          if (-not (Test-Path $appBundle)) {
-            throw "CommandCenter app bundle was not found at $appBundle"
-          }
-
-          $qtRoot = if ($env:Qt6_DIR) { $env:Qt6_DIR } elseif ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { "" }
-          if ([string]::IsNullOrWhiteSpace($qtRoot)) {
-            throw "Neither Qt6_DIR nor QT_ROOT_DIR is set."
-          }
-
-          $macdeployqt = Join-Path $qtRoot "bin/macdeployqt"
-          if (Test-Path $macdeployqt) {
-            & $macdeployqt $appBundle
-          } else {
-            Write-Warning "macdeployqt not found at $macdeployqt; packaging raw app bundle."
-          }
 
       - name: Package artifacts
         shell: pwsh
@@ -201,20 +153,43 @@ jobs:
             Copy-Item -Path $readmeSource -Destination (Join-Path $bundleDir "README.md") -Force
           }
 
-          if ($env:RUNNER_OS -eq "Windows") {
-            $qtBuildDir = Join-Path $PWD "build/command-center/Release"
-            $qtBundleDir = Join-Path $bundleDir "command-center"
-            New-Item -ItemType Directory -Path $qtBundleDir -Force | Out-Null
+          $tauriBundleCandidates = @(
+            (Join-Path $PWD "runinator-command-center/src-tauri/target/release/bundle"),
+            (Join-Path $PWD "target/release/bundle")
+          )
+          $tauriBundleDir = $tauriBundleCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $tauriBundleDir) {
+            throw "Tauri bundle directory was not found. Checked: $($tauriBundleCandidates -join ', ')"
+          }
 
-            Get-ChildItem -Path $qtBuildDir | ForEach-Object {
-              Copy-Item -Path $_.FullName -Destination (Join-Path $qtBundleDir $_.Name) -Recurse -Force
+          $commandCenterDir = Join-Path $bundleDir "runinator-command-center"
+          New-Item -ItemType Directory -Path $commandCenterDir -Force | Out-Null
+
+          Get-ChildItem -Path $tauriBundleDir | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $commandCenterDir $_.Name) -Recurse -Force
+          }
+
+          $copiedCommandCenterItems = Get-ChildItem -Path $commandCenterDir -Recurse
+          if (-not $copiedCommandCenterItems) {
+            throw "No Runinator Command Center artifacts were copied from $tauriBundleDir"
+          }
+
+          if ($env:RUNNER_OS -eq "Windows") {
+            $desktopArtifacts = $copiedCommandCenterItems | Where-Object {
+              -not $_.PSIsContainer -and $_.Extension -in @(".exe", ".msi")
             }
           } elseif ($env:RUNNER_OS -eq "macOS") {
-            $qtArtifact = Join-Path $PWD "build/command-center/CommandCenter.app"
-            Copy-Item -Path $qtArtifact -Destination (Join-Path $bundleDir "CommandCenter.app") -Recurse -Force
+            $desktopArtifacts = $copiedCommandCenterItems | Where-Object {
+              ($_.PSIsContainer -and $_.Name.EndsWith(".app")) -or (-not $_.PSIsContainer -and $_.Extension -eq ".dmg")
+            }
           } else {
-            $qtArtifact = Join-Path $PWD "build/command-center/CommandCenter"
-            Copy-Item -Path $qtArtifact -Destination (Join-Path $bundleDir "CommandCenter") -Force
+            $desktopArtifacts = $copiedCommandCenterItems | Where-Object {
+              -not $_.PSIsContainer -and $_.Extension -in @(".AppImage", ".deb", ".rpm")
+            }
+          }
+
+          if (-not $desktopArtifacts) {
+            throw "No platform desktop artifacts were found in $commandCenterDir"
           }
 
           $archivePath = Join-Path $distRoot "$bundleName.zip"

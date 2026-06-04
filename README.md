@@ -32,6 +32,7 @@ bash scripts/run-local.sh logs
 bash scripts/run-local.sh logs --process web-service
 bash scripts/run-local.sh logs-watch --lines 40
 bash scripts/run-local.sh sync
+bash scripts/run-local.sh smoke-sync
 bash scripts/run-local.sh ui
 bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
@@ -41,6 +42,13 @@ The supervisor runs `runinatorctl workflows apply` once, so the workflow pack co
 
 ```bash
 bash scripts/run-local.sh sync
+```
+
+When you only need to prove the local ws/waker/worker wiring with a tiny import
+and one console action, use the hello-world smoke pack:
+
+```bash
+bash scripts/run-local.sh smoke-sync
 ```
 
 You can also run the supervisor directly:
@@ -150,6 +158,11 @@ cp -R packs/sdlc/wdl ~/.runinator/workflows/wdl
 
 Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlp` plus the
 referenced `.wdl` sources for imports.
+
+For a minimal smoke import, use `./packs/hello-world/hello-world.wdlp`. It
+contains one WDL workflow that runs a single built-in console action and is wired
+into `bash scripts/run-local.sh smoke-sync` for an import-and-run check against
+an already running local stack.
 
 Workflow syntax now includes richer declarative control-flow nodes:
 
@@ -324,6 +337,7 @@ For workflow pack import changes, run:
 
 ```bash
 jq empty packs/sdlc/sdlc.wdlp
+jq empty packs/hello-world/hello-world.wdlp
 cargo test -p runinator-ctl
 ```
 
@@ -331,6 +345,12 @@ To sync the seed file manually against a running local API:
 
 ```bash
 bash scripts/run-local.sh sync
+```
+
+To run the tiny smoke pack against a running local stack:
+
+```bash
+bash scripts/run-local.sh smoke-sync
 ```
 
 To verify rich workflow execution end-to-end against an isolated local stack:
