@@ -1579,3 +1579,116 @@ fn format_preserves_alias_and_spread() {
     // formatting is idempotent and never expands the sugar.
     assert_eq!(format_str(&formatted).expect("format twice"), formatted);
 }
+
+// helper: compile two sources and assert their normalized graphs match.
+fn assert_same_graph(aliased: &str, explicit: &str) {
+    assert_eq!(
+        runinator_workflows::normalize_definition(compile(aliased).definition),
+        runinator_workflows::normalize_definition(compile(explicit).definition),
+        "aliased form should lower identically to the explicit form"
+    );
+}
+
+#[test]
+fn object_spread_in_subflow_with_matches_explicit() {
+    assert_same_graph(
+        r#"
+        workflow "Sub" v1 {
+            alias conn = { base_url: config.a.b, token: secret.c.d }
+            call "Child" with { ...conn, key: "K" }
+        }
+        "#,
+        r#"
+        workflow "Sub" v1 {
+            call "Child" with { base_url: config.a.b, token: secret.c.d, key: "K" }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn object_spread_in_approval_metadata_matches_explicit() {
+    assert_same_graph(
+        r#"
+        workflow "Appr" v1 {
+            alias meta = { env: "prod", owner: "team" }
+            approve "Ship?" type "change" { ...meta, extra: "x" }
+                ok -> done
+                reject -> fail
+        }
+        "#,
+        r#"
+        workflow "Appr" v1 {
+            approve "Ship?" type "change" { env: "prod", owner: "team", extra: "x" }
+                ok -> done
+                reject -> fail
+        }
+        "#,
+    );
+}
+
+#[test]
+fn nested_object_spread_inside_action_arg() {
+    assert_same_graph(
+        r#"
+        workflow "Nest" v1 {
+            alias conn = { base_url: config.a.b }
+            let t = api.call(config: { ...conn, timeout: 30 })
+        }
+        "#,
+        r#"
+        workflow "Nest" v1 {
+            let t = api.call(config: { base_url: config.a.b, timeout: 30 })
+        }
+        "#,
+    );
+}
+
+#[test]
+fn aliases_compose_via_spread() {
+    assert_same_graph(
+        r#"
+        workflow "Compose" v1 {
+            alias base = { base_url: config.a.b }
+            alias full = { ...base, token: secret.c.d }
+            let t = api.call(...full)
+        }
+        "#,
+        r#"
+        workflow "Compose" v1 {
+            let t = api.call(base_url: config.a.b, token: secret.c.d)
+        }
+        "#,
+    );
+}
+
+#[test]
+fn alias_cycle_is_a_semantic_error() {
+    let src = r#"
+        workflow "Cycle" v1 {
+            alias a = { ...b }
+            alias b = { ...a }
+            let t = api.call(...a)
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("references itself"), "{message}");
+}
+
+#[test]
+fn later_entry_overrides_spread() {
+    // `(x: "from-arg", ...conn)` — the spread is last, so conn's x wins (positional last-wins).
+    assert_same_graph(
+        r#"
+        workflow "Last" v1 {
+            alias conn = { x: "from-alias" }
+            let t = api.call(x: "from-arg", ...conn)
+        }
+        "#,
+        r#"
+        workflow "Last" v1 {
+            let t = api.call(x: "from-alias")
+        }
+        "#,
+    );
+}

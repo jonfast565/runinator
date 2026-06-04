@@ -48,6 +48,10 @@ impl Lowerer {
             ExprKind::Coalesce(parts) => self.wrap_array("$coalesce", parts),
             ExprKind::ToString(inner) => self.wrap_unary("$to_string", inner),
             ExprKind::ToJson(inner) => self.wrap_unary("$to_json_string", inner),
+            // spreads are expanded by desugaring before lowering; one reaching here is a bug.
+            ExprKind::Spread(name) => {
+                Err(WdlError::lower(format!("unexpanded spread '...{name}'")))
+            }
         }
     }
 

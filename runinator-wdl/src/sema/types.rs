@@ -225,6 +225,8 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
         ExprKind::Path(_) => {
             let _ = infer_expr(expr, env, diagnostics);
         }
+        // spreads are expanded before sema runs; nothing to check.
+        ExprKind::Spread(_) => {}
         ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
     }
 }
@@ -258,6 +260,8 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
                 .map(|(key, value)| (key.clone(), infer_expr(value, env, diagnostics))),
         ),
         ExprKind::Path(segs) => infer_path(segs, env, expr.span, diagnostics),
+        // spreads are expanded before sema runs; treat as untyped if one is reached.
+        ExprKind::Spread(_) => RuninatorType::Any,
     }
 }
 

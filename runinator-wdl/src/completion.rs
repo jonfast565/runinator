@@ -478,6 +478,8 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
             .and_then(|item| infer_expr_type(item, context)),
         ExprKind::ToJson(_) => Some(RuninatorType::String),
         ExprKind::Path(segs) => infer_path_type(segs, context),
+        // a spread carries no value type of its own; it is resolved by desugaring.
+        ExprKind::Spread(_) => None,
     }
 }
 

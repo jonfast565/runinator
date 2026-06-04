@@ -1,15 +1,15 @@
-// desugaring runs after parsing and before sema/lowering. it expands `...alias` argument spreads
-// in action calls into concrete arguments using the workflow's header aliases, so the rest of the
-// pipeline only ever sees fully-resolved argument lists and never needs to know about aliases.
+// desugaring runs after parsing and before sema/lowering. it expands `...alias` spreads — in
+// action arguments, object literals, subflow `with`, and approval metadata — into concrete entries
+// using the workflow's header aliases, so the rest of the pipeline never sees a spread.
 
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::errors::WdlError;
+use crate::errors::{Span, WdlError};
 
 type AliasTable = HashMap<String, Vec<(String, Expr)>>;
 
-/// expand every `...alias` spread in the document's action calls. mutates the document in place.
+/// expand every `...alias` spread in the document. mutates the document in place.
 pub fn desugar(document: &mut Document) -> Result<(), WdlError> {
     let aliases = collect_aliases(&document.workflow.aliases)?;
     expand_block(&mut document.workflow.body, &aliases)
@@ -39,78 +39,211 @@ fn expand_block(block: &mut Block, aliases: &AliasTable) -> Result<(), WdlError>
     Ok(())
 }
 
-// recurse into control-flow bodies; expand spreads on action statements.
+// expand spreads in a statement's expressions and recurse into control-flow bodies.
 fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
     match &mut stmt.kind {
-        StmtKind::Action(action) => expand_action(action, aliases),
+        StmtKind::Action(action) => expand_entries(&mut action.args, aliases)?,
+        StmtKind::Subflow(subflow) => {
+            if let Some(run_name) = subflow.run_name.as_mut() {
+                expand_expr(run_name, aliases)?;
+            }
+            expand_entries(&mut subflow.params, aliases)?;
+        }
+        StmtKind::Approval(approval) => {
+            expand_expr(&mut approval.prompt, aliases)?;
+            expand_entries(&mut approval.metadata, aliases)?;
+        }
+        StmtKind::Config(config) => {
+            if let Some(name) = config.name.as_mut() {
+                expand_expr(name, aliases)?;
+            }
+            if let Some(metadata) = config.metadata.as_mut() {
+                expand_expr(metadata, aliases)?;
+            }
+        }
+        StmtKind::Emit(emit) => {
+            if let Some(data) = emit.data.as_mut() {
+                expand_expr(data, aliases)?;
+            }
+        }
+        StmtKind::Wait(wait) => {
+            if let WaitAmount::Expr(expr) = &mut wait.amount {
+                expand_expr(expr, aliases)?;
+            }
+        }
+        StmtKind::Fail(expr) => {
+            if let Some(expr) = expr.as_mut() {
+                expand_expr(expr, aliases)?;
+            }
+        }
         StmtKind::If(if_stmt) => {
-            for (_, body) in if_stmt.arms.iter_mut() {
+            for (cond, body) in if_stmt.arms.iter_mut() {
+                expand_cond(cond, aliases)?;
                 expand_block(body, aliases)?;
             }
             if let Some(body) = if_stmt.else_block.as_mut() {
                 expand_block(body, aliases)?;
             }
-            Ok(())
         }
-        StmtKind::For(stmt) => expand_block(&mut stmt.body, aliases),
-        StmtKind::While(stmt) => expand_block(&mut stmt.body, aliases),
-        StmtKind::Map(stmt) => expand_block(&mut stmt.body, aliases),
-        StmtKind::Match(stmt) => {
-            for arm in stmt.arms.iter_mut() {
+        StmtKind::For(for_stmt) => {
+            expand_expr(&mut for_stmt.items, aliases)?;
+            expand_block(&mut for_stmt.body, aliases)?;
+        }
+        StmtKind::While(while_stmt) => {
+            expand_cond(&mut while_stmt.cond, aliases)?;
+            expand_block(&mut while_stmt.body, aliases)?;
+        }
+        StmtKind::Map(map_stmt) => {
+            expand_expr(&mut map_stmt.items, aliases)?;
+            expand_block(&mut map_stmt.body, aliases)?;
+        }
+        StmtKind::Match(match_stmt) => {
+            expand_expr(&mut match_stmt.subject, aliases)?;
+            for arm in match_stmt.arms.iter_mut() {
+                if let Some(equals) = arm.equals.as_mut() {
+                    expand_expr(equals, aliases)?;
+                }
+                if let Some(when) = arm.when.as_mut() {
+                    expand_cond(when, aliases)?;
+                }
                 expand_block(&mut arm.body, aliases)?;
             }
-            if let Some(body) = stmt.default.as_mut() {
+            if let Some(body) = match_stmt.default.as_mut() {
                 expand_block(body, aliases)?;
             }
-            Ok(())
         }
-        StmtKind::Parallel(stmt) => {
-            for branch in stmt.branches.iter_mut() {
+        StmtKind::Parallel(parallel) => {
+            for branch in parallel.branches.iter_mut() {
                 expand_block(branch, aliases)?;
             }
-            Ok(())
         }
-        StmtKind::Race(stmt) => {
-            for branch in stmt.branches.iter_mut() {
+        StmtKind::Race(race) => {
+            for branch in race.branches.iter_mut() {
                 expand_block(branch, aliases)?;
             }
-            Ok(())
         }
-        StmtKind::Try(stmt) => {
-            expand_block(&mut stmt.body, aliases)?;
-            if let Some(body) = stmt.catch.as_mut() {
+        StmtKind::Try(try_stmt) => {
+            expand_block(&mut try_stmt.body, aliases)?;
+            if let Some(body) = try_stmt.catch.as_mut() {
                 expand_block(body, aliases)?;
             }
-            if let Some(body) = stmt.finally.as_mut() {
+            if let Some(body) = try_stmt.finally.as_mut() {
                 expand_block(body, aliases)?;
             }
-            Ok(())
         }
-        _ => Ok(()),
     }
+    Ok(())
 }
 
-// merge each referenced alias's entries (in listed order) ahead of the explicit args, with explicit
-// args overriding spread entries regardless of position.
-fn expand_action(action: &mut ActionStmt, aliases: &AliasTable) -> Result<(), WdlError> {
-    if action.arg_spreads.is_empty() {
-        return Ok(());
-    }
-    let mut merged: Vec<(String, Expr)> = Vec::new();
-    for (name, span) in &action.arg_spreads {
-        let entries = aliases
-            .get(name)
-            .ok_or_else(|| WdlError::semantic(*span, format!("unknown alias '{name}'")))?;
-        for (key, value) in entries {
-            upsert(&mut merged, key.clone(), value.clone());
+fn expand_cond(cond: &mut Cond, aliases: &AliasTable) -> Result<(), WdlError> {
+    match &mut cond.kind {
+        CondKind::All(conds) | CondKind::Any(conds) => {
+            for cond in conds.iter_mut() {
+                expand_cond(cond, aliases)?;
+            }
         }
+        CondKind::Not(inner) => expand_cond(inner, aliases)?,
+        CondKind::Cmp { left, right, .. } => {
+            expand_expr(left, aliases)?;
+            expand_expr(right, aliases)?;
+        }
+        CondKind::Exists(expr) => expand_expr(expr, aliases)?,
     }
-    for (key, value) in action.args.drain(..) {
-        upsert(&mut merged, key, value);
-    }
-    action.args = merged;
-    action.arg_spreads.clear();
     Ok(())
+}
+
+// recurse into an expression, expanding spreads inside nested object literals.
+fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
+    match &mut expr.kind {
+        ExprKind::Object(entries) => expand_entries(entries, aliases)?,
+        ExprKind::Array(items) => {
+            for item in items.iter_mut() {
+                expand_expr(item, aliases)?;
+            }
+        }
+        ExprKind::Concat(parts) | ExprKind::Coalesce(parts) => {
+            for part in parts.iter_mut() {
+                expand_expr(part, aliases)?;
+            }
+        }
+        ExprKind::ToString(inner) | ExprKind::ToJson(inner) => expand_expr(inner, aliases)?,
+        ExprKind::Str(parts) => {
+            for part in parts.iter_mut() {
+                if let StrPart::Expr(part) = part {
+                    expand_expr(part, aliases)?;
+                }
+            }
+        }
+        // a bare spread expression is only ever produced inside an entry list and handled by
+        // `expand_entries`; encountering one as a standalone value is a grammar/parser invariant
+        // violation.
+        ExprKind::Spread(name) => {
+            return Err(WdlError::semantic(
+                expr.span,
+                format!("spread '...{name}' is not allowed here"),
+            ));
+        }
+        ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Path(_) => {}
+    }
+    Ok(())
+}
+
+// rebuild an entry list in source order, splicing each spread's resolved entries in place and
+// letting later entries override earlier ones of the same key (positional last-wins).
+fn expand_entries(entries: &mut Vec<(String, Expr)>, aliases: &AliasTable) -> Result<(), WdlError> {
+    let mut out: Vec<(String, Expr)> = Vec::new();
+    for (key, mut value) in entries.drain(..) {
+        if let ExprKind::Spread(name) = &value.kind {
+            let resolved = resolve_alias(name, value.span, aliases, &mut Vec::new())?;
+            for (key, value) in resolved {
+                upsert(&mut out, key, value);
+            }
+            continue;
+        }
+        expand_expr(&mut value, aliases)?;
+        upsert(&mut out, key, value);
+    }
+    *entries = out;
+    Ok(())
+}
+
+// resolve an alias to a flat entry list, expanding nested spreads (aliases may compose other
+// aliases) while detecting reference cycles.
+fn resolve_alias(
+    name: &str,
+    span: Span,
+    aliases: &AliasTable,
+    visiting: &mut Vec<String>,
+) -> Result<Vec<(String, Expr)>, WdlError> {
+    if visiting.iter().any(|seen| seen == name) {
+        return Err(WdlError::semantic(
+            span,
+            format!("alias '{name}' references itself"),
+        ));
+    }
+    let entries = aliases
+        .get(name)
+        .ok_or_else(|| WdlError::semantic(span, format!("unknown alias '{name}'")))?;
+    visiting.push(name.to_string());
+    let mut out: Vec<(String, Expr)> = Vec::new();
+    for (key, value) in entries {
+        if let ExprKind::Spread(inner) = &value.kind {
+            let resolved = resolve_alias(inner, value.span, aliases, visiting)?;
+            for (key, value) in resolved {
+                upsert(&mut out, key, value);
+            }
+            continue;
+        }
+        let mut value = value.clone();
+        expand_expr(&mut value, aliases)?;
+        upsert(&mut out, key.clone(), value);
+    }
+    visiting.pop();
+    Ok(out)
 }
 
 // insert a key, or overwrite its value in place to preserve first-seen ordering.

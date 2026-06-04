@@ -92,9 +92,8 @@ maps to `RuninatorType`.
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
 
-**Argument aliases**: shared call arguments can be named once in the workflow header and spread
-into action calls, so a connection's `base_url`/`email`/`token` are written once instead of on
-every call:
+**Argument aliases**: shared arguments can be named once in the workflow header and spread with
+`...name`, so a connection's `base_url`/`email`/`token` are written once instead of on every call:
 
 ```
 workflow "Ticket Work" v1 {
@@ -104,12 +103,18 @@ workflow "Ticket Work" v1 {
 }
 ```
 
-`...name` spreads the alias's entries; explicit `key: value` arguments on the same call override a
-spread entry of the same name (regardless of order). Aliases are pure surface sugar: spreads are
-expanded **before** semantic analysis and lowering, so the JSON graph never sees an alias — the
-aliased and fully-expanded forms compile to the same graph. `format` preserves `alias`/`...name`,
-but `decompile` (which works from the graph) emits the expanded argument list. A `secret.*` value
-spread through an alias is still a whole argument value, so the "no secret mid-string" rule holds.
+A `...name` spread works anywhere an object's entries are written: action arguments, object
+literals `{ ... }`, subflow `with { ... }`, and `approve "..." { ... }` metadata — including nested
+objects. Entries apply in source order with **positional last-wins** (like JS spread): a later
+`key: value` overrides an earlier spread of the same key, and a later spread overrides an earlier
+entry. Aliases may compose other aliases (`alias full = { ...base, token: secret.x }`); reference
+cycles are a compile error.
+
+Aliases are pure surface sugar: spreads are expanded **before** semantic analysis and lowering, so
+the JSON graph never sees an alias — the aliased and fully-expanded forms compile to the same
+graph. `format` preserves `alias`/`...name`, but `decompile` (which works from the graph) emits the
+expanded form. A `secret.*` value spread through an alias is still a whole argument value, so the
+"no secret mid-string" rule holds.
 
 ## Implicit vs explicit
 

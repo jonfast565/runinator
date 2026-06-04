@@ -284,6 +284,8 @@ fn resolve_expr(
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
             resolve_expr(inner, symbols, scope, diagnostics);
         }
+        // spreads are expanded before sema runs; nothing to resolve.
+        ExprKind::Spread(_) => {}
     }
 }
 

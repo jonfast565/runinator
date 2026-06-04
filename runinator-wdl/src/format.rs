@@ -165,42 +165,34 @@ impl Formatter {
     }
 
     fn action(&self, action: &ActionStmt) -> String {
-        let args = if action.args.is_empty() && action.arg_spreads.is_empty() {
+        let args = if action.args.is_empty() {
             "()".to_string()
         } else {
-            self.action_args_multiline(action)
+            self.action_args_multiline(&action.args)
         };
         let mut text = format!("{}.{}{args}", action.provider, action.function);
         self.action_modifiers(action, &mut text);
         text
     }
 
-    // spreads are emitted first as `...alias`, then the explicit `name: value` arguments.
-    fn action_args_multiline(&self, action: &ActionStmt) -> String {
-        if action.args.is_empty() && action.arg_spreads.is_empty() {
+    // arguments render in source order; a `...alias` spread entry prints as `...alias`.
+    fn action_args_multiline(&self, args: &[(String, Expr)]) -> String {
+        if args.is_empty() {
             return "()".to_string();
         }
         let arg_indent = self.indent + 1;
-        let total = action.arg_spreads.len() + action.args.len();
         let mut out = "(\n".to_string();
-        let mut index = 0;
-        for (name, _span) in &action.arg_spreads {
+        for (index, (name, value)) in args.iter().enumerate() {
             out.push_str(&indent(arg_indent));
-            out.push_str("...");
-            out.push_str(name);
-            index += 1;
-            if index < total {
-                out.push(',');
+            match &value.kind {
+                ExprKind::Spread(alias) => out.push_str(&format!("...{alias}")),
+                _ => {
+                    out.push_str(name);
+                    out.push_str(": ");
+                    out.push_str(&format_expr_multiline(value, arg_indent));
+                }
             }
-            out.push('\n');
-        }
-        for (name, value) in &action.args {
-            out.push_str(&indent(arg_indent));
-            out.push_str(name);
-            out.push_str(": ");
-            out.push_str(&format_expr_multiline(value, arg_indent));
-            index += 1;
-            if index < total {
+            if index + 1 < args.len() {
                 out.push(',');
             }
             out.push('\n');
@@ -542,6 +534,7 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
         }
         ExprKind::ToString(inner) => (ExprPrec::Primary, format!("string({})", format_expr(inner))),
         ExprKind::ToJson(inner) => (ExprPrec::Primary, format!("json({})", format_expr(inner))),
+        ExprKind::Spread(name) => (ExprPrec::Primary, format!("...{name}")),
     };
 
     if prec < parent {
@@ -666,7 +659,10 @@ fn format_object_entries(entries: &[(String, Expr)]) -> String {
     }
     let parts = entries
         .iter()
-        .map(|(key, value)| format!("{}: {}", format_key(key), format_expr(value)))
+        .map(|(key, value)| match &value.kind {
+            ExprKind::Spread(name) => format!("...{name}"),
+            _ => format!("{}: {}", format_key(key), format_expr(value)),
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{ {parts} }}")
@@ -679,9 +675,14 @@ fn format_object_entries_multiline(entries: &[(String, Expr)], indent_level: usi
     let mut out = "{\n".to_string();
     for (index, (key, value)) in entries.iter().enumerate() {
         out.push_str(&indent(indent_level + 1));
-        out.push_str(&format_key(key));
-        out.push_str(": ");
-        out.push_str(&format_expr_multiline(value, indent_level + 1));
+        match &value.kind {
+            ExprKind::Spread(name) => out.push_str(&format!("...{name}")),
+            _ => {
+                out.push_str(&format_key(key));
+                out.push_str(": ");
+                out.push_str(&format_expr_multiline(value, indent_level + 1));
+            }
+        }
         if index + 1 < entries.len() {
             out.push(',');
         }

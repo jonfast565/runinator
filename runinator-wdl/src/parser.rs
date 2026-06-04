@@ -248,16 +248,11 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
     let span = span_of(&pair);
     let mut idents = Vec::new();
     let mut args = Vec::new();
-    let mut arg_spreads = Vec::new();
     let mut modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::action_ident => idents.push(inner.as_str().to_string()),
-            Rule::arg_list => {
-                let (parsed_args, parsed_spreads) = parse_arg_list(inner)?;
-                args = parsed_args;
-                arg_spreads = parsed_spreads;
-            }
+            Rule::arg_list => args = parse_arg_list(inner)?,
             Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
         }
@@ -269,33 +264,21 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
         provider: idents[0].clone(),
         function: idents[1].clone(),
         args,
-        arg_spreads,
         modifiers,
     })
 }
 
-#[allow(clippy::type_complexity)]
-fn parse_arg_list(
-    pair: Pair<Rule>,
-) -> Result<(Vec<(String, Expr)>, Vec<(String, Span)>), WdlError> {
+// argument entries in source order; a `...alias` spread becomes an entry with an `ExprKind::Spread`
+// value (the key is unused), expanded later by desugaring.
+fn parse_arg_list(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlError> {
     let mut args = Vec::new();
-    let mut spreads = Vec::new();
     for arg in pair.into_inner().filter(|p| p.as_rule() == Rule::arg) {
         let entry = arg
             .into_inner()
             .next()
             .ok_or_else(|| WdlError::lower("arg entry"))?;
         match entry.as_rule() {
-            Rule::arg_spread => {
-                let span = span_of(&entry);
-                let name = entry
-                    .into_inner()
-                    .next()
-                    .ok_or_else(|| WdlError::lower("spread alias"))?
-                    .as_str()
-                    .to_string();
-                spreads.push((name, span));
-            }
+            Rule::arg_spread => args.push(parse_spread_entry(entry)?),
             Rule::arg_pair => {
                 let mut inner = entry.into_inner();
                 let name = inner.next().ok_or_else(|| WdlError::lower("arg name"))?;
@@ -305,7 +288,20 @@ fn parse_arg_list(
             _ => {}
         }
     }
-    Ok((args, spreads))
+    Ok(args)
+}
+
+// build a spread entry from an `arg_spread`/`object_spread` pair: an empty key paired with an
+// `ExprKind::Spread` value carrying the alias name and the spread's source span.
+fn parse_spread_entry(pair: Pair<Rule>) -> Result<(String, Expr), WdlError> {
+    let span = span_of(&pair);
+    let name = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| WdlError::lower("spread alias"))?
+        .as_str()
+        .to_string();
+    Ok((String::new(), Expr::new(ExprKind::Spread(name), span)))
 }
 
 fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), WdlError> {
@@ -1021,6 +1017,7 @@ fn parse_object_entries(pair: Pair<Rule>) -> Result<Vec<(String, Expr)>, WdlErro
     {
         let inner = first_inner(entry)?;
         match inner.as_rule() {
+            Rule::object_spread => entries.push(parse_spread_entry(inner)?),
             Rule::object_pair => {
                 let mut key = String::new();
                 let mut value = None;

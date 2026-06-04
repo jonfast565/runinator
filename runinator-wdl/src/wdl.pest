@@ -71,7 +71,7 @@ action_stmt  = { action_ident ~ "." ~ action_ident ~ "(" ~ arg_list? ~ ")" ~ mod
 action_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 arg_list     = { arg ~ ("," ~ arg)* ~ ","? }
 arg          = { arg_spread | arg_pair }
-// `...name` spreads a header alias's entries into this call; explicit pairs override spreads.
+// `...name` spreads a header alias's entries into this call; later args override earlier ones.
 arg_spread   = { "..." ~ ident }
 arg_pair     = { ident ~ ":" ~ expr }
 
@@ -196,7 +196,9 @@ path     = ${ ident ~ ("." ~ path_seg)* }
 path_seg = { ident | integer }
 
 object        = { "{" ~ (object_entry ~ ("," ~ object_entry)*)? ~ ","? ~ "}" }
-object_entry  = { object_pair | object_shorthand }
+object_entry  = { object_spread | object_pair | object_shorthand }
+// `...name` spreads a header alias's entries into this object; later entries override earlier ones.
+object_spread = { "..." ~ ident }
 object_pair   = { (ident | string) ~ ":" ~ expr }
 object_shorthand = { ident }
 

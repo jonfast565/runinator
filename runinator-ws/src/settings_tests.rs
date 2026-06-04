@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use runinator_models::settings::SettingKind;
@@ -7,11 +8,15 @@ use runinator_utilities::credential_store::{CredentialStore, LocalEncryptedCrede
 use super::{decode_config_value, validate_and_encode};
 
 fn temp_store() -> (LocalEncryptedCredentialStore, std::path::PathBuf) {
+    // a process-global counter keeps paths unique even when parallel tests
+    // sample the same timestamp, so one test's cleanup cannot wipe another's store.
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("runinator-ws-settings-{unique}.json"));
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("runinator-ws-settings-{unique}-{seq}.json"));
     (LocalEncryptedCredentialStore::new(&path, "key"), path)
 }
 

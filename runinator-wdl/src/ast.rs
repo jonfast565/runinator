@@ -119,10 +119,9 @@ pub struct Reentry {
 pub struct ActionStmt {
     pub provider: String,
     pub function: String,
+    /// argument entries in source order. a `...alias` spread is carried as an entry whose value
+    /// is `ExprKind::Spread`; desugaring expands it in place before sema and lowering.
     pub args: Vec<(String, Expr)>,
-    /// `...alias` argument spreads, each with its source span for diagnostics. emptied by
-    /// desugaring once expanded into `args`.
-    pub arg_spreads: Vec<(String, Span)>,
     pub modifiers: Modifiers,
 }
 
@@ -278,6 +277,9 @@ pub enum ExprKind {
     ToString(Box<Expr>),
     /// `json(x)` serialization.
     ToJson(Box<Expr>),
+    /// a `...alias` spread placeholder, only valid as an argument or object entry value. expanded
+    /// away by desugaring; never reaches sema or lowering. the carried name is the alias.
+    Spread(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
