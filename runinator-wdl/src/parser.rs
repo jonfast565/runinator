@@ -275,7 +275,9 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
 }
 
 #[allow(clippy::type_complexity)]
-fn parse_arg_list(pair: Pair<Rule>) -> Result<(Vec<(String, Expr)>, Vec<(String, Span)>), WdlError> {
+fn parse_arg_list(
+    pair: Pair<Rule>,
+) -> Result<(Vec<(String, Expr)>, Vec<(String, Span)>), WdlError> {
     let mut args = Vec::new();
     let mut spreads = Vec::new();
     for arg in pair.into_inner().filter(|p| p.as_rule() == Rule::arg) {
