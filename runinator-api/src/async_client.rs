@@ -13,13 +13,15 @@ use runinator_models::{
         api_workflow_run_command, api_workflow_run_nodes, api_workflow_run_rename,
         api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_CREDENTIALS,
-        API_IDEMPOTENCY_KEYS, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
-        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
-        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
-        API_WORKFLOWS_EXPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_RUNS,
+        API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
+        API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
+        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
+        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
+        API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
-    bundles::{Bundle, ProviderBundle, SecretBundle},
+    bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
     runs::{RunStatus, RunSummary},
@@ -180,8 +182,41 @@ where
         Ok(response.json::<B>().await?)
     }
 
+    /// POST a raw JSON workflow bundle after acknowledging that system breakage is possible.
     pub async fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
-        self.import_bundle(bundle).await
+        let url = self.build_url(API_WORKFLOWS_IMPORT).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .header(
+                WORKFLOW_JSON_IMPORT_RISK_HEADER,
+                WORKFLOW_JSON_IMPORT_RISK_ACK,
+            )
+            .json(bundle)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowBundle>().await?)
+    }
+
+    /// Build a compiled pack zip (workflows + optional secrets) and POST it to `/packs/import`.
+    pub async fn import_pack(
+        &self,
+        workflows: &WorkflowBundle,
+        secrets: Option<&SecretBundle>,
+    ) -> Result<PackImportResult> {
+        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets)
+            .map_err(|err| ApiError::Pack(err.to_string()))?;
+        let url = self.build_url(API_PACKS_IMPORT).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .header(reqwest::header::CONTENT_TYPE, "application/zip")
+            .body(body)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PackImportResult>().await?)
     }
 
     pub async fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {

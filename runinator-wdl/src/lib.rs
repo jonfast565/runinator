@@ -13,11 +13,13 @@ mod errors;
 mod format;
 pub(crate) mod lower;
 mod parser;
+mod secrets;
 pub mod sema;
 
 pub use decompile::DecompileOptions;
 pub use errors::{Span, WdlError};
 pub use parser::parse_document;
+pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
 
 pub use completion::{
@@ -53,9 +55,12 @@ pub fn compile_str_with_diagnostics(
     src: &str,
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<Diagnostic>), WdlError> {
-    let mut document = parse_document(src)?;
-    desugar::desugar(&mut document)?;
-    let diagnostics = sema::analyze(&document);
+    let document = parse_document(src)?;
+    // desugar a clone so sema validates the fully-expanded program, while lowering keeps the
+    // sugared form to record `...alias` spreads for the decompile sidecar.
+    let mut desugared = document.clone();
+    desugar::desugar(&mut desugared)?;
+    let diagnostics = sema::analyze(&desugared);
     if let Some(error) = sema::first_error(&diagnostics) {
         return Err(WdlError::semantic(error.span, error.message.clone()));
     }
@@ -90,8 +95,10 @@ pub fn compile_unchecked(
     src: &str,
     options: &CompileOptions,
 ) -> Result<WorkflowDefinition, WdlError> {
-    let mut document = parse_document(src)?;
-    desugar::desugar(&mut document)?;
+    let document = parse_document(src)?;
+    // validate the alias expansion on a clone, then lower the sugared form (see above).
+    let mut desugared = document.clone();
+    desugar::desugar(&mut desugared)?;
     lower::lower_document(&document, options)
 }
 

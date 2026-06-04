@@ -84,9 +84,49 @@ literals.
 `exists x`, `&&`, `||`, `!`.
 
 **Input typing**: `{ a: string, b?: integer, c: string[], d: map<string>, e: A | B }`
-maps to `RuninatorType`.
+maps to `RuninatorType`. Open structs use `...: type`, e.g. `{ known: string, ...: any }`.
 
-**Annotations**: `@id("explicit")` and `@skip` for round-trip stability.
+**Input defaults**: a top-level input field may carry a default — `name: type = expr` — used
+when the field is omitted at run start:
+
+```
+input {
+    poll_interval: integer = 30
+    base_url:      string  = config.api.base_url
+    label:         string  = "run-" ++ string(input.poll_interval)
+    token:         string  = secret.api.token
+}
+```
+
+The default is an ordinary expression (a literal, object/array, or a `config.*` / `run.*` /
+`secret.*` / sibling `input.*` reference; `prev` and step outputs are rejected since defaults run
+before any step). A defaulted field is implicitly optional. Defaults are evaluated lazily against
+the run context (after `config` resolves, with secrets left as `secret://` strings), filling only
+omitted fields and never overwriting a supplied value; one default may read another. They survive
+compile → decompile → recompile and are stored on the field in `input_type`.
+
+**Triggers**: a workflow header may declare cron schedules that fire runs of the workflow:
+
+```
+workflow "Nightly" v1 {
+    trigger cron "0 9 * * *"
+    trigger cron "*/5 * * * *" with { source: "cron" }
+    trigger cron "0 0 * * *" disabled blackout "2026-01-01T00:00:00Z" to "2026-01-02T00:00:00Z"
+    ...
+}
+```
+
+The cron expression must be a string literal; the optional `with { … }` object is the run input.
+`disabled` creates the trigger disabled, and `blackout` carries RFC3339 start/end timestamps.
+Triggers belong to their workflow, so they are carried inside the compiled definition
+(`definition.metadata.triggers`) and **materialized at import**: the web service replaces that
+workflow's pack-managed (`managed_by: wdl`) cron triggers with the declared set (idempotent on
+re-apply; manually-added triggers are left alone). This works for directory packs, not just `.wdlp`
+manifests, and they round-trip through decompile.
+
+**Annotations**: `@id("explicit")`, `@skip`, `@lock`, and `@timeout(300s)` for round-trip
+stability and node-level orchestration metadata. Action `.timeout(...)` remains the provider
+command timeout; `@timeout(...)` maps to the workflow node timeout.
 
 **Typed bindings**: `let tickets: { issues: any[] } = jira.search(...)` annotates a step's
 output type. The annotation is checked during semantic analysis, persisted in the graph
@@ -110,11 +150,15 @@ objects. Entries apply in source order with **positional last-wins** (like JS sp
 entry. Aliases may compose other aliases (`alias full = { ...base, token: secret.x }`); reference
 cycles are a compile error.
 
-Aliases are pure surface sugar: spreads are expanded **before** semantic analysis and lowering, so
-the JSON graph never sees an alias — the aliased and fully-expanded forms compile to the same
-graph. `format` preserves `alias`/`...name`, but `decompile` (which works from the graph) emits the
-expanded form. A `secret.*` value spread through an alias is still a whole argument value, so the
-"no secret mid-string" rule holds.
+Aliases are surface sugar: spreads are expanded **before** semantic analysis and runtime
+execution, so the runtime graph never sees an alias — the aliased and fully-expanded forms run
+identically. To keep round trips faithful, lowering also records the authored alias declarations
+and each call's spread layout in a render-only `wdl` metadata sidecar (alongside declared types);
+both `format` and `decompile` re-emit `alias`/`...name` from it, so aliased source compiles,
+decompiles, and recompiles back to the same source — including composition and positional
+overrides. Graphs authored without this sidecar (e.g. hand-written JSON, or compiled before the
+sidecar existed) decompile to the equivalent fully-expanded form. A `secret.*` value spread through
+an alias is still a whole argument value, so the "no secret mid-string" rule holds.
 
 ## Implicit vs explicit
 
@@ -208,7 +252,41 @@ runinatorctl wdl check    workflow.wdl
 ```
 
 `runinatorctl workflows apply` also accepts `.wdl` files, `.wdlp` manifests, and
-directories of `.wdl` files directly alongside JSON packs.
+directories of `.wdl` files directly alongside JSON packs. The ctl compiles the pack
+client-side, zips the compiled artifacts (`workflows.json` + optional `secrets.json`), and
+uploads a single `application/zip` to the web service's `/packs/import` endpoint — compilation
+never happens on the backend. With no path argument, `workflows apply` falls back to the
+`~/.runinator/workflows` folder (honoring `RUNINATOR_HOME`) if it exists.
+
+Re-applying a pack updates what changed: ctl stamps each compiled workflow / secret with its source
+file's mtime, so the web service's newer-wins reconciliation overwrites an edited file and skips an
+unedited one — without clobbering a workflow a user has since edited in the UI (whose stored
+timestamp is newer). A subflow that targets a workflow neither in the pack nor already stored is
+rejected at apply time.
+
+## Secrets (`.wdls`)
+
+A `.wdls` file is the secrets/config companion to `.wdl`: a flat list of `secret`/`config`
+declarations addressing a dotted `scope.name`, mirroring WDL's `secret.*` / `config.*` reference
+surface. Values are pure JSON literals (no references or `${...}` interpolation):
+
+```
+secret jira.token    = "abc123"
+config jira.base_url = "https://acme.atlassian.net"
+config app.retries   = 3
+config app.flags     = { beta: true, region: "us" }
+```
+
+A dotted name with more than two segments joins the tail with `/` (so `secret jira.api.key` is the
+secret `key` under scope `jira` named `api/key`). `secret` entries are stored as redacted secrets;
+`config` entries are eagerly-resolvable config values. `parse_secrets_str` lowers `.wdls` to a
+`SecretBundle`; `secrets_to_wdls` renders one back. A pack ships secrets as a sibling
+`settings.wdls` (or `settings.json`) next to a directory pack, or via a `.wdlp` manifest's
+`settings` path; the ctl folds them into the same compiled pack zip.
+
+Standalone secret/config import requires a `.wdls` file (JSON is not accepted):
+`runinatorctl settings import secrets.wdls`. The MCP `runinator_import_workflow_bundle` tool
+likewise takes WDL `source` text, compiled client-side, rather than a JSON bundle.
 
 ## Decompiler scope
 

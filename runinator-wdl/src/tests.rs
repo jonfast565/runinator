@@ -7,6 +7,7 @@ use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
     RuninatorType,
 };
+use runinator_models::value::Value;
 
 /// compile and return the `Semantic` error's span and message, failing otherwise.
 fn expect_semantic(src: &str) -> (crate::Span, String) {
@@ -586,6 +587,37 @@ fn round_trips_expression_wait() {
     // the dynamic duration lowers to a $ref expression, not an integer.
     assert!(wait.pointer("/wait/seconds/$ref").is_some(), "{wait:#?}");
     assert_round_trips(src);
+}
+
+#[test]
+fn node_annotations_lower_and_round_trip() {
+    let src = r#"
+        workflow "Annotations" v1 {
+            @lock
+            @timeout(45s)
+            wait 1s
+        }
+    "#;
+    let definition = compile(src);
+    let nodes = definition.definition.as_value();
+    let wait = nodes
+        .get("nodes")
+        .and_then(|n| n.as_array())
+        .unwrap()
+        .iter()
+        .find(|n| n.get("kind").and_then(|k| k.as_str()) == Some("wait"))
+        .expect("wait node");
+    assert_eq!(wait.get("locked"), Some(&Value::from(true)));
+    assert_eq!(wait.get("timeout_seconds"), Some(&Value::from(45)));
+
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(wdl.contains("@lock"), "{wdl}");
+    assert!(wdl.contains("@timeout(45s)"), "{wdl}");
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(
+        definition.definition.as_value(),
+        second.definition.as_value()
+    );
 }
 
 #[test]
@@ -1515,8 +1547,8 @@ fn alias_spread_lowers_like_explicit_args() {
         }
     "#;
     assert_eq!(
-        runinator_workflows::normalize_definition(compile(aliased).definition),
-        runinator_workflows::normalize_definition(compile(explicit).definition),
+        runtime_graph(compile(aliased)),
+        runtime_graph(compile(explicit)),
         "a `...alias` spread should lower identically to the explicit argument list"
     );
 }
@@ -1536,8 +1568,8 @@ fn explicit_arg_overrides_spread() {
         }
     "#;
     assert_eq!(
-        runinator_workflows::normalize_definition(compile(aliased).definition),
-        runinator_workflows::normalize_definition(compile(explicit).definition),
+        runtime_graph(compile(aliased)),
+        runtime_graph(compile(explicit))
     );
 }
 
@@ -1580,11 +1612,22 @@ fn format_preserves_alias_and_spread() {
     assert_eq!(format_str(&formatted).expect("format twice"), formatted);
 }
 
-// helper: compile two sources and assert their normalized graphs match.
+// normalize a definition's graph and drop the render-only `wdl` metadata sidecar (declared
+// types, alias declarations, spread recipes), so forms that differ only in resugar hints —
+// aliased vs. fully-expanded source — compare equal on their runtime graph.
+fn runtime_graph(definition: runinator_models::workflows::WorkflowDefinition) -> Value {
+    let mut value = runinator_workflows::normalize_definition(definition.definition).as_value();
+    if let Value::Object(root) = &mut value {
+        root.remove("metadata");
+    }
+    value
+}
+
+// helper: compile two sources and assert their runtime graphs match (ignoring resugar hints).
 fn assert_same_graph(aliased: &str, explicit: &str) {
     assert_eq!(
-        runinator_workflows::normalize_definition(compile(aliased).definition),
-        runinator_workflows::normalize_definition(compile(explicit).definition),
+        runtime_graph(compile(aliased)),
+        runtime_graph(compile(explicit)),
         "aliased form should lower identically to the explicit form"
     );
 }
@@ -1691,4 +1734,439 @@ fn later_entry_overrides_spread() {
         }
         "#,
     );
+}
+
+// compile -> decompile -> recompile and assert the full normalized graphs (including the `wdl`
+// resugar sidecar) match, so the alias declarations and `...alias` spreads round-trip exactly.
+// returns the decompiled source for spot-checks on the recovered surface syntax.
+fn assert_alias_round_trips(src: &str) -> String {
+    let first = compile(src);
+    let wdl = decompile(&first).expect("decompile");
+    let second = compile_str(&wdl, &CompileOptions::default())
+        .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{wdl}"));
+    assert_eq!(
+        runinator_workflows::normalize_definition(first.definition),
+        runinator_workflows::normalize_definition(second.definition),
+        "alias round trip diverged\n--- decompiled ---\n{wdl}"
+    );
+    wdl
+}
+
+#[test]
+fn resugars_action_spread() {
+    let wdl = assert_alias_round_trips(
+        r#"
+        workflow "Act" v1 {
+            alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
+            let t = jira.transition(...conn, key: "ABC-1")
+        }
+        "#,
+    );
+    assert!(wdl.contains("alias conn = {"), "{wdl}");
+    assert!(wdl.contains("...conn"), "{wdl}");
+    assert!(wdl.contains(r#"key: "ABC-1""#), "{wdl}");
+}
+
+#[test]
+fn resugars_subflow_with_spread() {
+    let wdl = assert_alias_round_trips(
+        r#"
+        workflow "Sub" v1 {
+            alias conn = { base_url: config.a.b, token: secret.c.d }
+            call "Child" with { ...conn, key: "K" }
+        }
+        "#,
+    );
+    assert!(wdl.contains("alias conn = {"), "{wdl}");
+    assert!(wdl.contains("with { ...conn"), "{wdl}");
+}
+
+#[test]
+fn resugars_approval_metadata_spread() {
+    let wdl = assert_alias_round_trips(
+        r#"
+        workflow "Appr" v1 {
+            alias meta = { env: "prod", owner: "team" }
+            approve "Ship?" type "change" { ...meta, extra: "x" }
+                ok -> done
+                reject -> fail
+        }
+        "#,
+    );
+    assert!(wdl.contains("alias meta = {"), "{wdl}");
+    assert!(wdl.contains("...meta"), "{wdl}");
+}
+
+#[test]
+fn resugars_nested_object_spread() {
+    let wdl = assert_alias_round_trips(
+        r#"
+        workflow "Nest" v1 {
+            alias conn = { base_url: config.a.b }
+            let t = api.call(config: { ...conn, timeout: 30 })
+        }
+        "#,
+    );
+    assert!(wdl.contains("config: { ...conn"), "{wdl}");
+}
+
+#[test]
+fn resugars_alias_composition() {
+    let wdl = assert_alias_round_trips(
+        r#"
+        workflow "Compose" v1 {
+            alias base = { base_url: config.a.b }
+            alias full = { ...base, token: secret.c.d }
+            let t = api.call(...full)
+        }
+        "#,
+    );
+    // the composing alias keeps its `...base` spread in the recovered header.
+    assert!(wdl.contains("alias full = { ...base"), "{wdl}");
+    assert!(wdl.contains("...full"), "{wdl}");
+}
+
+#[test]
+fn resugars_override_keeping_authored_order() {
+    // spread-first: the explicit override stays after the spread.
+    let first = assert_alias_round_trips(
+        r#"
+        workflow "Over" v1 {
+            alias conn = { base_url: "from-alias", region: "us" }
+            let t = api.call(...conn, base_url: "explicit")
+        }
+        "#,
+    );
+    assert!(
+        first.contains(r#"...conn, base_url: "explicit""#),
+        "{first}"
+    );
+
+    // spread-last: the explicit entry stays before the spread (which wins on recompile).
+    let second = assert_alias_round_trips(
+        r#"
+        workflow "Over2" v1 {
+            alias conn = { x: "from-alias" }
+            let t = api.call(x: "from-arg", ...conn)
+        }
+        "#,
+    );
+    assert!(second.contains(r#"x: "from-arg", ...conn"#), "{second}");
+}
+
+// input parameter defaults --------------------------------------------------
+
+#[test]
+fn input_default_literal_lowers_and_round_trips() {
+    let src = r#"
+        workflow "Defaults" v1 {
+            input {
+                count: integer = 5
+                label: string = "hello"
+            }
+            console.run(command: "go ${input.label}")
+        }
+    "#;
+    let def = compile(src);
+    let RuninatorType::Struct { fields, .. } = &def.input_type else {
+        panic!("expected struct input, got {:?}", def.input_type);
+    };
+    let count = fields.get("count").expect("count field");
+    assert_eq!(count.default, Some(Value::from(5)));
+    // a defaulted field is treated as optional.
+    assert!(!count.required, "defaulted field should be optional");
+
+    let wdl = decompile(&def).expect("decompile");
+    assert!(wdl.contains("count: integer = 5"), "{wdl}");
+    assert!(wdl.contains(r#"label: string = "hello""#), "{wdl}");
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(def.input_type, second.input_type);
+}
+
+#[test]
+fn input_default_expression_round_trips() {
+    let src = r#"
+        workflow "Defaults" v1 {
+            input {
+                base: string = config.api.base_url
+                token: string = secret.api.token
+                full: string = config.api.base_url ++ "/v1"
+            }
+            console.run(command: input.base)
+        }
+    "#;
+    let def = compile(src);
+    let wdl = decompile(&def).expect("decompile");
+    assert!(wdl.contains("base: string = config.api.base_url"), "{wdl}");
+    assert!(wdl.contains("token: string = secret.api.token"), "{wdl}");
+    assert!(
+        wdl.contains(r#"full: string = config.api.base_url ++ "/v1""#),
+        "{wdl}"
+    );
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(def.input_type, second.input_type);
+}
+
+#[test]
+fn open_input_struct_lowers_and_round_trips() {
+    let src = r#"
+        workflow "Open" v1 {
+            input {
+                name: string
+                ...: integer
+            }
+            console.run(command: input.name)
+        }
+    "#;
+    let def = compile(src);
+    let RuninatorType::Struct { additional, .. } = &def.input_type else {
+        panic!("expected struct input, got {:?}", def.input_type);
+    };
+    assert_eq!(
+        additional.as_deref(),
+        Some(&runinator_models::types::RuninatorType::Integer)
+    );
+
+    let wdl = decompile(&def).expect("decompile");
+    assert!(wdl.contains("...: integer"), "{wdl}");
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(def.input_type, second.input_type);
+}
+
+#[test]
+fn rejects_input_default_referencing_prev() {
+    let message = expect_semantic_error(
+        r#"
+        workflow "Bad" v1 {
+            input { x: string = prev.foo }
+            console.run(command: input.x)
+        }
+    "#,
+    );
+    assert!(
+        message.contains("input default may only reference"),
+        "{message}"
+    );
+}
+
+#[test]
+fn apply_input_defaults_fills_missing_fields() {
+    let src = r#"
+        workflow "Defaults" v1 {
+            input {
+                count: integer = 5
+                label: string = "n-" ++ string(input.count)
+                provided: string
+            }
+            console.run(command: input.label)
+        }
+    "#;
+    let def = compile(src);
+    let mut context = Value::from(serde_json::json!({
+        "input": { "provided": "yes" },
+        "steps": {},
+    }));
+    runinator_workflows::apply_input_defaults(&mut context, &def.input_type);
+    let input = context.get("input").expect("input slot");
+    assert_eq!(input.get("count"), Some(&Value::from(5)));
+    assert_eq!(input.get("label"), Some(&Value::from("n-5")));
+    // a provided value is never overwritten.
+    assert_eq!(input.get("provided"), Some(&Value::from("yes")));
+}
+
+#[test]
+fn apply_input_defaults_synthesizes_input_when_absent() {
+    let src = r#"
+        workflow "Defaults" v1 {
+            input { greeting: string = "hi" }
+            console.run(command: input.greeting)
+        }
+    "#;
+    let def = compile(src);
+    let mut context = Value::from(serde_json::json!({ "steps": {} }));
+    runinator_workflows::apply_input_defaults(&mut context, &def.input_type);
+    assert_eq!(
+        context.get("input").and_then(|i| i.get("greeting")),
+        Some(&Value::from("hi"))
+    );
+}
+
+#[test]
+fn format_renders_input_defaults() {
+    let src = "workflow \"D\" v1 {\ninput {\ncount: integer = 5\nbase: string = config.x\n}\nconsole.run(command: input.base)\n}\n";
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("count: integer = 5"), "{formatted}");
+    assert!(formatted.contains("base: string = config.x"), "{formatted}");
+    // formatted source still compiles to the same input type.
+    let a = compile(src);
+    let b = compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");
+    assert_eq!(a.input_type, b.input_type);
+}
+
+// .wdls secrets format ------------------------------------------------------
+
+#[test]
+fn parses_wdls_secrets_and_config() {
+    use crate::parse_secrets_str;
+    use runinator_models::settings::SettingKind;
+
+    let src = r#"
+        secret jira.token = "abc123"
+        secret jira.api.key = "xyz"
+        config jira.base_url = "https://acme.atlassian.net"
+        config app.retries = 3
+        config app.flags = { beta: true, region: "us" }
+    "#;
+    let bundle = parse_secrets_str(src).expect("parse wdls");
+    assert_eq!(bundle.secrets.len(), 5);
+
+    let token = &bundle.secrets[0];
+    assert_eq!(token.scope, "jira");
+    assert_eq!(token.name, "token");
+    assert_eq!(token.kind, SettingKind::Secret);
+    assert_eq!(token.value, Value::from("abc123"));
+
+    // multi-segment names join with `/`, matching wdl secret addressing.
+    assert_eq!(bundle.secrets[1].name, "api/key");
+
+    let base = &bundle.secrets[2];
+    assert_eq!(base.kind, SettingKind::Config);
+    assert_eq!(base.value, Value::from("https://acme.atlassian.net"));
+
+    assert_eq!(bundle.secrets[3].value, Value::from(3));
+
+    let flags = &bundle.secrets[4];
+    assert_eq!(flags.kind, SettingKind::Config);
+    assert_eq!(flags.value.get("beta"), Some(&Value::from(true)));
+    assert_eq!(flags.value.get("region"), Some(&Value::from("us")));
+}
+
+#[test]
+fn rejects_wdls_reference_value() {
+    use crate::parse_secrets_str;
+    let err = parse_secrets_str("config app.url = config.other.url\n").unwrap_err();
+    let message = format!("{err}");
+    assert!(message.contains("literals"), "{message}");
+}
+
+#[test]
+fn rejects_wdls_interpolated_value() {
+    use crate::parse_secrets_str;
+    let err = parse_secrets_str("secret app.k = \"a-${input.x}\"\n").unwrap_err();
+    let message = format!("{err}");
+    assert!(message.contains("interpolate"), "{message}");
+}
+
+#[test]
+fn wdls_round_trips_through_export() {
+    use crate::{parse_secrets_str, secrets_to_wdls};
+    let src = r#"
+        secret jira.token = "abc123"
+        config jira.base_url = "https://acme.atlassian.net"
+        config app.flags = { beta: true }
+        config app.tags = ["x", "y"]
+    "#;
+    let bundle = parse_secrets_str(src).expect("parse");
+    let rendered = secrets_to_wdls(&bundle);
+    let reparsed = parse_secrets_str(&rendered).expect("reparse");
+    assert_eq!(bundle.secrets, reparsed.secrets, "rendered:\n{rendered}");
+}
+
+// header triggers ------------------------------------------------------------
+
+#[test]
+fn lowers_cron_triggers_into_metadata() {
+    let src = r#"
+        workflow "Scheduled" v1 {
+            trigger cron "0 9 * * *"
+            trigger cron "*/5 * * * *" with { source: "cron" }
+            Console.run(command: "echo hi")
+        }
+    "#;
+    let def = compile(src);
+    let triggers = def
+        .definition
+        .metadata
+        .pointer("/triggers")
+        .and_then(Value::as_array)
+        .expect("triggers in metadata");
+    assert_eq!(triggers.len(), 2);
+    assert_eq!(triggers[0].get("cron"), Some(&Value::from("0 9 * * *")));
+    assert_eq!(triggers[0].get("enabled"), Some(&Value::from(true)));
+    assert_eq!(triggers[1].get("cron"), Some(&Value::from("*/5 * * * *")));
+    assert_eq!(
+        triggers[1].pointer("/parameters/source"),
+        Some(&Value::from("cron"))
+    );
+}
+
+#[test]
+fn trigger_options_lower_and_round_trip() {
+    let src = r#"
+        workflow "Scheduled" v1 {
+            trigger cron "0 9 * * *" with { source: "cron" } disabled blackout "2026-01-01T00:00:00Z" to "2026-01-02T00:00:00Z"
+            Console.run(command: "echo hi")
+        }
+    "#;
+    let def = compile(src);
+    let trigger = def
+        .definition
+        .metadata
+        .pointer("/triggers/0")
+        .expect("trigger in metadata");
+    assert_eq!(trigger.get("enabled"), Some(&Value::from(false)));
+    assert_eq!(
+        trigger.get("blackout_start"),
+        Some(&Value::from("2026-01-01T00:00:00Z"))
+    );
+    assert_eq!(
+        trigger.get("blackout_end"),
+        Some(&Value::from("2026-01-02T00:00:00Z"))
+    );
+
+    let wdl = decompile(&def).expect("decompile");
+    assert!(wdl.contains("disabled"), "{wdl}");
+    assert!(
+        wdl.contains(r#"blackout "2026-01-01T00:00:00Z" to "2026-01-02T00:00:00Z""#),
+        "{wdl}"
+    );
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(
+        def.definition.metadata.pointer("/triggers"),
+        second.definition.metadata.pointer("/triggers")
+    );
+}
+
+#[test]
+fn round_trips_cron_triggers() {
+    let src = r#"
+        workflow "Scheduled" v1 {
+            trigger cron "0 9 * * *"
+            trigger cron "*/5 * * * *" with { source: "cron" }
+            Console.run(command: "echo hi")
+        }
+    "#;
+    let def = compile(src);
+    let wdl = decompile(&def).expect("decompile");
+    assert!(wdl.contains("trigger cron \"0 9 * * *\""), "{wdl}");
+    assert!(wdl.contains("trigger cron \"*/5 * * * *\" with {"), "{wdl}");
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(
+        def.definition.metadata.pointer("/triggers"),
+        second.definition.metadata.pointer("/triggers"),
+        "triggers diverged:\n{wdl}"
+    );
+}
+
+#[test]
+fn rejects_non_literal_trigger_schedule() {
+    let message = expect_semantic_error(
+        r#"
+        workflow "Bad" v1 {
+            trigger cron input.schedule
+            Console.run(command: "x")
+        }
+    "#,
+    );
+    assert!(message.contains("string literal"), "{message}");
 }

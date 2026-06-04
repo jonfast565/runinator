@@ -34,6 +34,10 @@ pub(super) struct Decompiler<'a> {
     loop_vars: Vec<(String, String)>,
     // declared `let <id>: <type>` annotations recovered from graph metadata.
     declared_types: HashMap<String, RuninatorType>,
+    // header alias declarations recovered from graph metadata, in declaration order.
+    alias_decls: Vec<(String, Vec<Value>)>,
+    // per-node `...alias` spread recipes (node id -> recipe segments) recovered from metadata.
+    spreads: HashMap<String, Vec<Value>>,
     // node ids already emitted; each node is emitted exactly once and every other edge into
     // it becomes an explicit `-> label` arrow (labels are global, so this round-trips).
     visited: HashSet<String>,
@@ -67,6 +71,8 @@ pub fn decompile_definition(
     }
 
     let declared_types = read_declared_types(&graph.metadata);
+    let alias_decls = read_alias_decls(&graph.metadata);
+    let spreads = read_spreads(&graph.metadata);
 
     let mut decompiler = Decompiler {
         nodes,
@@ -75,6 +81,8 @@ pub fn decompile_definition(
         explicit: options.explicit,
         loop_vars: Vec::new(),
         declared_types,
+        alias_decls,
+        spreads,
         visited: HashSet::new(),
         worklist: VecDeque::new(),
         queued: HashSet::new(),
@@ -88,7 +96,9 @@ pub fn decompile_definition(
         definition.version
     ));
     decompiler.indent += 1;
-    decompiler.emit_input(&definition.input_type);
+    decompiler.emit_input(&definition.input_type)?;
+    decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
+    decompiler.emit_alias_decls()?;
 
     let start = graph
         .start
@@ -137,6 +147,45 @@ fn read_declared_types(metadata: &Value) -> HashMap<String, RuninatorType> {
     types
 }
 
+/// recover header `trigger` specs from runtime metadata at `/triggers`.
+fn read_triggers(metadata: &Value) -> Vec<Value> {
+    metadata
+        .pointer("/triggers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// recover header alias declarations from the metadata sidecar at `/wdl/aliases`, preserving
+/// declaration order. each alias is a `(name, recipe-segments)` pair.
+fn read_alias_decls(metadata: &Value) -> Vec<(String, Vec<Value>)> {
+    let Some(entries) = metadata.pointer("/wdl/aliases").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?.to_string();
+            let segs = entry.get("segs").and_then(Value::as_array)?.clone();
+            Some((name, segs))
+        })
+        .collect()
+}
+
+/// recover per-node `...alias` spread recipes from the metadata sidecar at `/wdl/spreads`.
+fn read_spreads(metadata: &Value) -> HashMap<String, Vec<Value>> {
+    let mut spreads = HashMap::new();
+    let Some(entries) = metadata.pointer("/wdl/spreads").and_then(Value::as_object) else {
+        return spreads;
+    };
+    for (id, segs) in entries {
+        if let Some(segs) = segs.as_array() {
+            spreads.insert(id.clone(), segs.clone());
+        }
+    }
+    spreads
+}
+
 impl<'a> Decompiler<'a> {
     fn loop_var(&self, node_id: &str) -> Option<String> {
         self.loop_vars
@@ -154,23 +203,82 @@ impl<'a> Decompiler<'a> {
         self.out.push('\n');
     }
 
-    fn emit_input(&mut self, input_type: &RuninatorType) {
-        let RuninatorType::Struct { fields, .. } = input_type else {
-            return;
+    fn emit_input(&mut self, input_type: &RuninatorType) -> Result<(), WdlError> {
+        let RuninatorType::Struct { fields, additional } = input_type else {
+            return Ok(());
         };
-        if fields.is_empty() {
-            return;
+        if fields.is_empty() && additional.is_none() {
+            return Ok(());
         }
         self.line("input {");
         self.indent += 1;
         for (name, field) in fields {
-            let mark = if field.required { "" } else { "?" };
             let rendered = expr::render_type(&field.ty);
+            // a default implies optionality, so it replaces the `?` marker rather than adding to it.
+            if let Some(default) = &field.default {
+                let default_text = self.expr(default)?;
+                self.line(&format!("{name}: {rendered} = {default_text}"));
+                continue;
+            }
+            let mark = if field.required { "" } else { "?" };
             self.line(&format!("{name}{mark}: {rendered}"));
+        }
+        if let Some(additional) = additional {
+            self.line(&format!("...: {}", expr::render_type(additional)));
         }
         self.indent -= 1;
         self.line("}");
         self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit header `trigger cron "..."` declarations recovered from runtime metadata.
+    fn emit_triggers(&mut self, triggers: &[Value]) -> Result<(), WdlError> {
+        if triggers.is_empty() {
+            return Ok(());
+        }
+        for trigger in triggers {
+            let cron = trigger
+                .get("cron")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("trigger missing cron expression".into()))?;
+            let params = trigger.get("parameters");
+            let has_params = params
+                .and_then(Value::as_object)
+                .is_some_and(|object| !object.is_empty());
+            let mut text = format!("trigger cron {}", quote(cron));
+            if has_params {
+                let rendered = self.expr(params.unwrap_or(&Value::Null))?;
+                text.push_str(&format!(" with {rendered}"));
+            }
+            if trigger.get("enabled").and_then(Value::as_bool) == Some(false) {
+                text.push_str(" disabled");
+            }
+            if let (Some(start), Some(end)) = (
+                trigger.get("blackout_start").and_then(Value::as_str),
+                trigger.get("blackout_end").and_then(Value::as_str),
+            ) {
+                text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
+            }
+            self.line(&text);
+        }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit the recovered header `alias <name> = { ... }` declarations, if any, followed by a
+    /// blank line separating them from the body.
+    fn emit_alias_decls(&mut self) -> Result<(), WdlError> {
+        if self.alias_decls.is_empty() {
+            return Ok(());
+        }
+        let decls = self.alias_decls.clone();
+        for (name, segs) in &decls {
+            let body = self.render_segs(segs)?;
+            self.line(&format!("alias {name} = {{ {body} }}"));
+        }
+        self.out.push('\n');
+        Ok(())
     }
 
     /// emit statements from `cur` until reaching `stop`, a terminal, or a dead end.
@@ -284,10 +392,27 @@ impl<'a> Decompiler<'a> {
     /// an `@id("...") ` prefix for a control block in the explicit form, empty otherwise. leaf
     /// nodes already surface their id through `let`/`@id`, so this covers only control headers.
     fn block_id_prefix(&self, node: &WorkflowNode) -> String {
-        if self.explicit {
-            format!("@id({}) ", quote(&node.id))
-        } else {
+        self.annotation_prefix(node, self.explicit)
+    }
+
+    fn annotation_prefix(&self, node: &WorkflowNode, include_id: bool) -> String {
+        let mut parts = Vec::new();
+        if include_id {
+            parts.push(format!("@id({})", quote(&node.id)));
+        }
+        if node.skipped {
+            parts.push("@skip".to_string());
+        }
+        if node.locked {
+            parts.push("@lock".to_string());
+        }
+        if let Some(timeout) = node.timeout_seconds {
+            parts.push(format!("@timeout({timeout}s)"));
+        }
+        if parts.is_empty() {
             String::new()
+        } else {
+            format!("{} ", parts.join(" "))
         }
     }
 
@@ -373,13 +498,18 @@ impl<'a> Decompiler<'a> {
         let (text, lets_binding) = self.statement_text(node)?;
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
-                Some(ty) => format!("let {}: {} = ", node.id, expr::render_type(ty)),
-                None => format!("let {} = ", node.id),
+                Some(ty) => format!(
+                    "{}let {}: {} = ",
+                    self.annotation_prefix(node, false),
+                    node.id,
+                    expr::render_type(ty)
+                ),
+                None => format!("{}let {} = ", self.annotation_prefix(node, false), node.id),
             }
         } else if needs_id_annotation(&node.kind) {
-            format!("@id({}) ", quote(&node.id))
+            self.annotation_prefix(node, true)
         } else {
-            String::new()
+            self.annotation_prefix(node, false)
         };
 
         let transitions = &node.transitions;
@@ -465,27 +595,29 @@ impl<'a> Decompiler<'a> {
         // `parameters` over it (parameters win). fold both into the call args so a node that
         // only populated `parameters` is not dropped; recompiling routes them to configuration,
         // which is equivalent under the same merge.
-        let mut merged = Map::new();
-        if let Value::Object(config) = action.configuration.as_value() {
-            for (name, value) in config {
-                merged.insert(name.clone(), value.clone());
+        // a recorded spread recipe re-emits the authored `...alias` argument list; otherwise the
+        // arguments come straight from the flat configuration/parameters.
+        let args = if let Some(segs) = self.spreads.get(&node.id) {
+            self.render_segs(segs)?
+        } else {
+            let mut merged = Map::new();
+            if let Value::Object(config) = action.configuration.as_value() {
+                for (name, value) in config {
+                    merged.insert(name.clone(), value.clone());
+                }
             }
-        }
-        if let Value::Object(params) = node.parameters.as_value() {
-            for (name, value) in params {
-                merged.insert(name.clone(), value.clone());
+            if let Value::Object(params) = node.parameters.as_value() {
+                for (name, value) in params {
+                    merged.insert(name.clone(), value.clone());
+                }
             }
-        }
-        let mut args = Vec::new();
-        for (name, value) in &merged {
-            args.push(format!("{name}: {}", self.expr(value)?));
-        }
-        let mut text = format!(
-            "{}.{}({})",
-            action.provider,
-            action.function,
+            let mut args = Vec::new();
+            for (name, value) in &merged {
+                args.push(format!("{name}: {}", self.expr(value)?));
+            }
             args.join(", ")
-        );
+        };
+        let mut text = format!("{}.{}({})", action.provider, action.function, args);
         if self.explicit || action.timeout_seconds != 60 {
             text.push_str(&format!(".timeout({}s)", action.timeout_seconds));
         }
@@ -524,7 +656,9 @@ impl<'a> Decompiler<'a> {
         if let Some(run_name) = &subflow.run_name {
             text.push_str(&format!(" as {}", self.expr(run_name)?));
         }
-        if let Value::Object(params) = node.parameters.as_value() {
+        if let Some(segs) = self.spreads.get(&node.id) {
+            text.push_str(&format!(" with {{ {} }}", self.render_segs(segs)?));
+        } else if let Value::Object(params) = node.parameters.as_value() {
             if !params.is_empty() {
                 let mut parts = Vec::new();
                 for (name, value) in params {
@@ -590,7 +724,9 @@ impl<'a> Decompiler<'a> {
         if self.explicit || kind != "generic" {
             text.push_str(&format!(" type {}", quote(kind)));
         }
-        if let Value::Object(params) = node.parameters.as_value() {
+        if let Some(segs) = self.spreads.get(&node.id) {
+            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+        } else if let Value::Object(params) = node.parameters.as_value() {
             let mut parts = Vec::new();
             for (name, value) in params {
                 if name == "prompt" || name == "approval_type" {

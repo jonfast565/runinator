@@ -1,3 +1,4 @@
+use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
 
@@ -15,6 +16,57 @@ pub fn resolve_value_refs(
 ) -> Result<Value, WorkflowValidationError> {
     let expression = parse_expression(value)?;
     evaluate_expression(&expression, context)
+}
+
+/// fill omitted top-level input fields from their declared defaults, mutating the `input` slot of
+/// the run `context` in place. each default is an expression evaluated against the same context, so
+/// it may reference `config.*`, `run.*`, `secret.*` (left as `secret://` strings), and sibling
+/// input fields. defaults are resolved over repeated passes so one default can read another;
+/// provided fields are never overwritten and unresolvable defaults are skipped.
+pub fn apply_input_defaults(context: &mut Value, input_type: &RuninatorType) {
+    let RuninatorType::Struct { fields, .. } = input_type else {
+        return;
+    };
+    if fields.values().all(|field| field.default.is_none()) {
+        return;
+    }
+    // ensure there is an `input` object to fill; only synthesize one when input is absent/null so a
+    // caller-supplied non-object value is never clobbered.
+    let needs_object = match context.get(REF_INPUT) {
+        Some(value) => value.is_null(),
+        None => true,
+    };
+    if needs_object && let Some(object) = context.as_object_mut() {
+        object.insert(REF_INPUT.into(), Value::Object(Map::new()));
+    }
+    if !context.get(REF_INPUT).is_some_and(Value::is_object) {
+        return;
+    }
+    loop {
+        let mut progressed = false;
+        for (name, field) in fields {
+            let Some(default) = &field.default else {
+                continue;
+            };
+            let present = context
+                .get(REF_INPUT)
+                .and_then(|input| input.get(name))
+                .is_some();
+            if present {
+                continue;
+            }
+            let Ok(value) = resolve_value_refs(default, context) else {
+                continue;
+            };
+            if let Some(input) = context.get_mut(REF_INPUT).and_then(Value::as_object_mut) {
+                input.insert(name.clone(), value);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
 }
 
 pub(crate) fn parse_expression(

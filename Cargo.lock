@@ -5085,6 +5085,7 @@ dependencies = [
  "reqwest",
  "runinator-comm",
  "runinator-models",
+ "runinator-utilities",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5133,6 +5134,7 @@ dependencies = [
  "mime_guess",
  "reqwest",
  "runinator-models",
+ "runinator-utilities",
  "runinator-wdl",
  "serde",
  "serde_json",
@@ -5153,6 +5155,7 @@ dependencies = [
  "clap",
  "runinator-api",
  "runinator-models",
+ "runinator-utilities",
  "runinator-wdl",
  "serde",
  "serde_json",
@@ -5194,9 +5197,12 @@ dependencies = [
 name = "runinator-mcp"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "reqwest",
  "runinator-models",
+ "runinator-utilities",
+ "runinator-wdl",
  "serde",
  "serde_json",
  "urlencoding",
@@ -5396,6 +5402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zip",
 ]
 
 [[package]]

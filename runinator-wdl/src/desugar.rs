@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::errors::{Span, WdlError};
 
-type AliasTable = HashMap<String, Vec<(String, Expr)>>;
+pub(crate) type AliasTable = HashMap<String, Vec<(String, Expr)>>;
 
 /// expand every `...alias` spread in the document. mutates the document in place.
 pub fn desugar(document: &mut Document) -> Result<(), WdlError> {
@@ -15,8 +15,30 @@ pub fn desugar(document: &mut Document) -> Result<(), WdlError> {
     expand_block(&mut document.workflow.body, &aliases)
 }
 
+/// splice the top-level `...alias` spreads in an authored entry list into a flat entry list
+/// (positional last-wins), resolving alias composition. nested object spreads inside the
+/// entry values are left intact for the caller to expand. used by lowering, which must build
+/// the flat graph form while keeping the authored form for the resugar sidecar.
+pub(crate) fn flatten_entries(
+    entries: &[(String, Expr)],
+    aliases: &AliasTable,
+) -> Result<Vec<(String, Expr)>, WdlError> {
+    let mut out: Vec<(String, Expr)> = Vec::new();
+    for (key, value) in entries {
+        if let ExprKind::Spread(name) = &value.kind {
+            let resolved = resolve_alias(name, value.span, aliases, &mut Vec::new())?;
+            for (key, value) in resolved {
+                upsert(&mut out, key, value);
+            }
+            continue;
+        }
+        upsert(&mut out, key.clone(), value.clone());
+    }
+    Ok(out)
+}
+
 // build the alias lookup, rejecting duplicate names.
-fn collect_aliases(aliases: &[Alias]) -> Result<AliasTable, WdlError> {
+pub(crate) fn collect_aliases(aliases: &[Alias]) -> Result<AliasTable, WdlError> {
     let mut table = AliasTable::new();
     for alias in aliases {
         if table

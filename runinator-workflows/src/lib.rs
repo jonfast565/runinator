@@ -16,7 +16,7 @@ mod validation;
 
 pub use conditions::{evaluate_condition, next_transition};
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
-pub use expressions::resolve_value_refs;
+pub use expressions::{apply_input_defaults, resolve_value_refs};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_switch, parse_approval_parameters, parse_emit_parameters, parse_join_parameters,

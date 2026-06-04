@@ -1,116 +1,152 @@
 <template>
   <div class="typed-value-editor">
-  <input
-    v-if="typeKind === 'string'"
-    type="text"
-    :value="stringValue"
-    :placeholder="placeholder"
-    @input="emitValue(($event.target as HTMLInputElement).value)"
-  />
-  <input
-    v-else-if="typeKind === 'integer' || typeKind === 'number'"
-    type="number"
-    :step="typeKind === 'integer' ? 1 : 'any'"
-    :value="numberValue"
-    @input="setNumberValue(($event.target as HTMLInputElement).value)"
-  />
-  <input
-    v-else-if="typeKind === 'boolean'"
-    type="checkbox"
-    :checked="Boolean(modelValue)"
-    @change="emitValue(($event.target as HTMLInputElement).checked)"
-  />
-  <textarea
-    v-else-if="isStringArray"
-    :value="stringArrayText"
-    placeholder="one value per line"
-    @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
-  />
-  <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
-    <div v-for="(_item, index) in arrayValue" :key="index" class="collection-row">
-      <TypedValueEditor
-        class="collection-value"
-        :model-value="arrayValue[index]"
-        :ty="arrayItemType"
-        @update:model-value="setArrayItem(index, $event)"
-      />
-      <button type="button" @click="removeArrayItem(index)">Remove</button>
+    <div v-if="expressionsAllowed" class="value-mode-row">
+      <button type="button" :class="{ active: !shouldShowExpressionEditor(modelValue) }" @click="setExpressionMode(false)">Value</button>
+      <button type="button" :class="{ active: shouldShowExpressionEditor(modelValue) }" @click="setExpressionMode(true)">Expression</button>
     </div>
-    <button type="button" @click="addArrayItem">Add Item</button>
-  </div>
-  <div v-else-if="typeKind === 'struct'" class="struct-editor">
-    <label v-for="[fieldName, field] in structEntries" :key="fieldName">
-      <span class="parameter-label">
-        {{ fieldName }}
-        <strong v-if="field.required">*</strong>
-        <small>{{ describeType(field.ty) }}</small>
-      </span>
-      <TypedValueEditor
-        :model-value="recordValue[fieldName]"
-        :ty="field.ty"
-        @update:model-value="setRecordField(fieldName, $event)"
-      />
-    </label>
-    <div v-if="structAdditionalType" class="map-editor">
-      <div v-for="[key, value] in additionalStructEntries" :key="key" class="collection-row">
+    <ExpressionJsonEditor
+      v-if="shouldShowExpressionEditor(modelValue)"
+      :model-value="expressionTextFor(modelValue)"
+      :context="expressionContext"
+      title="Expression"
+      @update:model-value="setExpressionJsonValue"
+    />
+    <input
+      v-else-if="typeKind === 'string'"
+      type="text"
+      :value="stringValue"
+      :placeholder="placeholder"
+      @input="emitValue(($event.target as HTMLInputElement).value)"
+    />
+    <input
+      v-else-if="typeKind === 'integer' || typeKind === 'number'"
+      type="number"
+      :step="typeKind === 'integer' ? 1 : 'any'"
+      :value="numberValue"
+      @input="setNumberValue(($event.target as HTMLInputElement).value)"
+    />
+    <input
+      v-else-if="typeKind === 'boolean'"
+      type="checkbox"
+      :checked="Boolean(modelValue)"
+      @change="emitValue(($event.target as HTMLInputElement).checked)"
+    />
+    <textarea
+      v-else-if="isStringArray"
+      :value="stringArrayText"
+      placeholder="one value per line"
+      @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
+    />
+    <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
+      <div v-for="(_item, index) in arrayValue" :key="index" class="collection-row">
+        <TypedValueEditor
+          class="collection-value"
+          :model-value="arrayValue[index]"
+          :ty="arrayItemType"
+          :allow-expressions="expressionsAllowed"
+          :force-expression="isWorkflowExpressionValue(arrayValue[index])"
+          :expression-context="expressionContext"
+          @update:model-value="setArrayItem(index, $event)"
+        />
+        <button type="button" @click="removeArrayItem(index)">Remove</button>
+      </div>
+      <button type="button" @click="addArrayItem">Add Item</button>
+    </div>
+    <div v-else-if="typeKind === 'struct'" class="struct-editor">
+      <label v-for="[fieldName, field] in structEntries" :key="fieldName">
+        <span class="parameter-label">
+          {{ fieldName }}
+          <strong v-if="field.required">*</strong>
+          <small>{{ describeType(field.ty) }}</small>
+        </span>
+        <TypedValueEditor
+          :model-value="recordValue[fieldName]"
+          :ty="field.ty"
+          :allow-expressions="expressionsAllowed"
+          :force-expression="isWorkflowExpressionValue(recordValue[fieldName])"
+          :expression-context="expressionContext"
+          @update:model-value="setRecordField(fieldName, $event)"
+        />
+      </label>
+      <div v-if="structAdditionalType" class="map-editor">
+        <div v-for="[key, value] in additionalStructEntries" :key="key" class="collection-row">
+          <input class="collection-key" :value="key" @input="renameRecordField(key, ($event.target as HTMLInputElement).value)" />
+          <TypedValueEditor
+            class="collection-value"
+            :model-value="value"
+            :ty="structAdditionalType"
+            :allow-expressions="expressionsAllowed"
+            :force-expression="isWorkflowExpressionValue(value)"
+            :expression-context="expressionContext"
+            @update:model-value="setRecordField(key, $event)"
+          />
+          <button type="button" @click="removeRecordField(key)">Remove</button>
+        </div>
+        <button type="button" @click="addRecordField">Add Field</button>
+      </div>
+    </div>
+    <div v-else-if="typeKind === 'map' && mapValueType" class="map-editor">
+      <div v-for="[key, value] in recordEntries" :key="key" class="collection-row">
         <input class="collection-key" :value="key" @input="renameRecordField(key, ($event.target as HTMLInputElement).value)" />
         <TypedValueEditor
           class="collection-value"
           :model-value="value"
-          :ty="structAdditionalType"
+          :ty="mapValueType"
+          :allow-expressions="expressionsAllowed"
+          :force-expression="isWorkflowExpressionValue(value)"
+          :expression-context="expressionContext"
           @update:model-value="setRecordField(key, $event)"
         />
         <button type="button" @click="removeRecordField(key)">Remove</button>
       </div>
-      <button type="button" @click="addRecordField">Add Field</button>
+      <button type="button" @click="addRecordField">Add Entry</button>
     </div>
-  </div>
-  <div v-else-if="typeKind === 'map' && mapValueType" class="map-editor">
-    <div v-for="[key, value] in recordEntries" :key="key" class="collection-row">
-      <input class="collection-key" :value="key" @input="renameRecordField(key, ($event.target as HTMLInputElement).value)" />
+    <div v-else-if="typeKind === 'union' && unionVariants.length" class="union-editor">
+      <select :value="unionVariantIndex" @change="selectUnionVariant(Number(($event.target as HTMLSelectElement).value))">
+        <option v-for="(variant, index) in unionVariants" :key="index" :value="index">
+          {{ describeType(variant) }}
+        </option>
+      </select>
       <TypedValueEditor
-        class="collection-value"
-        :model-value="value"
-        :ty="mapValueType"
-        @update:model-value="setRecordField(key, $event)"
+        :model-value="unionValue"
+        :ty="selectedUnionVariant"
+        :allow-expressions="expressionsAllowed"
+        :force-expression="isWorkflowExpressionValue(unionValue)"
+        :expression-context="expressionContext"
+        @update:model-value="emitValue($event)"
       />
-      <button type="button" @click="removeRecordField(key)">Remove</button>
     </div>
-    <button type="button" @click="addRecordField">Add Entry</button>
-  </div>
-  <div v-else-if="typeKind === 'union' && unionVariants.length" class="union-editor">
-    <select :value="unionVariantIndex" @change="selectUnionVariant(Number(($event.target as HTMLSelectElement).value))">
-      <option v-for="(variant, index) in unionVariants" :key="index" :value="index">
-        {{ describeType(variant) }}
-      </option>
-    </select>
-    <TypedValueEditor
-      :model-value="unionValue"
-      :ty="selectedUnionVariant"
-      @update:model-value="emitValue($event)"
+    <ExpressionJsonEditor
+      v-else
+      :model-value="jsonText"
+      :context="expressionContext"
+      title="WDL Value"
+      @update:model-value="setJsonValue"
     />
-  </div>
-  <JsonEditor
-    v-else
-    :model-value="jsonText"
-    @update:model-value="setJsonValue"
-  />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import type { JsonRecord, RuninatorField, RuninatorType } from "../../types/models";
 import { pretty } from "../../utils/format";
-import JsonEditor from "./JsonEditor.vue";
+import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
+import { isWorkflowExpressionValue } from "../../utils/workflow-expression-completion";
+import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
 
 defineOptions({ name: "TypedValueEditor" });
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: unknown;
   ty: RuninatorType;
   placeholder?: string;
-}>();
+  allowExpressions?: boolean;
+  forceExpression?: boolean;
+  expressionContext?: WorkflowExpressionEditorContext;
+}>(), {
+  allowExpressions: true,
+  forceExpression: false
+});
 
 const emit = defineEmits<{
   "update:modelValue": [value: unknown];
@@ -135,9 +171,41 @@ const unionValue = computed(() => matchesType(props.modelValue, selectedUnionVar
 const isStringArray = computed(() => props.ty.type === "array" && props.ty.items.type === "string");
 const stringArrayText = computed(() => arrayValue.value.join("\n"));
 const jsonText = computed(() => pretty(props.modelValue ?? defaultValueForType(props.ty)));
+const localExpressionMode = ref(Boolean(props.forceExpression) || isWorkflowExpressionValue(props.modelValue));
+const expressionsAllowed = computed(() => props.allowExpressions !== false);
+
+watch(() => props.modelValue, (value) => {
+  if (isWorkflowExpressionValue(value)) localExpressionMode.value = true;
+});
 
 function emitValue(value: unknown) {
   emit("update:modelValue", value);
+}
+
+function shouldShowExpressionEditor(value: unknown): boolean {
+  return expressionsAllowed.value && (Boolean(props.forceExpression) || localExpressionMode.value || isWorkflowExpressionValue(value));
+}
+
+function expressionTextFor(value: unknown): string {
+  return pretty(isWorkflowExpressionValue(value) ? value : defaultExpressionForType(props.ty));
+}
+
+function setExpressionMode(enabled: boolean) {
+  localExpressionMode.value = enabled;
+  if (enabled && !isWorkflowExpressionValue(props.modelValue)) {
+    emitValue(defaultExpressionForType(props.ty));
+  }
+  if (!enabled && isWorkflowExpressionValue(props.modelValue)) {
+    emitValue(defaultValueForType(props.ty));
+  }
+}
+
+function setExpressionJsonValue(raw: string) {
+  try {
+    emitValue(JSON.parse(raw || "null"));
+  } catch {
+    // keep invalid in-progress json local to codemirror until it parses.
+  }
 }
 
 function setNumberValue(raw: string) {
@@ -248,6 +316,11 @@ function defaultValueForType(ty: RuninatorType): unknown {
   return null;
 }
 
+function defaultExpressionForType(ty: RuninatorType): JsonRecord {
+  if (ty.type === "string") return { "$to_string": { "$ref": { input: ["value"] } } };
+  return { "$ref": { input: ["value"] } };
+}
+
 function describeType(ty: RuninatorType | undefined, depth = 0): string {
   if (!ty) return "any";
   if (ty.type === "array") return `${describeType(ty.items, depth + 1)}[]`;
@@ -278,6 +351,32 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 
 .typed-value-editor {
   min-width: 0;
+}
+
+.value-mode-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.value-mode-row button {
+  border: 1px solid #c8d1db;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #4b5663;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.value-mode-row button.active {
+  border-color: #2f3a45;
+  background: #2f3a45;
+  color: #ffffff;
 }
 
 .struct-editor label {

@@ -1,11 +1,21 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use runinator_models::bundles::SecretBundle;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
 
 use crate::commands::{Result, err};
+
+// the source file's last-modified time, used to stamp compiled artifacts so re-applying an edited
+// pack overwrites the stored copy (newer mtime wins) while an unedited file is skipped.
+fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .map(DateTime::<Utc>::from)
+}
 
 #[cfg(test)]
 mod tests;
@@ -23,22 +33,49 @@ pub fn is_pack_source(path: &Path) -> bool {
 }
 
 // load a settings bundle that ships alongside a pack source: a `.wdlp` manifest's optional
-// "settings" path entry, or a sibling settings.json next to a directory pack. a single .wdl or a
-// pack without a settings file yields None.
+// "settings" path entry, or a sibling `settings.wdls`/`settings.json` next to a directory pack. a
+// `.wdls` settings file is parsed with the wdl secrets front end; `.json` is read directly. a
+// single .wdl or a pack without a settings file yields None.
 pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
     let Some(settings_path) = pack_settings_path(path)? else {
         return Ok(None);
     };
-    let data = fs::read_to_string(&settings_path)?;
-    let bundle: SecretBundle = serde_json::from_str(&data)?;
-    Ok(Some(bundle))
+    parse_settings_file(&settings_path).map(Some)
 }
 
-// resolve the settings file path for a pack source, if one exists.
+// parse a settings file, choosing the `.wdls` secrets front end or json by extension.
+fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
+    let data = fs::read_to_string(path)?;
+    let mut bundle: SecretBundle = match path.extension().and_then(|ext| ext.to_str()) {
+        Some("wdls") => runinator_wdl::parse_secrets_str(&data).map_err(|e| {
+            err(format!(
+                "failed to parse {}:\n{}",
+                path.display(),
+                e.render(&data)
+            ))
+        })?,
+        _ => serde_json::from_str(&data)?,
+    };
+    // stamp entries that did not declare their own time, so re-import reconciles by file mtime.
+    if let Some(modified) = file_modified(path) {
+        for entry in &mut bundle.secrets {
+            entry.updated_at.get_or_insert(modified);
+        }
+    }
+    Ok(bundle)
+}
+
+// resolve the settings file path for a pack source, if one exists. a directory pack prefers a
+// `settings.wdls` over a `settings.json`.
 fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
     if path.is_dir() {
-        let candidate = path.join("settings.json");
-        return Ok(candidate.is_file().then_some(candidate));
+        for name in ["settings.wdls", "settings.json"] {
+            let candidate = path.join(name);
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+        return Ok(None);
     }
     if path.extension().and_then(|ext| ext.to_str()) != Some("wdlp") {
         return Ok(None);
@@ -87,13 +124,16 @@ fn compile_wdl(path: &Path, data: &str, default_version: i64) -> Result<Workflow
             e.render(data)
         ))
     })?;
-    runinator_wdl::compile_str(&formatted, &options).map_err(|e| {
+    let mut definition = runinator_wdl::compile_str(&formatted, &options).map_err(|e| {
         err(format!(
             "failed to compile {}:\n{}",
             path.display(),
             e.render(&formatted)
         ))
-    })
+    })?;
+    // stamp with the source mtime so re-applying an edited file overwrites the stored workflow.
+    definition.updated_at = file_modified(path);
+    Ok(definition)
 }
 
 // compile every *.wdl in a directory (sorted for deterministic ids) into one bundle.

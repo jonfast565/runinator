@@ -15,9 +15,13 @@ type HttpDescriptor = {
   method: Method | ((args: CommandArgs) => Method);
   path: (args: CommandArgs) => string;
   body?: (args: CommandArgs) => unknown;
+  headers?: (args: CommandArgs) => Record<string, string>;
   transform?: (raw: unknown) => unknown;
   accept404?: boolean;
 };
+
+const WORKFLOW_JSON_IMPORT_RISK_HEADER = "x-runinator-json-workflow-risk";
+const WORKFLOW_JSON_IMPORT_RISK_ACK = "system-breakage-possible";
 
 function arg<T = unknown>(args: CommandArgs, key: string): T {
   if (!args || !(key in args)) {
@@ -48,6 +52,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   save_workflow_bundle: {
     method: "POST",
     path: () => "workflows/import",
+    body: (args) => arg(args, "request"),
+    headers: () => ({ [WORKFLOW_JSON_IMPORT_RISK_HEADER]: WORKFLOW_JSON_IMPORT_RISK_ACK })
+  },
+  save_workflow_wdl: {
+    method: "POST",
+    path: () => "wdl/import",
     body: (args) => arg(args, "request")
   },
   delete_workflow: {
@@ -294,9 +304,13 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   const url = `${base}/${path}`;
   const method = typeof descriptor.method === "function" ? descriptor.method(args) : descriptor.method;
   const init: RequestInit = { method };
+  const headers: Record<string, string> = descriptor.headers ? descriptor.headers(args) : {};
   if (descriptor.body) {
-    init.headers = { "content-type": "application/json" };
+    headers["content-type"] = "application/json";
     init.body = JSON.stringify(descriptor.body(args));
+  }
+  if (Object.keys(headers).length > 0) {
+    init.headers = headers;
   }
 
   const response = await fetch(url, init);
@@ -310,9 +324,9 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   if (response.status === 204) return undefined as unknown as T;
   const raw = await response.json();
 
-  // save_workflow_bundle: after import, re-export the first saved workflow to
+  // workflow imports: after import, re-export the first saved workflow to
   // hydrate the bundle with server-assigned ids — mirrors the Tauri command.
-  if (name === "save_workflow_bundle") {
+  if (name === "save_workflow_bundle" || name === "save_workflow_wdl") {
     const saved = raw as { workflows?: Array<{ id?: number | null }> };
     const id = saved.workflows?.[0]?.id;
     if (id == null) return saved as unknown as T;

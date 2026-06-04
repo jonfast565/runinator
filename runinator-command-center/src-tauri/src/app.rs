@@ -16,6 +16,7 @@ pub fn run() {
             crate::commands::get_service_status,
             crate::commands::start_service_discovery,
             crate::commands::save_workflow_bundle,
+            crate::commands::save_workflow_wdl,
             crate::commands::compile_wdl,
             crate::commands::analyze_wdl,
             crate::commands::complete_wdl,

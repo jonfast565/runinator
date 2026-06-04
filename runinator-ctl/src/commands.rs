@@ -9,7 +9,6 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
-    bundles::SecretBundle,
     providers::ProviderMetadata,
     settings::SettingKind,
     workflows::{
@@ -129,37 +128,47 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             file,
             skip_settings,
         } => {
-            // a .wdl/.wdlp/directory is compiled into a bundle and imported; json is handled below.
+            // with no path given, fall back to the `~/.runinator/workflows` folder as a last resort.
+            let resolved = match file {
+                Some(path) => path.clone(),
+                None => {
+                    let fallback = runinator_utilities::app_data::app_data_path("workflows")
+                        .map_err(|e| err(e.to_string()))?;
+                    if !fallback.exists() {
+                        return Err(err(format!(
+                            "no file or folder given and no default workflows folder at {}",
+                            fallback.display()
+                        )));
+                    }
+                    fallback
+                }
+            };
+            let file = &resolved;
+            // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled
+            // pack; json is handled below.
             if pack::is_pack_source(file) {
                 let bundle = pack::load_workflow_bundle(file)?;
-                let bundle = client.import_workflow_bundle(&bundle).await?;
-                // seed any settings bundle that ships with the pack in the same step.
+                // any settings (`settings.wdls`/`.json`) ride in the same compiled pack zip.
                 let settings = if *skip_settings {
                     None
                 } else {
                     pack::load_pack_settings(file)?
                 };
-                let imported_settings = match &settings {
-                    Some(settings) => Some(client.import_secret_bundle(settings).await?),
-                    None => None,
-                };
+                let result = client.import_pack(&bundle, settings.as_ref()).await?;
                 if json_output {
-                    return output::json(&bundle);
+                    return output::json(&result);
                 }
-                let settings_count = imported_settings
-                    .as_ref()
-                    .map(|bundle| bundle.secrets.len())
-                    .unwrap_or(0);
                 println!(
                     "imported {} workflows, {} triggers, and {} settings",
-                    bundle.workflows.len(),
-                    bundle.triggers.len(),
-                    settings_count
+                    result.workflows.workflows.len(),
+                    result.workflows.triggers.len(),
+                    result.secrets.secrets.len()
                 );
                 return Ok(());
             }
             let value = params::load_json_file(file)?;
             if value.get("workflows").is_some() {
+                // raw json bundles require the client to acknowledge that system breakage is possible.
                 let bundle: WorkflowBundle = serde_json::from_value(value.into())?;
                 let bundle = client.import_workflow_bundle(&bundle).await?;
                 if json_output {
@@ -582,8 +591,21 @@ async fn settings(client: &Client, command: &SettingsCommands, json_output: bool
             println!("stored {} {scope}/{name}", kind.as_str());
         }
         SettingsCommands::Import { file } => {
-            let value = params::load_json_file(file)?;
-            let bundle: SecretBundle = serde_json::from_value(value.into())?;
+            // settings import requires a `.wdls` secrets file; json is not accepted.
+            if file.extension().and_then(|ext| ext.to_str()) != Some("wdls") {
+                return Err(err(format!(
+                    "settings import requires a .wdls file, got {}",
+                    file.display()
+                )));
+            }
+            let data = fs::read_to_string(file)?;
+            let bundle = runinator_wdl::parse_secrets_str(&data).map_err(|e| {
+                err(format!(
+                    "failed to parse {}:\n{}",
+                    file.display(),
+                    e.render(&data)
+                ))
+            })?;
             let imported = client.import_secret_bundle(&bundle).await?;
             if json_output {
                 return output::json(&imported);

@@ -24,6 +24,13 @@ import type {
   WorkflowTrigger
 } from "../types/models";
 
+export interface WorkflowWdlSaveRequest {
+  source: string;
+  enabled: boolean;
+  workflow_id?: number | null;
+  triggers?: WorkflowTrigger[];
+}
+
 function command<T>(name: string, args?: Record<string, unknown>) {
   if (isTauriRuntime()) return invoke<T>(name, args);
   return invokeViaHttp<T>(name, args);
@@ -83,6 +90,10 @@ export async function saveWorkflow(workflow: WorkflowDefinition) {
 
 export async function saveWorkflowBundle(request: WorkflowBundle) {
   return command<WorkflowBundle>("save_workflow_bundle", { request });
+}
+
+export async function saveWorkflowWdl(request: WorkflowWdlSaveRequest) {
+  return command<WorkflowBundle>("save_workflow_wdl", { request });
 }
 
 export async function compileWdl(source: string, enabled: boolean) {

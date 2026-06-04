@@ -3,11 +3,18 @@ pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
+/// compiled pack zip import (workflows + optional secrets).
+pub const API_PACKS_IMPORT: &str = "/packs/import";
+/// header required before raw json workflow bundle imports are accepted.
+pub const WORKFLOW_JSON_IMPORT_RISK_HEADER: &str = "x-runinator-json-workflow-risk";
+/// header value acknowledging that raw json workflow imports can break the system.
+pub const WORKFLOW_JSON_IMPORT_RISK_ACK: &str = "system-breakage-possible";
 pub const API_WDL_COMPLETE: &str = "/wdl/complete";
 pub const API_WDL_COMPILE: &str = "/wdl/compile";
 pub const API_WDL_ANALYZE: &str = "/wdl/analyze";
 pub const API_WDL_FORMAT: &str = "/wdl/format";
 pub const API_WDL_DECOMPILE: &str = "/wdl/decompile";
+pub const API_WDL_IMPORT: &str = "/wdl/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";

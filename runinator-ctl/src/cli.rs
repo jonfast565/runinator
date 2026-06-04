@@ -114,8 +114,8 @@ pub enum SettingsCommands {
         #[arg(long)]
         schema: Option<String>,
     },
-    /// Import a bundle of settings from a json file (a `{ "secrets": [...] }` document with
-    /// scope/name/value, and optional kind and schema per entry).
+    /// Import settings from a `.wdls` secrets file (`secret|config <scope>.<name> = <literal>`
+    /// declarations). JSON is not accepted.
     Import { file: PathBuf },
     /// Delete a setting.
     Delete {
@@ -166,10 +166,11 @@ pub enum WorkflowCommands {
     Validate { file: PathBuf },
     /// Import a workflow pack (.wdl, .wdlp, or a directory of .wdl files), or save a workflow
     /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
-    /// bundle (a `.wdlp` "settings" entry or a sibling settings.json) is imported too to seed
-    /// config/secret slots, unless --skip-settings is given.
+    /// bundle (a `.wdlp` "settings" entry or a sibling settings.wdls/settings.json) is imported too
+    /// to seed config/secret slots, unless --skip-settings is given. When no path is given, falls
+    /// back to the `~/.runinator/workflows` folder if it exists.
     Apply {
-        file: PathBuf,
+        file: Option<PathBuf>,
         /// Skip importing the pack's settings bundle (config/secret slots).
         #[arg(long)]
         skip_settings: bool,

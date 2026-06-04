@@ -20,7 +20,21 @@ pub struct Workflow {
     /// an optional explicit `start -> <target>` entry edge. when `None` the first body
     /// statement is the entry; when set it names the entry node directly.
     pub start: Option<Target>,
+    /// header `trigger cron "..."` declarations scheduling runs of this workflow.
+    pub triggers: Vec<TriggerDecl>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// a header `trigger cron <schedule> (with <params>)?` declaration. `schedule` is a string
+/// expression (the cron expression); `params` is the optional run input object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriggerDecl {
+    pub schedule: Expr,
+    pub params: Option<Expr>,
+    pub enabled: bool,
+    pub blackout_start: Option<Expr>,
+    pub blackout_end: Option<Expr>,
     pub span: Span,
 }
 
@@ -51,6 +65,8 @@ pub struct Stmt {
 pub struct Annotations {
     pub id: Option<String>,
     pub skip: bool,
+    pub locked: bool,
+    pub timeout_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -339,8 +355,23 @@ pub enum TypeExpr {
     Named(String),
     Array(Box<TypeExpr>),
     Map(Box<TypeExpr>),
-    Struct(Vec<TypeField>),
+    Struct {
+        fields: Vec<TypeField>,
+        additional: Option<Box<TypeExpr>>,
+    },
     Union(Vec<TypeExpr>),
+}
+
+// secrets (.wdls) -----------------------------------------------------------
+
+/// a single `.wdls` declaration: `secret|config <scope>.<name…> = <literal>`. the value must be a
+/// pure literal; lowering rejects references and interpolation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecretDecl {
+    pub is_config: bool,
+    pub path: Vec<PathSeg>,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,4 +379,7 @@ pub struct TypeField {
     pub name: String,
     pub optional: bool,
     pub ty: TypeExpr,
+    /// an optional default expression, only present on top-level `input { }` fields. when set the
+    /// field is effectively optional and the expression fills it at run start if omitted.
+    pub default: Option<Expr>,
 }

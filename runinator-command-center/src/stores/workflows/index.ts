@@ -23,14 +23,15 @@ import {
   resumeWorkflowRun,
   rerunWorkflowNode,
   runToCursorWorkflowRun,
-  saveWorkflowBundle,
+  saveWorkflowWdl,
   saveWorkflowTrigger,
   skipWorkflowNode,
   stepWorkflowRun,
-  type WorkflowDebugPatch
+  type WorkflowDebugPatch,
+  type WorkflowWdlSaveRequest
 } from "../../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowBundle, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
+import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
 import { pretty } from "../../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
 import { createZip, type ZipEntry } from "../../utils/zip";
@@ -1770,16 +1771,24 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     app.setError(message);
   }
 
-  function workflowBundleSaveRequest(): WorkflowBundle {
+  function workflowSaveTriggers(workflowId: number | null | undefined): WorkflowTrigger[] {
+    if (workflowId == null) return [];
+    return workflowTriggers.value
+      .filter((trigger) => trigger.workflow_id === workflowId)
+      .map((trigger) => cloneJson(trigger));
+  }
+
+  async function workflowWdlSaveRequest(): Promise<WorkflowWdlSaveRequest> {
     const workflow = cloneJson(workflowDraft);
-    const workflowId = workflow.id;
+    const workflowId = workflow.id ?? null;
+    const source = await decompileToWdl(workflow);
     const triggers = workflowId === null
       ? []
-      : workflowTriggers.value
-          .filter((trigger) => trigger.workflow_id === workflowId)
-          .map((trigger) => cloneJson(trigger));
+      : workflowSaveTriggers(workflowId);
     return {
-      workflows: [workflow],
+      source,
+      enabled: workflow.enabled,
+      workflow_id: workflowId,
       triggers
     };
   }
@@ -1813,7 +1822,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (!synced) return;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
-    const saved = await app.runOperation("Saving workflow", () => saveWorkflowBundle(workflowBundleSaveRequest()));
+    const saved = await app.runOperation("Saving workflow", async () => saveWorkflowWdl(await workflowWdlSaveRequest()));
     const savedWorkflow = saved.workflows[0];
     if (!savedWorkflow) {
       app.setError("Workflow bundle save returned no workflow");

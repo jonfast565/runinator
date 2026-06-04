@@ -16,6 +16,10 @@ const RESERVED: [&str; 3] = ["start", "end", "fail"];
 /// reserved path roots that always resolve regardless of declared labels.
 const ROOTS: [&str; 5] = ["input", "prev", "run", "config", "secret"];
 
+/// roots an input-field default may reference. defaults run at workflow start, before any step,
+/// so `prev` and step outputs are not yet available; only start-time sources are allowed.
+const DEFAULT_ROOTS: [&str; 4] = ["input", "config", "run", "secret"];
+
 /// the declared-label table shared with later passes.
 pub(super) struct Symbols {
     pub labels: HashSet<String>,
@@ -30,6 +34,44 @@ pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) ->
     // an explicit `start -> <target>` must name a declared step (or a terminal).
     if let Some(start) = &workflow.start {
         resolve_target(start, &symbols, workflow.span, diagnostics);
+    }
+
+    // validate top-level input field defaults against the start-time roots.
+    if let Some(TypeExpr::Struct { fields, .. }) = &workflow.input {
+        for field in fields {
+            if let Some(default) = &field.default {
+                resolve_default_expr(default, diagnostics);
+            }
+        }
+    }
+
+    // a `trigger cron` schedule must be a plain string literal (the cron expression).
+    for trigger in &workflow.triggers {
+        let is_literal_string = matches!(
+            &trigger.schedule.kind,
+            ExprKind::Str(parts) if parts.iter().all(|part| matches!(part, StrPart::Lit(_)))
+        );
+        if !is_literal_string {
+            diagnostics.push(Diagnostic::error(
+                trigger.schedule.span,
+                "trigger cron expression must be a string literal",
+            ));
+        }
+        for value in [&trigger.blackout_start, &trigger.blackout_end]
+            .into_iter()
+            .flatten()
+        {
+            let is_literal_string = matches!(
+                &value.kind,
+                ExprKind::Str(parts) if parts.iter().all(|part| matches!(part, StrPart::Lit(_)))
+            );
+            if !is_literal_string {
+                diagnostics.push(Diagnostic::error(
+                    value.span,
+                    "trigger blackout value must be a string literal",
+                ));
+            }
+        }
     }
 
     let mut scope = Vec::new();
@@ -285,6 +327,56 @@ fn resolve_expr(
             resolve_expr(inner, symbols, scope, diagnostics);
         }
         // spreads are expanded before sema runs; nothing to resolve.
+        ExprKind::Spread(_) => {}
+    }
+}
+
+/// validate an input-field default expression: only `DEFAULT_ROOTS` may head a reference.
+fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
+        ExprKind::Str(parts) => {
+            for part in parts {
+                if let StrPart::Expr(inner) = part {
+                    resolve_default_expr(inner, diagnostics);
+                }
+            }
+        }
+        ExprKind::Path(segs) => {
+            let Some(PathSeg::Key(head)) = segs.first() else {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    "reference must start with an identifier",
+                ));
+                return;
+            };
+            if !DEFAULT_ROOTS.contains(&head.as_str()) {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!(
+                        "input default may only reference input, config, run, or secret, not '{head}'"
+                    ),
+                ));
+            }
+        }
+        ExprKind::Array(items) => {
+            for item in items {
+                resolve_default_expr(item, diagnostics);
+            }
+        }
+        ExprKind::Object(entries) => {
+            for (_, value) in entries {
+                resolve_default_expr(value, diagnostics);
+            }
+        }
+        ExprKind::Concat(parts) | ExprKind::Coalesce(parts) => {
+            for part in parts {
+                resolve_default_expr(part, diagnostics);
+            }
+        }
+        ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
+            resolve_default_expr(inner, diagnostics);
+        }
         ExprKind::Spread(_) => {}
     }
 }

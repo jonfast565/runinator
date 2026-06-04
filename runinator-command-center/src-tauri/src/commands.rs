@@ -1,4 +1,7 @@
 use runinator_models::{
+    api_routes::{
+        API_WORKFLOWS_IMPORT, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+    },
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
@@ -7,6 +10,7 @@ use runinator_models::{
         WorkflowRun, WorkflowTrigger,
     },
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
 
@@ -21,6 +25,16 @@ use crate::{
     },
 };
 use runinator_wdl::{CompileOptions, Severity};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowWdlSaveRequest {
+    pub source: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub workflow_id: Option<i64>,
+    #[serde(default)]
+    pub triggers: Vec<WorkflowTrigger>,
+}
 
 #[tauri::command]
 pub async fn get_service_status(
@@ -56,15 +70,19 @@ pub async fn save_workflow_bundle(
     state: State<'_, CommandCenterState>,
     request: WorkflowBundle,
 ) -> CommandResult<WorkflowBundle> {
-    let url = build_state_url(&state, "workflows/import").await?;
-    let payload_size = serde_json::to_vec(&request).map(|v| v.len()).unwrap_or(0);
+    let url = build_state_url(&state, API_WORKFLOWS_IMPORT).await?;
     println!(
-        "Sending save_workflow_bundle to {}, payload size: {} bytes",
-        url, payload_size
+        "Sending save_workflow_bundle to {}, workflow count: {}",
+        url,
+        request.workflows.len()
     );
     let response = state
         .client
         .post(url.clone())
+        .header(
+            WORKFLOW_JSON_IMPORT_RISK_HEADER,
+            WORKFLOW_JSON_IMPORT_RISK_ACK,
+        )
         .json(&request)
         .send()
         .await
@@ -73,9 +91,24 @@ pub async fn save_workflow_bundle(
             err
         })?;
     let response = handle_response(url, response).await?;
-    let saved = response.json::<WorkflowBundle>().await?;
-    let Some(workflow_id) = saved.workflows.first().and_then(|workflow| workflow.id) else {
-        return Ok(saved);
+    let result = response.json::<WorkflowBundle>().await?;
+    let Some(workflow_id) = result.workflows.first().and_then(|workflow| workflow.id) else {
+        return Ok(result);
+    };
+    get_json(&state, &format!("workflows/{workflow_id}/export")).await
+}
+
+#[tauri::command]
+pub async fn save_workflow_wdl(
+    state: State<'_, CommandCenterState>,
+    request: WorkflowWdlSaveRequest,
+) -> CommandResult<WorkflowBundle> {
+    let url = build_state_url(&state, "wdl/import").await?;
+    let response = state.client.post(url.clone()).json(&request).send().await?;
+    let response = handle_response(url, response).await?;
+    let result = response.json::<WorkflowBundle>().await?;
+    let Some(workflow_id) = result.workflows.first().and_then(|workflow| workflow.id) else {
+        return Ok(result);
     };
     get_json(&state, &format!("workflows/{workflow_id}/export")).await
 }

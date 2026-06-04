@@ -154,9 +154,8 @@ pub struct WorkflowBundle {
     pub triggers: Vec<WorkflowTrigger>,
 }
 
-impl crate::bundles::Bundle for WorkflowBundle {
-    const RESOURCE: &'static str = "/workflows/import";
-}
+// note: raw json workflow bundles use an explicit client method because the server requires
+// a risk-acknowledgment header before accepting them.
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -695,6 +694,8 @@ pub struct WorkflowNode {
     pub kind: WorkflowNodeKind,
     #[serde(default)]
     pub skipped: bool,
+    #[serde(default)]
+    pub locked: bool,
     #[serde(default)]
     pub action: Option<WorkflowAction>,
     #[serde(default)]

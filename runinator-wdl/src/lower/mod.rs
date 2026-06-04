@@ -4,6 +4,7 @@
 
 mod blocks;
 mod expr;
+mod spreads;
 pub(crate) mod types;
 
 use std::collections::HashSet;
@@ -13,6 +14,7 @@ use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 
 use crate::CompileOptions;
 use crate::ast::*;
+use crate::desugar::AliasTable;
 use crate::errors::WdlError;
 
 /// a binding from a loop/map variable to the node output it reads from.
@@ -34,6 +36,11 @@ struct Lowerer {
     // declared `let <id>: <type>` annotations, kept for graph metadata so decompile can
     // re-emit them. each value is the lossless native form of a RuninatorType.
     declared_types: Vec<(String, Value)>,
+    // header alias declarations, used to expand `...alias` spreads while lowering.
+    aliases: AliasTable,
+    // per-node `...alias` spread recipes (node id -> recipe segments), kept for graph metadata so
+    // decompile can resugar the spreads. empty for spread-free workflows.
+    spreads: Map,
 }
 
 pub fn lower_document(
@@ -42,6 +49,9 @@ pub fn lower_document(
 ) -> Result<WorkflowDefinition, WdlError> {
     let workflow = &document.workflow;
     let mut lowerer = Lowerer::new();
+    // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
+    // lowering, where node ids are available to key the recipes.
+    lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
     let end_id = lowerer.end_id.clone();
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
 
@@ -63,24 +73,53 @@ pub fn lower_document(
     nodes.push(node(&lowerer.end_id, "end", vec![]));
     nodes.push(node(&lowerer.fail_id, "fail", vec![]));
 
+    // the header alias declarations, encoded as recipe segments so decompile can re-emit them.
+    let mut alias_meta = Vec::with_capacity(workflow.aliases.len());
+    for alias in &workflow.aliases {
+        let segs = lowerer.entry_segs(&alias.entries)?;
+        let mut entry = Map::new();
+        entry.insert("name".into(), Value::String(alias.name.clone()));
+        entry.insert("segs".into(), Value::Array(segs));
+        alias_meta.push(Value::Object(entry));
+    }
+
     let mut definition = Map::new();
     definition.insert("start".into(), Value::String(lowerer.start_id.clone()));
     definition.insert("nodes".into(), Value::Array(nodes));
+    // the `wdl` sidecar carries render-only hints (declared types, alias declarations, and
+    // per-node spread recipes) that let decompile reproduce the original source; the runtime
+    // ignores it.
+    let mut wdl = Map::new();
     if !lowerer.declared_types.is_empty() {
         let mut types_map = Map::new();
         for (id, value) in &lowerer.declared_types {
             types_map.insert(id.clone(), value.clone());
         }
-        let mut wdl = Map::new();
         wdl.insert("types".into(), Value::Object(types_map));
-        let mut metadata = Map::new();
+    }
+    if !alias_meta.is_empty() {
+        wdl.insert("aliases".into(), Value::Array(alias_meta));
+    }
+    if !lowerer.spreads.is_empty() {
+        wdl.insert("spreads".into(), Value::Object(lowerer.spreads.clone()));
+    }
+    // header `trigger cron` declarations, carried as runtime data the web service materializes on
+    // import (unlike the render-only `wdl` sidecar).
+    let triggers = lowerer.lower_triggers(&workflow.triggers)?;
+    let mut metadata = Map::new();
+    if !wdl.is_empty() {
         metadata.insert("wdl".into(), Value::Object(wdl));
+    }
+    if !triggers.is_empty() {
+        metadata.insert("triggers".into(), Value::Array(triggers));
+    }
+    if !metadata.is_empty() {
         definition.insert("metadata".into(), Value::Object(metadata));
     }
     let graph = WorkflowGraph::from_value(Value::Object(definition)).map_err(WdlError::lower)?;
 
     let input_type = match &workflow.input {
-        Some(type_expr) => types::lower_type(type_expr)?,
+        Some(type_expr) => lowerer.lower_input_type(type_expr)?,
         None => Default::default(),
     };
 
@@ -111,7 +150,82 @@ impl Lowerer {
             fail_id: "fail".to_string(),
             scope: Vec::new(),
             declared_types: Vec::new(),
+            aliases: AliasTable::new(),
+            spreads: Map::new(),
         }
+    }
+
+    /// lower the top-level `input { }` type, attaching each field's default expression. defaults
+    /// only exist on top-level input fields; nested struct fields go through plain type lowering.
+    fn lower_input_type(
+        &self,
+        type_expr: &TypeExpr,
+    ) -> Result<runinator_models::types::RuninatorType, WdlError> {
+        use runinator_models::types::{RuninatorField, RuninatorType};
+        let TypeExpr::Struct { fields, additional } = type_expr else {
+            return types::lower_type(type_expr);
+        };
+        let mut mapped = std::collections::BTreeMap::new();
+        for field in fields {
+            let ty = types::lower_type(&field.ty)?;
+            let mut runinator_field = if field.optional {
+                RuninatorField::optional(ty)
+            } else {
+                RuninatorField::required(ty)
+            };
+            if let Some(default) = &field.default {
+                runinator_field = runinator_field.with_default(self.lower_expr(default)?);
+            }
+            mapped.insert(field.name.clone(), runinator_field);
+        }
+        let additional = additional
+            .as_ref()
+            .map(|ty| types::lower_type(ty))
+            .transpose()?
+            .map(Box::new);
+        Ok(RuninatorType::Struct {
+            fields: mapped,
+            additional,
+        })
+    }
+
+    /// lower header `trigger cron "..."` declarations into runtime trigger specs
+    /// (`[{ cron, parameters, enabled }]`). the cron expression must be a string literal.
+    fn lower_triggers(&self, triggers: &[TriggerDecl]) -> Result<Vec<Value>, WdlError> {
+        let mut specs = Vec::with_capacity(triggers.len());
+        for trigger in triggers {
+            let Value::String(cron) = self.lower_expr(&trigger.schedule)? else {
+                return Err(WdlError::lower(
+                    "trigger cron expression must be a string literal",
+                ));
+            };
+            let parameters = match &trigger.params {
+                Some(params) => self.lower_expr(params)?,
+                None => Value::Object(Map::new()),
+            };
+            let mut spec = Map::new();
+            spec.insert("cron".into(), Value::String(cron));
+            spec.insert("parameters".into(), parameters);
+            spec.insert("enabled".into(), Value::Bool(trigger.enabled));
+            if let Some(start) = &trigger.blackout_start {
+                let Value::String(start) = self.lower_expr(start)? else {
+                    return Err(WdlError::lower(
+                        "trigger blackout start must be a string literal",
+                    ));
+                };
+                spec.insert("blackout_start".into(), Value::String(start));
+            }
+            if let Some(end) = &trigger.blackout_end {
+                let Value::String(end) = self.lower_expr(end)? else {
+                    return Err(WdlError::lower(
+                        "trigger blackout end must be a string literal",
+                    ));
+                };
+                spec.insert("blackout_end".into(), Value::String(end));
+            }
+            specs.push(Value::Object(spec));
+        }
+        Ok(specs)
     }
 
     /// record a `let <id>: <type>` annotation for the graph metadata sidecar.
@@ -188,35 +302,35 @@ impl Lowerer {
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
             StmtKind::If(if_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_if(if_stmt, id, &cont)
+                self.lower_if(if_stmt, stmt, id, &cont)
             }
             StmtKind::For(for_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_for(for_stmt, id, &cont)
+                self.lower_for(for_stmt, stmt, id, &cont)
             }
             StmtKind::While(while_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_while(while_stmt, id, &cont)
+                self.lower_while(while_stmt, stmt, id, &cont)
             }
             StmtKind::Match(match_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_match(match_stmt, id, &cont)
+                self.lower_match(match_stmt, stmt, id, &cont)
             }
             StmtKind::Parallel(parallel) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_parallel(parallel, id, &cont)
+                self.lower_parallel(parallel, stmt, id, &cont)
             }
             StmtKind::Try(try_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_try(try_stmt, id, &cont)
+                self.lower_try(try_stmt, stmt, id, &cont)
             }
             StmtKind::Race(race) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_race(race, id, &cont)
+                self.lower_race(race, stmt, id, &cont)
             }
             StmtKind::Map(map_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
-                self.lower_map(map_stmt, id, &cont)
+                self.lower_map(map_stmt, stmt, id, &cont)
             }
         }
     }
@@ -231,10 +345,13 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), WdlError> {
         self.record_declared_type(id, stmt)?;
+        // expand `...alias` spreads for the graph, and record the authored form for resugaring.
+        let flat = crate::desugar::flatten_entries(&action.args, &self.aliases)?;
         let mut config = Map::new();
-        for (name, value) in &action.args {
+        for (name, value) in &flat {
             config.insert(name.clone(), self.lower_expr(value)?);
         }
+        self.record_spreads(id, &action.args)?;
         let mut action_obj = Map::new();
         action_obj.insert("provider".into(), Value::String(action.provider.clone()));
         action_obj.insert("function".into(), Value::String(action.function.clone()));
@@ -268,7 +385,7 @@ impl Lowerer {
             ),
         ];
         self.apply_modifier_fields(&mut fields, &action.modifiers);
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "action", fields));
         Ok(())
     }
@@ -301,10 +418,12 @@ impl Lowerer {
             subflow_obj.insert("run_name".into(), self.lower_expr(run_name)?);
         }
 
+        let flat = crate::desugar::flatten_entries(&subflow.params, &self.aliases)?;
         let mut params = Map::new();
-        for (name, value) in &subflow.params {
+        for (name, value) in &flat {
             params.insert(name.clone(), self.lower_expr(value)?);
         }
+        self.record_spreads(id, &subflow.params)?;
 
         let mut fields = vec![
             ("subflow", Value::Object(subflow_obj)),
@@ -314,7 +433,7 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "on_success", next),
             ),
         ];
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "subflow", fields));
         Ok(())
     }
@@ -345,7 +464,7 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "next", next),
             ),
         ];
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "wait", fields));
         Ok(())
     }
@@ -373,7 +492,7 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "next", next),
             ),
         ];
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "emit", fields));
         Ok(())
     }
@@ -396,9 +515,11 @@ impl Lowerer {
             ),
         );
         params.insert("prompt".into(), self.lower_expr(&approval.prompt)?);
-        for (name, value) in &approval.metadata {
+        let flat = crate::desugar::flatten_entries(&approval.metadata, &self.aliases)?;
+        for (name, value) in &flat {
             params.insert(name.clone(), self.lower_expr(value)?);
         }
+        self.record_spreads(id, &approval.metadata)?;
         let mut fields = vec![
             ("parameters", Value::Object(params)),
             (
@@ -406,7 +527,7 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "on_success", next),
             ),
         ];
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "approval", fields));
         Ok(())
     }
@@ -432,7 +553,7 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "next", next),
             ),
         ];
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "config", fields));
         Ok(())
     }
@@ -449,7 +570,7 @@ impl Lowerer {
             params.insert("message".into(), self.lower_expr(message)?);
             fields.push(("parameters", Value::Object(params)));
         }
-        self.apply_skip(&mut fields, stmt);
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "fail", fields));
         Ok(())
     }
@@ -477,9 +598,15 @@ impl Lowerer {
         }
     }
 
-    fn apply_skip(&self, fields: &mut Vec<(&'static str, Value)>, stmt: &Stmt) {
+    pub(super) fn apply_annotations(&self, fields: &mut Vec<(&'static str, Value)>, stmt: &Stmt) {
         if stmt.annotations.skip {
             fields.push(("skipped", Value::Bool(true)));
+        }
+        if stmt.annotations.locked {
+            fields.push(("locked", Value::Bool(true)));
+        }
+        if let Some(timeout) = stmt.annotations.timeout_seconds {
+            fields.push(("timeout_seconds", Value::from(timeout)));
         }
     }
 

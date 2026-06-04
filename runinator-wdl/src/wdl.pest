@@ -7,8 +7,24 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 document = { SOI ~ workflow ~ EOI }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ alias_decl* ~ start_decl? ~ stmt* ~ "}" }
+// a `.wdls` secrets/config file: a flat list of `secret`/`config` declarations addressing a
+// dotted `scope.name`, each assigned a literal value. mirrors wdl's `secret.*` / `config.*`
+// reference surface. the value reuses the expression grammar but must be a pure literal (no refs
+// or interpolation); the parser enforces that.
+secrets_document = { SOI ~ secret_decl* ~ EOI }
+secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
+secret_kind      = { "secret" | "config" }
+
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ trigger_decl* ~ alias_decl* ~ start_decl? ~ stmt* ~ "}" }
 version  = @{ "v" ~ ASCII_DIGIT+ }
+
+// header trigger declarations. a `trigger cron "<expr>"` schedules runs of this workflow on the
+// cron expression; an optional `with { ... }` object supplies the run input. triggers belong to
+// their workflow, so they are carried inside the compiled definition and materialized on import.
+trigger_decl = { "trigger" ~ "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
+trigger_option = { trigger_disabled | trigger_blackout }
+trigger_disabled = { "disabled" }
+trigger_blackout = { "blackout" ~ expr ~ "to" ~ expr }
 
 // reusable named argument groups, declared in the workflow header. an alias binds a name to an
 // object of argument values (typically shared `config.*`/`secret.*` refs); `...name` then spreads
@@ -22,7 +38,12 @@ start_decl = { "start" ~ "->" ~ target }
 
 // input typing -------------------------------------------------------------
 
-input_block = { "input" ~ "{" ~ type_field* ~ "}" }
+// top-level input fields may carry a default: `name: type = expr`. the default is an ordinary
+// expression (literal, `input.*`/`config.*`/`run.*` ref, `secret.*`, object/array) evaluated at
+// run start when the field is omitted. nested struct fields (`type_field`) never take a default.
+input_block = { "input" ~ "{" ~ input_field* ~ type_additional? ~ "}" }
+input_field  = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ field_default? ~ ","? }
+field_default = { "=" ~ expr }
 
 type_field   = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ ","? }
 optional_mark = { "?" }
@@ -33,16 +54,19 @@ type_postfix = { type_atom ~ array_suffix* }
 array_suffix = { "[" ~ "]" }
 type_atom    = { type_map | type_struct | type_named }
 type_map     = { "map" ~ "<" ~ type_expr ~ ">" }
-type_struct  = { "{" ~ type_field* ~ "}" }
+type_struct  = { "{" ~ type_field* ~ type_additional? ~ "}" }
+type_additional = { "..." ~ ":" ~ type_expr ~ ","? }
 type_named   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // statements ---------------------------------------------------------------
 
 stmt = { annotation* ~ binding? ~ stmt_body ~ transitions? }
 
-annotation = { ann_id | ann_skip }
+annotation = { ann_id | ann_skip | ann_lock | ann_timeout }
 ann_id     = { "@id" ~ "(" ~ string ~ ")" }
 ann_skip   = { "@skip" }
+ann_lock   = { "@lock" }
+ann_timeout = { "@timeout" ~ "(" ~ duration ~ ")" }
 
 binding = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" }
 

@@ -50,6 +50,46 @@ impl Decompiler<'_> {
         }
     }
 
+    /// render `...alias` spread recipe segments (recovered from the metadata sidecar) as a
+    /// comma-separated argument/object body: `...alias` for a spread, `key: value` otherwise.
+    pub(super) fn render_segs(&self, segs: &[Value]) -> Result<String, WdlError> {
+        let mut parts = Vec::with_capacity(segs.len());
+        for seg in segs {
+            if let Some(name) = seg.get("spread").and_then(Value::as_str) {
+                parts.push(format!("...{name}"));
+                continue;
+            }
+            let key = seg
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("spread recipe segment missing key".into()))?;
+            let value = seg
+                .get("value")
+                .ok_or_else(|| WdlError::Decompile("spread recipe segment missing value".into()))?;
+            parts.push(format!("{key}: {}", self.render_recipe_value(value)?));
+        }
+        Ok(parts.join(", "))
+    }
+
+    // render a recipe value: a `plain` value goes through the normal expr path; `object`/`array`
+    // recurse so spreads nested inside object/array literals survive.
+    fn render_recipe_value(&self, value: &Value) -> Result<String, WdlError> {
+        if let Some(plain) = value.get("plain") {
+            return self.expr(plain);
+        }
+        if let Some(segs) = value.get("object").and_then(Value::as_array) {
+            return Ok(format!("{{ {} }}", self.render_segs(segs)?));
+        }
+        if let Some(items) = value.get("array").and_then(Value::as_array) {
+            let parts = items
+                .iter()
+                .map(|item| self.render_recipe_value(item))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(format!("[{}]", parts.join(", ")));
+        }
+        Err(WdlError::Decompile("invalid spread recipe value".into()))
+    }
+
     fn join_binary(&self, items: &[Value], sep: &str) -> Result<String, WdlError> {
         let parts = items
             .iter()
@@ -187,14 +227,17 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
             .map(render_type)
             .collect::<Vec<_>>()
             .join(" | "),
-        RuninatorType::Struct { fields, .. } => {
-            let parts = fields
+        RuninatorType::Struct { fields, additional } => {
+            let mut parts = fields
                 .iter()
                 .map(|(name, field)| {
                     let mark = if field.required { "" } else { "?" };
                     format!("{name}{mark}: {}", render_type(&field.ty))
                 })
                 .collect::<Vec<_>>();
+            if let Some(additional) = additional {
+                parts.push(format!("...: {}", render_type(additional)));
+            }
             format!("{{ {} }}", parts.join(", "))
         }
     }

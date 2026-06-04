@@ -28,9 +28,21 @@ impl Formatter {
         self.indent += 1;
         if let Some(input) = &workflow.input {
             self.input(input);
-            if !workflow.aliases.is_empty() || !workflow.body.is_empty() {
+            if !workflow.triggers.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty()
+            {
                 self.out.push('\n');
             }
+        }
+        // preserve header `trigger cron` declarations.
+        for trigger in &workflow.triggers {
+            self.trigger_decl(trigger);
+        }
+        if !workflow.triggers.is_empty()
+            && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
         }
         // preserve header `alias` declarations; they are surface sugar and never reach the graph.
         for alias in &workflow.aliases {
@@ -49,7 +61,7 @@ impl Formatter {
     }
 
     fn input(&mut self, input: &TypeExpr) {
-        let TypeExpr::Struct(fields) = input else {
+        let TypeExpr::Struct { fields, additional } = input else {
             return;
         };
         self.line("input {");
@@ -57,8 +69,30 @@ impl Formatter {
         for field in fields {
             self.type_field(field, false);
         }
+        if let Some(additional) = additional {
+            self.line(&format!("...: {}", format_type(additional)));
+        }
         self.indent -= 1;
         self.line("}");
+    }
+
+    fn trigger_decl(&mut self, trigger: &TriggerDecl) {
+        let schedule = format_expr(&trigger.schedule);
+        let mut text = format!("trigger cron {schedule}");
+        if let Some(params) = &trigger.params {
+            text.push_str(&format!(" with {}", format_expr(params)));
+        }
+        if !trigger.enabled {
+            text.push_str(" disabled");
+        }
+        if let (Some(start), Some(end)) = (&trigger.blackout_start, &trigger.blackout_end) {
+            text.push_str(&format!(
+                " blackout {} to {}",
+                format_expr(start),
+                format_expr(end)
+            ));
+        }
+        self.line(&text);
     }
 
     fn alias_decl(&mut self, alias: &Alias) {
@@ -70,11 +104,15 @@ impl Formatter {
         let optional = if field.optional { "?" } else { "" };
         let name = format_key(&field.name);
         match &field.ty {
-            TypeExpr::Struct(fields) if !fields.is_empty() => {
+            TypeExpr::Struct { fields, additional } if !fields.is_empty() => {
                 self.line(&format!("{name}{optional}: {{"));
                 self.indent += 1;
+                let has_additional = additional.is_some();
                 for (index, nested) in fields.iter().enumerate() {
-                    self.type_field(nested, index + 1 < fields.len());
+                    self.type_field(nested, index + 1 < fields.len() || has_additional);
+                }
+                if let Some(additional) = additional {
+                    self.line(&format!("...: {}", format_type(additional)));
                 }
                 self.indent -= 1;
                 let suffix = if comma { "," } else { "" };
@@ -82,7 +120,16 @@ impl Formatter {
             }
             ty => {
                 let suffix = if comma { "," } else { "" };
-                self.line(&format!("{name}{optional}: {}{suffix}", format_type(ty)));
+                // a default implies optionality, so it replaces the `?` marker rather than adding to it.
+                if let Some(default) = &field.default {
+                    self.line(&format!(
+                        "{name}: {} = {}{suffix}",
+                        format_type(ty),
+                        format_expr(default)
+                    ));
+                } else {
+                    self.line(&format!("{name}{optional}: {}{suffix}", format_type(ty)));
+                }
             }
         }
     }
@@ -99,6 +146,12 @@ impl Formatter {
         }
         if stmt.annotations.skip {
             self.line("@skip");
+        }
+        if stmt.annotations.locked {
+            self.line("@lock");
+        }
+        if let Some(timeout) = stmt.annotations.timeout_seconds {
+            self.line(&format!("@timeout({timeout}s)"));
         }
 
         let mut text = String::new();
@@ -725,16 +778,15 @@ fn format_type(ty: &TypeExpr) -> String {
         TypeExpr::Named(name) => name.clone(),
         TypeExpr::Array(inner) => format!("{}[]", format_type(inner)),
         TypeExpr::Map(inner) => format!("map<{}>", format_type(inner)),
-        TypeExpr::Struct(fields) => {
-            if fields.is_empty() {
+        TypeExpr::Struct { fields, additional } => {
+            if fields.is_empty() && additional.is_none() {
                 return "{}".to_string();
             }
-            let fields = fields
-                .iter()
-                .map(format_type_field)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{{ {fields} }}")
+            let mut parts = fields.iter().map(format_type_field).collect::<Vec<_>>();
+            if let Some(additional) = additional {
+                parts.push(format!("...: {}", format_type(additional)));
+            }
+            format!("{{ {} }}", parts.join(", "))
         }
         TypeExpr::Union(variants) => variants
             .iter()

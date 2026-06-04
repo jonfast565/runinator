@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use runinator_models::value::Value;
 use runinator_models::{
-    bundles::{ProviderBundle, SecretBundle},
+    bundles::{PackImportResult, ProviderBundle, SecretBundle},
     notifications::Notification,
     providers::ProviderMetadata,
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
@@ -58,6 +58,7 @@ pub enum ApiResponse {
     ProviderList(Vec<ProviderMetadata>),
     ProviderBundle(ProviderBundle),
     SecretBundle(SecretBundle),
+    PackImport(PackImportResult),
     JsonValue(Value),
     JsonList(Vec<Value>),
     Notification(Notification),

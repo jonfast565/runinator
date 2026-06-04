@@ -15,12 +15,13 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        API_PROVIDERS, API_RUNS, API_WORKFLOW_RUNS, API_WORKFLOWS, API_WORKFLOWS_EXPORT,
-        API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, api_run_artifacts, api_workflow,
-        api_workflow_run, api_workflow_runs,
+        API_PACKS_IMPORT, API_PROVIDERS, API_RUNS, API_WORKFLOW_RUNS, API_WORKFLOWS,
+        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
+        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER, api_run_artifacts,
+        api_workflow, api_workflow_run, api_workflow_runs,
     },
     runs::RunStatus,
-    workflows::{WorkflowDefinition, WorkflowStatus},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowStatus},
 };
 
 use contracts::{RESOURCE_ARTIFACT_URI_PREFIX, RESOURCE_WORKFLOW_RUN_URI_PREFIX};
@@ -193,8 +194,52 @@ impl McpServer {
                 json_tool_response("Workflow saved", saved, false)?
             }
             "runinator_import_workflow_bundle" => {
-                let bundle = self.post_api_json(API_WORKFLOWS_IMPORT, arguments)?;
-                json_tool_response("Workflow bundle imported", bundle, false)?
+                if arguments_are_json_workflow_bundle(&arguments) {
+                    if arguments
+                        .get("acknowledge_system_breakage")
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                    {
+                        return Err("json workflow bundle import requires acknowledge_system_breakage=true because system breakage is possible".to_string());
+                    }
+                    let bundle: WorkflowBundle = serde_json::from_value(arguments.clone().into())
+                        .map_err(|err| err.to_string())?;
+                    let result = self.post_workflow_bundle_json(API_WORKFLOWS_IMPORT, &bundle)?;
+                    return Ok(Some(json_tool_response(
+                        "Workflow JSON bundle imported",
+                        result,
+                        false,
+                    )?));
+                }
+                // a full pack: one or more WDL sources plus optional `.wdls` secrets, compiled
+                // client-side into a single pack zip.
+                let sources = collect_wdl_sources(&arguments)?;
+                let options = runinator_wdl::CompileOptions {
+                    enabled: true,
+                    default_version: 1,
+                };
+                let mut workflows = Vec::with_capacity(sources.len());
+                for source in &sources {
+                    let mut definition = runinator_wdl::compile_str(source, &options)
+                        .map_err(|err| err.to_string())?;
+                    // an explicit ad-hoc import should always win the import reconciliation.
+                    definition.updated_at = Some(chrono::Utc::now());
+                    workflows.push(definition);
+                }
+                let secrets = match arguments.get("secrets").and_then(Value::as_str) {
+                    Some(text) if !text.trim().is_empty() => Some(
+                        runinator_wdl::parse_secrets_str(text).map_err(|err| err.to_string())?,
+                    ),
+                    _ => None,
+                };
+                let bundle = WorkflowBundle {
+                    workflows,
+                    triggers: Vec::new(),
+                };
+                let body = runinator_utilities::pack::build_pack_zip(&bundle, secrets.as_ref())
+                    .map_err(|err| err.to_string())?;
+                let result = self.post_api_zip(API_PACKS_IMPORT, body)?;
+                json_tool_response("Workflow pack imported", result, false)?
             }
             "runinator_export_workflow_bundle" => {
                 let path = match arguments.get("workflow_id").and_then(Value::as_i64) {
@@ -260,6 +305,39 @@ impl McpServer {
         self.client
             .post(self.url(path))
             .json(&body)
+            .send()
+            .map_err(|err| err.to_string())?
+            .error_for_status()
+            .map_err(|err| err.to_string())?
+            .json()
+            .map_err(|err| err.to_string())
+    }
+
+    fn post_api_zip(&self, path: &str, body: Vec<u8>) -> Result<Value, String> {
+        self.client
+            .post(self.url(path))
+            .header(reqwest::header::CONTENT_TYPE, "application/zip")
+            .body(body)
+            .send()
+            .map_err(|err| err.to_string())?
+            .error_for_status()
+            .map_err(|err| err.to_string())?
+            .json()
+            .map_err(|err| err.to_string())
+    }
+
+    fn post_workflow_bundle_json(
+        &self,
+        path: &str,
+        body: &WorkflowBundle,
+    ) -> Result<Value, String> {
+        self.client
+            .post(self.url(path))
+            .header(
+                WORKFLOW_JSON_IMPORT_RISK_HEADER,
+                WORKFLOW_JSON_IMPORT_RISK_ACK,
+            )
+            .json(body)
             .send()
             .map_err(|err| err.to_string())?
             .error_for_status()
@@ -375,6 +453,39 @@ impl McpServer {
             path.trim_start_matches('/')
         )
     }
+}
+
+/// collect WDL sources from import arguments: a `workflows` array of WDL strings, or a single
+/// `source` string for convenience.
+fn collect_wdl_sources(arguments: &Value) -> Result<Vec<String>, String> {
+    if let Some(array) = arguments.get("workflows").and_then(Value::as_array) {
+        let sources: Vec<String> = array
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        if sources.is_empty() {
+            return Err("import requires at least one WDL source in 'workflows'".to_string());
+        }
+        return Ok(sources);
+    }
+    if let Some(source) = arguments.get("source").and_then(Value::as_str) {
+        return Ok(vec![source.to_string()]);
+    }
+    Err(
+        "import requires 'workflows' (array of WDL sources) or a single 'source' string"
+            .to_string(),
+    )
+}
+
+fn arguments_are_json_workflow_bundle(arguments: &Value) -> bool {
+    if arguments.get("triggers").is_some() {
+        return true;
+    }
+    arguments
+        .get("workflows")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(Value::is_object))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

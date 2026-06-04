@@ -3,16 +3,19 @@ use std::sync::Arc;
 use axum::{
     Extension, Json,
     extract::{Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
+use runinator_models::{
+    api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
+    workflows::{WorkflowBundle, WorkflowDefinition},
+};
 use serde::Deserialize;
 
 use crate::events::{AppEvent, EventSender, emit};
 use crate::models::ApiResponse;
 use crate::repository;
-use crate::responses::{api_error, not_found, validation_error};
+use crate::responses::{api_error, bad_request, not_found, validation_error};
 
 pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -64,7 +67,19 @@ pub(crate) async fn get_workflows<T: DatabaseImpl>(
 pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    headers: HeaderMap,
     Json(bundle): Json<WorkflowBundle>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if !json_workflow_import_risk_acknowledged(&headers) {
+        return json_workflow_import_risk_required();
+    }
+    import_acknowledged_workflow_bundle(db, events, bundle).await
+}
+
+pub(crate) async fn import_acknowledged_workflow_bundle<T: DatabaseImpl>(
+    db: Arc<T>,
+    events: EventSender,
+    bundle: WorkflowBundle,
 ) -> (StatusCode, Json<ApiResponse>) {
     log::info!(
         "Importing workflow bundle: {} workflows, {} triggers",
@@ -82,6 +97,19 @@ pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
             api_error(err.to_string())
         }
     }
+}
+
+pub(crate) fn json_workflow_import_risk_acknowledged(headers: &HeaderMap) -> bool {
+    headers
+        .get(WORKFLOW_JSON_IMPORT_RISK_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case(WORKFLOW_JSON_IMPORT_RISK_ACK))
+}
+
+pub(crate) fn json_workflow_import_risk_required() -> (StatusCode, Json<ApiResponse>) {
+    bad_request(format!(
+        "raw JSON workflow imports can break system behavior; set header {WORKFLOW_JSON_IMPORT_RISK_HEADER}: {WORKFLOW_JSON_IMPORT_RISK_ACK} to acknowledge the risk"
+    ))
 }
 
 pub(crate) async fn export_workflow_bundle<T: DatabaseImpl>(

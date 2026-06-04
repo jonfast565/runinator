@@ -9,10 +9,11 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
   patchWorkflowRunDebug: vi.fn(),
-  saveWorkflowBundle: vi.fn()
+  saveWorkflowWdl: vi.fn(),
+  decompileToWdl: vi.fn()
 }));
 
-import { fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowBundle } from "../../api/commandCenterApi";
+import { decompileToWdl, fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
 
 describe("workflow run detail state", () => {
   beforeEach(() => {
@@ -65,13 +66,14 @@ describe("workflow run detail state", () => {
     expect(workflows.currentBreakpoints).toEqual([]);
   });
 
-  it("saves and reloads workflow triggers through the workflow bundle contract", async () => {
+  it("saves workflow edits as wdl and reloads workflow triggers", async () => {
     const workflows = useWorkflowsStore();
     const draft = workflowDefinition(7, "bundle draft");
     Object.assign(workflows.workflowDraft, draft);
     workflows.workflowJson = JSON.stringify(draft.definition);
     workflows.workflowTriggers = [workflowTrigger(12, 7, "0 * * * *")];
-    vi.mocked(saveWorkflowBundle).mockResolvedValue({
+    vi.mocked(decompileToWdl).mockResolvedValue("workflow bundle_draft { start -> end }");
+    vi.mocked(saveWorkflowWdl).mockResolvedValue({
       workflows: [workflowDefinition(7, "bundle saved")],
       triggers: [workflowTrigger(12, 7, "30 * * * *")]
     });
@@ -79,8 +81,11 @@ describe("workflow run detail state", () => {
 
     await workflows.saveSelectedWorkflow();
 
-    expect(saveWorkflowBundle).toHaveBeenCalledWith({
-      workflows: [expect.objectContaining({ id: 7, name: "bundle draft" })],
+    expect(decompileToWdl).toHaveBeenCalledWith(expect.objectContaining({ id: 7, name: "bundle draft" }));
+    expect(saveWorkflowWdl).toHaveBeenCalledWith({
+      source: "workflow bundle_draft { start -> end }",
+      enabled: true,
+      workflow_id: 7,
       triggers: [expect.objectContaining({ id: 12, workflow_id: 7, configuration: { cron: "0 * * * *", parameters: {} } })]
     });
     expect(workflows.workflowDraft.name).toBe("bundle saved");

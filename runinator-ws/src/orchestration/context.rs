@@ -31,6 +31,12 @@ pub(super) fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowN
         // is published; secrets stay unresolved until the worker.
         object.insert("config".into(), crate::handlers::credentials::config_tree());
     }
+    // fill omitted input fields from their declared defaults, evaluated against this context (so a
+    // default may read config/run/secret or a sibling input). resolved here, after config is in
+    // place, so every downstream `input.*` ref sees the defaulted value.
+    if let Some(snapshot) = &workflow_run.workflow_snapshot {
+        runinator_workflows::apply_input_defaults(&mut context, &snapshot.input_type);
+    }
     context
 }
 

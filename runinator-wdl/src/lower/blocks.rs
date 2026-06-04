@@ -16,6 +16,7 @@ impl Lowerer {
     pub(super) fn lower_if(
         &mut self,
         if_stmt: &IfStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -34,17 +35,16 @@ impl Lowerer {
         let mut transitions = Map::new();
         transitions.insert("branches".into(), Value::Array(branches));
         transitions.insert("next".into(), node_ref(&else_entry));
-        self.push(node(
-            id,
-            "condition",
-            vec![("transitions", Value::Object(transitions))],
-        ));
+        let mut fields = vec![("transitions", Value::Object(transitions))];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "condition", fields));
         Ok(())
     }
 
     pub(super) fn lower_for(
         &mut self,
         for_stmt: &ForStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -69,6 +69,7 @@ impl Lowerer {
         if let Some(limit) = for_stmt.limit {
             fields.push(("max_iterations", Value::from(limit)));
         }
+        self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "loop", fields));
         Ok(())
     }
@@ -76,6 +77,7 @@ impl Lowerer {
     pub(super) fn lower_while(
         &mut self,
         while_stmt: &WhileStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -106,20 +108,19 @@ impl Lowerer {
         reentry.insert("max_visits".into(), Value::from(max_visits));
         reentry.insert("on_exhausted".into(), node_ref(cont));
 
-        self.push(node(
-            id,
-            "condition",
-            vec![
-                ("transitions", Value::Object(transitions)),
-                ("reentry", Value::Object(reentry)),
-            ],
-        ));
+        let mut fields = vec![
+            ("transitions", Value::Object(transitions)),
+            ("reentry", Value::Object(reentry)),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "condition", fields));
         Ok(())
     }
 
     pub(super) fn lower_map(
         &mut self,
         map_stmt: &MapStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -139,20 +140,19 @@ impl Lowerer {
         let mut transitions = Map::new();
         transitions.insert("next".into(), node_ref(cont));
 
-        self.push(node(
-            id,
-            "map",
-            vec![
-                ("parameters", Value::Object(params)),
-                ("transitions", Value::Object(transitions)),
-            ],
-        ));
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            ("transitions", Value::Object(transitions)),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "map", fields));
         Ok(())
     }
 
     pub(super) fn lower_match(
         &mut self,
         match_stmt: &MatchStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -181,17 +181,16 @@ impl Lowerer {
         params.insert("cases".into(), Value::Array(cases));
         params.insert("default".into(), node_ref(&default_entry));
 
-        self.push(node(
-            id,
-            "switch",
-            vec![("parameters", Value::Object(params))],
-        ));
+        let mut fields = vec![("parameters", Value::Object(params))];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "switch", fields));
         Ok(())
     }
 
     pub(super) fn lower_parallel(
         &mut self,
         parallel: &ParallelStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -209,11 +208,9 @@ impl Lowerer {
 
         let mut parallel_params = Map::new();
         parallel_params.insert("branches".into(), Value::Array(branch_refs.clone()));
-        self.push(node(
-            id,
-            "parallel",
-            vec![("parameters", Value::Object(parallel_params))],
-        ));
+        let mut parallel_fields = vec![("parameters", Value::Object(parallel_params))];
+        self.apply_annotations(&mut parallel_fields, stmt);
+        self.push(node(id, "parallel", parallel_fields));
 
         let mut join_params = Map::new();
         join_params.insert("wait_for".into(), Value::Array(branch_refs));
@@ -237,6 +234,7 @@ impl Lowerer {
     pub(super) fn lower_race(
         &mut self,
         race: &RaceStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -253,20 +251,19 @@ impl Lowerer {
         );
         let mut transitions = Map::new();
         transitions.insert("next".into(), node_ref(cont));
-        self.push(node(
-            id,
-            "race",
-            vec![
-                ("parameters", Value::Object(params)),
-                ("transitions", Value::Object(transitions)),
-            ],
-        ));
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            ("transitions", Value::Object(transitions)),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "race", fields));
         Ok(())
     }
 
     pub(super) fn lower_try(
         &mut self,
         try_stmt: &TryStmt,
+        stmt: &Stmt,
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
@@ -290,14 +287,12 @@ impl Lowerer {
         }
         let mut transitions = Map::new();
         transitions.insert("next".into(), node_ref(cont));
-        self.push(node(
-            id,
-            "try",
-            vec![
-                ("parameters", Value::Object(params)),
-                ("transitions", Value::Object(transitions)),
-            ],
-        ));
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            ("transitions", Value::Object(transitions)),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "try", fields));
         Ok(())
     }
 }

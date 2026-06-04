@@ -46,6 +46,10 @@ pub enum ApiError {
     /// The web service returned a JSON shape this client could not parse.
     #[error("unexpected Runinator API response: {0}")]
     UnexpectedResponse(String),
+
+    /// Building the compiled pack zip before upload failed.
+    #[error("failed to build pack archive: {0}")]
+    Pack(String),
 }
 
 impl ApiError {

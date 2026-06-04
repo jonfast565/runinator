@@ -225,7 +225,7 @@ export function isLockedWorkflowNode(node: JsonRecord | null | undefined): boole
 
 function isWorkflowExpression(value: unknown): boolean {
   if (!isJsonRecord(value)) return false;
-  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string"].some((key) => key in value);
+  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string", "$node"].some((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 export function nextNodePosition(count: number): { x: number; y: number } {

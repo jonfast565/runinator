@@ -33,6 +33,49 @@ fn span_of(pair: &Pair<Rule>) -> Span {
     Span::new(span.start(), span.end())
 }
 
+/// parse a `.wdls` secrets/config document into its declarations.
+pub(crate) fn parse_secrets_document(src: &str) -> Result<Vec<SecretDecl>, WdlError> {
+    let mut pairs = WdlParser::parse(Rule::secrets_document, src)
+        .map_err(|err| WdlError::Parse(err.to_string()))?;
+    let document = pairs
+        .next()
+        .ok_or_else(|| WdlError::Parse("empty input".into()))?;
+    let mut decls = Vec::new();
+    for inner in document.into_inner() {
+        if inner.as_rule() == Rule::secret_decl {
+            decls.push(parse_secret_decl(inner)?);
+        }
+    }
+    Ok(decls)
+}
+
+fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut is_config = false;
+    let mut path = Vec::new();
+    let mut value = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::secret_kind => is_config = inner.as_str() == "config",
+            Rule::path => {
+                if let ExprKind::Path(segs) = parse_path(inner)?.kind {
+                    path = segs;
+                }
+            }
+            Rule::expr => value = Some(parse_expr(inner)?),
+            _ => {}
+        }
+    }
+    let value =
+        value.ok_or_else(|| WdlError::syntax(span, "secret declaration is missing a value"))?;
+    Ok(SecretDecl {
+        is_config,
+        path,
+        value,
+        span,
+    })
+}
+
 fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let span = span_of(&pair);
     let mut name = String::new();
@@ -40,6 +83,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut input = None;
     let mut aliases = Vec::new();
     let mut start = None;
+    let mut triggers = Vec::new();
     let mut body = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -49,6 +93,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                 version = Some(parse_i64(digits, span)?);
             }
             Rule::input_block => input = Some(parse_input_block(inner)?),
+            Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
             Rule::stmt => body.push(parse_stmt(inner)?),
@@ -61,7 +106,48 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         input,
         aliases,
         start,
+        triggers,
         body,
+        span,
+    })
+}
+
+fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut schedule = None;
+    let mut params = None;
+    let mut enabled = true;
+    let mut blackout_start = None;
+    let mut blackout_end = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expr => schedule = Some(parse_expr(inner)?),
+            Rule::object => params = Some(parse_object(inner)?),
+            Rule::trigger_option => {
+                let option = first_inner(inner)?;
+                match option.as_rule() {
+                    Rule::trigger_disabled => enabled = false,
+                    Rule::trigger_blackout => {
+                        let mut exprs = option
+                            .into_inner()
+                            .filter(|part| part.as_rule() == Rule::expr);
+                        blackout_start = exprs.next().map(parse_expr).transpose()?;
+                        blackout_end = exprs.next().map(parse_expr).transpose()?;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    let schedule =
+        schedule.ok_or_else(|| WdlError::syntax(span, "trigger is missing a cron expression"))?;
+    Ok(TriggerDecl {
+        schedule,
+        params,
+        enabled,
+        blackout_start,
+        blackout_end,
         span,
     })
 }
@@ -86,12 +172,46 @@ fn parse_alias_decl(pair: Pair<Rule>) -> Result<Alias, WdlError> {
 // input typing --------------------------------------------------------------
 
 fn parse_input_block(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
-    let fields = pair
-        .into_inner()
-        .filter(|p| p.as_rule() == Rule::type_field)
-        .map(parse_type_field)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(TypeExpr::Struct(fields))
+    let mut fields = Vec::new();
+    let mut additional = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::input_field => fields.push(parse_input_field(inner)?),
+            Rule::type_additional => {
+                let ty = inner
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::type_expr)
+                    .ok_or_else(|| WdlError::lower("open input additional type"))?;
+                additional = Some(Box::new(parse_type_expr(ty)?));
+            }
+            _ => {}
+        }
+    }
+    Ok(TypeExpr::Struct { fields, additional })
+}
+
+/// a top-level input field, optionally carrying a `= expr` default.
+fn parse_input_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
+    let mut name = String::new();
+    let mut optional = false;
+    let mut ty = TypeExpr::Named("any".into());
+    let mut default = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::string => name = plain_string(inner)?,
+            Rule::optional_mark => optional = true,
+            Rule::type_expr => ty = parse_type_expr(inner)?,
+            Rule::field_default => default = Some(parse_expr(first_inner(inner)?)?),
+            _ => {}
+        }
+    }
+    Ok(TypeField {
+        name,
+        optional,
+        ty,
+        default,
+    })
 }
 
 fn parse_type_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
@@ -107,7 +227,12 @@ fn parse_type_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
             _ => {}
         }
     }
-    Ok(TypeField { name, optional, ty })
+    Ok(TypeField {
+        name,
+        optional,
+        ty,
+        default: None,
+    })
 }
 
 fn parse_type_expr(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
@@ -153,12 +278,22 @@ fn parse_type_atom(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
             Ok(TypeExpr::Map(Box::new(parse_type_expr(value)?)))
         }
         Rule::type_struct => {
-            let fields = inner
-                .into_inner()
-                .filter(|p| p.as_rule() == Rule::type_field)
-                .map(parse_type_field)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(TypeExpr::Struct(fields))
+            let mut fields = Vec::new();
+            let mut additional = None;
+            for part in inner.into_inner() {
+                match part.as_rule() {
+                    Rule::type_field => fields.push(parse_type_field(part)?),
+                    Rule::type_additional => {
+                        let ty = part
+                            .into_inner()
+                            .find(|p| p.as_rule() == Rule::type_expr)
+                            .ok_or_else(|| WdlError::lower("open struct additional type"))?;
+                        additional = Some(Box::new(parse_type_expr(ty)?));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(TypeExpr::Struct { fields, additional })
         }
         Rule::type_named => Ok(TypeExpr::Named(inner.as_str().to_string())),
         other => Err(WdlError::lower(format!("unexpected type atom {other:?}"))),
@@ -216,6 +351,12 @@ fn apply_annotation(annotations: &mut Annotations, pair: Pair<Rule>) -> Result<(
             annotations.id = Some(plain_string(string)?);
         }
         Rule::ann_skip => annotations.skip = true,
+        Rule::ann_lock => annotations.locked = true,
+        Rule::ann_timeout => {
+            let duration = first_inner(inner)?;
+            annotations.timeout_seconds =
+                Some(parse_duration(duration.as_str(), span_of(&duration))?);
+        }
         _ => {}
     }
     Ok(())

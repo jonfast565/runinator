@@ -38,8 +38,10 @@ impl Lowerer {
                 Ok(Value::Array(items))
             }
             ExprKind::Object(entries) => {
+                // expand any `...alias` spreads nested inside this object literal before lowering.
+                let flat = crate::desugar::flatten_entries(entries, &self.aliases)?;
                 let mut map = Map::new();
-                for (key, value) in entries {
+                for (key, value) in &flat {
                     map.insert(key.clone(), self.lower_expr(value)?);
                 }
                 Ok(Value::Object(map))

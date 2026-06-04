@@ -177,7 +177,7 @@ fn validate_action_metadata(
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResultMetadata {
     pub name: String,
     #[serde(alias = "value_type", deserialize_with = "deserialize_type")]

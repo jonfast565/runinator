@@ -23,9 +23,11 @@
         </select>
         <TypedValueEditor
           v-else
-          :model-value="modelValue[parameter.name]"
+          :model-value="parameterValue(parameter.name)"
           :ty="parameter.ty"
           :placeholder="placeholder(parameter)"
+          :force-expression="isWorkflowExpressionValue(parameterValue(parameter.name))"
+          :expression-context="expressionContext"
           @update:model-value="setValue(parameter.name, $event)"
         />
       </label>
@@ -51,6 +53,8 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import type { ActionParameterMetadata, CredentialSummary, JsonRecord, RuninatorType } from "../../types/models";
+import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
+import { isWorkflowExpressionValue } from "../../utils/workflow-expression-completion";
 import { parseSecretRef, secretRef, secretRefLabel } from "../../utils/secrets";
 import { useSecretsStore } from "../../stores/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
@@ -59,6 +63,7 @@ const props = defineProps<{
   modelValue: JsonRecord;
   parameters: ActionParameterMetadata[];
   credentialScopes?: string[];
+  expressionContext?: WorkflowExpressionEditorContext;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +94,10 @@ const errors = computed(() => {
 
 function setValue(name: string, value: unknown) {
   emit("update:modelValue", { ...props.modelValue, [name]: value });
+}
+
+function parameterValue(name: string): unknown {
+  return props.modelValue[name];
 }
 
 function isString(parameter: ActionParameterMetadata): boolean {
@@ -237,8 +246,7 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 function isExpressionValue(value: unknown): boolean {
-  if (!isPlainRecord(value)) return false;
-  return ["$ref", "$concat", "$coalesce", "$literal", "$to_string", "$to_json_string"].some((key) => key in value);
+  return isWorkflowExpressionValue(value);
 }
 </script>
 

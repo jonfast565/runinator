@@ -171,6 +171,39 @@ pub(crate) async fn put_credential(
 pub(crate) async fn import_secret_bundle(
     Json(bundle): Json<SecretBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    match import_secret_entries(&bundle) {
+        Ok(imported) => (
+            StatusCode::OK,
+            Json(ApiResponse::SecretBundle(SecretBundle {
+                secrets: imported,
+            })),
+        ),
+        Err(error) => error.into_response(),
+    }
+}
+
+/// a secret-import failure tagged with whether it is a client (bad request) or server error.
+pub(crate) struct SecretImportError {
+    bad_request: bool,
+    message: String,
+}
+
+impl SecretImportError {
+    pub(crate) fn into_response(self) -> (StatusCode, Json<ApiResponse>) {
+        if self.bad_request {
+            bad_request(self.message)
+        } else {
+            api_error(self.message)
+        }
+    }
+}
+
+/// import every entry in a secret bundle into the credential store, reconciling by modification
+/// time, and return the redacted echo. shared by the json `/credentials/import` endpoint and the
+/// compiled pack import at `/packs/import`.
+pub(crate) fn import_secret_entries(
+    bundle: &SecretBundle,
+) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
     let store = credential_store();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for secret in &bundle.secrets {
@@ -191,37 +224,40 @@ pub(crate) async fn import_secret_bundle(
                 }
             }
             Ok(None) => {}
-            Err(err) => return api_error(err.to_string()),
+            Err(err) => {
+                return Err(SecretImportError {
+                    bad_request: false,
+                    message: err.to_string(),
+                });
+            }
         }
         // validate against the declared (or previously stored) schema before persisting.
-        let bytes = match validate_and_encode(
+        let bytes = validate_and_encode(
             &store,
             secret.kind,
             &secret.scope,
             &secret.name,
             &secret.value,
             secret.schema.as_ref(),
-        ) {
-            Ok(bytes) => bytes,
-            Err(message) => return bad_request(message),
-        };
+        )
+        .map_err(|message| SecretImportError {
+            bad_request: true,
+            message,
+        })?;
         // persist the incoming modification time so later imports reconcile against it.
         let result = match incoming_ts {
             Some(ts) => store.put_at(secret.kind, &secret.scope, &secret.name, &bytes, ts),
             None => store.put(secret.kind, &secret.scope, &secret.name, &bytes),
         };
         if let Err(err) = result {
-            return api_error(err.to_string());
+            return Err(SecretImportError {
+                bad_request: false,
+                message: err.to_string(),
+            });
         }
         imported.push(redacted_entry(secret));
     }
-
-    (
-        StatusCode::OK,
-        Json(ApiResponse::SecretBundle(SecretBundle {
-            secrets: imported,
-        })),
-    )
+    Ok(imported)
 }
 
 // echo an imported entry without its value, preserving kind and modification time.

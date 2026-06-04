@@ -55,13 +55,25 @@ pub(crate) fn fixed_tools() -> Vec<Value> {
         }),
         json!({
             "name": "runinator_import_workflow_bundle",
-            "description": "Import an importer-compatible workflow bundle.",
+            "description": "Import workflows from WDL sources or an importer-compatible JSON \
+                            workflow bundle. JSON workflow bundles can break system behavior; \
+                            set `acknowledge_system_breakage` to true when submitting JSON.",
             "inputSchema": object_schema(
                 vec![
-                    ("workflows", json!({ "type": "array", "items": { "type": "object" } })),
+                    ("workflows", json!({
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                { "type": "string" },
+                                { "type": "object" }
+                            ]
+                        }
+                    })),
                     ("triggers", json!({ "type": "array", "items": { "type": "object" } })),
+                    ("secrets", json!({ "type": "string" })),
+                    ("acknowledge_system_breakage", json!({ "type": "boolean" })),
                 ],
-                vec![],
+                vec!["workflows"],
             ),
         }),
         json!({

@@ -4,8 +4,12 @@ use reqwest::{
 };
 use runinator_models::json;
 use runinator_models::{
-    api_routes::{api_workflow, api_workflow_run_command, API_PROVIDERS, API_WORKFLOWS_VALIDATE},
-    bundles::{Bundle, ProviderBundle, SecretBundle},
+    api_routes::{
+        api_workflow, api_workflow_run_command, API_PACKS_IMPORT, API_PROVIDERS,
+        API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
+        WORKFLOW_JSON_IMPORT_RISK_HEADER,
+    },
+    bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     web::TaskResponse,
     workflows::{WorkflowBundle, WorkflowDefinition},
@@ -69,8 +73,39 @@ where
         Ok(response.json::<B>()?)
     }
 
+    /// POST a raw JSON workflow bundle after acknowledging that system breakage is possible.
     pub fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
-        self.import_bundle(bundle)
+        let url = self.build_url(API_WORKFLOWS_IMPORT)?;
+        let response = self
+            .client
+            .post(url.clone())
+            .header(
+                WORKFLOW_JSON_IMPORT_RISK_HEADER,
+                WORKFLOW_JSON_IMPORT_RISK_ACK,
+            )
+            .json(bundle)
+            .send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<WorkflowBundle>()?)
+    }
+
+    /// Build a compiled pack zip (workflows + optional secrets) and POST it to `/packs/import`.
+    pub fn import_pack(
+        &self,
+        workflows: &WorkflowBundle,
+        secrets: Option<&SecretBundle>,
+    ) -> Result<PackImportResult> {
+        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets)
+            .map_err(|err| ApiError::Pack(err.to_string()))?;
+        let url = self.build_url(API_PACKS_IMPORT)?;
+        let response = self
+            .client
+            .post(url.clone())
+            .header(reqwest::header::CONTENT_TYPE, "application/zip")
+            .body(body)
+            .send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<PackImportResult>()?)
     }
 
     pub fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {

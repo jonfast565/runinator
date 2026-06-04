@@ -11,7 +11,7 @@ Primary runtime flow:
 1. `runinator-ws` owns the HTTP API and the reducer, persists scheduled tasks/workflow runs/orchestration records through `runinator-database`, publishes scheduled work on the broker `wake` channel, publishes `ActionCommand`s on the broker action channel, consumes the broker `ingress` channel (drive + control requests), and runs the trigger-firing, action-dispatch, wake-publisher, and reconcile loops in-process.
 2. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each ready node is due, then publishes a drive on the `ingress` channel. It has no database, no HTTP client to the web service, and shares no channel with the worker.
 3. `runinator-worker` polls the broker action channel, resolves a provider/plugin, executes the task, and publishes results on the broker result channel (records also reachable through `runinator-api` compatibility endpoints). It self-publishes its built-in provider metadata to the web service on startup.
-4. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.wdl`/`.wdlp`/directory (or reads a workflow/bundle JSON) and imports it into the web service. There is no long-running importer service.
+4. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.wdl`/`.wdlp`/directory (including any `.wdls` secrets) **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-utilities::pack`; the entry-name layout is the wire contract shared by ctl/api/command-center/mcp (writers) and ws (reader).
 5. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
 There is also a Tauri `runinator-command-center` client. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
@@ -29,7 +29,7 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-waker`: broker-only timer/relay. It consumes the `wake` channel, sleeps until due, and publishes a drive on the `ingress` channel. It must not execute task providers, must not write to the database, and must not depend on `runinator-api` or the worker.
 - `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
 - `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
-- `runinator-wdl`: the WDL surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back). It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add WDL syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape.
+- `runinator-wdl`: the WDL surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back), plus the `.wdls` secrets front end. It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add WDL syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "wdl"`) on import.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
 - `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
 - `runinator-utilities`: small cross-cutting helpers such as startup/logging, credential store trait, and data export. Do not turn this into a dumping ground for domain logic.
@@ -67,7 +67,7 @@ When adding fields to shared structs, check every boundary that serializes, pers
 - `runinator-database/src/mappers.rs`
 - SQLite/Postgres implementations
 - `runinator-api`
-- ctl task/pack import (WDL compile + `workflows apply` JSON)
+- ctl task/pack import (WDL compile + `workflows apply` compiled-pack zip)
 - command center models, if the field is user-facing
 
 ## Provider And Plugin Guidance

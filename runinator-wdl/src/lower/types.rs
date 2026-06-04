@@ -12,7 +12,7 @@ pub(crate) fn lower_type(type_expr: &TypeExpr) -> Result<RuninatorType, WdlError
         TypeExpr::Named(name) => Ok(named_type(name)),
         TypeExpr::Array(inner) => Ok(RuninatorType::Array(Box::new(lower_type(inner)?))),
         TypeExpr::Map(inner) => Ok(RuninatorType::Map(Box::new(lower_type(inner)?))),
-        TypeExpr::Struct(fields) => {
+        TypeExpr::Struct { fields, additional } => {
             let mut mapped = BTreeMap::new();
             for field in fields {
                 let ty = lower_type(&field.ty)?;
@@ -23,9 +23,14 @@ pub(crate) fn lower_type(type_expr: &TypeExpr) -> Result<RuninatorType, WdlError
                 };
                 mapped.insert(field.name.clone(), runinator_field);
             }
+            let additional = additional
+                .as_ref()
+                .map(|ty| lower_type(ty))
+                .transpose()?
+                .map(Box::new);
             Ok(RuninatorType::Struct {
                 fields: mapped,
-                additional: None,
+                additional,
             })
         }
         TypeExpr::Union(variants) => {
