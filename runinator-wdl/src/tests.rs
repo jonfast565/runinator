@@ -492,6 +492,26 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
 }
 
 #[test]
+fn format_parenthesizes_eventless_scalar_emit() {
+    // an event-less scalar payload must keep its parens through formatting, otherwise it would
+    // be re-parsed as the event type and silently lose the payload.
+    let src = r#"workflow "E" { emit ("ready") }"#;
+    let formatted = format_str(src).expect("format");
+    assert!(
+        formatted.contains("emit (\"ready\")"),
+        "parens preserved:\n{formatted}"
+    );
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+
+    let first = compile(src);
+    let second = compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");
+    assert_eq!(
+        runinator_workflows::normalize_definition(first.definition),
+        runinator_workflows::normalize_definition(second.definition)
+    );
+}
+
+#[test]
 fn round_trips_concurrency() {
     let src = r#"
         workflow "Concurrency" v1 {
@@ -782,6 +802,120 @@ fn round_trips_leaves() {
         }
     "#;
     assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_scalar_emit_payloads() {
+    // emit payloads are arbitrary expressions, not just objects. an event-less scalar is
+    // parenthesized so it is not parsed as the event type.
+    let src = r#"
+        workflow "Payloads" {
+            let probe = console.run(command: "probe")
+            emit "count" probe.count
+            emit "nums" [1, 2, 3]
+            emit ("ready")
+            emit (42)
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn action_node_parameters_are_not_dropped() {
+    // action call args live in `configuration`, but the reducer also merges node-level
+    // `parameters`. a node that only set `parameters` must still decompile to call args.
+    use runinator_models::value::Value;
+    use runinator_models::workflows::{WorkflowNodeKind, WorkflowObject};
+
+    let mut def = compile(r#"workflow "Params" { console.run(command: "probe") }"#);
+    let action = def
+        .definition
+        .nodes
+        .iter_mut()
+        .find(|node| node.kind == WorkflowNodeKind::Action)
+        .expect("action node");
+    action.parameters =
+        WorkflowObject::from_value(Value::from(serde_json::json!({ "retries": 3 })))
+            .expect("parameters");
+
+    let wdl = decompile(&def).expect("decompile");
+    assert!(
+        wdl.contains("command:"),
+        "configuration arg preserved:\n{wdl}"
+    );
+    assert!(
+        wdl.contains("retries: 3"),
+        "node parameter surfaced:\n{wdl}"
+    );
+
+    // the surfaced parameter recompiles into the action configuration (same merge result).
+    let recompiled = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    let action = recompiled
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::Action)
+        .expect("action node");
+    assert_eq!(
+        action
+            .action
+            .as_ref()
+            .unwrap()
+            .configuration
+            .get("retries")
+            .and_then(Value::as_i64),
+        Some(3)
+    );
+}
+
+#[test]
+fn switch_shorthand_conditions_decompile() {
+    // switch cases authored as not_equals / exists shorthand (no explicit `when`) must decompile
+    // into the equivalent guard rather than erroring.
+    use runinator_models::value::Value;
+    use runinator_models::workflows::{WorkflowNodeKind, WorkflowObject};
+
+    let rebuild = |case: serde_json::Value| {
+        let mut def = compile(
+            r#"
+            workflow "Switch" {
+                let probe = console.run(command: "probe")
+                match probe.mode {
+                    "fast" -> { console.run(command: "fast") }
+                    else -> { console.run(command: "slow") }
+                }
+            }
+        "#,
+        );
+        let switch = def
+            .definition
+            .nodes
+            .iter_mut()
+            .find(|node| node.kind == WorkflowNodeKind::Switch)
+            .expect("switch node");
+        let mut params: serde_json::Value =
+            serde_json::to_value(switch.parameters.as_value()).expect("params");
+        let target = params["cases"][0]["target"].clone();
+        let mut rewritten = case;
+        rewritten["target"] = target;
+        params["cases"][0] = rewritten;
+        switch.parameters =
+            WorkflowObject::from_value(Value::from(params)).expect("rebuild params");
+        def
+    };
+
+    let not_equals = rebuild(serde_json::json!({ "not_equals": "fast" }));
+    let wdl = decompile(&not_equals).expect("decompile not_equals shorthand");
+    assert!(
+        wdl.contains("when") && wdl.contains("!="),
+        "not_equals rendered as guard:\n{wdl}"
+    );
+    compile_str(&wdl, &CompileOptions::default()).expect("recompile not_equals shorthand");
+
+    let exists = rebuild(serde_json::json!({ "exists": true }));
+    let wdl = decompile(&exists).expect("decompile exists shorthand");
+    assert!(wdl.contains("exists"), "exists rendered as guard:\n{wdl}");
+    compile_str(&wdl, &CompileOptions::default()).expect("recompile exists shorthand");
 }
 
 #[test]

@@ -10,7 +10,7 @@ mod expr;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use runinator_models::types::RuninatorType;
-use runinator_models::value::Value;
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
     WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowTransitions, WorkflowWaitSeconds,
 };
@@ -461,11 +461,24 @@ impl<'a> Decompiler<'a> {
             .action
             .as_ref()
             .ok_or_else(|| WdlError::Decompile("action node missing action".into()))?;
-        let mut args = Vec::new();
+        // action nodes carry args in `configuration`, but the reducer merges node-level
+        // `parameters` over it (parameters win). fold both into the call args so a node that
+        // only populated `parameters` is not dropped; recompiling routes them to configuration,
+        // which is equivalent under the same merge.
+        let mut merged = Map::new();
         if let Value::Object(config) = action.configuration.as_value() {
             for (name, value) in config {
-                args.push(format!("{name}: {}", self.expr(value)?));
+                merged.insert(name.clone(), value.clone());
             }
+        }
+        if let Value::Object(params) = node.parameters.as_value() {
+            for (name, value) in params {
+                merged.insert(name.clone(), value.clone());
+            }
+        }
+        let mut args = Vec::new();
+        for (name, value) in &merged {
+            args.push(format!("{name}: {}", self.expr(value)?));
         }
         let mut text = format!(
             "{}.{}({})",
@@ -541,23 +554,22 @@ impl<'a> Decompiler<'a> {
 
     fn emit_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
         let mut text = "emit".to_string();
-        if let Some(event_type) = node.parameters.get("event_type").and_then(Value::as_str) {
+        let event = node.parameters.get("event_type").and_then(Value::as_str);
+        if let Some(event_type) = event {
             text.push_str(&format!(" {}", quote(event_type)));
         }
         match node.parameters.get("data") {
-            Some(Value::Object(_)) | None | Some(Value::Null) => {
-                let data = node.parameters.get("data");
-                if let Some(Value::Object(_)) = data {
-                    text.push_str(&format!(" {}", self.expr(data.unwrap())?));
-                } else {
-                    text.push_str(" {}");
-                }
-            }
+            None | Some(Value::Null) => text.push_str(" {}"),
+            Some(data @ Value::Object(_)) => text.push_str(&format!(" {}", self.expr(data)?)),
             Some(other) => {
-                // non-object data cannot be written with the `emit { }` form.
-                return Err(WdlError::Decompile(format!(
-                    "emit data must be an object to decompile, found {other}"
-                )));
+                // scalar/array payloads render as expressions. without a preceding event type a
+                // bare string or concat would be parsed as the event, so wrap it in parens.
+                let rendered = self.expr(other)?;
+                if event.is_some() {
+                    text.push_str(&format!(" {rendered}"));
+                } else {
+                    text.push_str(&format!(" ({rendered})"));
+                }
             }
         }
         Ok(text)
@@ -783,9 +795,21 @@ impl<'a> Decompiler<'a> {
             } else if let Some(equals) = case.get("equals") {
                 self.expr(equals)?
             } else {
-                return Err(WdlError::Decompile(
-                    "switch case missing equals/when".into(),
-                ));
+                // not_equals / exists shorthand: rebuild the implied condition against the
+                // switch subject (mirroring parse_switch_parameters) and render it as a guard.
+                let mut condition = Map::new();
+                condition.insert("value".into(), value.clone());
+                for key in ["not_equals", "exists"] {
+                    if let Some(expected) = case.get(key) {
+                        condition.insert(key.into(), expected.clone());
+                    }
+                }
+                if condition.len() == 1 {
+                    return Err(WdlError::Decompile(
+                        "switch case missing when/equals/not_equals/exists".into(),
+                    ));
+                }
+                format!("when {}", self.cond(&Value::Object(condition))?)
             };
             self.line(&format!("{head} -> {{"));
             self.indent += 1;

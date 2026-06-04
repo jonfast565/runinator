@@ -59,18 +59,14 @@
       ]
     },
     {
-      "name": "importer",
-      "command": "./target/debug/runinator-importer",
+      "name": "pack-import",
+      "command": "./target/debug/runinatorctl",
       "args": [
-        "--once",
-        "--workflows-file",
-        "./packs/sdlc/sdlc.wdlp",
-        "--gossip-bind",
-        "127.0.0.1",
-        "--gossip-port",
-        "5512",
-        "--gossip-targets",
-        "127.0.0.1:5510,127.0.0.1:5511"
+        "--api-base-url",
+        "http://127.0.0.1:8080/",
+        "workflows",
+        "apply",
+        "./packs/sdlc/sdlc.wdlp"
       ],
       "restart_on_failure": false
     }

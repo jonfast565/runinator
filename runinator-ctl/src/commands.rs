@@ -24,7 +24,7 @@ use crate::{
         ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, SettingsCommands,
         TriggerCommands, WdlCommands, WorkflowCommands,
     },
-    output, params,
+    output, pack, params,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -126,6 +126,20 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             println!("workflow {} v{} validates", workflow.name, workflow.version);
         }
         WorkflowCommands::Apply { file } => {
+            // a .wdl/.wdlp/directory is compiled into a bundle and imported; json is handled below.
+            if pack::is_pack_source(file) {
+                let bundle = pack::load_workflow_bundle(file)?;
+                let bundle = client.import_workflow_bundle(&bundle).await?;
+                if json_output {
+                    return output::json(&bundle);
+                }
+                println!(
+                    "imported {} workflows and {} triggers",
+                    bundle.workflows.len(),
+                    bundle.triggers.len()
+                );
+                return Ok(());
+            }
             let value = params::load_json_file(file)?;
             if value.get("workflows").is_some() {
                 let bundle: WorkflowBundle = serde_json::from_value(value.into())?;

@@ -27,8 +27,8 @@ images:
   - name: runinator-worker
     newName: runinator-worker
     newTag: dev
-  - name: runinator-importer
-    newName: runinator-importer
+  - name: runinator-ctl
+    newName: runinator-ctl
     newTag: dev
   - name: runinator-migration
     newName: runinator-migration

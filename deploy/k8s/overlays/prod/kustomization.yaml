@@ -18,8 +18,8 @@ images:
   - name: runinator-worker
     newName: REPLACE_REGISTRY/runinator-worker
     newTag: latest
-  - name: runinator-importer
-    newName: REPLACE_REGISTRY/runinator-importer
+  - name: runinator-ctl
+    newName: REPLACE_REGISTRY/runinator-ctl
     newTag: latest
   - name: runinator-migration
     newName: REPLACE_REGISTRY/runinator-migration

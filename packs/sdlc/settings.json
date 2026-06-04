@@ -1,0 +1,35 @@
+{
+  "secrets": [
+    { "scope": "jira",        "name": "base_url",        "kind": "config", "value": "https://your-org.atlassian.net" },
+    { "scope": "jira",        "name": "email",           "kind": "config", "value": "automation@your-org.com" },
+    { "scope": "jira",        "name": "jql",             "kind": "config", "value": "project = ENG AND status = \"Ready for Dev\" AND labels = automation ORDER BY priority DESC" },
+
+    { "scope": "transitions", "name": "in_progress",     "kind": "config", "value": "21" },
+    { "scope": "transitions", "name": "in_review",       "kind": "config", "value": "31" },
+    { "scope": "transitions", "name": "done",            "kind": "config", "value": "41" },
+
+    { "scope": "github",      "name": "owner",           "kind": "config", "value": "your-org" },
+    { "scope": "github",      "name": "repo",            "kind": "config", "value": "your-repo" },
+    { "scope": "github",      "name": "base_branch",     "kind": "config", "value": "main" },
+
+    { "scope": "slack",       "name": "channel",         "kind": "config", "value": "#sdlc-automation" },
+
+    { "scope": "git",         "name": "repo",            "kind": "config", "value": "/srv/runinator/checkouts/your-repo" },
+    { "scope": "git",         "name": "remote",          "kind": "config", "value": "origin" },
+
+    { "scope": "ci_poll",     "name": "interval_seconds","kind": "config", "value": 60 },
+    { "scope": "ci_poll",     "name": "max_polls",       "kind": "config", "value": 30 },
+
+    { "scope": "claude",      "name": "binary",          "kind": "config", "value": "claude" },
+    { "scope": "claude",      "name": "model",           "kind": "config", "value": "claude-opus-4-8" },
+    { "scope": "claude",      "name": "prompt_intro",    "kind": "config", "value": "You are an autonomous engineer. Implement the change described by the ticket, keep the diff scoped, and follow the repository's conventions." },
+    { "scope": "claude",      "name": "allowed_tools",   "kind": "config", "value": "Bash,Read,Edit,Write,Grep" },
+    { "scope": "claude",      "name": "output_format",   "kind": "config", "value": "json" },
+    { "scope": "claude",      "name": "permission_mode", "kind": "config", "value": "acceptEdits" },
+    { "scope": "claude",      "name": "extra_args",      "kind": "config", "value": ["--dangerously-skip-permissions"] },
+
+    { "scope": "jira",        "name": "token",           "kind": "secret", "value": "REPLACE_WITH_JIRA_API_TOKEN" },
+    { "scope": "github",      "name": "token",           "kind": "secret", "value": "REPLACE_WITH_GITHUB_TOKEN" },
+    { "scope": "slack",       "name": "token",           "kind": "secret", "value": "REPLACE_WITH_SLACK_BOT_TOKEN" }
+  ]
+}

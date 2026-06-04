@@ -17,7 +17,6 @@
       <sourceFolder url="file://$MODULE_DIR$/runinator-api/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-broker/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-comm/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/runinator-importer/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-mcp/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-provider-ai/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/runinator-provider-approval/src" isTestSource="false" />

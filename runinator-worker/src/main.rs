@@ -52,6 +52,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config).await?;
     let api_client = build_api_client(&config)?;
+    publish_provider_metadata(&api_client).await;
 
     let shutdown = Arc::new(Notify::new());
     let mut worker_task = {
@@ -183,6 +184,20 @@ fn build_api_client(
             err.to_string(),
         )) as SendableError
     })
+}
+
+// register the built-in providers with the web service on startup. best-effort: a failure here
+// is logged but does not stop the worker, which can still execute already-registered providers.
+async fn publish_provider_metadata(api_client: &AsyncApiClient<StaticLocator>) {
+    let bundle = provider_repository::metadata_bundle();
+    let count = bundle.providers.len();
+    match api_client.import_provider_bundle(&bundle).await {
+        Ok(imported) => info!(
+            "Registered {} provider(s) with the web service",
+            imported.providers.len()
+        ),
+        Err(err) => warn!("Failed to register provider bundle ({count} provider(s)): {err}"),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

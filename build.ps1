@@ -28,7 +28,7 @@ param(
     # a raw manifest file. Defaults to the local overlay.
     [string]$KubeManifest = "deploy/k8s/overlays/local",
     [ValidateRange(1, 86400)]
-    [int]$KubeImporterTimeoutSeconds = 600,
+    [int]$KubePackImportTimeoutSeconds = 600,
     [switch]$KubeDelete,
     # By default the postgres and rabbitmq StatefulSets are preserved if they
     # already exist in the cluster, so app rollouts do not touch the database
@@ -271,7 +271,7 @@ function Publish-Binaries {
     $binaries = @(
         'runinator-waker',
         'runinator-worker',
-        'runinator-importer',
+        'runinatorctl',
         'runinator-ws',
         'runinator-broker',
         'runinator-supervisor'
@@ -585,13 +585,11 @@ function Write-LocalSupervisorConfig {
 
     $gossipPorts = @{
         Scheduler = $GossipBasePort + 1
-        Importer  = $GossipBasePort + 2
         Web       = $GossipBasePort + 3
     }
 
     $allGossipTargets = @(
         "127.0.0.1:$($gossipPorts.Scheduler)"
-        "127.0.0.1:$($gossipPorts.Importer)"
         "127.0.0.1:$($gossipPorts.Web)"
     )
 
@@ -602,7 +600,7 @@ function Write-LocalSupervisorConfig {
     }
 
     if (-not (Test-Path -LiteralPath $WorkflowsFile)) {
-        Write-Warning "Workflows file missing at $WorkflowsFile. The importer will fail its one-shot import without it."
+        Write-Warning "Workflows file missing at $WorkflowsFile. runinatorctl will fail its one-shot pack import without it."
     }
 
     $commands = @(
@@ -656,13 +654,13 @@ function Write-LocalSupervisorConfig {
             }
         }
         [ordered]@{
-            name = 'Runinator Importer'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-importer'))
+            name = 'Runinator Pack Import'
+            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinatorctl'))
             cwd = $WorkspacePath
             args = @(
-                '--once',
-                '--workflows-file', $WorkflowsFile
-            ) + (Get-GossipArguments -Port $gossipPorts.Importer -AllTargets $allGossipTargets)
+                '--api-base-url', 'http://127.0.0.1:8080/',
+                'workflows', 'apply', $WorkflowsFile
+            )
             env = @{
                 RUST_LOG = 'info'
             }
@@ -768,7 +766,7 @@ function Build-ContainerImages {
     $images = @(
         @{ Name = 'runinator-waker'; Dockerfile = 'runinator-waker/Dockerfile' },
         @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
-        @{ Name = 'runinator-importer';  Dockerfile = 'runinator-importer/Dockerfile' },
+        @{ Name = 'runinator-ctl';       Dockerfile = 'runinator-ctl/Dockerfile' },
         @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
         @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' },
         @{ Name = 'runinator-command-center-web'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
@@ -903,7 +901,7 @@ function Deploy-KubernetesStack {
         [string]$KubeContext,
 
         [ValidateRange(1, 86400)]
-        [int]$ImporterTimeoutSeconds = 600,
+        [int]$PackImportTimeoutSeconds = 600,
 
         [hashtable]$ImageMap,
 
@@ -945,7 +943,7 @@ function Deploy-KubernetesStack {
     $flag = if ($isOverlay) { '-k' } else { '-f' }
 
     Write-Step ("kubectl " + (($ctxArgs + @($verb, $flag, $applyPath)) -join ' '))
-    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'service/runinator-gossip')) {
+    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'job/runinator-pack-import', 'service/runinator-gossip')) {
         $deleteStaleArgs = $ctxArgs + @(
             'delete', $staleResource,
             '--namespace', 'runinator',
@@ -955,7 +953,7 @@ function Deploy-KubernetesStack {
         try {
             Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $deleteStaleArgs -WorkingDirectory $WorkspacePath
         } catch {
-            Write-Warning "Importer cleanup skipped or failed for '$staleResource': $_"
+            Write-Warning "Pack-import cleanup skipped or failed for '$staleResource': $_"
         }
     }
 
@@ -1012,15 +1010,15 @@ function Deploy-KubernetesStack {
     $jobWaitArgs = $ctxArgs + @(
         'wait',
         '--for=condition=complete',
-        'job/runinator-importer',
+        'job/runinator-pack-import',
         '--namespace', 'runinator',
-        '--timeout', "$($ImporterTimeoutSeconds)s"
+        '--timeout', "$($PackImportTimeoutSeconds)s"
     )
 
     try {
         Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $jobWaitArgs -WorkingDirectory $WorkspacePath
     } catch {
-        Write-Warning "Importer Job did not complete within timeout: $_"
+        Write-Warning "Pack-import Job did not complete within timeout: $_"
     }
 }
 
@@ -1122,7 +1120,7 @@ try {
                 WorkspacePath = $workspacePath
                 ManifestPath  = $manifestPath
                 KubeContext   = $KubeContext
-                ImporterTimeoutSeconds = $KubeImporterTimeoutSeconds
+                PackImportTimeoutSeconds = $KubePackImportTimeoutSeconds
                 ImageMap      = $imageMap
             }
 

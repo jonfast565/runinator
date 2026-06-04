@@ -5191,39 +5191,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-importer"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "clap",
- "env_logger",
- "log",
- "reqwest",
- "runinator-api",
- "runinator-comm",
- "runinator-models",
- "runinator-plugin",
- "runinator-provider-ai",
- "runinator-provider-approval",
- "runinator-provider-aws",
- "runinator-provider-console",
- "runinator-provider-email",
- "runinator-provider-git",
- "runinator-provider-github",
- "runinator-provider-jira",
- "runinator-provider-slack",
- "runinator-provider-sql",
- "runinator-utilities",
- "runinator-wdl",
- "runinator-workflows",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "runinator-mcp"
 version = "0.1.0"
 dependencies = [

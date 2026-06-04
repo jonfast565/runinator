@@ -7,8 +7,7 @@ COMMAND="${1:-start}"
 WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$ROOT_DIR/packs/sdlc/sdlc.wdlp}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
-IMPORTER_GOSSIP_PORT="${RUNINATOR_IMPORTER_ONCE_GOSSIP_PORT:-5513}"
-IMPORTER_GOSSIP_TARGETS="${RUNINATOR_IMPORTER_ONCE_GOSSIP_TARGETS:-127.0.0.1:5510,127.0.0.1:5511,127.0.0.1:5512}"
+API_BASE_URL="${RUNINATOR_API_BASE_URL:-http://127.0.0.1:8080/}"
 
 if [[ $# -gt 0 ]]; then
   shift
@@ -44,12 +43,9 @@ ensure_workflow_dir() {
 
 sync_import() {
   ensure_workflow_dir
-  cargo run -p runinator-importer -- \
-    --once \
-    --workflows-file "$WORKFLOWS_FILE" \
-    --gossip-bind 127.0.0.1 \
-    --gossip-port "$IMPORTER_GOSSIP_PORT" \
-    --gossip-targets "$IMPORTER_GOSSIP_TARGETS"
+  cargo run -p runinator-ctl -- \
+    --api-base-url "$API_BASE_URL" \
+    workflows apply "$WORKFLOWS_FILE"
 }
 
 show_logs() {
@@ -88,7 +84,7 @@ Useful commands:
 
 Command-center:
   Run the Tauri UI with bash scripts/run-local.sh ui.
-  The importer imports the workflow file configured in runinator-supervisor.json once on startup.
+  The supervisor runs runinatorctl once on startup to import the workflow pack configured in runinator-supervisor.json.
 MSG
     ;;
   foreground)

@@ -16,7 +16,7 @@ resources:
   - ws.yaml
   - waker.yaml
   - worker.yaml
-  - importer.yaml
+  - pack-import.yaml
   - command-center.yaml
 
 images:
@@ -26,7 +26,7 @@ images:
     newTag: dev
   - name: runinator-worker
     newTag: dev
-  - name: runinator-importer
+  - name: runinator-ctl
     newTag: dev
   - name: runinator-migration
     newTag: dev

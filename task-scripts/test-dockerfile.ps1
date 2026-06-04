@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('broker', 'waker', 'worker', 'importer', 'ws')]
+    [ValidateSet('broker', 'waker', 'worker', 'ctl', 'ws')]
     [string]$Service,
     [string]$Workspace = (Split-Path -Parent $PSScriptRoot),
     [string]$Tag = 'dev-selftest',
@@ -52,8 +52,10 @@ switch ($Service) {
             '--api-base-url', 'http://127.0.0.1:8080/'
         )
     }
-    'importer' {
-        $cmd = @('--gossip-targets', '', '--poll-interval-seconds', '1')
+    'ctl' {
+        # runinatorctl is a one-shot; the default entrypoint applies the bundled pack and exits.
+        # without a reachable web service it logs a connection error, which is enough of a smoke test.
+        $cmd = @()
     }
     'ws' {
         $ports += '127.0.0.1::8080'

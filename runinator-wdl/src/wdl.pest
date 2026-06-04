@@ -82,7 +82,10 @@ wait_amount = { duration | expr }
 wait_until  = { "until" ~ string }
 wait_initial = { "initial" ~ string }
 
-emit_stmt = { "emit" ~ string? ~ object? }
+// the leading string is the event type; the trailing expression is the payload. an object
+// payload keeps its brace form (`emit "x" { a: 1 }`); other payloads are any expression, and
+// the decompiler parenthesizes an event-less scalar so it is not mistaken for the event type.
+emit_stmt = { "emit" ~ string? ~ expr? }
 
 approval_stmt = { "approve" ~ expr ~ approval_type? ~ object? }
 approval_type = { "type" ~ string }

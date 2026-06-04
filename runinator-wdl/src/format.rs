@@ -260,7 +260,14 @@ impl Formatter {
             text.push_str(&format!(" {}", quote(event_type)));
         }
         if let Some(data) = &emit.data {
-            text.push_str(&format!(" {}", format_expr_multiline(data, self.indent)));
+            let rendered = format_expr_multiline(data, self.indent);
+            // object payloads keep their brace form; an event-less scalar is parenthesized so it
+            // is not re-parsed as the event type. mirrors the decompiler.
+            if emit.event_type.is_some() || matches!(data.kind, ExprKind::Object(_)) {
+                text.push_str(&format!(" {rendered}"));
+            } else {
+                text.push_str(&format!(" ({rendered})"));
+            }
         }
         text
     }

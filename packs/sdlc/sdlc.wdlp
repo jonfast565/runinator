@@ -1,7 +1,7 @@
 {
   "item_type": "wdl_pack",
   "name": "SDLC Automation Pack",
-  "version": 4,
+  "version": 5,
   "workflows": [
     "wdl/core-team-sdlc-pipeline.wdl",
     "wdl/ticket-work.wdl"

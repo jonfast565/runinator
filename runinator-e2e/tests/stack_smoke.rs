@@ -234,43 +234,42 @@ impl StackHarness {
         };
         harness.supervisor("start")?;
         harness.wait_for_web().await?;
-        // the real stack registers provider/action metadata through the importer; without it,
-        // workflow validation rejects every action node (e.g. unknown provider action 'Console.run').
-        harness.register_providers()?;
+        // the worker self-publishes the built-in provider bundle on startup; without it, workflow
+        // validation rejects every action node (e.g. unknown provider action 'Console.run'). wait
+        // for that registration to land before importing workflows.
+        harness.wait_for_providers().await?;
         Ok(harness)
     }
 
-    /// run the importer once to register the built-in provider bundle with the web service. mirrors
-    /// the importer process in the supervisor stack so action nodes pass workflow validation.
-    fn register_providers(&self) -> E2eResult<()> {
-        // provider registration is independent of the workflows file, but the importer's --once mode
-        // requires one to exist. import an empty bundle so we register providers without seeding.
-        let seed = self
-            .config_path
-            .parent()
-            .ok_or("supervisor config has no parent directory")?
-            .join("provider-seed.json");
-        fs::write(&seed, br#"{"workflows":[],"triggers":[]}"#)?;
-        self.import_workflows(&seed)
+    /// poll the web service until the worker has registered at least one provider, mirroring how the
+    /// supervisor stack relies on the worker's startup self-publish for action validation.
+    async fn wait_for_providers(&self) -> E2eResult<()> {
+        let client = self.api_client()?;
+        for _ in 0..60 {
+            match client.fetch_providers().await {
+                Ok(providers) if !providers.is_empty() => return Ok(()),
+                _ => sleep(Duration::from_secs(1)).await,
+            }
+        }
+        Err("worker did not register providers in time".into())
     }
 
-    /// run the importer once against the given workflows file (a .json bundle, .wdl file, or .wdlp
-    /// pack). registers the built-in provider bundle and imports the workflows it resolves.
+    /// run `runinatorctl workflows apply` once against the given workflows file (a .json bundle,
+    /// .wdl file, .wdlp pack, or directory of .wdl files).
     fn import_workflows(&self, workflows_file: &Path) -> E2eResult<()> {
         let status = Command::new(
             self.workspace
                 .join("target/debug")
-                .join(bin_name("runinator-importer")),
+                .join(bin_name("runinatorctl")),
         )
-        .args(["--once", "--api-base-url", &self.api_url])
-        .arg("--workflows-file")
+        .args(["--api-base-url", &self.api_url, "workflows", "apply"])
         .arg(workflows_file)
         .current_dir(&self.workspace)
         .status()?;
         if status.success() {
             Ok(())
         } else {
-            Err(format!("runinator-importer failed with {status}").into())
+            Err(format!("runinatorctl workflows apply failed with {status}").into())
         }
     }
 
@@ -359,7 +358,7 @@ fn build_service_binaries(workspace: &Path) -> E2eResult<()> {
             "-p",
             "runinator-worker",
             "-p",
-            "runinator-importer",
+            "runinator-ctl",
         ])
         .current_dir(workspace)
         .status()?;

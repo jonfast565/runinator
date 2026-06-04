@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use runinator_models::{
+    bundles::ProviderBundle,
     errors::{RuntimeError, SendableError},
     workflows::WorkflowAction,
 };
@@ -31,6 +32,13 @@ fn get_providers() -> Vec<StaticProvider> {
         Box::new(ApprovalProvider {}) as StaticProvider,
         Box::new(EmailProvider {}) as StaticProvider,
     ]
+}
+
+/// build the metadata bundle for the built-in providers so the worker can register them.
+pub fn metadata_bundle() -> ProviderBundle {
+    ProviderBundle {
+        providers: get_providers().iter().map(|p| p.metadata()).collect(),
+    }
 }
 
 pub fn resolve_provider(

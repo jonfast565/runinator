@@ -2,7 +2,7 @@
 # Deploy the runinator stack to a Kubernetes cluster using kustomize.
 #
 # Usage:
-#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--importer-timeout 600s] [--recreate-infra] [--delete]
+#   scripts/deploy-k8s.sh [--overlay local|prod] [--context <kubectl-ctx>] [--pack-import-timeout 600s] [--recreate-infra] [--delete]
 #
 # By default the postgres and rabbitmq StatefulSets are only applied when they
 # do not already exist in the target namespace. Pass --recreate-infra to apply
@@ -16,7 +16,7 @@
 #   docker build -t runinator-ws:dev       -f runinator-ws/Dockerfile       .
 #   docker build -t runinator-waker:dev     -f runinator-waker/Dockerfile     .
 #   docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
-#   docker build -t runinator-importer:dev  -f runinator-importer/Dockerfile  .
+#   docker build -t runinator-ctl:dev       -f runinator-ctl/Dockerfile       .
 #   docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
 
 set -euo pipefail
@@ -25,7 +25,7 @@ overlay="local"
 context=""
 delete=0
 recreate_infra=0
-importer_timeout="600s"
+pack_import_timeout="600s"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,8 +37,8 @@ while [[ $# -gt 0 ]]; do
             context="$2"
             shift 2
             ;;
-        --importer-timeout)
-            importer_timeout="$2"
+        --pack-import-timeout)
+            pack_import_timeout="$2"
             shift 2
             ;;
         --recreate-infra)
@@ -81,7 +81,7 @@ if [[ -n "$context" ]]; then
 fi
 
 echo "==> kubectl ${kubectl_ctx_args[*]:-} $verb -k $overlay_dir"
-for stale_resource in deployment/runinator-importer job/runinator-importer service/runinator-gossip; do
+for stale_resource in deployment/runinator-importer job/runinator-importer job/runinator-pack-import service/runinator-gossip; do
     kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} delete "$stale_resource" --namespace runinator --ignore-not-found=true >/dev/null 2>&1 || true
 done
 
@@ -138,7 +138,7 @@ if [[ "$verb" == "apply" ]]; then
         fi
     done
 
-    if ! kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} wait --for=condition=complete job/runinator-importer --namespace runinator --timeout "$importer_timeout"; then
-        echo "warn: importer job did not complete within timeout" >&2
+    if ! kubectl ${kubectl_ctx_args[@]+"${kubectl_ctx_args[@]}"} wait --for=condition=complete job/runinator-pack-import --namespace runinator --timeout "$pack_import_timeout"; then
+        echo "warn: pack-import job did not complete within timeout" >&2
     fi
 fi

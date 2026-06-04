@@ -102,7 +102,7 @@ if [[ "$skip_build" -eq 0 ]]; then
     -p runinator-ws \
     -p runinator-waker \
     -p runinator-worker \
-    -p runinator-importer \
+    -p runinator-ctl \
     -p runinator-supervisor
 fi
 
@@ -115,7 +115,7 @@ apps=(
   "runinator-ws|Runinator Web Service|dev.runinator.web-service|Runinator HTTP API service."
   "runinator-waker|Runinator Waker|dev.runinator.waker|Runinator waker service."
   "runinator-worker|Runinator Worker|dev.runinator.worker|Runinator worker service."
-  "runinator-importer|Runinator Importer|dev.runinator.importer|Runinator task and workflow importer."
+  "runinatorctl|Runinator Control|dev.runinator.ctl|Runinator control and pack-import CLI."
   "runinator-supervisor|Runinator Supervisor|dev.runinator.supervisor|Runinator local stack supervisor."
 )
 

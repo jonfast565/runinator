@@ -1,33 +1,33 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: runinator-importer
+  name: runinator-pack-import
   namespace: runinator
 spec:
-  # the importer is a one-shot that fails hard if runinator-ws is not yet
-  # serving. ws waits on its own db-migrate init container and postgres, so it
-  # can take ~30s+ to come up. a higher backoffLimit lets the OnFailure restart
-  # loop absorb that startup race; activeDeadlineSeconds bounds total runtime.
+  # runinatorctl runs a one-shot pack import that fails hard if runinator-ws is
+  # not yet serving. ws waits on its own db-migrate init container and postgres,
+  # so it can take ~30s+ to come up. a higher backoffLimit lets the OnFailure
+  # restart loop absorb that startup race; activeDeadlineSeconds bounds total runtime.
   backoffLimit: 12
   activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
-        app: runinator-importer
+        app: runinator-pack-import
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: importer
-          image: runinator-importer:dev
+        - name: pack-import
+          image: runinator-ctl:dev
           imagePullPolicy: IfNotPresent
-          command: ["runinator-importer"]
+          command: ["runinatorctl"]
           args:
-            - "--once"
-            - "--workflows-file"
-            - "/home/runinator/.runinator/workflows/sdlc.wdlp"
             - "--api-base-url"
             - "$(WS_API_BASE_URL)"
+            - "workflows"
+            - "apply"
+            - "/home/runinator/.runinator/workflows/sdlc.wdlp"
           envFrom:
             - configMapRef:
                 name: runinator-common

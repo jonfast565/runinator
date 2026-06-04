@@ -1,6 +1,6 @@
 # runinator
 
-Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, waker, worker, and importer together.
+Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, waker, and worker, plus a one-shot `runinatorctl` pack import.
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor starts the importer in one-shot mode, so the workflow file configured in `runinator-supervisor.json` is pushed into the API once after the web service is discovered. The checked-in local config imports the WDL pack manifest at `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files before sending the bundle to the API. If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once, so the workflow pack configured in `runinator-supervisor.json` is pushed into the API after the web service starts. The checked-in local config imports the WDL pack manifest at `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files before sending the bundle to the API. (Built-in provider metadata is registered separately: the worker self-publishes it to the web service on startup.) If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -59,7 +59,7 @@ This uses `runinator-supervisor.json` to start:
 - `runinator-ws`
 - `runinator-waker`
 - `runinator-worker`
-- `runinator-importer`
+- `runinatorctl workflows apply` (one-shot pack import)
 
 The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
@@ -98,8 +98,8 @@ Local runtime files are written under `~/.runinator/` by default. This includes
 the SQLite database at `~/.runinator/runinator.db`, credentials at
 `~/.runinator/credentials.enc.json`, application logs under
 `~/.runinator/logs/`, and supervisor state under `~/.runinator/supervisor/`.
-When the importer is started without `--workflows-file`, it reads
-`~/.runinator/workflows/sdlc.wdlp`.
+The local supervisor runs `runinatorctl workflows apply` against the pack at
+`packs/sdlc/sdlc.wdlp`.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
@@ -131,13 +131,13 @@ This publishes binaries under `target/artifacts/`, writes `target/artifacts/runi
 
 ## Workflow Import
 
-The importer binary reads `~/.runinator/workflows/sdlc.wdlp` by default when
-`--workflows-file` is not set. A `.wdlp` manifest lists the `.wdl` files that
-make up the pack, and those paths are resolved relative to the manifest. The
-local supervisor config passes `--once` and `--workflows-file
-./packs/sdlc/sdlc.wdlp`. Put a settings bundle at `~/.runinator/secrets.json` to
-load local credentials and config during importer startup. Each entry carries a
-`kind` (`secret` — the default — or `config`) and a `value`; secret values stay
+`runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
+path can be a `.wdl` file, a `.wdlp` manifest (which lists the `.wdl` files that
+make up the pack, resolved relative to the manifest), a directory of `.wdl`
+files, or a workflow/bundle JSON file. The local supervisor config applies
+`./packs/sdlc/sdlc.wdlp`. To load local credentials and config, import a settings
+bundle with `runinatorctl settings import <file>`. Each entry carries a `kind`
+(`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
 read by the web service. You can seed the app-data
 workflow manifest from the repository sample pack if needed:
@@ -240,11 +240,11 @@ Kubernetes Job pod templates are immutable across image tag changes.
 pwsh ./build.ps1 -DeployKube
 ```
 
-The deploy waits up to 10 minutes for the importer Job to complete. Override
+The deploy waits up to 10 minutes for the pack-import Job to complete. Override
 that when importing larger workflow packs:
 
 ```bash
-pwsh ./build.ps1 -DeployKube -KubeImporterTimeoutSeconds 900
+pwsh ./build.ps1 -DeployKube -KubePackImportTimeoutSeconds 900
 ```
 
 The local overlay includes development-only Postgres, RabbitMQ, and app
@@ -316,15 +316,15 @@ scripts/package-macos-backend-apps.sh --release
 ```
 
 The script creates `.app` bundles for broker, web service, waker, worker,
-importer, and supervisor under `target/macos-apps`.
+the control CLI (`runinatorctl`), and supervisor under `target/macos-apps`.
 
 ## Verification
 
-For importer workflow import changes, run:
+For workflow pack import changes, run:
 
 ```bash
 jq empty packs/sdlc/sdlc.wdlp
-cargo test -p runinator-importer
+cargo test -p runinator-ctl
 ```
 
 To sync the seed file manually against a running local API:

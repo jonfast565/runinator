@@ -64,7 +64,7 @@ deploy()
 | `provider.fn(args).mods` | action |
 | `spawn`/`call "WF" reuse as ... with { }` | subflow (fire_and_forget / wait) |
 | `wait 30s until "ready"` | wait |
-| `emit "type" { data }` | emit |
+| `emit "type" { data }` (payload is any expression; parenthesize an event-less scalar: `emit (42)`) | emit |
 | `approve "..." type "..." { meta }` | approval |
 | `set name = ...` / `set meta { }` | config |
 | `fail "msg"` | fail |
@@ -183,7 +183,8 @@ runinatorctl wdl format   workflow.wdl [-o out.wdl] [--check]
 runinatorctl wdl check    workflow.wdl
 ```
 
-The importer also accepts `.wdl` files directly alongside JSON packs.
+`runinatorctl workflows apply` also accepts `.wdl` files, `.wdlp` manifests, and
+directories of `.wdl` files directly alongside JSON packs.
 
 ## Decompiler scope
 

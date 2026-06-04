@@ -11,7 +11,6 @@ members = [
     "runinator-worker",
     "runinator-ctl",
     "runinator-comm",
-    "runinator-importer",
     "runinator-api",
     "runinator-plugin",
     "runinator-provider-ai",

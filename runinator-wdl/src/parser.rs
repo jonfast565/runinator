@@ -403,7 +403,7 @@ fn parse_emit(pair: Pair<Rule>) -> Result<EmitStmt, WdlError> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::string => event_type = Some(plain_string(inner)?),
-            Rule::object => data = Some(parse_object(inner)?),
+            Rule::expr => data = Some(parse_expr(inner)?),
             _ => {}
         }
     }

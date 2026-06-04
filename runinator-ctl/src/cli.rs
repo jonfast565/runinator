@@ -164,7 +164,8 @@ pub enum WorkflowCommands {
     Show { workflow: String },
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
-    /// Save a workflow definition or import a workflow bundle JSON file.
+    /// Import a workflow pack (.wdl, .wdlp, or a directory of .wdl files), or save a workflow
+    /// definition / import a workflow bundle from a JSON file.
     Apply { file: PathBuf },
     /// Export one workflow or the full workflow bundle.
     Export {
