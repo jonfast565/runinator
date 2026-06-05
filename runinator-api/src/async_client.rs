@@ -204,10 +204,14 @@ where
         &self,
         workflows: &WorkflowBundle,
         secrets: Option<&SecretBundle>,
+        overwrite: bool,
     ) -> Result<PackImportResult> {
         let body = runinator_utilities::pack::build_pack_zip(workflows, secrets)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
-        let url = self.build_url(API_PACKS_IMPORT).await?;
+        let mut url = self.build_url(API_PACKS_IMPORT).await?;
+        if overwrite {
+            url.set_query(Some("overwrite=true"));
+        }
         let response = self
             .client
             .post(url.clone())

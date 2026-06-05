@@ -204,15 +204,25 @@ impl SecretImportError {
 pub(crate) fn import_secret_entries(
     bundle: &SecretBundle,
 ) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
+    import_secret_entries_with(bundle, false)
+}
+
+// `overwrite` makes an explicit re-apply authoritative: an existing setting is replaced even when
+// the incoming entry is not strictly newer, bypassing the reconciliation timestamp gate.
+pub(crate) fn import_secret_entries_with(
+    bundle: &SecretBundle,
+    overwrite: bool,
+) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
     let store = credential_store();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for secret in &bundle.secrets {
         let incoming_ts = secret.updated_at.map(|updated_at| updated_at.timestamp());
-        // overwrite an existing entry only when the incoming entry is strictly newer.
+        // overwrite an existing entry only on an explicit overwrite or when the incoming entry is
+        // strictly newer.
         match store.entry_updated_at(secret.kind, &secret.scope, &secret.name) {
             Ok(Some(stored_ts)) => {
                 let is_newer = incoming_ts.map(|ts| ts > stored_ts).unwrap_or(false);
-                if !is_newer {
+                if !overwrite && !is_newer {
                     log::info!(
                         "Skipping import of {} {}/{}: stored copy is up to date",
                         secret.kind.as_str(),

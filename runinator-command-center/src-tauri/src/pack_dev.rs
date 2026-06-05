@@ -127,7 +127,9 @@ pub async fn apply_dev_pack(
     };
     let body = runinator_utilities::pack::build_pack_zip(&bundle, settings.as_ref())
         .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-    let url = build_state_url(&state, API_PACKS_IMPORT).await?;
+    let mut url = build_state_url(&state, API_PACKS_IMPORT).await?;
+    // an explicit dev re-apply is authoritative: update existing items in place.
+    url.set_query(Some("overwrite=true"));
     let response = state
         .client
         .post(url.clone())

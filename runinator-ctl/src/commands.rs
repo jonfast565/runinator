@@ -253,7 +253,8 @@ async fn apply_workflow_source(
         } else {
             pack::load_pack_settings(file)?
         };
-        let result = client.import_pack(&bundle, settings.as_ref()).await?;
+        // `workflows apply` is an explicit re-apply: update existing items in place.
+        let result = client.import_pack(&bundle, settings.as_ref(), true).await?;
         let summary = WorkflowApplySummary {
             message: format!(
                 "imported {} workflows, {} triggers, and {} settings",

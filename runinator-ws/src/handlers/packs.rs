@@ -3,14 +3,16 @@ use std::sync::Arc;
 use axum::{
     Extension, Json,
     body::Bytes,
+    extract::Query,
     http::{HeaderMap, StatusCode, header},
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::bundles::{PackImportResult, SecretBundle};
 use runinator_models::workflows::WorkflowBundle;
+use serde::Deserialize;
 
 use crate::events::{AppEvent, EventSender, emit};
-use crate::handlers::credentials::import_secret_entries;
+use crate::handlers::credentials::import_secret_entries_with;
 use crate::handlers::workflows::{
     json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
 };
@@ -18,13 +20,24 @@ use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
+// query parameters for the pack import endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct PackImportParams {
+    // when true, an explicit re-apply updates existing items in place instead of skipping ones
+    // that are not strictly newer than the stored copy.
+    #[serde(default)]
+    overwrite: bool,
+}
+
 // import a compiled pack zip, or a raw workflow bundle json when risk is acknowledged.
 pub(crate) async fn import_pack<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Query(params): Query<PackImportParams>,
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
+    let overwrite = params.overwrite;
     if is_json_content_type(&headers) {
         if !json_workflow_import_risk_acknowledged(&headers) {
             return json_workflow_import_risk_required();
@@ -34,14 +47,15 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
             Err(err) => return bad_request(format!("invalid workflow bundle json: {err}")),
         };
         log::info!(
-            "Importing json workflow bundle through pack endpoint: {} workflows, {} triggers",
+            "Importing json workflow bundle through pack endpoint: {} workflows, {} triggers (overwrite={overwrite})",
             bundle.workflows.len(),
             bundle.triggers.len()
         );
-        let workflows = match repository::import_workflow_bundle(db.as_ref(), bundle).await {
-            Ok(bundle) => bundle,
-            Err(err) => return api_error(err.to_string()),
-        };
+        let workflows =
+            match repository::import_workflow_bundle_with(db.as_ref(), bundle, overwrite).await {
+                Ok(bundle) => bundle,
+                Err(err) => return api_error(err.to_string()),
+            };
         emit(&events, AppEvent::WorkflowsChanged);
         return (
             StatusCode::OK,
@@ -57,7 +71,7 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
     log::info!(
-        "Importing pack: {} workflows, {} triggers, {} secrets",
+        "Importing pack: {} workflows, {} triggers, {} secrets (overwrite={overwrite})",
         workflow_bundle.workflows.len(),
         workflow_bundle.triggers.len(),
         secret_bundle
@@ -65,12 +79,18 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
             .map(|bundle| bundle.secrets.len())
             .unwrap_or(0),
     );
-    let workflows = match repository::import_workflow_bundle(db.as_ref(), workflow_bundle).await {
+    let workflows = match repository::import_workflow_bundle_with(
+        db.as_ref(),
+        workflow_bundle,
+        overwrite,
+    )
+    .await
+    {
         Ok(bundle) => bundle,
         Err(err) => return api_error(err.to_string()),
     };
     let secrets = match &secret_bundle {
-        Some(bundle) => match import_secret_entries(bundle) {
+        Some(bundle) => match import_secret_entries_with(bundle, overwrite) {
             Ok(imported) => SecretBundle { secrets: imported },
             Err(error) => return error.into_response(),
         },

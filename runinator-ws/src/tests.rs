@@ -374,6 +374,48 @@ async fn import_skips_workflow_when_name_already_exists() {
 }
 
 #[tokio::test]
+async fn import_overwrite_updates_existing_workflow_in_place() {
+    let (db, path) = test_db().await;
+    let first = WorkflowBundle {
+        workflows: vec![workflow(None, "Core Team SDLC Pipeline")],
+        triggers: vec![],
+    };
+    let initial = crate::repository::import_workflow_bundle(&db, first)
+        .await
+        .unwrap();
+    let existing_id = initial.workflows[0].id;
+    assert_ne!(initial.workflows[0].version, 2);
+
+    // an explicit re-apply carries no id and no newer timestamp, but overwrite must still win.
+    let mut changed = workflow(None, "Core Team SDLC Pipeline");
+    changed.version = 2;
+    changed.definition = WorkflowGraph::from_value(json!({
+        "start": "done",
+        "nodes": [
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let second = WorkflowBundle {
+        workflows: vec![changed.clone()],
+        triggers: vec![],
+    };
+
+    let saved = crate::repository::import_workflow_bundle_with(&db, second, true)
+        .await
+        .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    // the existing row is updated in place: same id, bumped version, no duplicate row. the skip
+    // path would have left the stored version unchanged, so version == 2 proves the overwrite.
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(saved.workflows[0].id, existing_id);
+    assert_eq!(workflows[0].id, existing_id);
+    assert_eq!(workflows[0].version, 2);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn import_upserts_existing_workflow_when_id_is_present() {
     let (db, path) = test_db().await;
     let first = WorkflowBundle {

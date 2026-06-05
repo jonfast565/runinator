@@ -119,6 +119,17 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
     db: &T,
     bundle: WorkflowBundle,
 ) -> Result<WorkflowBundle, SendableError> {
+    import_workflow_bundle_with(db, bundle, false).await
+}
+
+// `overwrite` makes an explicit re-apply authoritative: existing items are updated in place even
+// when the incoming copy is not strictly newer, bypassing the reconciliation timestamp gate that
+// background sync relies on. callers that reconcile (gossip, plain imports) pass `false`.
+pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
+    db: &T,
+    bundle: WorkflowBundle,
+    overwrite: bool,
+) -> Result<WorkflowBundle, SendableError> {
     // reject the whole pack up front if any subflow targets a workflow that is neither in the pack
     // nor already stored, so a typo'd `spawn "Naem"` fails at apply time rather than at run time.
     validate_subflow_targets(db, &bundle).await?;
@@ -126,10 +137,11 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
         // an incoming id is an explicit save (e.g. the command center) and always wins.
-        // an id-less workflow is a pack import: overwrite an existing workflow only when
-        // the incoming copy carries a strictly newer updated_at, so we do not clobber a
-        // workflow the user has since modified.
-        if workflow.id.is_none()
+        // an id-less workflow is a pack import: unless this is an explicit overwrite, update an
+        // existing workflow only when the incoming copy carries a strictly newer updated_at, so a
+        // background reconcile does not clobber a workflow the user has since modified.
+        if !overwrite
+            && workflow.id.is_none()
             && let Some(existing) = db.fetch_workflow_by_name(workflow.name.clone()).await?
             && !incoming_is_newer(workflow.updated_at, existing.updated_at)
         {
