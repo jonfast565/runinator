@@ -10,10 +10,24 @@
       <div v-if="failure.message" class="rt-failure-msg">{{ failure.message }}</div>
     </div>
 
+    <!-- quick status filter for long runs (opt-in via the filterable prop). -->
+    <div v-if="filterable && detail && orderedNodes.length" class="rt-filters">
+      <button
+        v-for="option in filterOptions"
+        :key="option.id"
+        type="button"
+        class="rt-filter"
+        :class="{ active: filter === option.id }"
+        @click="filter = option.id"
+      >
+        {{ option.label }} <span class="rt-filter-count">{{ option.count }}</span>
+      </button>
+    </div>
+
     <div v-if="!detail" class="rt-empty">No run selected.</div>
-    <ol v-else-if="orderedNodes.length" class="rt-list">
+    <ol v-else-if="visibleNodes.length" class="rt-list">
       <li
-        v-for="node in orderedNodes"
+        v-for="node in visibleNodes"
         :key="node.id"
         :class="['rt-item', { selected: node.node_id === selectedNodeId, active: isActive(node) }]"
       >
@@ -50,7 +64,7 @@
         </div>
       </li>
     </ol>
-    <div v-else class="rt-empty">No steps recorded yet.</div>
+    <div v-else class="rt-empty">{{ orderedNodes.length ? "No steps match this filter." : "No steps recorded yet." }}</div>
   </div>
 </template>
 
@@ -67,7 +81,12 @@ const props = defineProps<{
   selectedNodeId?: string | null;
   // when true, the most recent failed node is expanded automatically.
   autoExpandFailed?: boolean;
+  // when true, show a status filter bar above the steps.
+  filterable?: boolean;
 }>();
+
+type TimelineFilter = "all" | "running" | "failed" | "succeeded";
+const filter = ref<TimelineFilter>("all");
 
 const emit = defineEmits<{
   select: [nodeId: string];
@@ -92,6 +111,25 @@ const runInFlight = computed(() => {
 const orderedNodes = computed(() => {
   const nodes = props.detail?.nodes ?? [];
   return [...nodes].sort((left, right) => left.id - right.id);
+});
+
+function matchesFilter(node: WorkflowNodeRun, active: TimelineFilter): boolean {
+  if (active === "all") return true;
+  if (active === "failed") return FAILED_STATUSES.has(node.status);
+  if (active === "succeeded") return node.status === "succeeded";
+  return RUNNING_STATUSES.has(node.status) || isActive(node);
+}
+
+const visibleNodes = computed(() => orderedNodes.value.filter((node) => matchesFilter(node, filter.value)));
+
+const filterOptions = computed(() => {
+  const count = (id: TimelineFilter) => orderedNodes.value.filter((node) => matchesFilter(node, id)).length;
+  return [
+    { id: "all" as const, label: "All", count: orderedNodes.value.length },
+    { id: "running" as const, label: "Active", count: count("running") },
+    { id: "failed" as const, label: "Failed", count: count("failed") },
+    { id: "succeeded" as const, label: "OK", count: count("succeeded") }
+  ];
 });
 
 const failure = computed(() => {
@@ -253,6 +291,34 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   color: #66717e;
   font-size: 13px;
   padding: 10px 0;
+}
+.rt-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rt-filter {
+  border: 1px solid #c8d1db;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #4b5663;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+}
+.rt-filter.active {
+  border-color: #2563eb;
+  background: #eef5ff;
+  color: #1d4ed8;
+}
+.rt-filter-count {
+  color: #97a1ad;
+  font-variant-numeric: tabular-nums;
+}
+.rt-filter.active .rt-filter-count {
+  color: #2563eb;
 }
 .rt-list {
   list-style: none;

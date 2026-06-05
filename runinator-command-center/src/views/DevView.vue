@@ -56,6 +56,10 @@
               <input v-model="autoApply" type="checkbox" />
               <span>Apply on change</span>
             </label>
+            <label class="check-row">
+              <input v-model="autoSave" type="checkbox" />
+              <span>Auto-save edits</span>
+            </label>
           </div>
         </div>
 
@@ -184,12 +188,21 @@
               <span>Active</span>
               <strong>{{ latestRunDetail.run.active_node_id ?? "-" }}</strong>
             </div>
+            <div>
+              <span>Steps</span>
+              <strong class="dev-run-counts">
+                <span class="ok">{{ runNodeCounts.ok }}✓</span>
+                <span v-if="runNodeCounts.failed" class="failed">{{ runNodeCounts.failed }}✕</span>
+                <span v-if="runNodeCounts.running" class="running">{{ runNodeCounts.running }}⟳</span>
+              </strong>
+            </div>
           </div>
           <RunTimeline
             class="dev-run-timeline"
             :detail="latestRunDetail"
             :selected-node-id="selectedRunNodeId"
             auto-expand-failed
+            filterable
             @select="selectRunNode"
           >
             <template #node-actions="{ node }">
@@ -248,13 +261,14 @@ const packPath = ref(window.localStorage.getItem("runinator.devPack.path") || DE
 const skipSettings = ref(Boolean(savedOptions.skipSettings));
 const autoInspect = ref(savedOptions.autoInspect ?? true);
 const autoApply = ref(Boolean(savedOptions.autoApply));
+const autoSave = ref(Boolean(savedOptions.autoSave));
 const debugRun = ref(Boolean(savedOptions.debugRun));
 const runWorkflowRef = ref(String(savedOptions.runWorkflowRef ?? ""));
 const recentRunIds = ref<number[]>([]);
 const runInputValue = ref<unknown>({});
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 const inspectResult = ref<DevPackInspectResult | null>(null);
-const selectedFilePath = ref("");
+const selectedFilePath = ref(window.localStorage.getItem("runinator.devPack.file") || "");
 const sourceText = ref("");
 const savedSourceText = ref("");
 const latestRunId = ref(0);
@@ -278,6 +292,15 @@ const canSaveSource = computed(() => selectedIsWdl.value && sourceText.value !==
 const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
 const statusBadge = computed(() => (errorText.value ? "failed" : busy.value || saving.value ? "running" : "succeeded"));
 const lastInspectText = computed(() => (lastInspectAt.value ? `Last inspect ${lastInspectAt.value.toLocaleTimeString()}` : "Not inspected"));
+const runNodeCounts = computed(() => {
+  const counts = { ok: 0, failed: 0, running: 0 };
+  for (const node of latestRunDetail.value?.nodes ?? []) {
+    if (node.status === "succeeded") counts.ok += 1;
+    else if (node.status === "failed" || node.status === "timed_out") counts.failed += 1;
+    else if (["running", "waiting", "queued", "retrying"].includes(node.status)) counts.running += 1;
+  }
+  return counts;
+});
 
 onMounted(async () => {
   await providers.fetchProviders().catch(() => {});
@@ -295,6 +318,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearInterval(inspectTimer);
   window.clearInterval(runTimer);
+  window.clearTimeout(autoSaveTimer);
   window.removeEventListener("keydown", onKeydown);
 });
 
@@ -303,17 +327,32 @@ watch(packPath, (value) => {
 });
 
 // remember the run loop's toggles and target across reloads.
-watch([skipSettings, autoInspect, autoApply, debugRun, runWorkflowRef], () => {
+watch([skipSettings, autoInspect, autoApply, autoSave, debugRun, runWorkflowRef], () => {
   window.localStorage.setItem(
     OPTIONS_STORAGE_KEY,
     JSON.stringify({
       skipSettings: skipSettings.value,
       autoInspect: autoInspect.value,
       autoApply: autoApply.value,
+      autoSave: autoSave.value,
       debugRun: debugRun.value,
       runWorkflowRef: runWorkflowRef.value
     })
   );
+});
+
+watch(selectedFilePath, (value) => {
+  window.localStorage.setItem("runinator.devPack.file", value);
+});
+
+// auto-save the edited wdl to disk (debounced) so the watch/apply loop sees in-app edits.
+let autoSaveTimer = 0;
+watch(sourceText, () => {
+  if (!autoSave.value) return;
+  window.clearTimeout(autoSaveTimer);
+  autoSaveTimer = window.setTimeout(() => {
+    if (autoSave.value && canSaveSource.value && !saving.value && !busy.value) void saveSelectedSource();
+  }, 800);
 });
 
 function loadDevOptions(): Record<string, any> {
@@ -756,8 +795,23 @@ function fileMeta(file: DevPackFile) {
 .dev-run-summary {
   display: grid;
   gap: 8px;
-  grid-template-columns: 120px 140px minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.2fr) minmax(0, 1fr);
   margin-bottom: 10px;
+}
+
+.dev-run-counts {
+  display: inline-flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.dev-run-counts .ok {
+  color: #166534;
+}
+.dev-run-counts .failed {
+  color: #b91c1c;
+}
+.dev-run-counts .running {
+  color: #1d4ed8;
 }
 
 .dev-run-timeline {

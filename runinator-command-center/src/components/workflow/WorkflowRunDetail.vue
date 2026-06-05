@@ -87,6 +87,7 @@
       :detail="workflows.workflowRunDetail"
       :selected-node-id="workflows.selectedWorkflowRunNodeId"
       auto-expand-failed
+      filterable
       @select="workflows.selectWorkflowRunNode"
     >
       <template #node-actions="{ node }">
