@@ -5,11 +5,11 @@
         <div class="panel-toolbar">
           <h2>Dev Pack</h2>
           <div class="actions">
-            <button class="btn" :disabled="busy || !packPath.trim()" @click="inspectPackNow">
+            <button class="btn" :disabled="busy || !packPath.trim()" :title="`Inspect (${modKeyLabel}I)`" @click="inspectPackNow">
               <Icon name="refresh" />
               <span>Inspect</span>
             </button>
-            <button class="btn btn-primary" :disabled="busy || !packPath.trim()" @click="applyPack">
+            <button class="btn btn-primary" :disabled="busy || !packPath.trim()" :title="`Apply (⇧${modKeyLabel}↵)`" @click="applyPack">
               <Icon name="upload" />
               <span>Apply</span>
             </button>
@@ -63,6 +63,7 @@
           <StatusBadge :status="statusBadge" />
           <span>{{ statusText }}</span>
         </div>
+        <div class="dev-shortcuts">{{ modKeyLabel }}S save · {{ modKeyLabel }}I inspect · {{ modKeyLabel }}↵ run · ⇧{{ modKeyLabel }}↵ apply</div>
         <div v-if="errorText" class="dev-error">{{ errorText }}</div>
 
         <div class="dev-metrics">
@@ -148,10 +149,26 @@
       <section class="panel dev-run-panel">
         <div class="panel-toolbar">
           <h2>Latest Run</h2>
-          <button class="btn" :disabled="!latestRunId || busy" @click="refreshLatestRun">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </button>
+          <div class="actions">
+            <button class="btn btn-primary" :disabled="!canRun" :title="`Run (${modKeyLabel}↵)`" @click="runSelectedWorkflow">
+              <Icon name="play" />
+              <span>{{ latestRunId ? "Re-run" : "Run" }}</span>
+            </button>
+            <button class="btn" :disabled="!latestRunId || busy" @click="refreshLatestRun">
+              <Icon name="refresh" />
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="recentRunIds.length > 1" class="dev-recent-runs">
+          <span class="dev-recent-label">Recent:</span>
+          <button
+            v-for="id in recentRunIds"
+            :key="id"
+            class="dev-run-pill"
+            :class="{ active: id === latestRunId }"
+            @click="viewRun(id)"
+          >#{{ id }}</button>
         </div>
         <template v-if="latestRunDetail">
           <div class="dev-run-summary">
@@ -223,12 +240,17 @@ const workflows = useWorkflowsStore();
 const providers = useProvidersStore();
 const secrets = useSecretsStore();
 
+const OPTIONS_STORAGE_KEY = "runinator.devPack.options";
+const savedOptions = loadDevOptions();
+const modKeyLabel = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
+
 const packPath = ref(window.localStorage.getItem("runinator.devPack.path") || DEFAULT_PACK_PATH);
-const skipSettings = ref(false);
-const autoInspect = ref(true);
-const autoApply = ref(false);
-const debugRun = ref(false);
-const runWorkflowRef = ref("");
+const skipSettings = ref(Boolean(savedOptions.skipSettings));
+const autoInspect = ref(savedOptions.autoInspect ?? true);
+const autoApply = ref(Boolean(savedOptions.autoApply));
+const debugRun = ref(Boolean(savedOptions.debugRun));
+const runWorkflowRef = ref(String(savedOptions.runWorkflowRef ?? ""));
+const recentRunIds = ref<number[]>([]);
 const runInputValue = ref<unknown>({});
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 const inspectResult = ref<DevPackInspectResult | null>(null);
@@ -253,6 +275,7 @@ const selectedIsWdl = computed(() => selectedFilePath.value.endsWith(".wdl"));
 const runWorkflowInputType = computed<RuninatorType>(() => resolveRunWorkflow()?.input_type ?? { type: "any" });
 const runWorkflowKey = computed(() => String(runWorkflowRef.value || "none"));
 const canSaveSource = computed(() => selectedIsWdl.value && sourceText.value !== savedSourceText.value);
+const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
 const statusBadge = computed(() => (errorText.value ? "failed" : busy.value || saving.value ? "running" : "succeeded"));
 const lastInspectText = computed(() => (lastInspectAt.value ? `Last inspect ${lastInspectAt.value.toLocaleTimeString()}` : "Not inspected"));
 
@@ -266,16 +289,71 @@ onMounted(async () => {
       void inspectPack({ quiet: true, applyOnChange: autoApply.value });
     }
   }, 1500);
+  window.addEventListener("keydown", onKeydown);
 });
 
 onBeforeUnmount(() => {
   window.clearInterval(inspectTimer);
   window.clearInterval(runTimer);
+  window.removeEventListener("keydown", onKeydown);
 });
 
 watch(packPath, (value) => {
   window.localStorage.setItem("runinator.devPack.path", value);
 });
+
+// remember the run loop's toggles and target across reloads.
+watch([skipSettings, autoInspect, autoApply, debugRun, runWorkflowRef], () => {
+  window.localStorage.setItem(
+    OPTIONS_STORAGE_KEY,
+    JSON.stringify({
+      skipSettings: skipSettings.value,
+      autoInspect: autoInspect.value,
+      autoApply: autoApply.value,
+      debugRun: debugRun.value,
+      runWorkflowRef: runWorkflowRef.value
+    })
+  );
+});
+
+function loadDevOptions(): Record<string, any> {
+  try {
+    return JSON.parse(window.localStorage.getItem(OPTIONS_STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+// edit-loop keyboard shortcuts: save, inspect, run, and apply.
+function onKeydown(event: KeyboardEvent) {
+  if (!event.metaKey && !event.ctrlKey) return;
+  const key = event.key.toLowerCase();
+  if (key === "s") {
+    event.preventDefault();
+    if (canSaveSource.value && !saving.value) void saveSelectedSource();
+  } else if (key === "i") {
+    event.preventDefault();
+    if (!busy.value && packPath.value.trim()) inspectPackNow();
+  } else if (key === "enter") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (!busy.value && packPath.value.trim()) void applyPack();
+    } else if (canRun.value) {
+      void runSelectedWorkflow();
+    }
+  }
+}
+
+function rememberRun(id: number) {
+  recentRunIds.value = [id, ...recentRunIds.value.filter((existing) => existing !== id)].slice(0, 8);
+}
+
+async function viewRun(id: number) {
+  if (id === latestRunId.value && latestRunDetail.value) return;
+  latestRunId.value = id;
+  await refreshLatestRun();
+  watchLatestRun();
+}
 
 async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean } = {}) {
   const path = packPath.value.trim();
@@ -355,6 +433,7 @@ async function runSelectedWorkflow() {
   const created = await createWorkflowRun(workflow.id, { debug: debugRun.value, parameters });
   runInputFormRef.value?.persistLast();
   latestRunId.value = created.id;
+  rememberRun(created.id);
   statusText.value = `Started workflow run #${created.id}.`;
   await refreshLatestRun();
   watchLatestRun();
@@ -389,6 +468,7 @@ async function onRunNodeAction(payload: { type: RunNodeActionType; node: Workflo
     const options = payload.type === "replay-from" ? { fromStepId: payload.node.node_id } : {};
     const created = await replayWorkflowRun(runId, options);
     latestRunId.value = created.id;
+    rememberRun(created.id);
     selectedRunNodeId.value = null;
     statusText.value = `Replayed run #${runId} as #${created.id}.`;
     await refreshLatestRun();
@@ -492,6 +572,43 @@ function fileMeta(file: DevPackFile) {
 
 .dev-pack-diff {
   margin: 4px 0 6px;
+}
+
+.dev-shortcuts {
+  margin-top: 6px;
+  color: #8a94a0;
+  font-size: 11px;
+}
+
+.dev-recent-runs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dev-recent-label {
+  color: #66717e;
+  font-size: 11px;
+}
+
+.dev-run-pill {
+  border: 1px solid #c8d1db;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #344255;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+}
+
+.dev-run-pill.active {
+  border-color: #2563eb;
+  background: #eef5ff;
+  color: #1d4ed8;
 }
 
 .dev-options {

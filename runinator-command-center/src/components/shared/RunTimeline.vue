@@ -27,7 +27,7 @@
             <span v-if="node.attempt > 1" class="rt-attempt" title="Attempts">↻ {{ node.attempt }}</span>
             <span v-if="isActive(node)" class="rt-active">active</span>
             <span class="rt-spacer"></span>
-            <span v-if="duration(node)" class="rt-duration">{{ duration(node) }}</span>
+            <span v-if="nodeTiming(node)" class="rt-duration" :class="{ live: isRunningNode(node) }">{{ nodeTiming(node) }}</span>
             <span class="rt-caret" :class="{ open: expandedId === node.id }">▸</span>
           </button>
           <div v-if="previewOf(node)" class="rt-preview">{{ previewOf(node) }}</div>
@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { fetchWorkflowNodeRunChunks } from "../../api/commandCenterApi";
@@ -79,6 +79,14 @@ const FAILED_STATUSES = new Set(["failed", "timed_out"]);
 const expandedId = ref<number | null>(null);
 const logCache = ref<Record<number, string>>({});
 const logLoading = ref<Set<number>>(new Set());
+// ticks once a second while the run is in flight so active-node elapsed times count up.
+const now = ref(Date.now());
+let clockTimer = 0;
+
+const runInFlight = computed(() => {
+  const status = props.detail?.run.status;
+  return Boolean(status) && !["succeeded", "failed", "canceled", "timed_out"].includes(status ?? "");
+});
 
 // steps in execution order; node-run id is monotonic so it doubles as a stable ordering.
 const orderedNodes = computed(() => {
@@ -125,18 +133,31 @@ function outputText(node: WorkflowNodeRun): string {
   return JSON.stringify(output, null, 2);
 }
 
-function duration(node: WorkflowNodeRun): string {
-  if (!node.started_at || !node.finished_at) return "";
-  const start = Date.parse(node.started_at);
-  const end = Date.parse(node.finished_at);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "";
-  const ms = Math.max(0, end - start);
+function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
   const minutes = Math.floor(seconds / 60);
   const remSec = Math.round(seconds % 60);
   return remSec === 0 ? `${minutes}m` : `${minutes}m ${remSec}s`;
+}
+
+// a node is counting up live when it has started, is still active, and has not finished.
+function isRunningNode(node: WorkflowNodeRun): boolean {
+  return Boolean(node.started_at) && !node.finished_at && isActive(node);
+}
+
+// finished nodes show their wall-clock duration; running nodes count up against the ticking clock.
+function nodeTiming(node: WorkflowNodeRun): string {
+  if (!node.started_at) return "";
+  const start = Date.parse(node.started_at);
+  if (!Number.isFinite(start)) return "";
+  if (node.finished_at) {
+    const end = Date.parse(node.finished_at);
+    return Number.isFinite(end) ? formatMs(Math.max(0, end - start)) : "";
+  }
+  if (isActive(node)) return formatMs(Math.max(0, now.value - start));
+  return "";
 }
 
 function logState(node: WorkflowNodeRun): string {
@@ -188,6 +209,15 @@ watch(
     expandedId.value = null;
   }
 );
+
+onMounted(() => {
+  clockTimer = window.setInterval(() => {
+    // only re-render while in flight; a terminal run keeps its frozen final durations.
+    if (runInFlight.value) now.value = Date.now();
+  }, 1000);
+});
+
+onBeforeUnmount(() => window.clearInterval(clockTimer));
 </script>
 
 <style scoped>
@@ -349,6 +379,10 @@ watch(
   color: #66717e;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+.rt-duration.live {
+  color: #1d4ed8;
+  font-weight: 600;
 }
 .rt-preview {
   margin: 2px 6px 0;
