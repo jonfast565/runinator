@@ -1,11 +1,11 @@
 <template>
   <div class="typed-value-editor">
     <div v-if="expressionsAllowed" class="value-mode-row">
-      <button type="button" :class="{ active: !shouldShowExpressionEditor(modelValue) }" @click="setExpressionMode(false)">Value</button>
-      <button type="button" :class="{ active: shouldShowExpressionEditor(modelValue) }" @click="setExpressionMode(true)">Expression</button>
+      <button type="button" :class="{ active: !showExpressionEditor }" @click="setExpressionMode(false)">Value</button>
+      <button type="button" :class="{ active: showExpressionEditor }" @click="setExpressionMode(true)">Expression</button>
     </div>
     <ExpressionJsonEditor
-      v-if="shouldShowExpressionEditor(modelValue)"
+      v-if="showExpressionEditor"
       :model-value="expressionTextFor(modelValue)"
       :context="expressionContext"
       title="Expression"
@@ -171,9 +171,16 @@ const unionValue = computed(() => matchesType(props.modelValue, selectedUnionVar
 const isStringArray = computed(() => props.ty.type === "array" && props.ty.items.type === "string");
 const stringArrayText = computed(() => arrayValue.value.join("\n"));
 const jsonText = computed(() => pretty(props.modelValue ?? defaultValueForType(props.ty)));
-const localExpressionMode = ref(Boolean(props.forceExpression) || isWorkflowExpressionValue(props.modelValue));
 const expressionsAllowed = computed(() => props.allowExpressions !== false);
+// the toggle is driven by an explicit local intent, seeded from the incoming
+// value, so the editor never swaps modes under the user while they type.
+const localExpressionMode = ref(Boolean(props.forceExpression) || isWorkflowExpressionValue(props.modelValue));
+const showExpressionEditor = computed(() => expressionsAllowed.value && localExpressionMode.value);
 
+// an incoming expression value (or a forced expression) latches expression mode on.
+watch(() => props.forceExpression, (forced) => {
+  if (forced) localExpressionMode.value = true;
+});
 watch(() => props.modelValue, (value) => {
   if (isWorkflowExpressionValue(value)) localExpressionMode.value = true;
 });
@@ -182,22 +189,25 @@ function emitValue(value: unknown) {
   emit("update:modelValue", value);
 }
 
-function shouldShowExpressionEditor(value: unknown): boolean {
-  return expressionsAllowed.value && (Boolean(props.forceExpression) || localExpressionMode.value || isWorkflowExpressionValue(value));
-}
-
+// render the current value as wdl, including plain literals, so editing in
+// expression mode never clobbers the value back to the default expression.
 function expressionTextFor(value: unknown): string {
-  return pretty(isWorkflowExpressionValue(value) ? value : defaultExpressionForType(props.ty));
+  return pretty(value === undefined ? defaultExpressionForType(props.ty) : value);
 }
 
 function setExpressionMode(enabled: boolean) {
   localExpressionMode.value = enabled;
-  if (enabled && !isWorkflowExpressionValue(props.modelValue)) {
+  if (enabled && isEmptyValue(props.modelValue)) {
     emitValue(defaultExpressionForType(props.ty));
+    return;
   }
   if (!enabled && isWorkflowExpressionValue(props.modelValue)) {
     emitValue(defaultValueForType(props.ty));
   }
+}
+
+function isEmptyValue(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
 }
 
 function setExpressionJsonValue(raw: string) {

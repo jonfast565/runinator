@@ -931,6 +931,24 @@ fn typed_validation_rejects_provider_default_value_mismatch() {
 }
 
 #[test]
+fn typed_validation_rejects_whitespace_only_required_parameter() {
+    let wf = action_workflow(runinator_models::json!({ "config": "   " }));
+    let err = validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::String)])
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("missing required action parameter 'config'")
+    );
+}
+
+#[test]
+fn typed_validation_accepts_non_blank_required_parameter() {
+    let wf = action_workflow(runinator_models::json!({ "config": "value" }));
+    validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::String)])
+        .expect("non-blank required parameter is accepted");
+}
+
+#[test]
 fn typed_validation_reports_missing_required_nested_literal_field() {
     let provider = check_provider(RuninatorType::typed_structure([(
         "env",

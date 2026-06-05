@@ -24,6 +24,7 @@ import type {
   ActionResultMetadata
 } from "../../types/models";
 import { statusClassForNode } from "../status";
+import { isBlankValue } from "../values";
 
 export const workflowNodeKinds: WorkflowNodeKind[] = [
   "action",
@@ -1535,7 +1536,7 @@ function isExpressionValue(value: unknown): boolean {
 
 function isEmptyInputValue(value: unknown): boolean {
   if (isExpressionValue(value)) return false;
-  return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+  return isBlankValue(value);
 }
 
 export function workflowNodeResultMetadata(node: JsonRecord, providers: ProviderMetadata[]): ActionResultMetadata[] {

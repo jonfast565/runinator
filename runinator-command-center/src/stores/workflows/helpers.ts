@@ -1,5 +1,6 @@
 import type { JsonRecord, RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowTrigger, WorkflowTriggerKind } from "../../types/models";
 import { pretty } from "../../utils/format";
+import { isBlankValue } from "../../utils/values";
 import { nodeRef, nodeRefId, valueRef } from "../../utils/workflows";
 
 export type BranchPolicyName = "all" | "any" | "first_success";
@@ -188,7 +189,7 @@ export function validateJsonValueType(value: unknown, ty: RuninatorType | undefi
     if (!isJsonRecord(value)) return `${label} must be an object`;
     for (const [key, field] of Object.entries(ty.fields)) {
       const nested = value[key];
-      if (nested === undefined || nested === null || nested === "") {
+      if (isBlankValue(nested)) {
         if (field.required) return `${label}.${key} is required`;
         continue;
       }

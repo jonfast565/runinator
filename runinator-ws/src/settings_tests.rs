@@ -37,6 +37,18 @@ fn secret_must_be_a_non_empty_string() {
         )
         .is_err()
     );
+    // a whitespace-only value does not satisfy a required secret.
+    assert!(
+        validate_and_encode(
+            &store,
+            SettingKind::Secret,
+            "s",
+            "n",
+            &Value::String("   ".into()),
+            None
+        )
+        .is_err()
+    );
     let bytes = validate_and_encode(
         &store,
         SettingKind::Secret,

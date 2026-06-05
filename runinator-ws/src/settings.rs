@@ -71,7 +71,7 @@ pub(crate) fn validate_and_encode(
                     value_type(value)
                 ));
             };
-            if text.is_empty() {
+            if text.trim().is_empty() {
                 return Err(format!("secret '{scope}/{name}' value must not be empty"));
             }
             Ok(text.clone().into_bytes())

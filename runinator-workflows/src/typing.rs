@@ -310,7 +310,11 @@ fn validate_action_configuration(
         .collect::<HashMap<_, _>>();
 
     for param in &metadata.parameters {
-        if param.required && !configuration.contains_key(&param.name) {
+        if param.required
+            && configuration
+                .get(&param.name)
+                .is_none_or(is_blank_parameter_value)
+        {
             return Err(WorkflowValidationError::TypeError(format!(
                 "node '{}' is missing required action parameter '{}'",
                 node.id, param.name
@@ -663,6 +667,12 @@ fn expect_mixed_value_type(
                     }
                     continue;
                 };
+                if field.required && is_blank_parameter_value(nested) {
+                    return Err(type_error(
+                        &child_label,
+                        &TypeViolation::at(&[], field.ty.describe(), "missing"),
+                    ));
+                }
                 expect_mixed_value_type(nested, context, &field.ty, &child_label)?;
             }
             for (key, nested) in object {
@@ -683,6 +693,18 @@ fn expect_mixed_value_type(
         _ => expected
             .validate_value(value)
             .map_err(|violation| type_error(label, &violation)),
+    }
+}
+
+// a required parameter must carry a concrete value. null, empty or
+// whitespace-only strings, and empty arrays do not satisfy it. expression
+// objects always count as provided since they resolve at runtime.
+fn is_blank_parameter_value(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
     }
 }
 

@@ -46,7 +46,7 @@ export const useSecretsStore = defineStore("secrets", () => {
     const name = draft.name.trim();
     const kind = draft.kind;
     const label = kind === "config" ? "Config" : "Secret";
-    if (!scope || !name || !draft.secret) return app.setError(`${label} scope, name, and value are required`);
+    if (!scope || !name || !draft.secret.trim()) return app.setError(`${label} scope, name, and value are required`);
 
     // config values are json; secrets are sent as a plain string. the web service infers a
     // config slot's schema from its first value, so the client never sends one.

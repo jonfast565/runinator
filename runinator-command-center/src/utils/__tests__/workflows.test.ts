@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkflowDefinition } from "../../types/models";
+import type { ProviderMetadata, WorkflowDefinition } from "../../types/models";
 import {
   addDirectTransition,
   applyWorkflowInlineNodeEdit,
@@ -569,6 +569,31 @@ describe("workflow graph utils", () => {
         expect.objectContaining({ nodeId: "task", message: "task references unknown provider Unknown" })
       ])
     );
+  });
+
+  it("treats whitespace-only required action inputs as missing", () => {
+    const providers: ProviderMetadata[] = [
+      {
+        name: "Console",
+        actions: [
+          { function_name: "run", parameters: [{ name: "command", required: true, secret: false, ty: { type: "string" } }], results: [] }
+        ],
+        metadata: { credential_scopes: [], contract: null }
+      }
+    ];
+    const blank: any = {
+      start: "task",
+      nodes: [{ id: "task", kind: "action", action: { provider: "Console", function: "run", configuration: {} }, parameters: { command: "   " } }]
+    };
+    expect(validateWorkflowIssues(blank, providers)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ nodeId: "task", message: "task: command is required" })])
+    );
+
+    const provided: any = {
+      start: "task",
+      nodes: [{ id: "task", kind: "action", action: { provider: "Console", function: "run", configuration: {} }, parameters: { command: "echo hi" } }]
+    };
+    expect(validateWorkflowIssues(provided, providers).some((issue) => issue.message.includes("command is required"))).toBe(false);
   });
 
   it("applies inline node edits while preserving layout and references", () => {

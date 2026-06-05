@@ -56,6 +56,7 @@ import type { ActionParameterMetadata, CredentialSummary, JsonRecord, RuninatorT
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
 import { isWorkflowExpressionValue } from "../../utils/workflow-expression-completion";
 import { parseSecretRef, secretRef, secretRefLabel } from "../../utils/secrets";
+import { isBlankValue } from "../../utils/values";
 import { useSecretsStore } from "../../stores/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
 
@@ -85,7 +86,7 @@ const errors = computed(() => {
       result[parameter.name] = "Required";
       continue;
     }
-    if (value === undefined || value === null || value === "") continue;
+    if (isEmpty(value)) continue;
     const typeError = validateValueType(value, parameter.ty, parameter.label || parameter.name);
     if (typeError) result[parameter.name] = typeError;
   }
@@ -144,7 +145,7 @@ function placeholder(parameter: ActionParameterMetadata): string {
 }
 
 function isEmpty(value: unknown): boolean {
-  return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+  return isBlankValue(value);
 }
 
 function describeType(ty: RuninatorType | undefined, depth = 0): string {

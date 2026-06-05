@@ -34,6 +34,7 @@ import type { Edge } from "@vue-flow/core";
 import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
 import { pretty } from "../../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
+import { isBlankValue } from "../../utils/values";
 import { createZip, type ZipEntry } from "../../utils/zip";
 import {
   applyWorkflowEdgeEditorDraft,
@@ -1808,7 +1809,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     for (const parameter of action.parameters ?? []) {
       if (!parameter.required) continue;
       const value = parameters[parameter.name];
-      if (value === undefined || value === null || value === "") {
+      if (isBlankValue(value)) {
         return `${parameter.label || parameter.name} is required`;
       }
       const typeError = validateJsonValueType(value, parameter.ty, parameter.label || parameter.name);
