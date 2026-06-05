@@ -36,18 +36,28 @@
         <WorkflowEdge v-bind="edgeProps" />
       </template>
     </VueFlow>
-    <div v-if="workflows.workflowEditorMode === 'graph' && nodeIssueGroups.length" class="workflow-issues-panel">
+    <div v-if="workflows.workflowEditorMode === 'graph'" class="workflow-issues-panel">
       <header class="workflow-issues-header">
-        {{ issueCount }} configuration {{ issueCount === 1 ? "issue" : "issues" }} to fix
+        <span>Diagnostics</span>
+        <span :class="['workflow-issues-summary', issueSummaryClass]">{{ issueSummary }}</span>
       </header>
-      <ul class="workflow-issues-list">
-        <li v-for="group in nodeIssueGroups" :key="group.nodeId" :class="['workflow-issue-item', `severity-${group.severity}`]">
-          <button type="button" class="workflow-issue-node" @click="focusIssueNode(group.nodeId)">{{ group.title }}</button>
-          <ul class="workflow-issue-messages">
-            <li v-for="(issue, index) in group.issues" :key="index" :class="`severity-${issue.severity}`">{{ issue.message }}</li>
-          </ul>
-        </li>
-      </ul>
+      <table v-if="issueRows.length" class="workflow-issues-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>What</th>
+            <th>Node</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, index) in issueRows" :key="index" :class="row.severity" @click="focusIssueNode(row.nodeId)">
+            <td><span :class="['workflow-issue-severity', row.severity]">{{ row.severity }}</span></td>
+            <td>{{ row.message }}</td>
+            <td class="workflow-issue-node-cell">{{ row.title }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="workflow-issues-empty">No graph diagnostics.</div>
     </div>
     <div v-if="showCommandBar" class="workflow-command-bar">
       <template v-if="workflows.selectedGraphEdge">
@@ -171,7 +181,7 @@
 <script setup lang="ts">
 import { watch, nextTick, ref, computed, provide } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
-import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
+import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
 import { useSecretsStore } from "../../stores/secrets";
@@ -226,27 +236,37 @@ const selectedEdgeCanMoveDown = computed(() => Boolean(selectedEdgeDraft.value?.
 const showCommandBar = computed(() => Boolean(workflows.selectedGraphEdge || workflows.selectedNode));
 
 // group validation issues by node so misconfigured nodes can be listed under the graph.
-const nodeIssueGroups = computed(() => {
+// flatten validation issues into table rows, errors first, mirroring the wdl editor diagnostics.
+const issueRows = computed(() => {
   const titles = new Map(workflows.graphNodes.map((node: any) => [node.id, String(node.data?.title ?? node.id)]));
-  const groups = new Map<string, { nodeId: string; title: string; issues: WorkflowValidationIssue[]; severity: WorkflowValidationSeverity }>();
-  for (const issue of workflows.graphValidationIssues) {
-    const existing = groups.get(issue.nodeId);
-    if (existing) {
-      existing.issues.push(issue);
-      if (issue.severity === "error") existing.severity = "error";
-      continue;
-    }
-    groups.set(issue.nodeId, {
+  return [...workflows.graphValidationIssues]
+    .map((issue) => ({
+      severity: issue.severity,
+      message: issue.message,
       nodeId: issue.nodeId,
-      title: titles.get(issue.nodeId) ?? issue.nodeId,
-      issues: [issue],
-      severity: issue.severity
-    });
-  }
-  // surface errors before warnings.
-  return [...groups.values()].sort((a, b) => Number(b.severity === "error") - Number(a.severity === "error"));
+      title: titles.get(issue.nodeId) ?? issue.nodeId
+    }))
+    .sort((left, right) => Number(right.severity === "error") - Number(left.severity === "error"));
 });
-const issueCount = computed(() => workflows.graphValidationIssues.length);
+
+const issueCounts = computed(() => {
+  const errors = workflows.graphValidationIssues.filter((issue) => issue.severity === "error").length;
+  return { errors, warnings: workflows.graphValidationIssues.length - errors };
+});
+
+const issueSummary = computed(() => {
+  const { errors, warnings } = issueCounts.value;
+  const parts: string[] = [];
+  if (errors) parts.push(`${errors} error${errors === 1 ? "" : "s"}`);
+  if (warnings) parts.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
+  return parts.join(" · ") || "Clean";
+});
+
+const issueSummaryClass = computed(() => {
+  if (issueCounts.value.errors) return "error";
+  if (issueCounts.value.warnings) return "warning";
+  return "clean";
+});
 
 // select the node and recenter the graph on it so the user can fix it.
 function focusIssueNode(nodeId: string) {

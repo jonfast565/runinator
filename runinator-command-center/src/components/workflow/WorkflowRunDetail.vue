@@ -27,7 +27,7 @@
       <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
       <div v-if="workflows.workflowRunDetail.run.finished_at">Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}</div>
       <div v-if="workflows.workflowRunDetail.run.message" class="run-message">
-        {{ workflows.workflowRunDetail.run.message }}
+        {{ formatErrorMessage(workflows.workflowRunDetail.run.message) }}
       </div>
     </div>
 
@@ -138,7 +138,7 @@ import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
-import { formatDate, pretty } from "../../utils/format";
+import { formatDate, formatErrorMessage, pretty } from "../../utils/format";
 import { computed, nextTick, ref } from "vue";
 import type { ActionResultMetadata, WorkflowNodeRun } from "../../types/models";
 import { workflowNodeActionConfig, workflowNodeResultMetadata } from "../../utils/workflows";

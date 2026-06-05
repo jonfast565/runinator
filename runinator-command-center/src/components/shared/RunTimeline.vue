@@ -3,11 +3,15 @@
     <!-- failure reason pinned at the top for an at-a-glance "what broke and where". -->
     <div v-if="failure" class="rt-failure">
       <div class="rt-failure-head">
-        <Icon name="alert" :size="14" />
-        <span>Failed at <strong>{{ failure.nodeId }}</strong></span>
+        <Icon name="alert" :size="15" />
+        <span class="rt-failure-title">Failed at <strong>{{ failure.nodeId }}</strong></span>
         <StatusBadge :status="failure.status" />
+        <span class="rt-spacer"></span>
+        <button v-if="failure.message" type="button" class="rt-failure-copy" :title="copied ? 'Copied' : 'Copy error'" @click="copyFailure">
+          {{ copied ? "Copied" : "Copy" }}
+        </button>
       </div>
-      <div v-if="failure.message" class="rt-failure-msg">{{ failure.message }}</div>
+      <pre v-if="failure.message" class="rt-failure-msg">{{ failure.message }}</pre>
     </div>
 
     <!-- quick status filter for long runs (opt-in via the filterable prop). -->
@@ -52,8 +56,8 @@
           </div>
           <div v-if="expandedId === node.id" class="rt-expand">
             <template v-if="node.message">
-              <div class="rt-expand-label">Message</div>
-              <div class="rt-message">{{ node.message }}</div>
+              <div class="rt-expand-label">{{ isFailedNode(node) ? "Error" : "Message" }}</div>
+              <div class="rt-message" :class="{ error: isFailedNode(node) }">{{ formatErrorMessage(node.message) }}</div>
             </template>
             <template v-if="outputText(node)">
               <div class="rt-expand-label">Output</div>
@@ -75,6 +79,7 @@ import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { fetchWorkflowNodeRunChunks } from "../../api/commandCenterApi";
 import { statusBadgeClass } from "../../utils/status";
+import { formatErrorMessage } from "../../utils/format";
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../../types/models";
 
 const props = defineProps<{
@@ -144,17 +149,37 @@ const failure = computed(() => {
     return {
       nodeId: failedNode.node_id,
       status: failedNode.status,
-      message: failedNode.message || detail.run.message || "Run failed."
+      message: formatErrorMessage(failedNode.message || detail.run.message) || "Run failed."
     };
   }
-  return { nodeId: detail.run.active_node_id ?? "run", status: detail.run.status, message: detail.run.message ?? "Run failed." };
+  return {
+    nodeId: detail.run.active_node_id ?? "run",
+    status: detail.run.status,
+    message: formatErrorMessage(detail.run.message) || "Run failed."
+  };
 });
+
+const copied = ref(false);
+async function copyFailure() {
+  if (!failure.value?.message) return;
+  try {
+    await navigator.clipboard.writeText(failure.value.message);
+    copied.value = true;
+    window.setTimeout(() => (copied.value = false), 1200);
+  } catch {
+    // clipboard may be unavailable; ignore.
+  }
+}
 
 function isActive(node: WorkflowNodeRun): boolean {
   if (props.detail?.run.active_node_id && props.detail.run.active_node_id === node.node_id) {
     return !FAILED_STATUSES.has(node.status) && node.status !== "succeeded";
   }
   return RUNNING_STATUSES.has(node.status);
+}
+
+function isFailedNode(node: WorkflowNodeRun): boolean {
+  return FAILED_STATUSES.has(node.status);
 }
 
 function previewOf(node: WorkflowNodeRun): string {
@@ -290,10 +315,30 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   font-weight: 600;
   font-size: 13px;
 }
+.rt-failure-title strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.rt-failure-copy {
+  flex: 0 0 auto;
+  border: 1px solid #f0bcbc;
+  border-radius: 4px;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+.rt-failure-copy:hover {
+  background: #fdecec;
+}
 .rt-failure-msg {
-  margin-top: 4px;
+  margin: 6px 0 0;
+  max-height: 180px;
+  overflow: auto;
   color: #9f1239;
-  font-size: 12px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -494,10 +539,19 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   margin-top: 8px;
 }
 .rt-message {
-  color: #9f1239;
+  color: #44505f;
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.rt-message.error {
+  border-left: 3px solid #dc2626;
+  border-radius: 4px;
+  background: #fff5f5;
+  color: #9f1239;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 .rt-json,
 .rt-logs {
