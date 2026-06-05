@@ -7,6 +7,9 @@ export const useProvidersStore = defineStore('providers', () => {
   const providers = ref<ProviderMetadata[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // drives the providers view selection; set by deep links such as the run-timeline quick action.
+  const focusedProvider = ref('')
+  const focusedAction = ref('')
 
   async function fetchProviders() {
     loading.value = true
@@ -24,17 +27,28 @@ export const useProvidersStore = defineStore('providers', () => {
     }
   }
 
+  // select a provider/action so the providers view opens focused on it.
+  function focusProviderAction(provider: string, action = '') {
+    focusedProvider.value = provider
+    focusedAction.value = action
+  }
+
   function clearProviders() {
     providers.value = []
     error.value = null
     loading.value = false
+    focusedProvider.value = ''
+    focusedAction.value = ''
   }
 
   return {
     providers,
     loading,
     error,
+    focusedProvider,
+    focusedAction,
     fetchProviders,
+    focusProviderAction,
     clearProviders
   }
 })

@@ -2,7 +2,10 @@
   <section class="wdl-editor-shell">
     <header class="wdl-editor-title">
       <span>{{ title }}</span>
-      <button type="button" :disabled="readonly" @click.stop.prevent="formatDocument">Format</button>
+      <div class="wdl-editor-actions">
+        <span :class="['wdl-diagnostic-summary', diagnosticSummaryClass]">{{ diagnosticSummary }}</span>
+        <button type="button" :disabled="readonly" @click.stop.prevent="formatDocument">Format</button>
+      </div>
     </header>
     <div ref="editorContainer" class="wdl-editor-container"></div>
     <div class="wdl-diagnostics">
@@ -16,7 +19,12 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="diagnostic in diagnostics" :key="diagnosticKey(diagnostic)" @click="goToDiagnostic(diagnostic)">
+          <tr
+            v-for="diagnostic in diagnostics"
+            :key="diagnosticKey(diagnostic)"
+            :class="diagnostic.severity"
+            @click="goToDiagnostic(diagnostic)"
+          >
             <td>
               <span :class="['wdl-diagnostic-severity', diagnostic.severity]">{{ diagnostic.severity }}</span>
             </td>
@@ -32,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { linter, type Diagnostic } from '@codemirror/lint';
@@ -40,14 +48,24 @@ import { wdl } from '../../utils/codemirror-lang-wdl';
 import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
 import { analyzeWdl, formatWdl } from '../../api/commandCenterApi';
 import { useAppStore } from '../../stores/app';
-import type { ProviderMetadata, WdlDiagnostic } from '../../types/models';
+import type { CredentialSummary, ProviderMetadata, WdlDiagnostic, WdlSettingRef } from '../../types/models';
 
 const props = defineProps<{
   modelValue: string;
   readonly?: boolean;
   title?: string;
   providers?: ProviderMetadata[];
+  settings?: CredentialSummary[];
 }>();
+
+// map stored credential summaries to completion setting refs, defaulting unkinded entries to secret.
+function settingRefs(): WdlSettingRef[] {
+  return (props.settings ?? []).map((setting) => ({
+    scope: setting.scope,
+    name: setting.name,
+    kind: setting.kind ?? "secret"
+  }));
+}
 
 const emit = defineEmits<{
   "update:modelValue": [value: string]
@@ -59,6 +77,22 @@ let view: EditorView | null = null;
 const title = props.title ?? "WDL";
 const app = useAppStore();
 let diagnosticsRequest = 0;
+
+const diagnosticCounts = computed(() => ({
+  errors: diagnostics.value.filter((diagnostic) => diagnostic.severity === "error").length,
+  warnings: diagnostics.value.filter((diagnostic) => diagnostic.severity === "warning").length
+}));
+const diagnosticSummary = computed(() => {
+  const { errors, warnings } = diagnosticCounts.value;
+  if (errors > 0) return `${errors} error${errors === 1 ? "" : "s"}`;
+  if (warnings > 0) return `${warnings} warning${warnings === 1 ? "" : "s"}`;
+  return "Clean";
+});
+const diagnosticSummaryClass = computed(() => {
+  if (diagnosticCounts.value.errors > 0) return "error";
+  if (diagnosticCounts.value.warnings > 0) return "warning";
+  return "clean";
+});
 
 // async linter backed by the rust runinator-wdl compiler, so editor diagnostics match
 // what the importer would report. codemirror debounces this by default.
@@ -133,7 +167,7 @@ onMounted(() => {
     doc: props.modelValue,
     extensions: [
       basicSetup,
-      wdl(wdlProviderCompletionSource(() => props.providers ?? [])),
+      wdl(wdlProviderCompletionSource(() => props.providers ?? [], settingRefs)),
       wdlLinter,
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
@@ -191,6 +225,35 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.wdl-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wdl-diagnostic-summary {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wdl-diagnostic-summary.clean {
+  background: #e8f7ef;
+  color: #11653b;
+}
+
+.wdl-diagnostic-summary.warning {
+  background: #fff4cc;
+  color: #8a5a00;
+}
+
+.wdl-diagnostic-summary.error {
+  background: #fde8e8;
+  color: #b91c1c;
 }
 
 .wdl-editor-title button {
@@ -254,6 +317,18 @@ onBeforeUnmount(() => {
 
 .wdl-diagnostics tbody tr:hover {
   background: #eef4ff;
+}
+
+.wdl-diagnostics tbody tr.error {
+  box-shadow: inset 3px 0 #dc2626;
+}
+
+.wdl-diagnostics tbody tr.warning {
+  box-shadow: inset 3px 0 #d97706;
+}
+
+.wdl-diagnostics td:nth-child(2) {
+  min-width: 220px;
 }
 
 .wdl-diagnostics td:nth-child(3),

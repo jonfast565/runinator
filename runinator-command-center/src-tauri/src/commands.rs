@@ -324,12 +324,16 @@ pub async fn create_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_id: i64,
     debug: Option<bool>,
+    parameters: Option<Value>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflows/{workflow_id}/runs")).await?;
     let response = state
         .client
         .post(url.clone())
-        .json(&json!({ "debug": debug.unwrap_or(false) }))
+        .json(&json!({
+            "debug": debug.unwrap_or(false),
+            "parameters": parameters.unwrap_or_else(|| json!({}))
+        }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;

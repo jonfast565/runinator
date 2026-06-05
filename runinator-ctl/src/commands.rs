@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fs, io,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use runinator_api::{AsyncApiClient, StaticLocator};
@@ -29,6 +29,23 @@ use crate::{
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 type Client = AsyncApiClient<StaticLocator>;
+
+#[derive(Debug, Clone)]
+struct WorkflowApplySummary {
+    message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSnapshot {
+    files: Vec<SourceFileSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceFileSnapshot {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    len: Option<u64>,
+}
 
 pub fn err(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
     Box::new(io::Error::new(io::ErrorKind::InvalidInput, message.into()))
@@ -128,70 +145,41 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             file,
             skip_settings,
         } => {
-            // with no path given, fall back to the `~/.runinator/workflows` folder as a last resort.
-            let resolved = match file {
-                Some(path) => path.clone(),
-                None => {
-                    let fallback = runinator_utilities::app_data::app_data_path("workflows")
-                        .map_err(|e| err(e.to_string()))?;
-                    if !fallback.exists() {
-                        return Err(err(format!(
-                            "no file or folder given and no default workflows folder at {}",
-                            fallback.display()
-                        )));
-                    }
-                    fallback
-                }
-            };
-            let file = &resolved;
-            // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled
-            // pack; json is handled below.
-            if pack::is_pack_source(file) {
-                let bundle = pack::load_workflow_bundle(file)?;
-                // any settings (`settings.wdls`/`.json`) ride in the same compiled pack zip.
-                let settings = if *skip_settings {
-                    None
-                } else {
-                    pack::load_pack_settings(file)?
-                };
-                let result = client.import_pack(&bundle, settings.as_ref()).await?;
-                if json_output {
-                    return output::json(&result);
-                }
-                println!(
-                    "imported {} workflows, {} triggers, and {} settings",
-                    result.workflows.workflows.len(),
-                    result.workflows.triggers.len(),
-                    result.secrets.secrets.len()
-                );
-                return Ok(());
+            let resolved = resolve_workflow_apply_path(file.as_deref())?;
+            let summary =
+                apply_workflow_source(client, &resolved, *skip_settings, json_output).await?;
+            if !json_output {
+                print_apply_summary(&summary);
             }
-            let value = params::load_json_file(file)?;
-            if value.get("workflows").is_some() {
-                // raw json bundles require the client to acknowledge that system breakage is possible.
-                let bundle: WorkflowBundle = serde_json::from_value(value.into())?;
-                let bundle = client.import_workflow_bundle(&bundle).await?;
-                if json_output {
-                    return output::json(&bundle);
-                }
-                println!(
-                    "imported {} workflows and {} triggers",
-                    bundle.workflows.len(),
-                    bundle.triggers.len()
-                );
-            } else {
-                let workflow: WorkflowDefinition = serde_json::from_value(value.into())?;
-                let workflow = client.upsert_workflow(&workflow).await?;
-                if json_output {
-                    return output::json(&workflow);
-                }
-                println!(
-                    "saved workflow {} v{} id={}",
-                    workflow.name,
-                    workflow.version,
-                    workflow.id.unwrap_or_default()
-                );
+        }
+        WorkflowCommands::Dev {
+            file,
+            skip_settings,
+            run,
+            params: cli_params,
+            json_file,
+            debug,
+            name,
+            watch_interval_ms,
+            debounce_ms,
+        } => {
+            if json_output {
+                return Err(err("workflows dev does not support --json output"));
             }
+            let resolved = resolve_workflow_apply_path(file.as_deref())?;
+            workflow_dev(
+                client,
+                &resolved,
+                *skip_settings,
+                run.as_deref(),
+                cli_params,
+                json_file.as_deref(),
+                *debug,
+                name.as_deref(),
+                Duration::from_millis(*watch_interval_ms),
+                Duration::from_millis(*debounce_ms),
+            )
+            .await?;
         }
         WorkflowCommands::Export {
             workflow_id,
@@ -230,6 +218,232 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
         }
     }
     Ok(())
+}
+
+fn resolve_workflow_apply_path(file: Option<&Path>) -> Result<PathBuf> {
+    match file {
+        Some(path) => Ok(path.to_path_buf()),
+        None => {
+            let fallback = runinator_utilities::app_data::app_data_path("workflows")
+                .map_err(|e| err(e.to_string()))?;
+            if !fallback.exists() {
+                return Err(err(format!(
+                    "no file or folder given and no default workflows folder at {}",
+                    fallback.display()
+                )));
+            }
+            Ok(fallback)
+        }
+    }
+}
+
+async fn apply_workflow_source(
+    client: &Client,
+    file: &Path,
+    skip_settings: bool,
+    json_output: bool,
+) -> Result<WorkflowApplySummary> {
+    // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled pack;
+    // json is handled below.
+    if pack::is_pack_source(file) {
+        let bundle = pack::load_workflow_bundle(file)?;
+        // any settings (`settings.wdls`/`.json`) ride in the same compiled pack zip.
+        let settings = if skip_settings {
+            None
+        } else {
+            pack::load_pack_settings(file)?
+        };
+        let result = client.import_pack(&bundle, settings.as_ref()).await?;
+        let summary = WorkflowApplySummary {
+            message: format!(
+                "imported {} workflows, {} triggers, and {} settings",
+                result.workflows.workflows.len(),
+                result.workflows.triggers.len(),
+                result.secrets.secrets.len()
+            ),
+        };
+        if json_output {
+            output::json(&result)?;
+        }
+        return Ok(summary);
+    }
+
+    let value = params::load_json_file(file)?;
+    if value.get("workflows").is_some() {
+        // raw json bundles require the client to acknowledge that system breakage is possible.
+        let bundle: WorkflowBundle = serde_json::from_value(value.into())?;
+        let bundle = client.import_workflow_bundle(&bundle).await?;
+        let summary = WorkflowApplySummary {
+            message: format!(
+                "imported {} workflows and {} triggers",
+                bundle.workflows.len(),
+                bundle.triggers.len()
+            ),
+        };
+        if json_output {
+            output::json(&bundle)?;
+        }
+        return Ok(summary);
+    }
+
+    let workflow: WorkflowDefinition = serde_json::from_value(value.into())?;
+    let workflow = client.upsert_workflow(&workflow).await?;
+    if json_output {
+        output::json(&workflow)?;
+    }
+    Ok(WorkflowApplySummary {
+        message: format!(
+            "saved workflow {} v{} id={}",
+            workflow.name,
+            workflow.version,
+            workflow.id.unwrap_or_default()
+        ),
+    })
+}
+
+fn print_apply_summary(summary: &WorkflowApplySummary) {
+    println!("{}", summary.message);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn workflow_dev(
+    client: &Client,
+    file: &Path,
+    skip_settings: bool,
+    run_workflow: Option<&str>,
+    cli_params: &[String],
+    json_file: Option<&Path>,
+    debug: bool,
+    name: Option<&str>,
+    watch_interval: Duration,
+    debounce: Duration,
+) -> Result<()> {
+    if watch_interval.is_zero() {
+        return Err(err("--watch-interval-ms must be greater than 0"));
+    }
+
+    println!("watching {}", file.display());
+    if let Some(path) = json_file {
+        println!("watching run input {}", path.display());
+    }
+    println!("press Ctrl-C to stop");
+    println!();
+
+    let mut last_snapshot: Option<SourceSnapshot> = None;
+    loop {
+        let mut snapshot = source_snapshot(file, json_file);
+        let changed = last_snapshot
+            .as_ref()
+            .map(|previous| previous != &snapshot)
+            .unwrap_or(true);
+
+        if changed {
+            if last_snapshot.is_some() && !debounce.is_zero() {
+                time::sleep(debounce).await;
+                snapshot = source_snapshot(file, json_file);
+            }
+
+            let source_count = snapshot.files.len();
+            println!(
+                "[dev] applying {} source file{}",
+                source_count,
+                if source_count == 1 { "" } else { "s" }
+            );
+            match apply_workflow_source(client, file, skip_settings, false).await {
+                Ok(summary) => {
+                    print_apply_summary(&summary);
+                    if let Some(workflow) = run_workflow {
+                        if let Err(err) =
+                            dev_run_workflow(client, workflow, cli_params, json_file, debug, name)
+                                .await
+                        {
+                            eprintln!("[dev] run failed:\n{err}");
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("[dev] apply failed:\n{err}");
+                }
+            }
+            println!();
+            last_snapshot = Some(snapshot);
+        }
+
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => {
+                signal.map_err(|signal_err| {
+                    err(format!("failed to listen for Ctrl-C: {signal_err}"))
+                })?;
+                println!("stopped workflow dev watcher");
+                break;
+            }
+            _ = time::sleep(watch_interval) => {}
+        }
+    }
+
+    Ok(())
+}
+
+async fn dev_run_workflow(
+    client: &Client,
+    workflow_ref: &str,
+    cli_params: &[String],
+    json_file: Option<&Path>,
+    debug: bool,
+    name: Option<&str>,
+) -> Result<()> {
+    let workflow = fetch_workflow_ref(client, workflow_ref).await?;
+    let workflow_id = workflow
+        .id
+        .ok_or_else(|| err("workflow has no persisted id"))?;
+    let payload = params::load_object(json_file, cli_params)?;
+    let run = client
+        .create_workflow_run_with_options(
+            workflow_id,
+            payload,
+            debug,
+            name.map(ToString::to_string),
+        )
+        .await?;
+    print_run_summary(&run);
+    watch_run_until_terminal(client, run.id, Duration::from_secs(1)).await
+}
+
+async fn watch_run_until_terminal(client: &Client, run_id: i64, interval: Duration) -> Result<()> {
+    loop {
+        let (run, nodes) = client.fetch_workflow_run(run_id).await?;
+        print_run_detail(&run, &nodes);
+        if run.status.is_terminal() {
+            return Ok(());
+        }
+        time::sleep(interval).await;
+        println!();
+    }
+}
+
+fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
+    let mut paths = match pack::pack_source_files(file) {
+        Ok(paths) if !paths.is_empty() => paths,
+        _ => vec![file.to_path_buf()],
+    };
+    if let Some(path) = json_file {
+        paths.push(path.to_path_buf());
+    }
+    paths.sort();
+    paths.dedup();
+
+    let files = paths
+        .into_iter()
+        .map(|path| {
+            let metadata = fs::metadata(&path).ok();
+            SourceFileSnapshot {
+                path,
+                modified: metadata.as_ref().and_then(|meta| meta.modified().ok()),
+                len: metadata.as_ref().map(|meta| meta.len()),
+            }
+        })
+        .collect();
+    SourceSnapshot { files }
 }
 
 fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {

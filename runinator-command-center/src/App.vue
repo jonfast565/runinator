@@ -1,7 +1,9 @@
 <template>
   <AppShell>
+    <DevView v-if="app.activeTab === 'Dev'" />
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
+    <ProvidersView v-if="app.activeTab === 'Providers'" />
     <ApprovalsView v-if="app.activeTab === 'Approvals'" />
     <ArtifactsView v-if="app.activeTab === 'Artifacts'" />
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
@@ -30,6 +32,8 @@ import { useSecretsStore } from "./stores/secrets";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
 import RunsView from "./views/RunsView.vue";
+import ProvidersView from "./views/ProvidersView.vue";
+import DevView from "./views/DevView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
 import ApprovalsView from "./views/ApprovalsView.vue";
 import ArtifactsView from "./views/ArtifactsView.vue";

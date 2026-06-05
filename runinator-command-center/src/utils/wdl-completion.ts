@@ -1,11 +1,14 @@
 import { snippet, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { completeWdl } from "../api/commandCenterApi";
-import type { ProviderMetadata, WdlCompletionRequest, WdlCompletionResponse } from "../types/models";
+import type { ProviderMetadata, WdlCompletionRequest, WdlCompletionResponse, WdlSettingRef } from "../types/models";
 
-export function wdlProviderCompletionSource(providers: () => ProviderMetadata[]): CompletionSource {
+export function wdlProviderCompletionSource(
+  providers: () => ProviderMetadata[],
+  settings: () => WdlSettingRef[] = () => []
+): CompletionSource {
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
     const source = context.state.doc.toString();
-    const request = buildWdlCompletionRequest(source, context.pos, providers());
+    const request = buildWdlCompletionRequest(source, context.pos, providers(), settings());
     const response = await completeWdl(request);
     const result = completionResponseToCodeMirror(source, response);
     if (!result.options.length && !context.explicit) return null;
@@ -13,11 +16,17 @@ export function wdlProviderCompletionSource(providers: () => ProviderMetadata[])
   };
 }
 
-export function buildWdlCompletionRequest(source: string, cursorOffset: number, providers: ProviderMetadata[]): WdlCompletionRequest {
+export function buildWdlCompletionRequest(
+  source: string,
+  cursorOffset: number,
+  providers: ProviderMetadata[],
+  settings: WdlSettingRef[] = []
+): WdlCompletionRequest {
   return {
     source,
     cursor_byte: utf16OffsetToUtf8ByteOffset(source, cursorOffset),
-    providers
+    providers,
+    settings
   };
 }
 

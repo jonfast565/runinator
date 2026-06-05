@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runinator_models::{
-    providers::{ActionMetadata, ProviderMetadata, RuninatorType},
+    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, RuninatorType},
+    settings::{SettingKind, SettingSummary},
     types::RuninatorField,
+    value::Value,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +20,9 @@ pub struct WdlCompletionRequest {
     pub cursor_byte: usize,
     #[serde(default)]
     pub providers: Vec<ProviderMetadata>,
+    // known config/secret slots, used to complete `config.scope.name` / `secret.scope.name`.
+    #[serde(default)]
+    pub settings: Vec<SettingSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +83,9 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
 
     let context = completion_context(&source, cursor, &request.providers);
     if let Some(path) = path_context(&source, cursor) {
+        if path.head == "config" || path.head == "secret" {
+            return complete_setting_path(&request.settings, path);
+        }
         if let Some(response) = complete_path(path, &context) {
             return response;
         }
@@ -176,6 +184,7 @@ fn complete_action_args(
             } else {
                 "optional"
             };
+            let (insert_text, is_snippet) = parameter_arg_insert(parameter);
             WdlCompletionItem {
                 label: parameter.name.clone(),
                 kind: "property".into(),
@@ -184,8 +193,8 @@ fn complete_action_args(
                     .description
                     .clone()
                     .or_else(|| parameter.label.clone()),
-                insert_text: format!("{}: ${{}}", parameter.name),
-                is_snippet: true,
+                insert_text,
+                is_snippet,
             }
         })
         .collect::<Vec<_>>();
@@ -194,6 +203,97 @@ fn complete_action_args(
         replace_start_byte: call.replace_start,
         replace_end_byte: call.replace_end,
         items,
+    }
+}
+
+// complete a `config.scope.name` / `secret.scope.name` reference from the known settings.
+fn complete_setting_path(settings: &[SettingSummary], path: PathContext) -> WdlCompletionResponse {
+    let kind = if path.head == "secret" {
+        SettingKind::Secret
+    } else {
+        SettingKind::Config
+    };
+    let mut labels = BTreeSet::new();
+    match path.completed.as_slice() {
+        // `config.` / `secret.` -> suggest distinct scopes.
+        [] => {
+            for setting in settings.iter().filter(|setting| setting.kind == kind) {
+                labels.insert(setting.scope.clone());
+            }
+        }
+        // `config.scope.` / `secret.scope.` -> suggest names within the scope.
+        [scope] => {
+            for setting in settings
+                .iter()
+                .filter(|setting| setting.kind == kind && &setting.scope == scope)
+            {
+                labels.insert(setting.name.clone());
+            }
+        }
+        // settings are flat scope/name pairs; deeper paths have no statically-known shape.
+        _ => return empty_response(path.replace_start, path.replace_end),
+    }
+    let detail = if path.completed.is_empty() {
+        format!("{} scope", kind.as_str())
+    } else {
+        format!("{} setting", kind.as_str())
+    };
+    let items = labels
+        .into_iter()
+        .map(|label| WdlCompletionItem {
+            label: label.clone(),
+            kind: "variable".into(),
+            detail: Some(detail.clone()),
+            documentation: None,
+            insert_text: label,
+            is_snippet: false,
+        })
+        .collect();
+    WdlCompletionResponse {
+        replace_start_byte: path.replace_start,
+        replace_end_byte: path.replace_end,
+        items,
+    }
+}
+
+// build a parameter argument insertion: `name: <typed-default>` with the value as an editable
+// snippet field so accepting the completion yields a valid, pre-selected literal.
+fn parameter_arg_insert(parameter: &ParameterMetadata) -> (String, bool) {
+    let name = &parameter.name;
+    if let Some(default) = &parameter.default_value
+        && let Some(literal) = scalar_literal(default)
+    {
+        return (format!("{name}: ${{{literal}}}"), true);
+    }
+    let (prefix, field, suffix) = typed_placeholder(&parameter.ty);
+    (format!("{name}: {prefix}${{{field}}}{suffix}"), true)
+}
+
+// render a scalar default as an inline literal, or none when it cannot live inside a snippet field.
+fn scalar_literal(value: &Value) -> Option<String> {
+    let literal = match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            serde_json::to_string(value).ok()?
+        }
+        _ => return None,
+    };
+    // snippet fields are delimited by braces, so a literal containing one cannot be inlined.
+    if literal.contains('{') || literal.contains('}') {
+        return None;
+    }
+    Some(literal)
+}
+
+// a type-appropriate empty placeholder: surrounding literal syntax plus the editable field text.
+fn typed_placeholder(ty: &RuninatorType) -> (&'static str, &'static str, &'static str) {
+    match ty {
+        RuninatorType::String => ("\"", "", "\""),
+        RuninatorType::Integer | RuninatorType::Number => ("", "0", ""),
+        RuninatorType::Boolean => ("", "false", ""),
+        RuninatorType::Null => ("", "null", ""),
+        RuninatorType::Array(_) => ("[", "", "]"),
+        RuninatorType::Map(_) | RuninatorType::Struct { .. } => ("{", "", "}"),
+        _ => ("", "", ""),
     }
 }
 

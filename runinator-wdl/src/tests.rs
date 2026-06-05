@@ -1,7 +1,7 @@
 use crate::{
-    CompileOptions, DecompileOptions, WdlCompletionRequest, WdlError, analyze_source, compile_str,
-    compile_str_with_diagnostics, complete_source, decompile, decompile_with, format_str,
-    parse_document,
+    CompileOptions, DecompileOptions, WdlCompletionRequest, WdlCompletionResponse, WdlError,
+    analyze_source, compile_str, compile_str_with_diagnostics, complete_source, decompile,
+    decompile_with, format_str, parse_document,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
@@ -28,6 +28,7 @@ fn completion_labels(src: &str, marker: &str) -> Vec<String> {
         source,
         cursor_byte: cursor,
         providers: completion_providers(),
+        settings: Vec::new(),
     })
     .items
     .into_iter()
@@ -1334,6 +1335,7 @@ fn completes_missing_action_arguments() {
         .find("<>")
         .expect("marker"),
         providers: completion_providers(),
+        settings: Vec::new(),
     });
     let labels = response
         .items
@@ -1342,11 +1344,10 @@ fn completes_missing_action_arguments() {
         .collect::<Vec<_>>();
     assert!(!labels.contains(&"base_url"));
     assert!(labels.contains(&"token"));
-    assert!(
-        response.items.iter().any(|item| item.label == "token"
-            && item.is_snippet
-            && item.insert_text == "token: ${}")
-    );
+    // token is a required string, so the snippet pre-fills quotes with an editable field inside.
+    assert!(response.items.iter().any(|item| item.label == "token"
+        && item.is_snippet
+        && item.insert_text == "token: \"${}\""));
 }
 
 #[test]
@@ -1450,6 +1451,129 @@ fn completes_run_context_fields() {
     );
     assert!(labels.contains(&"run_id".to_string()));
     assert!(labels.contains(&"workflow_id".to_string()));
+}
+
+fn setting_completion(src: &str, marker: &str) -> WdlCompletionResponse {
+    use runinator_models::settings::{SettingKind, SettingSummary};
+    let cursor = src.find(marker).expect("marker");
+    let source = src.replacen(marker, "", 1);
+    let settings = vec![
+        SettingSummary {
+            scope: "github".into(),
+            name: "token".into(),
+            kind: SettingKind::Secret,
+        },
+        SettingSummary {
+            scope: "github".into(),
+            name: "base_url".into(),
+            kind: SettingKind::Config,
+        },
+        SettingSummary {
+            scope: "slack".into(),
+            name: "webhook".into(),
+            kind: SettingKind::Secret,
+        },
+    ];
+    complete_source(WdlCompletionRequest {
+        source,
+        cursor_byte: cursor,
+        providers: completion_providers(),
+        settings,
+    })
+}
+
+#[test]
+fn completes_secret_scopes() {
+    let labels = setting_completion(
+        r#"
+        workflow "Complete" v1 {
+            emit "out" { token: secret.<> }
+        }
+    "#,
+        "<>",
+    )
+    .items
+    .into_iter()
+    .map(|item| item.label)
+    .collect::<Vec<_>>();
+    assert!(labels.contains(&"github".to_string()));
+    assert!(labels.contains(&"slack".to_string()));
+}
+
+#[test]
+fn completes_secret_names_within_scope() {
+    let labels = setting_completion(
+        r#"
+        workflow "Complete" v1 {
+            emit "out" { token: secret.github.<> }
+        }
+    "#,
+        "<>",
+    )
+    .items
+    .into_iter()
+    .map(|item| item.label)
+    .collect::<Vec<_>>();
+    // only the secret-kind name in the github scope is suggested, not the config slot.
+    assert_eq!(labels, vec!["token".to_string()]);
+}
+
+#[test]
+fn completes_config_scopes_separately_from_secrets() {
+    let labels = setting_completion(
+        r#"
+        workflow "Complete" v1 {
+            emit "out" { url: config.github.<> }
+        }
+    "#,
+        "<>",
+    )
+    .items
+    .into_iter()
+    .map(|item| item.label)
+    .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["base_url".to_string()]);
+}
+
+#[test]
+fn parameter_defaults_use_typed_placeholders() {
+    use runinator_models::providers::{
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
+    };
+    let providers = vec![ProviderMetadata {
+        name: "demo".into(),
+        actions: vec![ActionMetadata::new("run", "demo").with_parameters(vec![
+            ParameterMetadata::required("count", RuninatorType::Integer),
+            ParameterMetadata::required("flag", RuninatorType::Boolean),
+            ParameterMetadata::optional("name", RuninatorType::String).with_default("ada"),
+        ])],
+        metadata: ProviderRuntimeMetadata::default(),
+    }];
+    let src = "workflow \"D\" v1 {\n    demo.run()\n}";
+    let cursor = src.find("()").expect("marker") + 1;
+    let inserts = complete_source(WdlCompletionRequest {
+        source: src.to_string(),
+        cursor_byte: cursor,
+        providers,
+        settings: Vec::new(),
+    })
+    .items
+    .into_iter()
+    .map(|item| (item.label, item.insert_text))
+    .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        inserts.get("count").map(String::as_str),
+        Some("count: ${0}")
+    );
+    assert_eq!(
+        inserts.get("flag").map(String::as_str),
+        Some("flag: ${false}")
+    );
+    // a concrete default becomes a pre-selected literal.
+    assert_eq!(
+        inserts.get("name").map(String::as_str),
+        Some("name: ${\"ada\"}")
+    );
 }
 
 #[test]

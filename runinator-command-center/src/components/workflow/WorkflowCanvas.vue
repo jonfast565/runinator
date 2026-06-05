@@ -155,6 +155,7 @@
       v-model="workflows.workflowWdl"
       class="workflow-wdl-editor"
       :providers="providersStore.providers"
+      :settings="secretsStore.secrets"
       @blur="workflows.syncWorkflowWdl"
     />
     <JsonEditor
@@ -173,6 +174,7 @@ import { VueFlow, useVueFlow } from "@vue-flow/core";
 import type { WorkflowEdgeEditorDraft, WorkflowEdgeSemanticOption, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
+import { useSecretsStore } from "../../stores/secrets";
 import { optionIdForSourceHandle } from "../../utils/workflows";
 import JsonEditor from "../shared/JsonEditor.vue";
 import WdlEditor from "../shared/WdlEditor.vue";
@@ -185,6 +187,7 @@ provide("workflowEdgeInteractive", true);
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
+const secretsStore = useSecretsStore();
 const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
 const contextMenu = ref<null | { kind: "node"; id: string; x: number; y: number; deletable: boolean } | { kind: "edge"; id: string; x: number; y: number }>(null);
 const lastPointer = ref({ x: 0, y: 0 });

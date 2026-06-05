@@ -10,6 +10,7 @@ SMOKE_WORKFLOW="${RUNINATOR_SMOKE_WORKFLOW:-Hello World Test}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 API_BASE_URL="${RUNINATOR_API_BASE_URL:-http://127.0.0.1:8080/}"
+DEV_ARGS=()
 
 if [[ $# -gt 0 ]]; then
   shift
@@ -38,8 +39,13 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
+      if [[ "$COMMAND" == "dev" ]]; then
+        DEV_ARGS+=("$1")
+        shift
+        continue
+      fi
       echo "unknown option: $1" >&2
-      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
       exit 2
       ;;
   esac
@@ -123,6 +129,7 @@ Useful commands:
   bash scripts/run-local.sh logs
   bash scripts/run-local.sh logs --process web-service
   bash scripts/run-local.sh sync
+  bash scripts/run-local.sh dev
   bash scripts/run-local.sh smoke-sync
   bash scripts/run-local.sh ui
   bash scripts/run-local.sh stop
@@ -153,6 +160,13 @@ MSG
   sync)
     sync_import
     ;;
+  dev)
+    ensure_workflow_dir
+    cargo run -p runinator-ctl -- \
+      --api-base-url "$API_BASE_URL" \
+      workflows dev "$WORKFLOWS_FILE" \
+      "${DEV_ARGS[@]}"
+    ;;
   smoke-sync)
     smoke_sync
     ;;
@@ -169,7 +183,7 @@ MSG
     cargo run "${SUPERVISOR_ARGS[@]}" status
     ;;
   *)
-    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
     exit 2
     ;;
 esac

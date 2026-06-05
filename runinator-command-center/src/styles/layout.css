@@ -391,3 +391,68 @@ main {
     min-height: 260px;
   }
 }
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .sidebar {
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    border-right: 0;
+    border-bottom: 1px solid #cbd5df;
+    padding: 8px 10px;
+    overflow-x: auto;
+  }
+
+  .brand {
+    flex: 0 0 auto;
+  }
+
+  .brand > span:last-child {
+    display: none;
+  }
+
+  .nav-list {
+    display: flex;
+    flex: 1 0 auto;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .nav-section-label,
+  .nav-count {
+    display: none;
+  }
+
+  .nav-list button {
+    flex: 0 0 auto;
+    padding: 8px 9px;
+  }
+
+  .workspace {
+    height: calc(100vh - 45px);
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .view-title {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .toolbar-search {
+    width: min(100%, 260px);
+  }
+
+  .connection-strip {
+    flex-wrap: wrap;
+  }
+}

@@ -4,6 +4,9 @@ import { apiBaseUrl, invokeViaHttp } from "./httpRuntime";
 import type {
   JsonRecord,
   CredentialSummary,
+  DevPackApplyResult,
+  DevPackInspectResult,
+  DevPackTextFile,
   Notification,
   ProviderMetadata,
   RunArtifact,
@@ -114,6 +117,32 @@ export async function formatWdl(source: string) {
 
 export async function decompileToWdl(workflow: WorkflowDefinition) {
   return command<string>("decompile_to_wdl", { workflow });
+}
+
+function requireTauriDevPack() {
+  if (!isTauriRuntime()) {
+    throw new Error("Dev pack file access is only available in the Tauri desktop app.");
+  }
+}
+
+export async function inspectDevPack(path: string, skipSettings = false) {
+  requireTauriDevPack();
+  return command<DevPackInspectResult>("inspect_dev_pack", { path, skipSettings });
+}
+
+export async function readDevPackFile(path: string) {
+  requireTauriDevPack();
+  return command<DevPackTextFile>("read_dev_pack_file", { path });
+}
+
+export async function writeDevPackFile(path: string, content: string) {
+  requireTauriDevPack();
+  return command<DevPackTextFile>("write_dev_pack_file", { path, content });
+}
+
+export async function applyDevPack(path: string, skipSettings = false) {
+  requireTauriDevPack();
+  return command<DevPackApplyResult>("apply_dev_pack", { path, skipSettings });
 }
 
 export async function deleteWorkflow(workflowId: number) {

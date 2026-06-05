@@ -32,6 +32,7 @@ bash scripts/run-local.sh logs
 bash scripts/run-local.sh logs --process web-service
 bash scripts/run-local.sh logs-watch --lines 40
 bash scripts/run-local.sh sync
+bash scripts/run-local.sh dev
 bash scripts/run-local.sh smoke-sync
 bash scripts/run-local.sh ui
 bash scripts/run-local.sh stop
@@ -42,6 +43,18 @@ The supervisor runs `runinatorctl workflows apply` once, so the workflow pack co
 
 ```bash
 bash scripts/run-local.sh sync
+```
+
+For rapid WDL development, keep a pack compiling and re-importing on every save:
+
+```bash
+bash scripts/run-local.sh dev
+```
+
+Pass `--run` to create and watch a workflow run after each successful import:
+
+```bash
+bash scripts/run-local.sh dev --run "Core Team SDLC Pipeline"
 ```
 
 When you only need to prove the local ws/waker/worker wiring with a tiny import
@@ -158,6 +171,12 @@ cp -R packs/sdlc/wdl ~/.runinator/workflows/wdl
 
 Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlp` plus the
 referenced `.wdl` sources for imports.
+
+`runinatorctl workflows dev <path>` runs the same client-side pack compile and
+compiled zip upload in a watch loop. It watches the pack manifest, referenced
+`.wdl` files, adjacent settings, and an optional `--json-file`. When `--run` is
+provided, it starts that workflow after each successful import and refreshes the
+run detail until the run reaches a terminal state.
 
 For a minimal smoke import, use `./packs/hello-world/hello-world.wdlp`. It
 contains one WDL workflow that runs a single built-in console action and is wired

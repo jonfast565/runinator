@@ -1,6 +1,8 @@
 export type AppTab =
+  | "Dev"
   | "Workflows"
   | "Runs"
+  | "Providers"
   | "Approvals"
   | "Artifacts"
   | "Notifications"

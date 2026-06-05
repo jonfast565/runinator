@@ -1,6 +1,6 @@
 <template>
   <div class="modal-backdrop" @click.self="workflows.closeRunInput">
-    <form class="modal run-input-modal" @submit.prevent="workflows.confirmRunInput">
+    <form class="modal run-input-modal" @submit.prevent="onSubmit">
       <header class="modal-header">
         <div>
           <h2>Run {{ workflows.selectedWorkflow?.name }}</h2>
@@ -13,9 +13,10 @@
       </header>
 
       <section class="form-section">
-        <TypedValueEditor
-          v-if="inputType"
-          :ty="inputType"
+        <RunInputForm
+          ref="runInputFormRef"
+          :input-type="inputType"
+          :storage-key="storageKey"
           :model-value="workflows.runInputDraft"
           @update:model-value="onInputChange"
         />
@@ -30,17 +31,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import type { JsonRecord } from "../../types/models";
+import { computed, ref } from "vue";
+import type { JsonRecord, RuninatorType } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
-import TypedValueEditor from "../shared/TypedValueEditor.vue";
+import RunInputForm from "../shared/RunInputForm.vue";
 
 const workflows = useWorkflowsStore();
+const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 
-const inputType = computed(() => workflows.selectedWorkflowInputType);
+const inputType = computed<RuninatorType>(() => workflows.selectedWorkflowInputType ?? { type: "any" });
+const storageKey = computed(() => String(workflows.selectedWorkflow?.id ?? workflows.selectedWorkflow?.name ?? "none"));
 
 function onInputChange(value: unknown) {
   workflows.runInputDraft = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as JsonRecord;
+}
+
+function onSubmit() {
+  runInputFormRef.value?.persistLast();
+  workflows.confirmRunInput();
 }
 </script>
 

@@ -264,10 +264,17 @@ export interface WdlDiagnostic {
   message: string;
 }
 
+export interface WdlSettingRef {
+  scope: string;
+  name: string;
+  kind: SettingKind;
+}
+
 export interface WdlCompletionRequest {
   source: string;
   cursor_byte: number;
   providers: ProviderMetadata[];
+  settings: WdlSettingRef[];
 }
 
 export interface WdlCompletionResponse {
@@ -342,4 +349,37 @@ export interface WorkflowRunCreated {
 
 export interface ServiceStatus {
   service_url: string | null;
+}
+
+export interface DevPackFile {
+  path: string;
+  kind: string;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+}
+
+export interface DevPackInspectResult {
+  path: string;
+  files: DevPackFile[];
+  workflows: WorkflowDefinition[];
+  triggers: WorkflowTrigger[];
+  settings_count: number;
+  settings: WdlSettingRef[];
+}
+
+export interface DevPackTextFile {
+  path: string;
+  content: string;
+  modified_at?: string | null;
+}
+
+export interface DevPackApplyResult {
+  path: string;
+  files: DevPackFile[];
+  imported: {
+    workflows: WorkflowBundle;
+    secrets?: {
+      secrets?: unknown[];
+    };
+  };
 }

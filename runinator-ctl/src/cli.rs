@@ -175,6 +175,31 @@ pub enum WorkflowCommands {
         #[arg(long)]
         skip_settings: bool,
     },
+    /// Watch a workflow pack, re-apply it on changes, and optionally run a workflow.
+    Dev {
+        file: Option<PathBuf>,
+        /// Skip importing the pack's settings bundle (config/secret slots).
+        #[arg(long)]
+        skip_settings: bool,
+        /// Workflow id or name to run after each successful apply.
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+        #[arg(long)]
+        debug: bool,
+        /// Name assigned to each created workflow run.
+        #[arg(long)]
+        name: Option<String>,
+        /// How often to check source mtimes.
+        #[arg(long, default_value_t = 500)]
+        watch_interval_ms: u64,
+        /// Quiet period after a change before compiling/importing.
+        #[arg(long, default_value_t = 250)]
+        debounce_ms: u64,
+    },
     /// Export one workflow or the full workflow bundle.
     Export {
         workflow_id: Option<i64>,

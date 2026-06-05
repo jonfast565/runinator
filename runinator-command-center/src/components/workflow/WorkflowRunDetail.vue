@@ -82,40 +82,23 @@
     </div>
 
     <h3 class="run-detail-section-title">Steps</h3>
-    <div class="table-scroll compact-scroll">
-      <table class="compact">
-        <thead>
-          <tr>
-            <th>Node</th>
-            <th>Status</th>
-            <th>Try</th>
-            <th>Node Run</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="node in workflows.workflowRunDetail?.nodes"
-              :key="node.id"
-              :class="{ selected: workflows.selectedWorkflowRunNodeId === node.node_id }"
-              @click="workflows.selectWorkflowRunNode(node.node_id)">
-            <td>{{ node.node_id }}</td>
-            <td><StatusBadge :status="node.status" /></td>
-            <td>{{ node.attempt }}</td>
-            <td>{{ node.id }}</td>
-            <td class="step-actions">
-              <button
-                v-if="canRestartFromStep(node.node_id)"
-                class="btn btn-icon btn-ghost btn-sm"
-                title="Restart from here"
-                @click.stop="onRestartFromStep(node.node_id)"
-              >
-                <Icon name="restart" :size="14" />
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <RunTimeline
+      class="run-detail-timeline"
+      :detail="workflows.workflowRunDetail"
+      :selected-node-id="workflows.selectedWorkflowRunNodeId"
+      auto-expand-failed
+      @select="workflows.selectWorkflowRunNode"
+    >
+      <template #node-actions="{ node }">
+        <RunNodeActions
+          v-if="workflows.workflowRunDetail"
+          :node="node"
+          :run="workflows.workflowRunDetail.run"
+          show-editor-actions
+          @action="onNodeAction"
+        />
+      </template>
+    </RunTimeline>
 
     <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
       <h3 class="run-detail-section-title">Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
@@ -144,20 +127,24 @@
 <script setup lang="ts">
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
+import { useAppStore } from "../../stores/app";
 import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
+import RunTimeline from "../shared/RunTimeline.vue";
+import RunNodeActions, { type RunNodeActionType } from "../shared/RunNodeActions.vue";
 import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";
 import { computed, nextTick, ref } from "vue";
-import type { ActionResultMetadata } from "../../types/models";
-import { workflowNodeResultMetadata } from "../../utils/workflows";
+import type { ActionResultMetadata, WorkflowNodeRun } from "../../types/models";
+import { workflowNodeActionConfig, workflowNodeResultMetadata } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
+const app = useAppStore();
 
 const renaming = ref(false);
 const renameDraft = ref("");
@@ -199,15 +186,45 @@ async function commitRename() {
   await workflows.renameSelectedWorkflowRun(run.id, next.length === 0 ? null : next);
 }
 
-function canRestartFromStep(nodeId: string): boolean {
-  if (!isTerminalRun.value) return false;
-  return Boolean(nodeId) && nodeId !== "start" && nodeId !== "end" && nodeId !== "fail";
-}
-
-async function onRestartFromStep(nodeId: string) {
+// quick actions emitted by RunNodeActions in the timeline (feature 7).
+async function onNodeAction(payload: { type: RunNodeActionType; node: WorkflowNodeRun }) {
   const run = workflows.workflowRunDetail?.run;
   if (!run) return;
-  await workflows.replaySelectedWorkflowRun(run.id, nodeId);
+  if (payload.type === "replay-run") {
+    await workflows.replaySelectedWorkflowRun(run.id);
+  } else if (payload.type === "replay-from") {
+    await workflows.replaySelectedWorkflowRun(run.id, payload.node.node_id);
+  } else if (payload.type === "open-editor") {
+    await openStepInEditor(payload.node.node_id);
+  } else if (payload.type === "open-provider") {
+    openProviderForNode(payload.node.node_id);
+  }
+}
+
+// look the run's node up in its workflow definition.
+function definitionNode(nodeId: string) {
+  const nodes = workflows.workflowRunWorkflow?.definition?.nodes;
+  return Array.isArray(nodes) ? nodes.find((node: any) => node.id === nodeId) ?? null : null;
+}
+
+// open the step in the workflow editor, preferring the live workflow over the run snapshot.
+async function openStepInEditor(nodeId: string) {
+  const workflowId = workflows.workflowRunWorkflow?.id;
+  const workflow = workflows.workflows.find((item) => item.id === workflowId) ?? workflows.workflowRunWorkflow;
+  if (!workflow) return;
+  await workflows.selectWorkflow(workflow);
+  app.activeTab = "Workflows";
+  workflows.openStepEditor(nodeId);
+}
+
+// focus this node's provider/action in the providers view.
+function openProviderForNode(nodeId: string) {
+  const node = definitionNode(nodeId);
+  if (!node) return;
+  const config = workflowNodeActionConfig(node);
+  if (!config.provider) return;
+  providersStore.focusProviderAction(config.provider, config.action);
+  app.activeTab = "Providers";
 }
 
 const selectedNodeOutput = computed<Record<string, any> | null>(() => {
