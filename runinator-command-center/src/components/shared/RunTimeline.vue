@@ -1,5 +1,5 @@
 <template>
-  <div class="run-timeline">
+  <div ref="rootEl" class="run-timeline">
     <!-- failure reason pinned at the top for an at-a-glance "what broke and where". -->
     <div v-if="failure" class="rt-failure">
       <div class="rt-failure-head">
@@ -29,6 +29,7 @@
       <li
         v-for="node in visibleNodes"
         :key="node.id"
+        :data-node-run-id="node.id"
         :class="['rt-item', { selected: node.node_id === selectedNodeId, active: isActive(node) }]"
       >
         <div class="rt-rail">
@@ -69,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { fetchWorkflowNodeRunChunks } from "../../api/commandCenterApi";
@@ -95,6 +96,7 @@ const emit = defineEmits<{
 const RUNNING_STATUSES = new Set(["running", "waiting", "queued", "retrying"]);
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
 
+const rootEl = ref<HTMLElement | null>(null);
 const expandedId = ref<number | null>(null);
 const logCache = ref<Record<number, string>>({});
 const logLoading = ref<Set<number>>(new Set());
@@ -247,6 +249,14 @@ watch(
     expandedId.value = null;
   }
 );
+
+// keep the running step in view while a run is in flight, without yanking finished runs around.
+const activeNodeRunId = computed(() => visibleNodes.value.find((node) => isActive(node))?.id ?? null);
+watch(activeNodeRunId, async (id) => {
+  if (!runInFlight.value || id == null) return;
+  await nextTick();
+  rootEl.value?.querySelector(`[data-node-run-id="${id}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+});
 
 onMounted(() => {
   clockTimer = window.setInterval(() => {

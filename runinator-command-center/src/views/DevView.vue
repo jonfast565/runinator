@@ -19,7 +19,15 @@
         <div class="form-grid dev-form-grid">
           <label>
             <span>Pack path</span>
-            <input v-model="packPath" placeholder="packs/sdlc/sdlc.wdlp" @keydown.enter.prevent="inspectPackNow" />
+            <input
+              v-model="packPath"
+              list="dev-pack-paths"
+              placeholder="packs/sdlc/sdlc.wdlp"
+              @keydown.enter.prevent="inspectPackNow"
+            />
+            <datalist id="dev-pack-paths">
+              <option v-for="path in recentPacks" :key="path" :value="path" />
+            </datalist>
           </label>
           <label>
             <span>Run after apply</span>
@@ -158,6 +166,10 @@
               <Icon name="play" />
               <span>{{ latestRunId ? "Re-run" : "Run" }}</span>
             </button>
+            <button v-if="runInFlight" class="btn btn-danger" title="Cancel this run" @click="cancelRun">
+              <Icon name="stop" />
+              <span>Cancel</span>
+            </button>
             <button class="btn" :disabled="!latestRunId || busy" @click="refreshLatestRun">
               <Icon name="refresh" />
               <span>Refresh</span>
@@ -225,6 +237,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   applyDevPack,
+  cancelWorkflowRun,
   createWorkflowRun,
   fetchWorkflowRun,
   inspectDevPack,
@@ -265,6 +278,7 @@ const autoSave = ref(Boolean(savedOptions.autoSave));
 const debugRun = ref(Boolean(savedOptions.debugRun));
 const runWorkflowRef = ref(String(savedOptions.runWorkflowRef ?? ""));
 const recentRunIds = ref<number[]>([]);
+const recentPacks = ref<string[]>(loadRecentPacks());
 const runInputValue = ref<unknown>({});
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 const inspectResult = ref<DevPackInspectResult | null>(null);
@@ -290,6 +304,10 @@ const runWorkflowInputType = computed<RuninatorType>(() => resolveRunWorkflow()?
 const runWorkflowKey = computed(() => String(runWorkflowRef.value || "none"));
 const canSaveSource = computed(() => selectedIsWdl.value && sourceText.value !== savedSourceText.value);
 const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
+const runInFlight = computed(() => {
+  const status = latestRunDetail.value?.run.status;
+  return Boolean(status) && !TERMINAL_STATUSES.has(status ?? "");
+});
 const statusBadge = computed(() => (errorText.value ? "failed" : busy.value || saving.value ? "running" : "succeeded"));
 const lastInspectText = computed(() => (lastInspectAt.value ? `Last inspect ${lastInspectAt.value.toLocaleTimeString()}` : "Not inspected"));
 const runNodeCounts = computed(() => {
@@ -320,6 +338,7 @@ onBeforeUnmount(() => {
   window.clearInterval(runTimer);
   window.clearTimeout(autoSaveTimer);
   window.removeEventListener("keydown", onKeydown);
+  document.title = defaultDocumentTitle;
 });
 
 watch(packPath, (value) => {
@@ -394,6 +413,44 @@ async function viewRun(id: number) {
   watchLatestRun();
 }
 
+async function cancelRun() {
+  if (!latestRunId.value || !runInFlight.value) return;
+  try {
+    await cancelWorkflowRun(latestRunId.value);
+    statusText.value = `Canceled run #${latestRunId.value}.`;
+    await refreshLatestRun();
+  } catch (err) {
+    errorText.value = String(err);
+  }
+}
+
+function loadRecentPacks(): string[] {
+  try {
+    return JSON.parse(window.localStorage.getItem("runinator.devPack.recentPaths") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function rememberPack(path: string) {
+  recentPacks.value = [path, ...recentPacks.value.filter((existing) => existing !== path)].slice(0, 8);
+  window.localStorage.setItem("runinator.devPack.recentPaths", JSON.stringify(recentPacks.value));
+}
+
+// reflect the run status in the tab title so a completed run is noticeable from another tab.
+const defaultDocumentTitle = document.title;
+watch(
+  () => [latestRunId.value, latestRunDetail.value?.run.status] as const,
+  ([id, status]) => {
+    if (!id || !status) {
+      document.title = defaultDocumentTitle;
+      return;
+    }
+    const icon = status === "succeeded" ? "✓" : status === "failed" || status === "timed_out" ? "✕" : "▶";
+    document.title = `${icon} #${id} ${status} · Runinator`;
+  }
+);
+
 async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean } = {}) {
   const path = packPath.value.trim();
   if (!path) return;
@@ -406,6 +463,7 @@ async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean }
     const result = await inspectDevPack(path, skipSettings.value);
     const previousFingerprint = lastFingerprint;
     inspectResult.value = result;
+    rememberPack(path);
     lastInspectAt.value = new Date();
     lastFingerprint = fingerprint(result.files);
     if (!selectedFilePath.value || !result.files.some((file) => file.path === selectedFilePath.value)) {
