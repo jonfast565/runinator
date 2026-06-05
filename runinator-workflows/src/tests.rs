@@ -1061,6 +1061,56 @@ fn typed_validation_reports_nested_dynamic_expression_type_errors() {
     );
 }
 
+// an open `{ scope: { name: type } }` config schema, matching what the web service builds from
+// the stored settings.
+fn config_schema(name_type: RuninatorType) -> RuninatorType {
+    RuninatorType::open_structure(
+        [(
+            "jira",
+            RuninatorType::open_structure([("base_url", name_type)], RuninatorType::Any),
+        )],
+        RuninatorType::Any,
+    )
+}
+
+#[test]
+fn typed_validation_accepts_config_ref_matching_config_schema() {
+    let provider = check_provider(RuninatorType::String);
+    let wf = action_workflow(runinator_models::json!({
+        "config": { "$ref": { "config": ["jira", "base_url"] } }
+    }));
+    validate_workflow_with_config(&wf, &[provider], &config_schema(RuninatorType::String))
+        .expect("config ref typed as string satisfies a string parameter");
+}
+
+#[test]
+fn typed_validation_rejects_config_ref_conflicting_with_config_schema() {
+    let provider = check_provider(RuninatorType::String);
+    let wf = action_workflow(runinator_models::json!({
+        "config": { "$ref": { "config": ["jira", "base_url"] } }
+    }));
+    let err =
+        validate_workflow_with_config(&wf, &[provider], &config_schema(RuninatorType::Integer))
+            .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("action parameter 'config' expected string, got integer"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn typed_validation_types_unconfigured_config_refs_as_any() {
+    // a key absent from the schema falls through the open struct's `any` additional type, so it
+    // resolves to `any` (assignable to an `any` parameter) rather than erroring on the ref itself.
+    let provider = check_provider(RuninatorType::Any);
+    let wf = action_workflow(runinator_models::json!({
+        "config": { "$ref": { "config": ["jira", "not_configured"] } }
+    }));
+    validate_workflow_with_config(&wf, &[provider], &config_schema(RuninatorType::String))
+        .expect("unconfigured config keys resolve to any");
+}
+
 #[test]
 fn typed_validation_keeps_optional_field_refs_presence_only() {
     let provider = check_provider(RuninatorType::String);

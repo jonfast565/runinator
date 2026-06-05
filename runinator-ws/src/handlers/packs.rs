@@ -79,6 +79,15 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
             .map(|bundle| bundle.secrets.len())
             .unwrap_or(0),
     );
+    // apply config/secrets before workflows so a pack's own `config.*` values are present in the
+    // store when its workflows are type-checked on import.
+    let secrets = match &secret_bundle {
+        Some(bundle) => match import_secret_entries_with(bundle, overwrite) {
+            Ok(imported) => SecretBundle { secrets: imported },
+            Err(error) => return error.into_response(),
+        },
+        None => SecretBundle::default(),
+    };
     let workflows = match repository::import_workflow_bundle_with(
         db.as_ref(),
         workflow_bundle,
@@ -88,13 +97,6 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
     {
         Ok(bundle) => bundle,
         Err(err) => return api_error(err.to_string()),
-    };
-    let secrets = match &secret_bundle {
-        Some(bundle) => match import_secret_entries_with(bundle, overwrite) {
-            Ok(imported) => SecretBundle { secrets: imported },
-            Err(error) => return error.into_response(),
-        },
-        None => SecretBundle::default(),
     };
     emit(&events, AppEvent::WorkflowsChanged);
     (

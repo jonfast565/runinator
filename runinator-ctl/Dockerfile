@@ -16,6 +16,7 @@ RUN groupadd --system runinator && useradd --system --gid runinator --home /home
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinatorctl /usr/local/bin/runinatorctl
 COPY packs/sdlc/sdlc.wdlp /home/runinator/.runinator/workflows/sdlc.wdlp
+COPY packs/sdlc/settings.json /home/runinator/.runinator/workflows/settings.json
 COPY packs/sdlc/wdl /home/runinator/.runinator/workflows/wdl
 RUN chown -R runinator:runinator /usr/local/bin/runinatorctl /home/runinator/.runinator
 RUN chmod -R 775 /usr/local/bin/runinatorctl

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use runinator_models::{
     providers::ProviderMetadata,
+    types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowTransitions,
     },
@@ -147,8 +148,19 @@ pub fn validate_workflow_with_providers(
     workflow: &WorkflowDefinition,
     providers: &[ProviderMetadata],
 ) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
+    // config refs stay permissive (`any`) when no config schema is supplied.
+    validate_workflow_with_config(workflow, providers, &RuninatorType::Any)
+}
+
+/// validate a workflow against provider metadata and a config schema; `config.*` references are
+/// type-checked against `config_type` (an open `{ scope: { name: type } }` struct).
+pub fn validate_workflow_with_config(
+    workflow: &WorkflowDefinition,
+    providers: &[ProviderMetadata],
+    config_type: &RuninatorType,
+) -> Result<(String, Vec<WorkflowNode>), WorkflowValidationError> {
     let (start, nodes) = validate_workflow(workflow)?;
-    validate_workflow_types(workflow, &nodes, providers)?;
+    validate_workflow_types(workflow, &nodes, providers, config_type)?;
     Ok((start, nodes))
 }
 

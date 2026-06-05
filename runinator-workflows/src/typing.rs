@@ -26,6 +26,7 @@ pub type WorkflowType = RuninatorType;
 struct TypeContext {
     input: WorkflowType,
     workflow: WorkflowType,
+    config: WorkflowType,
     node_outputs: HashMap<String, WorkflowType>,
 }
 
@@ -33,12 +34,14 @@ pub fn validate_workflow_types(
     workflow: &WorkflowDefinition,
     nodes: &[WorkflowNode],
     providers: &[ProviderMetadata],
+    config_type: &WorkflowType,
 ) -> Result<(), WorkflowValidationError> {
     let provider_actions = provider_actions(providers);
     validate_provider_metadata_set(providers)?;
     let mut context = TypeContext {
         input: workflow.input_type.clone(),
         workflow: workflow_context_type(),
+        config: config_type.clone(),
         node_outputs: HashMap::new(),
     };
 
@@ -445,8 +448,9 @@ fn resolve_ref_type(
         WorkflowRefSource::Input => &context.input,
         WorkflowRefSource::Workflow => &context.workflow,
         WorkflowRefSource::Prev => &WorkflowType::Any,
-        // config holds runtime-supplied json; its shape is unknown at compile time.
-        WorkflowRefSource::Config => &WorkflowType::Any,
+        // config is typed from the stored settings schema (`{ scope: { name: type } }`); an
+        // open struct keeps not-yet-configured keys permissive (`any`) instead of erroring.
+        WorkflowRefSource::Config => &context.config,
         WorkflowRefSource::NodeOutput(node) => {
             context.node_outputs.get(node.as_str()).ok_or_else(|| {
                 WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())

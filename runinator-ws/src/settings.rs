@@ -35,6 +35,22 @@ fn stored_config_schema(store: &dyn CredentialStore, scope: &str, name: &str) ->
         .map(|stored| stored.schema)
 }
 
+/// the pinned type of a stored config slot, decoded from its schema (back-compat: infer from the
+/// bare value when no schema is stored).
+pub(crate) fn stored_config_type(
+    store: &dyn CredentialStore,
+    scope: &str,
+    name: &str,
+) -> Option<RuninatorType> {
+    match stored_config_schema(store, scope, name) {
+        Some(schema) => Some(RuninatorType::from_json_schema(&schema)),
+        None => {
+            let bytes = store.get(SettingKind::Config, scope, name).ok()??;
+            Some(RuninatorType::infer_from_value(&decode_config_value(&bytes)))
+        }
+    }
+}
+
 /// validate a value for its kind and produce the bytes to persist. config validates against a
 /// schema (the request's, else the previously stored one, else one inferred from the value on
 /// first write) and must conform to it; secrets must be a non-empty string. returns a

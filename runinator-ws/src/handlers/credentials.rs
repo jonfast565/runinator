@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
 use axum::{Json, extract::Query, http::StatusCode};
+use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
@@ -15,7 +17,7 @@ use runinator_utilities::credential_store::{
 
 use crate::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
 use crate::responses::{api_error, bad_request, not_found};
-use crate::settings::{decode_config_value, validate_and_encode};
+use crate::settings::{decode_config_value, stored_config_type, validate_and_encode};
 
 // resolve the credential store path from the environment, falling back to the app-data default.
 fn credential_store_path() -> PathBuf {
@@ -84,6 +86,33 @@ fn build_config_tree() -> Value {
         }
     }
     Value::Object(root)
+}
+
+/// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
+/// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
+/// stays permissive (`any`) rather than failing validation.
+pub(crate) fn config_type_tree() -> RuninatorType {
+    let store = credential_store();
+    let Ok(entries) = store.list() else {
+        return RuninatorType::map(RuninatorType::Any);
+    };
+    let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();
+    for entry in entries {
+        if entry.kind != SettingKind::Config {
+            continue;
+        }
+        let Some(ty) = stored_config_type(&store, &entry.scope, &entry.name) else {
+            continue;
+        };
+        scopes.entry(entry.scope).or_default().insert(entry.name, ty);
+    }
+    let scope_fields = scopes.into_iter().map(|(scope, names)| {
+        (
+            scope,
+            RuninatorType::open_structure(names, RuninatorType::Any),
+        )
+    });
+    RuninatorType::open_structure(scope_fields, RuninatorType::Any)
 }
 
 pub(crate) async fn get_credential(

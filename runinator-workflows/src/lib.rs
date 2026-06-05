@@ -34,7 +34,9 @@ pub use types::{
     WaitParameters, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
 };
 pub use typing::{WorkflowType, validate_workflow_types};
-pub use validation::{parse_nodes, validate_workflow, validate_workflow_with_providers};
+pub use validation::{
+    parse_nodes, validate_workflow, validate_workflow_with_config, validate_workflow_with_providers,
+};
 
 pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> Value {
     let mut steps = Map::new();
