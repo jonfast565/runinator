@@ -141,20 +141,15 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             }
             println!("workflow {} v{} validates", workflow.name, workflow.version);
         }
-        WorkflowCommands::Apply {
-            file,
-            skip_settings,
-        } => {
+        WorkflowCommands::Apply { file } => {
             let resolved = resolve_workflow_apply_path(file.as_deref())?;
-            let summary =
-                apply_workflow_source(client, &resolved, *skip_settings, json_output).await?;
+            let summary = apply_workflow_source(client, &resolved, json_output).await?;
             if !json_output {
                 print_apply_summary(&summary);
             }
         }
         WorkflowCommands::Dev {
             file,
-            skip_settings,
             run,
             params: cli_params,
             json_file,
@@ -170,7 +165,6 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             workflow_dev(
                 client,
                 &resolved,
-                *skip_settings,
                 run.as_deref(),
                 cli_params,
                 json_file.as_deref(),
@@ -240,19 +234,14 @@ fn resolve_workflow_apply_path(file: Option<&Path>) -> Result<PathBuf> {
 async fn apply_workflow_source(
     client: &Client,
     file: &Path,
-    skip_settings: bool,
     json_output: bool,
 ) -> Result<WorkflowApplySummary> {
     // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
         let bundle = pack::load_workflow_bundle(file)?;
-        // any settings (`settings.wdls`/`.json`) ride in the same compiled pack zip.
-        let settings = if skip_settings {
-            None
-        } else {
-            pack::load_pack_settings(file)?
-        };
+        // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
+        let settings = pack::load_pack_settings(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
         let result = client.import_pack(&bundle, settings.as_ref(), true).await?;
         let summary = WorkflowApplySummary {
@@ -310,7 +299,6 @@ fn print_apply_summary(summary: &WorkflowApplySummary) {
 async fn workflow_dev(
     client: &Client,
     file: &Path,
-    skip_settings: bool,
     run_workflow: Option<&str>,
     cli_params: &[String],
     json_file: Option<&Path>,
@@ -350,7 +338,7 @@ async fn workflow_dev(
                 source_count,
                 if source_count == 1 { "" } else { "s" }
             );
-            match apply_workflow_source(client, file, skip_settings, false).await {
+            match apply_workflow_source(client, file, false).await {
                 Ok(summary) => {
                     print_apply_summary(&summary);
                     if let Some(workflow) = run_workflow {

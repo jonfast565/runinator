@@ -1,9 +1,11 @@
+mod errors;
+
 use std::sync::Arc;
 
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -79,12 +81,8 @@ impl Provider for ApprovalProvider {
 }
 
 fn parse_params(request: &ProviderExecutionRequest) -> Result<ApprovalParams, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
-        Box::new(RuntimeError::new(
-            "approval.invalid_params".into(),
-            e.to_string(),
-        )) as SendableError
-    })
+    serde_json::from_value(request.parameters.clone().into())
+        .map_err(|e| errors::INVALID_PARAMS.error(e))
 }
 
 #[cfg(test)]

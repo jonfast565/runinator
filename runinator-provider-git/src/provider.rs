@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use runinator_models::json;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -13,6 +13,7 @@ use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Serialize;
 
 use crate::command::run_command;
+use crate::errors::UNSUPPORTED_ACTION;
 use crate::params::{
     CleanupParams, CommitParams, PushParams, WorkspaceParams, WorktreeParams, parse_params,
 };
@@ -190,10 +191,7 @@ impl Provider for GitProvider {
                 )?
             }
             other => {
-                return Err(Box::new(RuntimeError::new(
-                    "git.unsupported_action".into(),
-                    format!("Unsupported Git action {other}"),
-                )));
+                return Err(UNSUPPORTED_ACTION.error(other));
             }
         };
         let result = GitResult {

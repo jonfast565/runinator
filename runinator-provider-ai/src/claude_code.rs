@@ -7,12 +7,15 @@ use std::time::{Duration, Instant};
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 
+use crate::errors::{
+    CLAUDE_CANCELED, CLAUDE_EXIT_CODE, CLAUDE_INVALID_JSON, CLAUDE_SPAWN, CLAUDE_TIMEOUT,
+};
 use crate::params::{ClaudeCodeParams, parse_params};
 
 pub(crate) fn run_claude_code(
@@ -22,10 +25,7 @@ pub(crate) fn run_claude_code(
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: ClaudeCodeParams = parse_params(request)?;
     if token.is_cancelled() {
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.claude_code.canceled".into(),
-            "Claude Code command canceled".into(),
-        )));
+        return Err(CLAUDE_CANCELED.bare());
     }
     let argv = build_claude_argv(&params);
 
@@ -42,21 +42,15 @@ pub(crate) fn run_claude_code(
         command.env(key, value);
     }
 
-    let mut child = command.spawn().map_err(|err| {
-        RuntimeError::new(
-            "ai_command.claude_code.spawn".into(),
-            format!("failed to spawn {}: {err}", params.binary),
-        )
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|err| CLAUDE_SPAWN.error(format!("failed to spawn {}: {err}", params.binary)))?;
 
     let stdout_handle = drain_stdout(&mut child, sink.as_ref());
     let stderr_handle = drain_stderr(&mut child);
     if token.is_cancelled() {
         let _ = child.kill();
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.claude_code.canceled".into(),
-            "Claude Code command canceled".into(),
-        )));
+        return Err(CLAUDE_CANCELED.bare());
     }
     let status = wait_for_child(&mut child, request.timeout_secs, token)?;
     let stdout = stdout_handle
@@ -67,10 +61,7 @@ pub(crate) fn run_claude_code(
         .unwrap_or_default();
 
     if !status.success() {
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.claude_code.exit_code".into(),
-            format!("claude exited with {status}: {stderr}"),
-        )));
+        return Err(CLAUDE_EXIT_CODE.error(format!("claude exited with {status}: {stderr}")));
     }
 
     let parsed = parse_claude_output(&params.output_format, &stdout)?;
@@ -93,17 +84,14 @@ fn wait_for_child(
         if token.is_cancelled() {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "ai_command.claude_code.canceled".into(),
-                "Claude Code command canceled".into(),
-            )));
+            return Err(CLAUDE_CANCELED.bare());
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "ai_command.claude_code.timeout".into(),
-                format!("Claude Code timed out after {} seconds", timeout.as_secs()),
+            return Err(CLAUDE_TIMEOUT.error(format!(
+                "Claude Code timed out after {} seconds",
+                timeout.as_secs()
             )));
         }
         if let Some(status) = child.try_wait()? {
@@ -178,10 +166,9 @@ fn drain_stderr(child: &mut Child) -> Option<JoinHandle<String>> {
 fn parse_claude_output(format: &str, stdout: &str) -> Result<Value, SendableError> {
     match format {
         "json" | "stream-json" => serde_json::from_str::<Value>(stdout).map_err(|err| {
-            Box::new(RuntimeError::new(
-                "ai_command.claude_code.invalid_json".into(),
-                format!("claude stdout was not valid JSON ({format}): {err}"),
-            )) as SendableError
+            CLAUDE_INVALID_JSON.error(format!(
+                "claude stdout was not valid JSON ({format}): {err}"
+            ))
         }),
         _ => Ok(json!({ "text": stdout })),
     }

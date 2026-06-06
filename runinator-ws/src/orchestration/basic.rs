@@ -15,7 +15,7 @@ pub(super) async fn process_config_node<T: DatabaseImpl>(
             node.parameters.clone().into(),
         )
         .await?;
-    let context = runtime_context(workflow_run, node_runs);
+    let context = runtime_context(db, workflow_run, node_runs).await;
     let resolved = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let new_name = resolved.get("name").and_then(|value| match value {

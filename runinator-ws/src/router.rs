@@ -400,11 +400,15 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .route(
             "/credentials",
-            get(get_credential)
-                .post(put_credential)
-                .delete(delete_credential),
+            get(get_credential::<T>)
+                .post(put_credential::<T>)
+                .delete(delete_credential::<T>)
+                .layer(Extension(pool.clone())),
         )
-        .route("/credentials/import", post(import_secret_bundle))
+        .route(
+            "/credentials/import",
+            post(import_secret_bundle::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             API_PROVIDERS,
             get(get_providers::<T>)

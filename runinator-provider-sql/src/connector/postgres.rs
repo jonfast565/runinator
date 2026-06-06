@@ -6,11 +6,12 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use postgres::types::Type;
 use postgres::{Client, Column, NoTls, Row};
-use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::errors::SendableError;
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 use super::{DatabaseConnector, TableData};
+use crate::errors::{QUERY_FAILED, QUERY_TIMEOUT};
 
 #[derive(Clone)]
 pub struct PostgresConnector {
@@ -155,17 +156,13 @@ impl DatabaseConnector for PostgresConnector {
 
         match receiver.recv_timeout(effective_timeout) {
             Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => Err(Box::new(RuntimeError::new(
-                "QUERY_TIMEOUT".to_string(),
-                format!(
-                    "PostgreSQL query timed out after {} seconds",
-                    effective_timeout.as_secs()
-                ),
+            Err(RecvTimeoutError::Timeout) => Err(QUERY_TIMEOUT.error(format!(
+                "PostgreSQL query timed out after {} seconds",
+                effective_timeout.as_secs()
             ))),
-            Err(RecvTimeoutError::Disconnected) => Err(Box::new(RuntimeError::new(
-                "QUERY_FAILED".to_string(),
-                "PostgreSQL query worker exited before returning a result".to_string(),
-            ))),
+            Err(RecvTimeoutError::Disconnected) => {
+                Err(QUERY_FAILED.error("PostgreSQL query worker exited before returning a result"))
+            }
         }
     }
 }

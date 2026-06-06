@@ -13,9 +13,10 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use log::info;
-use runinator_models::{
-    errors::{RuntimeError, SendableError},
-    runs::NewRunArtifact,
+use runinator_models::{errors::SendableError, runs::NewRunArtifact};
+
+use crate::errors::{
+    DYNAMO_TIMEOUT, INVALID_ATTRIBUTE_VALUE, MISSING_KEY_CONDITION, MISSING_PARTIQL_STATEMENT,
 };
 use runinator_utilities::data_export::{
     TableData, TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
@@ -63,12 +64,9 @@ async fn execute_dump(
 
     match time::timeout(timeout, fut).await {
         Ok(result) => result,
-        Err(_) => Err(Box::new(RuntimeError::new(
-            "DYNAMO_TIMEOUT".to_string(),
-            format!(
-                "Timed out after {} second(s) while querying DynamoDB table {}",
-                timeout_secs, request.table_name
-            ),
+        Err(_) => Err(DYNAMO_TIMEOUT.error(format!(
+            "Timed out after {} second(s) while querying DynamoDB table {}",
+            timeout_secs, request.table_name
         ))),
     }
 }
@@ -96,10 +94,8 @@ async fn query_items(
     request: &DynamoDumpRequest,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, SendableError> {
     let key_condition = request.key_condition_expression.as_ref().ok_or_else(|| {
-        invalid_request(
-            "MISSING_KEY_CONDITION",
-            "key_condition_expression is required when query_type is 'query'",
-        )
+        MISSING_KEY_CONDITION
+            .error("key_condition_expression is required when query_type is 'query'")
     })?;
     let key_condition_expr = key_condition.as_str();
 
@@ -168,10 +164,8 @@ async fn execute_partiql(
     request: &DynamoDumpRequest,
 ) -> Result<Vec<HashMap<String, AttributeValue>>, SendableError> {
     let statement = request.partiql_statement.as_ref().ok_or_else(|| {
-        invalid_request(
-            "MISSING_PARTIQL_STATEMENT",
-            "partiql_statement is required when query_type is 'partiql'",
-        )
+        MISSING_PARTIQL_STATEMENT
+            .error("partiql_statement is required when query_type is 'partiql'")
     })?;
     let statement_text = statement.as_str();
 
@@ -582,14 +576,7 @@ fn attr_null(value: bool) -> AttributeValue {
 }
 
 fn invalid_attribute_value(message: impl Into<String>) -> SendableError {
-    Box::new(RuntimeError::new(
-        "INVALID_ATTRIBUTE_VALUE".to_string(),
-        message.into(),
-    ))
-}
-
-fn invalid_request(code: &str, message: impl Into<String>) -> SendableError {
-    Box::new(RuntimeError::new(code.to_string(), message.into()))
+    INVALID_ATTRIBUTE_VALUE.error(message.into())
 }
 
 fn to_sendable<E>(err: E) -> SendableError

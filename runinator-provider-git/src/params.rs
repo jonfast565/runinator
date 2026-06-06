@@ -1,8 +1,7 @@
-use runinator_models::{
-    errors::{RuntimeError, SendableError},
-    runs::ProviderExecutionRequest,
-};
+use runinator_models::{errors::SendableError, runs::ProviderExecutionRequest};
 use serde::Deserialize;
+
+use crate::errors::INVALID_PARAMS;
 
 #[derive(Deserialize)]
 pub(crate) struct WorktreeParams {
@@ -40,10 +39,5 @@ pub(crate) struct PushParams {
 pub(crate) fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
-        Box::new(RuntimeError::new(
-            "git.invalid_params".into(),
-            e.to_string(),
-        )) as SendableError
-    })
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| INVALID_PARAMS.error(e))
 }

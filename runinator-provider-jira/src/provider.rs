@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use runinator_models::json;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
     },
@@ -11,6 +11,7 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
+use crate::error::{UNSUPPORTED_ACTION, http_error, validate_base_url};
 use crate::metadata::{base_param, email_param, issue_key_param, jira_results, token_param};
 use crate::params::{
     JiraCommentParams, JiraIssueKeyParams, JiraSearchParams, JiraTransitionParams, parse_params,
@@ -88,7 +89,8 @@ impl Provider for JiraProvider {
     ) -> Result<TaskExecutionResult, SendableError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))
-            .build()?;
+            .build()
+            .map_err(|e| http_error("jira client build failed", e))?;
         let function = request.action_function.as_str();
         let response = match function {
             "search_external_items" | "search" => {
@@ -97,24 +99,29 @@ impl Provider for JiraProvider {
             }
             "fetch_item" | "fetch" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
+                validate_base_url(&p.base.base_url)?;
                 client
                     .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
                     .basic_auth(
                         p.base.email.as_deref().unwrap_or_default(),
                         Some(&p.base.token),
                     )
-                    .send()?
+                    .send()
+                    .map_err(|e| http_error("jira fetch request failed", e))?
             }
             "add_comment" | "comment" => {
                 let p: JiraCommentParams = parse_params(&request)?;
+                validate_base_url(&p.base.base_url)?;
                 client
                     .post(format!("{}/rest/api/3/issue/{}/comment", p.base.base_url, p.key))
                     .basic_auth(p.base.email.as_deref().unwrap_or_default(), Some(&p.base.token))
                     .json(&json!({ "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": p.body }] }] } }))
-                    .send()?
+                    .send()
+                    .map_err(|e| http_error("jira comment request failed", e))?
             }
             "transition_item" | "transition" => {
                 let p: JiraTransitionParams = parse_params(&request)?;
+                validate_base_url(&p.base.base_url)?;
                 client
                     .post(format!(
                         "{}/rest/api/3/issue/{}/transitions",
@@ -125,25 +132,25 @@ impl Provider for JiraProvider {
                         Some(&p.base.token),
                     )
                     .json(&json!({ "transition": { "id": p.transition_id } }))
-                    .send()?
+                    .send()
+                    .map_err(|e| http_error("jira transition request failed", e))?
             }
             "poll_status" | "poll" => {
                 let p: JiraIssueKeyParams = parse_params(&request)?;
+                validate_base_url(&p.base.base_url)?;
                 client
                     .get(format!("{}/rest/api/3/issue/{}", p.base.base_url, p.key))
                     .basic_auth(
                         p.base.email.as_deref().unwrap_or_default(),
                         Some(&p.base.token),
                     )
-                    .send()?
+                    .send()
+                    .map_err(|e| http_error("jira poll request failed", e))?
             }
             other => {
-                return Err(Box::new(RuntimeError::new(
-                    "jira.unsupported_action".into(),
-                    format!("Unsupported Jira action {other}"),
-                )));
+                return Err(UNSUPPORTED_ACTION.error(other));
             }
         };
-        json_response("jira", response)
+        json_response(response)
     }
 }

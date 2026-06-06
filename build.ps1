@@ -763,12 +763,15 @@ function Build-ContainerImages {
 
     Test-ToolAvailable -Name 'docker'
 
+    # all rust services share deploy/Dockerfile and are selected via --target.
+    # BuildKit caches the common builder stage so the cargo compile runs once
+    # for the whole set. the command center is a separate node build.
     $images = @(
-        @{ Name = 'runinator-waker'; Dockerfile = 'runinator-waker/Dockerfile' },
-        @{ Name = 'runinator-worker';    Dockerfile = 'runinator-worker/Dockerfile' },
-        @{ Name = 'runinator-ctl';       Dockerfile = 'runinator-ctl/Dockerfile' },
-        @{ Name = 'runinator-ws';        Dockerfile = 'runinator-ws/Dockerfile' },
-        @{ Name = 'runinator-migration'; Dockerfile = 'runinator-migration/Dockerfile' },
+        @{ Name = 'runinator-waker';     Dockerfile = 'deploy/Dockerfile'; Target = 'waker' },
+        @{ Name = 'runinator-worker';    Dockerfile = 'deploy/Dockerfile'; Target = 'worker' },
+        @{ Name = 'runinator-ctl';       Dockerfile = 'deploy/Dockerfile'; Target = 'ctl' },
+        @{ Name = 'runinator-ws';        Dockerfile = 'deploy/Dockerfile'; Target = 'ws' },
+        @{ Name = 'runinator-migration'; Dockerfile = 'deploy/Dockerfile'; Target = 'migration' },
         @{ Name = 'runinator-command-center-web'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
     )
 
@@ -779,12 +782,13 @@ function Build-ContainerImages {
 
         $context = if ($image.ContainsKey('Context')) { $image.Context } else { '.' }
 
-        Invoke-ExternalCommand -FilePath 'docker' -Arguments @(
-            'build',
-            '--file', $image.Dockerfile,
-            '--tag', $taggedName,
-            $context
-        ) -WorkingDirectory $WorkspacePath
+        $buildArgs = @('build', '--file', $image.Dockerfile)
+        if ($image.ContainsKey('Target')) {
+            $buildArgs += @('--target', $image.Target)
+        }
+        $buildArgs += @('--tag', $taggedName, $context)
+
+        Invoke-ExternalCommand -FilePath 'docker' -Arguments $buildArgs -WorkingDirectory $WorkspacePath
 
         $builtImages[$image.Name] = $taggedName
 

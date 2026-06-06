@@ -1,0 +1,46 @@
+// SDLC Automation Pack settings.
+//
+// every entry below is a config.*/secret.* value the pack's workflows reference,
+// so each is required. replace every `<<insert here>>` with a real value before
+// running the pipeline. non-string slots use a typed placeholder (`0`, an array)
+// so the pack still imports and type-checks.
+
+// jira connection and the ticket query the pipeline pulls work from.
+config jira.base_url = "<<insert here>>"
+config jira.email = "<<insert here>>"
+config jira.jql = "<<insert here>>"
+
+// jira workflow transition ids (project specific).
+config transitions.in_progress = "<<insert here>>"
+config transitions.in_review = "<<insert here>>"
+config transitions.done = "<<insert here>>"
+
+// github repository the automation opens and merges pull requests against.
+config github.owner = "<<insert here>>"
+config github.repo = "<<insert here>>"
+config github.base_branch = "<<insert here>>"
+
+// slack channel for success and failure notifications.
+config slack.channel = "<<insert here>>"
+
+// local git checkout used for worktrees, and the remote to push branches to.
+config git.repo = "<<insert here>>"
+config git.remote = "<<insert here>>"
+
+// ci poll cadence in seconds; max_polls is unused by the workflow and keeps its default.
+config ci_poll.interval_seconds = 0
+config ci_poll.max_polls = 30
+
+// claude code agent configuration.
+config claude.binary = "<<insert here>>"
+config claude.model = "<<insert here>>"
+config claude.prompt_intro = "<<insert here>>"
+config claude.allowed_tools = "<<insert here>>"
+config claude.output_format = "<<insert here>>"
+config claude.permission_mode = "<<insert here>>"
+config claude.extra_args = ["<<insert here>>"]
+
+// api tokens (late-resolved at the worker).
+secret jira.token = "<<insert here>>"
+secret github.token = "<<insert here>>"
+secret slack.token = "<<insert here>>"

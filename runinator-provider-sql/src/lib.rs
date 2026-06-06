@@ -1,12 +1,13 @@
 mod connector;
 mod dump;
+mod errors;
 mod format;
 mod helpers;
 
 use std::sync::Arc;
 
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -78,12 +79,9 @@ impl Provider for SqlProvider {
     ) -> Result<TaskExecutionResult, SendableError> {
         match request.action_function.as_str() {
             "dump_data" => self.dump_data(request.parameters.into(), request.timeout_secs, token),
-            _ => Err(Box::new(RuntimeError::new(
-                "UNSUPPORTED_CALL".to_string(),
-                format!(
-                    "Unsupported SQL provider call '{}'",
-                    request.action_function
-                ),
+            _ => Err(errors::UNSUPPORTED_CALL.error(format!(
+                "Unsupported SQL provider call '{}'",
+                request.action_function
             ))),
         }
     }

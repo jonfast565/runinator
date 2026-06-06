@@ -1,4 +1,5 @@
 mod claude_code;
+mod errors;
 mod params;
 mod provider;
 mod shell;

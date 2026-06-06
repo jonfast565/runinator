@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use log::info;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     runs::{NewRunArtifact, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
@@ -17,6 +17,7 @@ use serde_json::json;
 use crate::SqlProvider;
 use crate::connector::DatabaseConnector;
 use crate::connector::postgres::PostgresConnector;
+use crate::errors::{INVALID_ARGUMENT, QUERY_CANCELED};
 use crate::format::{DatabaseKind, DumpFormat};
 use crate::helpers::{
     file_size, next_available_stem, normalize_timeout, sanitize_file_stem, to_sendable,
@@ -60,10 +61,7 @@ impl SqlProvider {
         let request: DumpDataRequest = serde_json::from_value(parameters).map_err(to_sendable)?;
 
         if request.queries.is_empty() {
-            return Err(Box::new(RuntimeError::new(
-                "INVALID_ARGUMENT".to_string(),
-                "At least one query must be provided".to_string(),
-            )));
+            return Err(INVALID_ARGUMENT.error("At least one query must be provided"));
         }
 
         let timeout = normalize_timeout(timeout_secs);
@@ -84,18 +82,12 @@ impl SqlProvider {
 
         for (idx, query) in request.queries.iter().enumerate() {
             if token.is_cancelled() {
-                return Err(Box::new(RuntimeError::new(
-                    "QUERY_CANCELED".to_string(),
-                    "SQL dump canceled".to_string(),
-                )));
+                return Err(QUERY_CANCELED.error("SQL dump canceled"));
             }
             info!("Executing query {} for database dump", idx + 1);
             let table_data = connector.execute_query(&query.sql, timeout)?;
             if token.is_cancelled() {
-                return Err(Box::new(RuntimeError::new(
-                    "QUERY_CANCELED".to_string(),
-                    "SQL dump canceled".to_string(),
-                )));
+                return Err(QUERY_CANCELED.error("SQL dump canceled"));
             }
 
             let default_stem = format!("query_{:02}", idx + 1);

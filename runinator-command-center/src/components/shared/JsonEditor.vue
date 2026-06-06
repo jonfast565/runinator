@@ -1,6 +1,11 @@
 <template>
   <section class="json-editor-shell">
-    <header class="json-editor-title">{{ title }}</header>
+    <header v-if="title" class="json-editor-title">
+      <span>{{ title }}</span>
+      <button type="button" class="json-editor-copy" :title="copied ? 'Copied' : 'Copy JSON'" @click="copy">
+        {{ copied ? "Copied" : "Copy" }}
+      </button>
+    </header>
     <div ref="editorContainer" class="json-editor-container"></div>
   </section>
 </template>
@@ -11,19 +16,31 @@ import { EditorView, basicSetup } from 'codemirror';
 import { json } from '@codemirror/lang-json';
 import { EditorState } from '@codemirror/state';
 
-const props = defineProps<{ 
+const props = withDefaults(defineProps<{
   modelValue: string;
   readonly?: boolean;
+  // header label; pass an empty string to hide the title bar.
   title?: string;
-}>();
+}>(), { title: "JSON" });
 
-const emit = defineEmits<{ 
-  "update:modelValue": [value: string] 
+const emit = defineEmits<{
+  "update:modelValue": [value: string]
 }>();
 
 const editorContainer = ref<HTMLElement | null>(null);
 let view: EditorView | null = null;
-const title = props.title ?? "JSON";
+const title = props.title;
+const copied = ref(false);
+
+async function copy() {
+  try {
+    await navigator.clipboard.writeText(props.modelValue);
+    copied.value = true;
+    window.setTimeout(() => (copied.value = false), 1200);
+  } catch {
+    // clipboard may be unavailable; ignore.
+  }
+}
 
 onMounted(() => {
   if (!editorContainer.value) return;
@@ -75,23 +92,46 @@ onBeforeUnmount(() => {
   min-height: 220px;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid #ccd4dd;
-  border-radius: 6px;
-  background-color: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background-color: var(--surface);
   overflow: hidden;
 }
 
 .json-editor-title {
-  padding: 8px 10px;
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 700;
   user-select: none;
+}
+
+.json-editor-copy {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+
+.json-editor-copy:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .json-editor-container {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  border-top: 1px solid #e3e8ee;
+  border-top: 1px solid var(--border-subtle);
   overflow: hidden;
 }
 

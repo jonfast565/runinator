@@ -6,6 +6,7 @@ use runinator_models::{
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
+    settings::{SettingKind, SettingRecord},
     types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -56,6 +57,26 @@ pub fn sqlite_row_to_run_summary(row: &SqliteRow) -> RunSummary {
 
 pub fn postgres_row_to_run_summary(row: &PgRow) -> RunSummary {
     run_summary_from_row!(row)
+}
+
+macro_rules! setting_from_row {
+    ($row:expr) => {{
+        SettingRecord {
+            kind: SettingKind::from_str_lossy(&$row.get::<String, _>("kind")),
+            scope: $row.get("scope"),
+            name: $row.get("name"),
+            value: $row.get("value"),
+            updated_at: $row.get("updated_at"),
+        }
+    }};
+}
+
+pub fn sqlite_row_to_setting(row: &SqliteRow) -> SettingRecord {
+    setting_from_row!(row)
+}
+
+pub fn postgres_row_to_setting(row: &PgRow) -> SettingRecord {
+    setting_from_row!(row)
 }
 
 macro_rules! run_chunk_from_row {

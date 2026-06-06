@@ -8,22 +8,21 @@ use lettre::{
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 
+use crate::errors::{
+    INVALID, INVALID_PARAMS, NOTIFICATION_INVALID_PARAMS, NOTIFICATION_POST, NOTIFICATION_RESPONSE,
+    NOTIFICATION_SERVICE_URL, SMTP_CONFIG, SMTP_SEND,
+};
 use crate::params::{EmailSendParams, NotificationPayload, NotificationSendParams};
 
 pub(crate) async fn send_email(
     request: &ProviderExecutionRequest,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: EmailSendParams = serde_json::from_value(request.parameters.clone().into())
-        .map_err(|err| {
-            Box::new(RuntimeError::new(
-                "email.invalid_params".into(),
-                err.to_string(),
-            )) as SendableError
-        })?;
+        .map_err(|err| INVALID_PARAMS.error(err))?;
     if params.to.trim().is_empty() {
         return Err(invalid("missing recipient"));
     }
@@ -84,12 +83,7 @@ pub(crate) async fn send_email(
     .map_err(|err| invalid(&format!("failed to build email: {err}")))?;
 
     let transport_builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
-        .map_err(|err| {
-            Box::new(RuntimeError::new(
-                "email.smtp_config".into(),
-                err.to_string(),
-            )) as SendableError
-        })?
+        .map_err(|err| SMTP_CONFIG.error(err))?
         .port(port);
     let mailer = if !user.is_empty() {
         transport_builder
@@ -99,9 +93,10 @@ pub(crate) async fn send_email(
         transport_builder.build()
     };
 
-    mailer.send(email).await.map_err(|err| {
-        Box::new(RuntimeError::new("email.smtp_send".into(), err.to_string())) as SendableError
-    })?;
+    mailer
+        .send(email)
+        .await
+        .map_err(|err| SMTP_SEND.error(err))?;
 
     let notification_id = post_notification(NotificationPayload {
         workflow_run_id: request.run_id,
@@ -133,12 +128,7 @@ pub(crate) async fn send_notification(
     request: &ProviderExecutionRequest,
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: NotificationSendParams = serde_json::from_value(request.parameters.clone().into())
-        .map_err(|err| {
-            Box::new(RuntimeError::new(
-                "notification.invalid_params".into(),
-                err.to_string(),
-            )) as SendableError
-        })?;
+        .map_err(|err| NOTIFICATION_INVALID_PARAMS.error(err))?;
     if params.title.trim().is_empty() {
         return Err(invalid("missing title"));
     }
@@ -167,17 +157,10 @@ pub(crate) async fn send_notification(
 }
 
 async fn post_notification(payload: NotificationPayload) -> Result<i64, SendableError> {
-    let service_url = env::var("RUNINATOR_SERVICE_URL").map_err(|_| {
-        Box::new(RuntimeError::new(
-            "notification.service_url".into(),
-            "missing RUNINATOR_SERVICE_URL".into(),
-        )) as SendableError
-    })?;
+    let service_url = env::var("RUNINATOR_SERVICE_URL")
+        .map_err(|_| NOTIFICATION_SERVICE_URL.error("missing RUNINATOR_SERVICE_URL"))?;
     if service_url.trim().is_empty() {
-        return Err(Box::new(RuntimeError::new(
-            "notification.service_url".into(),
-            "empty RUNINATOR_SERVICE_URL".into(),
-        )));
+        return Err(NOTIFICATION_SERVICE_URL.error("empty RUNINATOR_SERVICE_URL"));
     }
     let url = format!("{}/notifications", service_url.trim_end_matches('/'));
     let body = json!({
@@ -190,33 +173,25 @@ async fn post_notification(payload: NotificationPayload) -> Result<i64, Sendable
         "metadata": payload.metadata,
     });
     let client = reqwest::Client::new();
-    let response = client.post(url).json(&body).send().await.map_err(|err| {
-        Box::new(RuntimeError::new(
-            "notification.post".into(),
-            err.to_string(),
-        )) as SendableError
-    })?;
+    let response = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|err| NOTIFICATION_POST.error(err))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            "notification.post".into(),
-            format!("notification service returned {status}"),
-        )));
+        return Err(NOTIFICATION_POST.error(format!("notification service returned {status}")));
     }
-    let json: Value = response.json().await.map_err(|err| {
-        Box::new(RuntimeError::new(
-            "notification.response".into(),
-            err.to_string(),
-        )) as SendableError
-    })?;
-    json.get("id").and_then(Value::as_i64).ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "notification.response".into(),
-            "missing notification id".into(),
-        )) as SendableError
-    })
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|err| NOTIFICATION_RESPONSE.error(err))?;
+    json.get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| NOTIFICATION_RESPONSE.error("missing notification id"))
 }
 
 fn invalid(message: &str) -> SendableError {
-    Box::new(RuntimeError::new("email.invalid".into(), message.into())) as SendableError
+    INVALID.error(message)
 }

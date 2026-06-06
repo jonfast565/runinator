@@ -11,12 +11,13 @@ use std::{
 
 use log::warn;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::ProviderEventSink;
 
+use crate::errors::{CANCELED, NONZERO_EXIT, STDERR_UNAVAILABLE, STDOUT_UNAVAILABLE, TIMEOUT};
 use crate::params::{ConsoleResult, parse_params, to_runtime_error};
 
 pub(crate) fn execute_command(
@@ -44,18 +45,14 @@ pub(crate) fn execute_command(
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(to_runtime_error)?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        RuntimeError::new(
-            "console.stdout.unavailable".into(),
-            "Failed to capture command stdout".into(),
-        )
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        RuntimeError::new(
-            "console.stderr.unavailable".into(),
-            "Failed to capture command stderr".into(),
-        )
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| STDOUT_UNAVAILABLE.bare())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| STDERR_UNAVAILABLE.bare())?;
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stdout_thread = spawn_output_thread(stdout, Arc::clone(&stop_flag), "stdout", sink.clone());
@@ -84,10 +81,7 @@ pub(crate) fn execute_command(
             artifacts: Vec::new(),
         })
     } else {
-        Err(Box::new(RuntimeError::new(
-            "console.nonzero_exit".into(),
-            format!("Console command exited with code {exit_code}"),
-        )))
+        Err(NONZERO_EXIT.error(format!("exit code {exit_code}")))
     }
 }
 
@@ -137,10 +131,7 @@ fn wait_for_child(
             warn!("Console child received cancellation; killing process");
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "console.canceled".into(),
-                "Console command canceled".into(),
-            )));
+            return Err(CANCELED.bare());
         }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
@@ -149,12 +140,9 @@ fn wait_for_child(
                     warn!("Console child exceeded timeout; killing process");
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(Box::new(RuntimeError::new(
-                        "console.timeout".into(),
-                        format!(
-                            "Console command timed out after {} seconds",
-                            timeout.as_secs()
-                        ),
+                    return Err(TIMEOUT.error(format!(
+                        "Console command timed out after {} seconds",
+                        timeout.as_secs()
                     )));
                 }
             }

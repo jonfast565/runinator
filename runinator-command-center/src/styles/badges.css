@@ -2,7 +2,7 @@
   display: inline-flex;
   max-width: 100%;
   align-items: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 2px 8px;
   font-size: 12px;
   font-weight: 650;
@@ -10,7 +10,7 @@
 }
 
 .connection-pill {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 3px 9px;
   font-size: 12px;
   font-weight: 650;
@@ -18,27 +18,27 @@
 
 .connection-pill.connected,
 .status-succeeded {
-  background: #dff5e7;
-  color: #1f6f49;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .connection-pill.waiting,
 .status-running {
-  background: #fff2cc;
-  color: #84620d;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .status-failed {
-  background: #fde2df;
-  color: #a33a2f;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .status-waiting {
-  background: #e1efff;
-  color: #1d5b9f;
+  background: var(--info-bg);
+  color: var(--info-fg);
 }
 
 .status-muted {
-  background: #eef2f6;
-  color: #66717e;
+  background: var(--surface-muted);
+  color: var(--text-muted);
 }

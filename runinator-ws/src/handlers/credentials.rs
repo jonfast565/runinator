@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::{Json, extract::Query, http::StatusCode};
+use axum::{Extension, Json, extract::Query, http::StatusCode};
+use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
@@ -11,62 +11,35 @@ use runinator_models::{
     settings::SettingKind,
     web::TaskResponse,
 };
-use runinator_utilities::credential_store::{
-    CredentialStore, LocalEncryptedCredentialStore, default_app_credential_store_path,
-};
+use runinator_utilities::secret_cipher::SecretCipher;
 
 use crate::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
 use crate::responses::{api_error, bad_request, not_found};
-use crate::settings::{decode_config_value, stored_config_type, validate_and_encode};
+use crate::settings::{
+    decode_config_schema, decode_config_value, stored_config_type, validate_and_encode,
+};
 
-// resolve the credential store path from the environment, falling back to the app-data default.
-fn credential_store_path() -> PathBuf {
-    std::env::var("RUNINATOR_CREDENTIAL_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            default_app_credential_store_path()
-                .unwrap_or_else(|_| PathBuf::from("credentials.enc.json"))
-        })
-}
-
-pub(crate) fn credential_store() -> LocalEncryptedCredentialStore {
+// the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY`. the value
+// column holds ciphertext; only the web service holds the key.
+fn settings_cipher() -> SecretCipher {
     let key = std::env::var("RUNINATOR_CREDENTIAL_KEY")
         .unwrap_or_else(|_| "runinator-local-development-key".into());
-    LocalEncryptedCredentialStore::new(credential_store_path(), key)
+    SecretCipher::new(key)
 }
 
-// caches the built config tree keyed on the store file's modification time, so the reducer
-// (which calls config_tree on every context build) rereads the file only when it changes.
-static CONFIG_CACHE: Mutex<Option<(Option<SystemTime>, Value)>> = Mutex::new(None);
-
-// the store file's modification time, or None when it does not exist yet.
-fn config_store_mtime() -> Option<SystemTime> {
-    std::fs::metadata(credential_store_path())
-        .and_then(|meta| meta.modified())
-        .ok()
+// current time in unix seconds, used to stamp settings that arrive without their own timestamp.
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
 }
 
-/// the config reference tree `{ <scope>: { <name>: <value> } }`, cached and invalidated by the
-/// store file's mtime. secrets are never included — they resolve late at the worker.
-pub(crate) fn config_tree() -> Value {
-    let mtime = config_store_mtime();
-    if let Ok(cache) = CONFIG_CACHE.lock() {
-        if let Some((cached_mtime, value)) = cache.as_ref() {
-            if *cached_mtime == mtime {
-                return value.clone();
-            }
-        }
-    }
-    let tree = build_config_tree();
-    if let Ok(mut cache) = CONFIG_CACHE.lock() {
-        *cache = Some((mtime, tree.clone()));
-    }
-    tree
-}
-
-fn build_config_tree() -> Value {
-    let store = credential_store();
-    let Ok(entries) = store.list() else {
+/// the config reference tree `{ <scope>: { <name>: <value> } }`. secrets are never included — they
+/// resolve late at the worker. read live from the database so every replica sees current config.
+pub(crate) async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
+    let cipher = settings_cipher();
+    let Ok(entries) = db.list_settings().await else {
         return Value::Object(Map::new());
     };
     let mut root = Map::new();
@@ -74,10 +47,7 @@ fn build_config_tree() -> Value {
         if entry.kind != SettingKind::Config {
             continue;
         }
-        let Ok(Some(bytes)) = store.get(SettingKind::Config, &entry.scope, &entry.name) else {
-            continue;
-        };
-        let value = decode_config_value(&bytes);
+        let value = decode_config_value(&cipher.decrypt(&entry.value));
         let scope = root
             .entry(entry.scope)
             .or_insert_with(|| Value::Object(Map::new()));
@@ -91,9 +61,9 @@ fn build_config_tree() -> Value {
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
 /// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
 /// stays permissive (`any`) rather than failing validation.
-pub(crate) fn config_type_tree() -> RuninatorType {
-    let store = credential_store();
-    let Ok(entries) = store.list() else {
+pub(crate) async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
+    let cipher = settings_cipher();
+    let Ok(entries) = db.list_settings().await else {
         return RuninatorType::map(RuninatorType::Any);
     };
     let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();
@@ -101,10 +71,13 @@ pub(crate) fn config_type_tree() -> RuninatorType {
         if entry.kind != SettingKind::Config {
             continue;
         }
-        let Some(ty) = stored_config_type(&store, &entry.scope, &entry.name) else {
+        let Some(ty) = stored_config_type(&cipher.decrypt(&entry.value)) else {
             continue;
         };
-        scopes.entry(entry.scope).or_default().insert(entry.name, ty);
+        scopes
+            .entry(entry.scope)
+            .or_default()
+            .insert(entry.name, ty);
     }
     let scope_fields = scopes.into_iter().map(|(scope, names)| {
         (
@@ -115,12 +88,13 @@ pub(crate) fn config_type_tree() -> RuninatorType {
     RuninatorType::open_structure(scope_fields, RuninatorType::Any)
 }
 
-pub(crate) async fn get_credential(
+pub(crate) async fn get_credential<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let store = credential_store();
+    let cipher = settings_cipher();
     if query.scope.is_none() && query.name.is_none() {
-        return match store.list() {
+        return match db.list_settings().await {
             Ok(entries) => (
                 StatusCode::OK,
                 Json(ApiResponse::JsonList(
@@ -144,9 +118,13 @@ pub(crate) async fn get_credential(
         return bad_request("credential lookup requires both scope and name");
     };
 
-    match store.get(query.kind, &scope, &name) {
+    match db
+        .fetch_setting(query.kind, scope.clone(), name.clone())
+        .await
+    {
         // config is non-sensitive: return the parsed json value. secrets return the raw string.
-        Ok(Some(bytes)) => {
+        Ok(Some(record)) => {
+            let bytes = cipher.decrypt(&record.value);
             let value = match query.kind {
                 SettingKind::Config => decode_config_value(&bytes),
                 SettingKind::Secret => Value::String(String::from_utf8_lossy(&bytes).into_owned()),
@@ -168,22 +146,46 @@ pub(crate) async fn get_credential(
     }
 }
 
-pub(crate) async fn put_credential(
+pub(crate) async fn put_credential<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(request): Json<CredentialPutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let store = credential_store();
+    let cipher = settings_cipher();
+    // reuse the schema pinned by a prior write of this config slot, if any.
+    let stored_schema = match config_stored_schema(
+        db.as_ref(),
+        &cipher,
+        request.kind,
+        &request.scope,
+        &request.name,
+    )
+    .await
+    {
+        Ok(schema) => schema,
+        Err(err) => return api_error(err),
+    };
     let bytes = match validate_and_encode(
-        &store,
         request.kind,
         &request.scope,
         &request.name,
         &request.value,
         request.schema.as_ref(),
+        stored_schema.as_ref(),
     ) {
         Ok(bytes) => bytes,
         Err(message) => return bad_request(message),
     };
-    match store.put(request.kind, &request.scope, &request.name, &bytes) {
+    let ciphertext = cipher.encrypt(&bytes);
+    match db
+        .upsert_setting(
+            request.kind,
+            request.scope.clone(),
+            request.name.clone(),
+            ciphertext,
+            now_unix(),
+        )
+        .await
+    {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -197,10 +199,11 @@ pub(crate) async fn put_credential(
     }
 }
 
-pub(crate) async fn import_secret_bundle(
+pub(crate) async fn import_secret_bundle<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(bundle): Json<SecretBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match import_secret_entries(&bundle) {
+    match import_secret_entries(db.as_ref(), &bundle).await {
         Ok(imported) => (
             StatusCode::OK,
             Json(ApiResponse::SecretBundle(SecretBundle {
@@ -227,76 +230,104 @@ impl SecretImportError {
     }
 }
 
-/// import every entry in a secret bundle into the credential store, reconciling by modification
-/// time, and return the redacted echo. shared by the json `/credentials/import` endpoint and the
-/// compiled pack import at `/packs/import`.
-pub(crate) fn import_secret_entries(
+/// import every entry in a secret bundle into the settings store, reconciling by modification time,
+/// and return the redacted echo. shared by the json `/credentials/import` endpoint and the compiled
+/// pack import at `/packs/import`.
+pub(crate) async fn import_secret_entries<T: DatabaseImpl>(
+    db: &T,
     bundle: &SecretBundle,
 ) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
-    import_secret_entries_with(bundle, false)
+    import_secret_entries_with(db, bundle, false).await
 }
 
 // `overwrite` makes an explicit re-apply authoritative: an existing setting is replaced even when
 // the incoming entry is not strictly newer, bypassing the reconciliation timestamp gate.
-pub(crate) fn import_secret_entries_with(
+pub(crate) async fn import_secret_entries_with<T: DatabaseImpl>(
+    db: &T,
     bundle: &SecretBundle,
     overwrite: bool,
 ) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
-    let store = credential_store();
+    let cipher = settings_cipher();
     let mut imported = Vec::with_capacity(bundle.secrets.len());
     for secret in &bundle.secrets {
         let incoming_ts = secret.updated_at.map(|updated_at| updated_at.timestamp());
+        // load the stored record once: it gates reconciliation and pins the config schema.
+        let stored = db
+            .fetch_setting(secret.kind, secret.scope.clone(), secret.name.clone())
+            .await
+            .map_err(|err| SecretImportError {
+                bad_request: false,
+                message: err.to_string(),
+            })?;
         // overwrite an existing entry only on an explicit overwrite or when the incoming entry is
         // strictly newer.
-        match store.entry_updated_at(secret.kind, &secret.scope, &secret.name) {
-            Ok(Some(stored_ts)) => {
-                let is_newer = incoming_ts.map(|ts| ts > stored_ts).unwrap_or(false);
-                if !overwrite && !is_newer {
-                    log::info!(
-                        "Skipping import of {} {}/{}: stored copy is up to date",
-                        secret.kind.as_str(),
-                        secret.scope,
-                        secret.name
-                    );
-                    imported.push(redacted_entry(secret));
-                    continue;
-                }
-            }
-            Ok(None) => {}
-            Err(err) => {
-                return Err(SecretImportError {
-                    bad_request: false,
-                    message: err.to_string(),
-                });
+        if let Some(stored) = &stored {
+            let is_newer = incoming_ts
+                .map(|ts| ts > stored.updated_at)
+                .unwrap_or(false);
+            if !overwrite && !is_newer {
+                log::info!(
+                    "Skipping import of {} {}/{}: stored copy is up to date",
+                    secret.kind.as_str(),
+                    secret.scope,
+                    secret.name
+                );
+                imported.push(redacted_entry(secret));
+                continue;
             }
         }
         // validate against the declared (or previously stored) schema before persisting.
+        let stored_schema = stored
+            .as_ref()
+            .and_then(|record| decode_config_schema(&cipher.decrypt(&record.value)));
         let bytes = validate_and_encode(
-            &store,
             secret.kind,
             &secret.scope,
             &secret.name,
             &secret.value,
             secret.schema.as_ref(),
+            stored_schema.as_ref(),
         )
         .map_err(|message| SecretImportError {
             bad_request: true,
             message,
         })?;
         // persist the incoming modification time so later imports reconcile against it.
-        let result = match incoming_ts {
-            Some(ts) => store.put_at(secret.kind, &secret.scope, &secret.name, &bytes, ts),
-            None => store.put(secret.kind, &secret.scope, &secret.name, &bytes),
-        };
-        if let Err(err) = result {
-            return Err(SecretImportError {
-                bad_request: false,
-                message: err.to_string(),
-            });
-        }
+        let updated_at = incoming_ts.unwrap_or_else(now_unix);
+        let ciphertext = cipher.encrypt(&bytes);
+        db.upsert_setting(
+            secret.kind,
+            secret.scope.clone(),
+            secret.name.clone(),
+            ciphertext,
+            updated_at,
+        )
+        .await
+        .map_err(|err| SecretImportError {
+            bad_request: false,
+            message: err.to_string(),
+        })?;
         imported.push(redacted_entry(secret));
     }
     Ok(imported)
+}
+
+// the schema pinned in a config slot's previously-stored bytes, if any. secrets carry no schema.
+async fn config_stored_schema<T: DatabaseImpl>(
+    db: &T,
+    cipher: &SecretCipher,
+    kind: SettingKind,
+    scope: &str,
+    name: &str,
+) -> Result<Option<Value>, String> {
+    if kind != SettingKind::Config {
+        return Ok(None);
+    }
+    let record = db
+        .fetch_setting(kind, scope.to_string(), name.to_string())
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(record.and_then(|record| decode_config_schema(&cipher.decrypt(&record.value))))
 }
 
 // echo an imported entry without its value, preserving kind and modification time.
@@ -311,14 +342,15 @@ fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
     }
 }
 
-pub(crate) async fn delete_credential(
+pub(crate) async fn delete_credential<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (Some(scope), Some(name)) = (query.scope, query.name) else {
         return bad_request("credential deletion requires both scope and name");
     };
 
-    match credential_store().delete(query.kind, &scope, &name) {
+    match db.delete_setting(query.kind, scope, name).await {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {

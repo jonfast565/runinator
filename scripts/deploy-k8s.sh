@@ -12,12 +12,14 @@
 # For an end-to-end build and deploy, prefer:
 #   pwsh ./build.ps1 -DeployKube
 #
-# Manual local images use the overlay's default dev tag:
-#   docker build -t runinator-ws:dev       -f runinator-ws/Dockerfile       .
-#   docker build -t runinator-waker:dev     -f runinator-waker/Dockerfile     .
-#   docker build -t runinator-worker:dev    -f runinator-worker/Dockerfile    .
-#   docker build -t runinator-ctl:dev       -f runinator-ctl/Dockerfile       .
-#   docker build -t runinator-migration:dev -f runinator-migration/Dockerfile .
+# Manual local images use the overlay's default dev tag. all rust services share
+# deploy/Dockerfile and are selected with --target; BuildKit caches the common
+# builder stage so the cargo compile runs once for the whole set:
+#   docker build -f deploy/Dockerfile --target ws        -t runinator-ws:dev        .
+#   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
+#   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
+#   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
+#   docker build -f deploy/Dockerfile --target migration -t runinator-migration:dev .
 
 set -euo pipefail
 

@@ -54,14 +54,22 @@
           </div>
           <fieldset class="kind-field">
             <legend>Kind</legend>
-            <label class="kind-option">
-              <input type="radio" name="setting-kind" value="secret" v-model="secrets.draft.kind" />
-              Secret (encrypted, resolved at the worker)
-            </label>
-            <label class="kind-option">
-              <input type="radio" name="setting-kind" value="config" v-model="secrets.draft.kind" />
-              Config (plain JSON, resolved by the web service)
-            </label>
+            <div class="kind-options">
+              <label class="kind-option" :class="{ active: secrets.draft.kind === 'secret' }">
+                <input type="radio" name="setting-kind" value="secret" v-model="secrets.draft.kind" />
+                <span class="kind-option-body">
+                  <span class="kind-option-title">Secret</span>
+                  <span class="kind-option-desc">Encrypted, resolved at the worker</span>
+                </span>
+              </label>
+              <label class="kind-option" :class="{ active: secrets.draft.kind === 'config' }">
+                <input type="radio" name="setting-kind" value="config" v-model="secrets.draft.kind" />
+                <span class="kind-option-body">
+                  <span class="kind-option-title">Config</span>
+                  <span class="kind-option-desc">Plain JSON, resolved by the web service</span>
+                </span>
+              </label>
+            </div>
           </fieldset>
           <label>
             Scope
@@ -145,28 +153,70 @@ onMounted(() => {
 }
 
 .kind-field {
-  border: 1px solid #d7dce3;
-  border-radius: 6px;
-  color: #4b5663;
-  display: grid;
-  font-size: 12px;
-  gap: 6px;
+  border: 0;
   margin: 0;
-  padding: 8px 10px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
 }
 
 .kind-field legend {
-  padding: 0 4px;
+  color: #4b5663;
+  font-size: 12px;
+  padding: 0;
+}
+
+.kind-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .kind-option {
-  align-items: center;
   display: flex;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid #d7dce3;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.kind-option:hover {
+  border-color: #b9c4d2;
+  background: #fbfcfe;
+}
+
+.kind-option.active {
+  border-color: #3b82f6;
+  background: #f4f8ff;
+  box-shadow: 0 0 0 1px #3b82f6 inset;
 }
 
 .kind-option input {
-  margin: 0;
+  margin: 2px 0 0;
+  accent-color: #3b82f6;
+  flex: 0 0 auto;
+}
+
+.kind-option-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kind-option-title {
+  color: #17202a;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kind-option-desc {
+  color: #66717e;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .hint {

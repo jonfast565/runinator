@@ -1,3 +1,4 @@
+mod errors;
 mod helpers;
 mod params;
 
@@ -5,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -292,13 +293,10 @@ impl Provider for GitHubProvider {
                     .send()?
             }
             other => {
-                return Err(Box::new(RuntimeError::new(
-                    "github.unsupported_action".into(),
-                    format!("Unsupported GitHub action {other}"),
-                )));
+                return Err(errors::UNSUPPORTED_ACTION.error(other));
             }
         };
-        json_response("github", response)
+        json_response(response)
     }
 }
 

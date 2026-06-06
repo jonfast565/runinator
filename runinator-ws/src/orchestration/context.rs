@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) -> Value {
+pub(super) async fn runtime_context<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node_runs: &[WorkflowNodeRun],
+) -> Value {
     let prev_output = node_runs
         .iter()
         .filter_map(|run| run.output_json.clone())
@@ -29,7 +33,10 @@ pub(super) fn runtime_context(workflow_run: &WorkflowRun, node_runs: &[WorkflowN
         }
         // config refs (`{"$ref":{"config":[...]}}`) resolve here, before any action command
         // is published; secrets stay unresolved until the worker.
-        object.insert("config".into(), crate::handlers::credentials::config_tree());
+        object.insert(
+            "config".into(),
+            crate::handlers::credentials::config_tree(db).await,
+        );
     }
     // fill omitted input fields from their declared defaults, evaluated against this context (so a
     // default may read config/run/secret or a sibling input). resolved here, after config is in

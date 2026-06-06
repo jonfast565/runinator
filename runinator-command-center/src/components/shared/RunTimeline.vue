@@ -3,12 +3,13 @@
     <!-- failure reason pinned at the top for an at-a-glance "what broke and where". -->
     <div v-if="failure" class="rt-failure">
       <div class="rt-failure-head">
-        <Icon name="alert" :size="15" />
-        <span class="rt-failure-title">Failed at <strong>{{ failure.nodeId }}</strong></span>
+        <span class="rt-failure-icon"><Icon name="alert" :size="14" /></span>
+        <span class="rt-failure-title">Failed at <code class="rt-failure-node">{{ failure.nodeId }}</code></span>
         <StatusBadge :status="failure.status" />
         <span class="rt-spacer"></span>
         <button v-if="failure.message" type="button" class="rt-failure-copy" :title="copied ? 'Copied' : 'Copy error'" @click="copyFailure">
-          {{ copied ? "Copied" : "Copy" }}
+          <Icon v-if="copied" name="check" :size="13" />
+          <span>{{ copied ? "Copied" : "Copy" }}</span>
         </button>
       </div>
       <pre v-if="failure.message" class="rt-failure-msg">{{ failure.message }}</pre>
@@ -55,9 +56,10 @@
             <slot name="node-actions" :node="node" />
           </div>
           <div v-if="expandedId === node.id" class="rt-expand">
-            <template v-if="node.message">
-              <div class="rt-expand-label">{{ isFailedNode(node) ? "Error" : "Message" }}</div>
-              <div class="rt-message" :class="{ error: isFailedNode(node) }">{{ formatErrorMessage(node.message) }}</div>
+            <!-- failed-node errors are surfaced once in the failure banner above; only show informational messages here. -->
+            <template v-if="node.message && !isFailedNode(node)">
+              <div class="rt-expand-label">Message</div>
+              <div class="rt-message">{{ formatErrorMessage(node.message) }}</div>
             </template>
             <template v-if="outputText(node)">
               <div class="rt-expand-label">Output</div>
@@ -301,44 +303,78 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   gap: 8px;
 }
 .rt-failure {
-  border: 1px solid #f3c2c2;
-  border-left: 3px solid #dc2626;
-  border-radius: 6px;
-  background: #fff5f5;
-  padding: 8px 10px;
+  border: 1px solid #f4cccc;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fff6f6 0%, #fffafa 100%);
+  box-shadow: 0 1px 2px rgba(190, 18, 60, 0.06);
+  padding: 10px 12px;
+  overflow: hidden;
 }
 .rt-failure-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #b91c1c;
+  color: #b42318;
   font-weight: 600;
   font-size: 13px;
 }
-.rt-failure-title strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-.rt-failure-copy {
+.rt-failure-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
-  border: 1px solid #f0bcbc;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fee4e2;
+  color: #d92d20;
+}
+.rt-failure-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7a271a;
+}
+.rt-failure-node {
+  border: 1px solid #f3c6c0;
   border-radius: 4px;
   background: #fff;
-  color: #b91c1c;
+  color: #b42318;
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+.rt-failure-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  border: 1px solid #f0bcbc;
+  border-radius: 5px;
+  background: #fff;
+  color: #b42318;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 8px;
+  padding: 3px 9px;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 .rt-failure-copy:hover {
-  background: #fdecec;
+  background: #fef2f1;
+  border-color: #e69a93;
 }
 .rt-failure-msg {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   max-height: 180px;
   overflow: auto;
-  color: #9f1239;
-  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border: 1px solid #f6dada;
+  border-radius: 6px;
+  background: #fffafa;
+  padding: 8px 10px;
+  color: #912018;
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }

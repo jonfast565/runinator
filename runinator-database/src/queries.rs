@@ -11,6 +11,43 @@ fn bind(dialect: SqlDialect, index: usize) -> String {
     }
 }
 
+pub(crate) fn upsert_setting(dialect: SqlDialect) -> String {
+    let b = |n| bind(dialect, n);
+    format!(
+        "INSERT INTO settings (kind, scope, name, value, updated_at) VALUES ({}, {}, {}, {}, {})
+         ON CONFLICT(kind, scope, name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        b(1),
+        b(2),
+        b(3),
+        b(4),
+        b(5),
+    )
+}
+
+pub(crate) fn fetch_setting(dialect: SqlDialect) -> String {
+    let b = |n| bind(dialect, n);
+    format!(
+        "SELECT kind, scope, name, value, updated_at FROM settings WHERE kind = {} AND scope = {} AND name = {}",
+        b(1),
+        b(2),
+        b(3),
+    )
+}
+
+pub(crate) fn delete_setting(dialect: SqlDialect) -> String {
+    let b = |n| bind(dialect, n);
+    format!(
+        "DELETE FROM settings WHERE kind = {} AND scope = {} AND name = {}",
+        b(1),
+        b(2),
+        b(3),
+    )
+}
+
+pub(crate) fn list_settings() -> &'static str {
+    "SELECT kind, scope, name, value, updated_at FROM settings ORDER BY kind, scope, name"
+}
+
 pub(crate) fn fetch_runs_by_status(dialect: SqlDialect) -> String {
     format!(
         "SELECT id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = {} ORDER BY id",

@@ -8,6 +8,7 @@ use runinator_models::{
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    settings::{SettingKind, SettingRecord},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
         WorkflowRun, WorkflowStatus, WorkflowTrigger,
@@ -488,4 +489,35 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn mark_all_notifications_read(
         &self,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Insert or replace a setting's stored value (encrypted at rest) and modification time.
+    fn upsert_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+        value: Vec<u8>,
+        updated_at: i64,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch a single setting's persisted record, or None when it does not exist.
+    fn fetch_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> impl Future<Output = Result<Option<SettingRecord>, SendableError>> + Send;
+
+    /// Delete a setting; succeeds even when the entry is absent.
+    fn delete_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// List every stored setting (encrypted values included), ordered by kind/scope/name.
+    fn list_settings(
+        &self,
+    ) -> impl Future<Output = Result<Vec<SettingRecord>, SendableError>> + Send;
 }

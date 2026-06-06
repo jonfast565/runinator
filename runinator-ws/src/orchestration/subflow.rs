@@ -114,7 +114,7 @@ pub(super) async fn process_subflow_node<T: DatabaseImpl>(
     }
 
     let subflow_id = resolve_subflow_id(db, node).await?;
-    let context = runtime_context(workflow_run, node_runs);
+    let context = runtime_context(db, workflow_run, node_runs).await;
     let parameters = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let run_name = resolve_optional_string(node.subflow.run_name.as_ref(), &context)?;

@@ -15,10 +15,10 @@
   flex-direction: column;
   gap: 12px;
   overflow: auto;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   padding: 16px;
-  box-shadow: 0 16px 40px rgba(23, 32, 42, 0.28);
+  box-shadow: var(--shadow-modal);
 }
 
 .modal-header {
@@ -35,7 +35,7 @@
 
 .modal label {
   display: grid;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 12px;
   gap: 4px;
 }

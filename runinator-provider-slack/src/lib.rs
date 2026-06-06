@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+mod errors;
+
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -13,6 +15,8 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Deserialize;
+
+use crate::errors::{API_ERROR, HTTP_ERROR, INVALID_JSON, INVALID_PARAMS, UNSUPPORTED_ACTION};
 
 #[derive(Deserialize)]
 struct SendMessageParams {
@@ -78,10 +82,7 @@ impl Provider for SlackProvider {
         let params: SendMessageParams = match function {
             "send" | "send_message" => parse_params(&request)?,
             other => {
-                return Err(Box::new(RuntimeError::new(
-                    "slack.unsupported_action".into(),
-                    format!("Unsupported Slack action {other}"),
-                )));
+                return Err(UNSUPPORTED_ACTION.error(other));
             }
         };
         let token = params.token.clone();
@@ -103,12 +104,8 @@ impl Provider for SlackProvider {
 fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|err| {
-        Box::new(RuntimeError::new(
-            "slack.invalid_params".into(),
-            err.to_string(),
-        )) as SendableError
-    })
+    serde_json::from_value(request.parameters.clone().into())
+        .map_err(|err| INVALID_PARAMS.error(err))
 }
 
 fn build_send_message_payload(params: SendMessageParams) -> Result<Value, SendableError> {
@@ -144,10 +141,7 @@ fn insert_array_param(
         return Ok(());
     };
     if !value.is_array() {
-        return Err(Box::new(RuntimeError::new(
-            "slack.invalid_params".into(),
-            format!("{name} must be a JSON array"),
-        )));
+        return Err(INVALID_PARAMS.error(format!("{name} must be a JSON array")));
     }
     payload.insert(name.into(), value);
     Ok(())
@@ -159,28 +153,18 @@ fn slack_response(
     let status = response.status();
     let text = response.text()?;
     if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            "slack.http_error".into(),
-            format!("HTTP {status}: {text}"),
-        )));
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
     }
 
-    let output: Value = serde_json::from_str(&text).map_err(|err| {
-        RuntimeError::new(
-            "slack.invalid_json".into(),
-            format!("Slack response was not JSON: {err}"),
-        )
-    })?;
+    let output: Value = serde_json::from_str(&text)
+        .map_err(|err| INVALID_JSON.error(format!("Slack response was not JSON: {err}")))?;
     let ok = output.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if !ok {
         let message = output
             .get("error")
             .and_then(Value::as_str)
             .unwrap_or("Slack API returned ok=false");
-        return Err(Box::new(RuntimeError::new(
-            "slack.api_error".into(),
-            message.to_string(),
-        )));
+        return Err(API_ERROR.error(message));
     }
 
     Ok(TaskExecutionResult {

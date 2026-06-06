@@ -4,12 +4,97 @@ use chrono::Duration;
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
     runs::NewRunChunk,
+    settings::SettingKind,
     workflows::{
         WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowStatus, WorkflowTrigger,
         WorkflowTriggerKind,
     },
 };
 use uuid::Uuid;
+
+#[tokio::test]
+async fn settings_round_trip_by_kind_scope_name() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-settings-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    // insert a secret and a config that share a scope/name but differ by kind: they must not collide.
+    db.upsert_setting(
+        SettingKind::Secret,
+        "jira".into(),
+        "token".into(),
+        b"cipher-a".to_vec(),
+        100,
+    )
+    .await
+    .unwrap();
+    db.upsert_setting(
+        SettingKind::Config,
+        "jira".into(),
+        "token".into(),
+        b"cipher-b".to_vec(),
+        200,
+    )
+    .await
+    .unwrap();
+
+    let secret = db
+        .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(secret.value, b"cipher-a");
+    assert_eq!(secret.updated_at, 100);
+    assert_eq!(secret.kind, SettingKind::Secret);
+
+    let config = db
+        .fetch_setting(SettingKind::Config, "jira".into(), "token".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(config.value, b"cipher-b");
+
+    // upsert replaces value and timestamp in place.
+    db.upsert_setting(
+        SettingKind::Secret,
+        "jira".into(),
+        "token".into(),
+        b"cipher-c".to_vec(),
+        300,
+    )
+    .await
+    .unwrap();
+    let updated = db
+        .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.value, b"cipher-c");
+    assert_eq!(updated.updated_at, 300);
+
+    // list returns both rows; delete is kind-scoped.
+    assert_eq!(db.list_settings().await.unwrap().len(), 2);
+    db.delete_setting(SettingKind::Secret, "jira".into(), "token".into())
+        .await
+        .unwrap();
+    assert!(
+        db.fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.fetch_setting(SettingKind::Config, "jira".into(), "token".into())
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
 
 #[tokio::test]
 async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {

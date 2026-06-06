@@ -10,6 +10,7 @@
 //! Both actions persist a `notifications` row when a service URL is reachable
 //! (via env var RUNINATOR_SERVICE_URL, seeded by the worker from its API URL).
 
+mod errors;
 mod params;
 mod send;
 
@@ -19,7 +20,7 @@ mod tests;
 use std::sync::Arc;
 
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -91,18 +92,12 @@ impl Provider for EmailProvider {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|err| {
-                Box::new(RuntimeError::new("email.runtime".into(), err.to_string()))
-                    as SendableError
-            })?;
+            .map_err(|err| errors::RUNTIME.error(err))?;
         runtime.block_on(async move {
             match request.action_function.as_str() {
                 "send" => send_email(&request).await,
                 "notify" => send_notification(&request).await,
-                other => Err(Box::new(RuntimeError::new(
-                    "email.unknown_action".into(),
-                    format!("Unknown action {other}"),
-                )) as SendableError),
+                other => Err(errors::UNKNOWN_ACTION.error(other)),
             }
         })
     }

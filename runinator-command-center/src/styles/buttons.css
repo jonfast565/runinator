@@ -5,10 +5,10 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid #c4ccd6;
-  background: #ffffff;
-  color: #17202a;
-  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
   padding: 6px 10px;
   font: inherit;
   cursor: pointer;
@@ -19,11 +19,11 @@
 
 .btn:hover:not(:disabled) {
   border-color: #7b8794;
-  background: #f5f7fa;
+  background: var(--surface-hover);
 }
 
 .btn:disabled {
-  color: #97a1ad;
+  color: var(--text-faint);
   cursor: default;
   opacity: 0.7;
 }
@@ -34,49 +34,49 @@
 }
 
 .btn-primary {
-  background: #1f6feb;
-  border-color: #1f6feb;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #1864d6;
-  border-color: #1864d6;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
   color: #ffffff;
 }
 
 .btn-danger {
-  background: #d6402b;
-  border-color: #d6402b;
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
   color: #ffffff;
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: #b73522;
-  border-color: #b73522;
+  background: var(--danger-solid-hover);
+  border-color: var(--danger-solid-hover);
   color: #ffffff;
 }
 
 .btn-warn {
-  background: #d68d2b;
-  border-color: #d68d2b;
+  background: var(--warn-solid);
+  border-color: var(--warn-solid);
   color: #ffffff;
 }
 
 .btn-warn:hover:not(:disabled) {
-  background: #b87521;
-  border-color: #b87521;
+  background: var(--warn-solid-hover);
+  border-color: var(--warn-solid-hover);
   color: #ffffff;
 }
 
 .btn-ghost {
   background: transparent;
   border-color: transparent;
-  color: #17202a;
+  color: var(--text);
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: #eef2f6;
+  background: var(--surface-muted);
   border-color: transparent;
 }
 
@@ -105,7 +105,7 @@
   background: transparent;
   border: 0;
   color: inherit;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;

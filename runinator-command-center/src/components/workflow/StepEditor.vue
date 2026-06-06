@@ -2,53 +2,112 @@
   <div class="step-editor step-detail">
     <template v-if="node">
       <header class="step-detail-header">
-        <div>
-          <span class="node-kind">{{ node.kind }}</span>
-          <h2>{{ node.id }}</h2>
-          <p>{{ headline }}</p>
+        <div class="step-detail-heading">
+          <div class="step-detail-titles">
+            <span class="node-kind">{{ node.kind }}</span>
+            <h2 :title="String(node.id)">{{ node.id }}</h2>
+            <span v-if="displayName" class="step-detail-name">{{ displayName }}</span>
+          </div>
+          <div v-if="flags.length" class="flag-row">
+            <span v-for="flag in flags" :key="flag.label" class="step-flag" :class="`flag-${flag.tone}`">{{ flag.label }}</span>
+          </div>
+          <p class="step-headline">{{ headline }}</p>
         </div>
-        <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+        <button class="step-edit-btn" @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
       </header>
 
       <section v-if="workflows.selectedNodeIssues.length" class="detail-section validation-section">
         <h3>Validation</h3>
         <div class="detail-rows">
-          <div v-for="issue in workflows.selectedNodeIssues" :key="issue.message" class="detail-row">
+          <div v-for="issue in workflows.selectedNodeIssues" :key="issue.message" class="detail-row" :class="`issue-${issue.severity}`">
             <span>{{ issue.severity }}</span>
             <strong>{{ issue.message }}</strong>
           </div>
         </div>
       </section>
 
-      <section v-for="section in detailSections" :key="section.title" class="detail-section">
-        <h3>{{ section.title }}</h3>
-        <div v-if="section.items.length" class="detail-grid">
-          <div v-for="item in section.items" :key="item.label" class="detail-item">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
+      <!-- action steps get a dedicated, structured breakdown of provider, parameters, and outputs. -->
+      <template v-if="node.kind === 'action'">
+        <section class="detail-section">
+          <h3>Action</h3>
+          <p v-if="actionDescription" class="section-note">{{ actionDescription }}</p>
+          <div class="detail-grid">
+            <div v-for="entry in actionMeta" :key="entry.label" class="detail-item">
+              <span>{{ entry.label }}</span>
+              <strong :class="{ mono: entry.mono }">{{ entry.value }}</strong>
+            </div>
+          </div>
+          <p v-if="!action && actionConfig.provider" class="section-note warn">
+            Provider “{{ actionConfig.provider }}” is not registered; showing the raw configuration.
+          </p>
+        </section>
+
+        <section class="detail-section">
+          <h3>Parameters <span class="count-pill">{{ paramRows.length }}</span></h3>
+          <div v-if="paramRows.length" class="param-list">
+            <div v-for="param in paramRows" :key="param.name" class="param-item" :class="{ unset: !param.configured }">
+              <div class="param-head">
+                <code class="param-name">{{ param.name }}</code>
+                <span v-if="param.type" class="param-type">{{ param.type }}</span>
+                <span v-if="param.required" class="param-tag tag-req">required</span>
+                <span v-if="param.secret" class="param-tag tag-secret">secret</span>
+              </div>
+              <div class="param-value" :class="{ muted: !param.configured }">{{ param.value }}</div>
+              <p v-if="param.description" class="param-desc">{{ param.description }}</p>
+            </div>
+          </div>
+          <p v-else class="empty-note">No parameters defined for this action.</p>
+        </section>
+
+        <section v-if="resultRows.length" class="detail-section">
+          <h3>Outputs <span class="count-pill">{{ resultRows.length }}</span></h3>
+          <div class="param-list">
+            <div v-for="result in resultRows" :key="result.name" class="param-item">
+              <div class="param-head">
+                <code class="param-name">{{ result.name }}</code>
+                <span v-if="result.type" class="param-type">{{ result.type }}</span>
+              </div>
+              <p v-if="result.description" class="param-desc">{{ result.description }}</p>
+            </div>
+          </div>
+        </section>
+      </template>
+
+      <!-- control nodes keep the compact summary grid keyed off their kind. -->
+      <section v-for="sect in detailSections" v-else :key="sect.title" class="detail-section">
+        <h3>{{ sect.title }}</h3>
+        <div v-if="sect.items.length" class="detail-grid">
+          <div v-for="entry in sect.items" :key="entry.label" class="detail-item">
+            <span>{{ entry.label }}</span>
+            <strong>{{ entry.value }}</strong>
           </div>
         </div>
-        <div v-if="section.chips.length" class="chip-row">
-          <span v-for="chip in section.chips" :key="chip" class="detail-chip">{{ chip }}</span>
+        <div v-if="sect.chips.length" class="chip-row">
+          <span v-for="chip in sect.chips" :key="chip" class="detail-chip">{{ chip }}</span>
         </div>
-        <div v-if="section.rows.length" class="detail-rows">
-          <div v-for="row in section.rows" :key="row.label + row.value" class="detail-row">
+        <div v-if="sect.rows.length" class="detail-rows">
+          <div v-for="row in sect.rows" :key="row.label + row.value" class="detail-row">
             <span>{{ row.label }}</span>
-            <strong>{{ row.value }}</strong>
+            <strong class="mono">{{ row.value }}</strong>
             <small v-if="row.note">{{ row.note }}</small>
           </div>
         </div>
       </section>
 
-      <section v-if="resultFields.length" class="detail-section">
-        <h3>Outputs</h3>
-        <div class="chip-row">
-          <span v-for="field in resultFields" :key="field" class="detail-chip">{{ field }}</span>
+      <section class="detail-section">
+        <h3>Transitions</h3>
+        <div v-if="transitionRows.length" class="detail-rows">
+          <div v-for="row in transitionRows" :key="row.label + row.value" class="detail-row transition-row">
+            <span>{{ row.label }}</span>
+            <strong class="mono">{{ row.value }}</strong>
+            <small v-if="row.note">{{ row.note }}</small>
+          </div>
         </div>
+        <p v-else class="empty-note">No outgoing transitions.</p>
       </section>
 
       <div class="step-summary-actions">
-        <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+        <button class="primary" @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
       </div>
@@ -67,7 +126,7 @@
 import { computed } from "vue";
 import { useProvidersStore } from "../../stores/providers";
 import { useWorkflowsStore } from "../../stores/workflows";
-import type { JsonRecord } from "../../types/models";
+import type { JsonRecord, RuninatorType } from "../../types/models";
 import { directTransitionKeys, nodeRefId, workflowNodeActionConfig, workflowNodeActionInputs } from "../../utils/workflows";
 
 interface DetailItem {
@@ -86,6 +145,28 @@ interface DetailSection {
   rows: DetailRow[];
 }
 
+interface MetaEntry {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+interface ParamRow {
+  name: string;
+  type: string;
+  required: boolean;
+  secret: boolean;
+  value: string;
+  description: string;
+  configured: boolean;
+}
+
+interface ResultRow {
+  name: string;
+  type: string;
+  description: string;
+}
+
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
 
@@ -93,6 +174,24 @@ const node = computed<JsonRecord | null>(() => workflows.selectedNode);
 const actionConfig = computed(() => (node.value ? workflowNodeActionConfig(node.value) : { provider: "", action: "" }));
 const provider = computed(() => providersStore.providers.find((item) => item.name === actionConfig.value.provider) ?? null);
 const action = computed(() => provider.value?.actions.find((item) => item.function_name === actionConfig.value.action) ?? null);
+
+// the human label shown on the node, only when it differs from the id.
+const displayName = computed(() => {
+  const name = node.value?.name;
+  return typeof name === "string" && name && name !== node.value?.id ? name : "";
+});
+
+const flags = computed<{ label: string; tone: string }[]>(() => {
+  const current = node.value;
+  if (!current) return [];
+  const out: { label: string; tone: string }[] = [];
+  if (current.locked) out.push({ label: "locked", tone: "neutral" });
+  if (current.skipped) out.push({ label: "skipped", tone: "warn" });
+  if (current.kind === "action" && current.run_once) out.push({ label: "run once", tone: "neutral" });
+  return out;
+});
+
+const actionDescription = computed(() => action.value?.description ?? "");
 
 const headline = computed(() => {
   const current = node.value;
@@ -117,21 +216,78 @@ const headline = computed(() => {
   }
 });
 
-const resultFields = computed(() =>
-  (action.value?.results ?? []).map((result) => `${result.label || result.name}: ${result.ty?.type ?? "any"}`)
+// action header band: provider, function, timeout, retries.
+const actionMeta = computed<MetaEntry[]>(() => {
+  const current = node.value;
+  if (!current || current.kind !== "action") return [];
+  const retries = current.retry?.max_attempts ?? current.max_attempts ?? 1;
+  const timeout = current.timeout_seconds ?? current.action?.timeout_seconds;
+  return [
+    { label: "Provider", value: actionConfig.value.provider || "—", mono: true },
+    { label: "Function", value: actionConfig.value.action || "—", mono: true },
+    { label: "Timeout", value: timeout != null ? `${timeout}s` : "default" },
+    { label: "Max Attempts", value: String(retries) }
+  ];
+});
+
+// one row per provider parameter, merged with the value configured on this node.
+const paramRows = computed<ParamRow[]>(() => {
+  const current = node.value;
+  if (!current || current.kind !== "action") return [];
+  const inputs = workflowNodeActionInputs(current);
+  const inputRecord = isRecord(inputs) ? inputs : {};
+  const schema = action.value?.parameters ?? [];
+
+  if (schema.length) {
+    return schema.map((param) => {
+      const configured = param.name in inputRecord;
+      const value = configured
+        ? valueLabel(inputRecord[param.name])
+        : param.default_value != null
+          ? `${valueLabel(param.default_value)} · default`
+          : "not set";
+      return {
+        name: param.name,
+        type: renderType(param.ty),
+        required: param.required,
+        secret: param.secret,
+        value,
+        description: param.description ?? "",
+        configured
+      };
+    });
+  }
+
+  // unknown provider: surface whatever inputs are actually set so detail is not lost.
+  return Object.entries(inputRecord).map(([name, raw]) => ({
+    name,
+    type: "",
+    required: false,
+    secret: false,
+    value: valueLabel(raw),
+    description: "",
+    configured: true
+  }));
+});
+
+const resultRows = computed<ResultRow[]>(() =>
+  (action.value?.results ?? []).map((result) => ({
+    name: result.label || result.name,
+    type: renderType(result.ty),
+    description: result.description ?? ""
+  }))
 );
 
 const detailSections = computed<DetailSection[]>(() => {
   const current = node.value;
   if (!current) return [];
-  const sections = [kindSection(current), transitionsSection(current)].filter(Boolean) as DetailSection[];
-  return sections.filter((section) => section.items.length || section.chips.length || section.rows.length);
+  return [kindSection(current)].filter((section) => section.items.length || section.chips.length || section.rows.length);
 });
+
+const transitionRows = computed<DetailRow[]>(() => (node.value ? transitionsSection(node.value).rows : []));
 
 function kindSection(current: JsonRecord): DetailSection {
   switch (current.kind) {
-    case "action":
-      return actionSection(current);
     case "approval":
       return section("Approval", [
         item("Type", current.parameters?.approval_type ?? current.parameters?.type ?? "generic"),
@@ -191,20 +347,6 @@ function kindSection(current: JsonRecord): DetailSection {
     default:
       return section(String(current.kind ?? "Node"), [item("Parameters", valueLabel(current.parameters))]);
   }
-}
-
-function actionSection(current: JsonRecord): DetailSection {
-  return section(
-    "Action",
-    [
-      item("Provider", actionConfig.value.provider || "-"),
-      item("Action", actionConfig.value.action || "-"),
-      item("Timeout", `${current.timeout_seconds ?? current.action?.timeout_seconds ?? "-"}s`),
-      item("Retries", current.retry?.max_attempts ?? 1),
-      item("Step Parameters", valueLabel(workflowNodeActionInputs(current)))
-    ],
-    (action.value?.parameters ?? []).filter((param) => param.required).map((param) => `requires ${param.name}`)
-  );
 }
 
 function transitionsSection(current: JsonRecord): DetailSection {
@@ -275,6 +417,23 @@ function subflowLabel(subflowId: unknown): string {
   return name || `Workflow ${id}`;
 }
 
+// render a runinator type into a short readable signature (e.g. array<string>, map<integer>).
+function renderType(ty: RuninatorType | null | undefined): string {
+  if (!ty) return "any";
+  switch (ty.type) {
+    case "array":
+      return `array<${renderType(ty.items)}>`;
+    case "map":
+      return `map<${renderType(ty.values)}>`;
+    case "struct":
+      return "struct";
+    case "union":
+      return ty.variants.map(renderType).join(" | ");
+    default:
+      return ty.type;
+  }
+}
+
 function valueLabel(value: unknown): string {
   if (value == null) return "-";
   if (typeof value === "string") return value || "-";
@@ -319,74 +478,127 @@ function isRecord(value: unknown): value is JsonRecord {
 
 <style scoped>
 .step-detail {
-  gap: 12px;
-  padding: 12px;
+  gap: 14px;
+  padding: 14px;
 }
 
-.step-detail-header,
-.step-summary-actions,
-.detail-band {
+.step-detail-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
-.step-detail-header h2,
-.step-detail-header p {
+.step-detail-heading {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.step-detail-titles {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.step-detail-titles h2 {
   margin: 0;
+  font-size: 17px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.step-detail-name {
+  color: #4b5663;
+  font-size: 13px;
 }
 
 .node-kind {
-  color: #66717e;
-  font-size: 11px;
+  color: #5560d8;
+  background: #eef0ff;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.step-detail-header p,
-.detail-item span,
-.detail-row span,
-.metric span,
-.metric small,
-.empty-detail p {
+.step-headline {
+  margin: 0;
   color: #66717e;
+  font-size: 12px;
 }
 
-.detail-band {
-  border: 1px solid #dbe5ef;
-  border-radius: 6px;
-  background: #f8fafc;
-  padding: 10px;
+.flag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.metric {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
+.step-flag {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.metric strong,
-.detail-item strong,
-.detail-row strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #17202a;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.flag-neutral {
+  background: #eef2f7;
+  color: #55606d;
+}
+
+.flag-warn {
+  background: #fff4cc;
+  color: #8a5a00;
+}
+
+.step-edit-btn {
+  flex: 0 0 auto;
 }
 
 .detail-section {
   display: grid;
   gap: 8px;
   border-top: 1px solid #e5ebf1;
-  padding-top: 10px;
+  padding-top: 12px;
 }
 
 .detail-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0;
   color: #17202a;
   font-size: 13px;
+}
+
+.count-pill {
+  color: #66717e;
+  background: #eef2f7;
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.section-note {
+  margin: -2px 0 0;
+  color: #5b6675;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.section-note.warn {
+  color: #8a5a00;
 }
 
 .detail-grid {
@@ -404,9 +616,30 @@ function isRecord(value: unknown): value is JsonRecord {
 
 .detail-item span,
 .detail-row span {
-  font-size: 11px;
+  color: #66717e;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
+}
+
+.detail-item strong,
+.detail-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17202a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.detail-rows {
+  display: grid;
+  gap: 6px;
 }
 
 .detail-row {
@@ -414,22 +647,112 @@ function isRecord(value: unknown): value is JsonRecord {
   padding-left: 8px;
 }
 
+.detail-row.transition-row {
+  border-left-color: #c4d4ea;
+}
+
+.detail-row.issue-error {
+  border-left-color: #dc2626;
+}
+
+.detail-row.issue-warning {
+  border-left-color: #d97706;
+}
+
 .detail-row small {
   overflow: hidden;
   color: #4b5663;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.detail-rows,
-.chip-row {
+/* parameter / output list: one card per field with type and value. */
+.param-list {
   display: grid;
+  gap: 8px;
+}
+
+.param-item {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e5ebf1;
+  border-radius: 6px;
+  background: #fbfcfe;
+  padding: 8px 10px;
+}
+
+.param-item.unset {
+  background: #fafbfc;
+  border-style: dashed;
+}
+
+.param-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.param-name {
+  color: #17202a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.param-type {
+  color: #5560d8;
+  background: #eef0ff;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.param-tag {
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tag-req {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+.tag-secret {
+  color: #6941c6;
+  background: #f4ebff;
+}
+
+.param-value {
+  color: #1f2937;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.param-value.muted {
+  color: #97a1ad;
+  font-style: italic;
+}
+
+.param-desc {
+  margin: 0;
+  color: #66717e;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .chip-row {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
 }
 
 .detail-chip {
@@ -441,9 +764,26 @@ function isRecord(value: unknown): value is JsonRecord {
   padding: 3px 8px;
 }
 
+.empty-note {
+  margin: 0;
+  color: #97a1ad;
+  font-size: 12px;
+}
+
+.step-summary-actions {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid #e5ebf1;
+  padding-top: 12px;
+}
+
 .empty-detail {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.empty-detail p {
+  color: #66717e;
 }
 </style>

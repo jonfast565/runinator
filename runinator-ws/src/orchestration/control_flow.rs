@@ -12,7 +12,7 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let context = runtime_context(workflow_run, node_runs);
+    let context = runtime_context(db, workflow_run, node_runs).await;
     let parameters = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let items = runinator_workflows::parse_loop_items(&parameters).items;
@@ -329,7 +329,7 @@ pub(super) async fn process_map_node<T: DatabaseImpl>(
         append_completed_map_item(existing, params.target.as_str(), node_runs)
     } else {
         // first visit: resolve the item list and initialize the frame.
-        let context = runtime_context(workflow_run, node_runs);
+        let context = runtime_context(db, workflow_run, node_runs).await;
         let items = runinator_workflows::resolve_value_refs(&params.items, &context)
             .map_err(|err| -> SendableError { Box::new(err) })?;
         let items = items.as_array().cloned().unwrap_or_default();

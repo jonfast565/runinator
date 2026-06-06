@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use runinator_plugin::cancel::CancellationToken;
 
+use crate::errors::{CANCELED, INVALID_JSON, NONZERO_EXIT, TIMEOUT};
 use crate::params::{AiCommandParams, parse_params};
 
 pub(crate) fn run_shell_command(
@@ -19,10 +20,7 @@ pub(crate) fn run_shell_command(
 ) -> Result<TaskExecutionResult, SendableError> {
     let params: AiCommandParams = parse_params(request)?;
     if token.is_cancelled() {
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.canceled".into(),
-            "AI command canceled".into(),
-        )));
+        return Err(CANCELED.bare());
     }
     let input = params.input.unwrap_or_else(|| json!({}));
     let mut child = Command::new("sh")
@@ -37,25 +35,15 @@ pub(crate) fn run_shell_command(
     }
     if token.is_cancelled() {
         let _ = child.kill();
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.canceled".into(),
-            "AI command canceled".into(),
-        )));
+        return Err(CANCELED.bare());
     }
     let output = wait_with_timeout(child, request.timeout_secs, token)?;
     if !output.status.success() {
-        return Err(Box::new(RuntimeError::new(
-            "ai_command.nonzero_exit".into(),
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        )));
+        return Err(NONZERO_EXIT.error(String::from_utf8_lossy(&output.stderr)));
     }
     let stdout = String::from_utf8(output.stdout)?;
-    let parsed: Value = serde_json::from_str(&stdout).map_err(|err| {
-        RuntimeError::new(
-            "ai_command.invalid_json".into(),
-            format!("AI command stdout must be JSON: {err}"),
-        )
-    })?;
+    let parsed: Value = serde_json::from_str(&stdout)
+        .map_err(|err| INVALID_JSON.error(format!("AI command stdout must be JSON: {err}")))?;
     Ok(TaskExecutionResult {
         message: Some("AI command completed".into()),
         output_json: Some(parsed),
@@ -75,17 +63,14 @@ fn wait_with_timeout(
         if token.is_cancelled() {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "ai_command.canceled".into(),
-                "AI command canceled".into(),
-            )));
+            return Err(CANCELED.bare());
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "ai_command.timeout".into(),
-                format!("AI command timed out after {} seconds", timeout.as_secs()),
+            return Err(TIMEOUT.error(format!(
+                "AI command timed out after {} seconds",
+                timeout.as_secs()
             )));
         }
         if child.try_wait()?.is_some() {

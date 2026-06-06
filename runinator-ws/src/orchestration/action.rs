@@ -50,7 +50,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         }
     };
     let attempt = node_run.attempt + 1;
-    let parameters = build_node_parameters(action, node, workflow_run, node_runs)?;
+    let parameters = build_node_parameters(db, action, node, workflow_run, node_runs).await?;
     let command = build_action_command(workflow_run.id, &node_run, action, parameters.clone());
     db.enqueue_action_dispatch(format!("workflow-node-run:{}", node_run.id), command)
         .await?;
@@ -75,14 +75,15 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     .await
 }
 
-fn build_node_parameters(
+async fn build_node_parameters<T: DatabaseImpl>(
+    db: &T,
     action: &WorkflowAction,
     node: &WorkflowNode,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
     let base = merge_parameters(&action.configuration, &node.parameters);
-    let context = runtime_context(workflow_run, node_runs);
+    let context = runtime_context(db, workflow_run, node_runs).await;
     runinator_workflows::resolve_value_refs(&base, &context)
         .map_err(|err| -> SendableError { Box::new(err) })
 }

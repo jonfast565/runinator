@@ -82,7 +82,7 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
     // apply config/secrets before workflows so a pack's own `config.*` values are present in the
     // store when its workflows are type-checked on import.
     let secrets = match &secret_bundle {
-        Some(bundle) => match import_secret_entries_with(bundle, overwrite) {
+        Some(bundle) => match import_secret_entries_with(db.as_ref(), bundle, overwrite).await {
             Ok(imported) => SecretBundle { secrets: imported },
             Err(error) => return error.into_response(),
         },

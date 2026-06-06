@@ -6,6 +6,6 @@
     "wdl/core-team-sdlc-pipeline.wdl",
     "wdl/ticket-work.wdl"
   ],
-  "settings": "settings.json",
+  "settings": "settings.wdls",
   "triggers": []
 }

@@ -26,9 +26,6 @@
     <div v-if="workflows.workflowRunDetail" class="workflow-run-meta">
       <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
       <div v-if="workflows.workflowRunDetail.run.finished_at">Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}</div>
-      <div v-if="workflows.workflowRunDetail.run.message" class="run-message">
-        {{ formatErrorMessage(workflows.workflowRunDetail.run.message) }}
-      </div>
     </div>
 
     <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">
@@ -115,10 +112,10 @@
         </div>
         <details v-if="hasExtraFields" class="result-extra">
           <summary>Raw JSON</summary>
-          <pre class="output workflow-detail-result">{{ selectedNodeResultText }}</pre>
+          <JsonEditor class="workflow-detail-json" :model-value="selectedNodeResultText" readonly title="" />
         </details>
       </div>
-      <pre v-else class="output workflow-detail-result">{{ selectedNodeResultText }}</pre>
+      <JsonEditor v-else class="workflow-detail-json" :model-value="selectedNodeResultText" readonly title="Output JSON" />
       <h3 class="run-detail-section-title">Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <pre class="output workflow-detail-logs">{{ workflows.workflowNodeDetailExtra || 'No logs for this step' }}</pre>
     </div>
@@ -138,7 +135,7 @@ import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
-import { formatDate, formatErrorMessage, pretty } from "../../utils/format";
+import { formatDate, pretty } from "../../utils/format";
 import { computed, nextTick, ref } from "vue";
 import type { ActionResultMetadata, WorkflowNodeRun } from "../../types/models";
 import { workflowNodeActionConfig, workflowNodeResultMetadata } from "../../utils/workflows";
@@ -315,13 +312,6 @@ function formatResultValue(value: any): string {
   gap: 6px 14px;
   margin-bottom: 10px;
 }
-.run-message {
-  padding: 4px 8px;
-  background: #fff8f8;
-  border: 1px solid #ffebeb;
-  border-radius: 4px;
-  color: #c53030;
-}
 .node-logs-section {
   margin-top: 10px;
   display: flex;
@@ -453,9 +443,18 @@ function formatResultValue(value: any): string {
   max-height: 220px;
   font-size: 11px;
 }
-.workflow-detail-result {
-  max-height: 140px;
-  font-size: 11px;
+.workflow-detail-json {
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-bottom: 10px;
+}
+.workflow-detail-json :deep(.json-editor-container) {
+  max-height: 200px;
+}
+.result-extra .workflow-detail-json {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
 .result-fields {
   display: flex;
@@ -526,11 +525,6 @@ function formatResultValue(value: any): string {
 }
 .result-extra summary:hover {
   color: #374151;
-}
-.result-extra pre {
-  margin: 0;
-  border-top: 1px solid #e2e8f0;
-  border-radius: 0;
 }
 
 @media (max-width: 920px) {

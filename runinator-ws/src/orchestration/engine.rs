@@ -129,7 +129,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                     node.parameters.clone().into(),
                 )
                 .await?;
-            let context = runtime_context(&workflow_run, &node_runs);
+            let context = runtime_context(db, &workflow_run, &node_runs).await;
             let matched = runinator_workflows::evaluate_condition(&node.condition, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
             let (status, reason) = if matched {
@@ -159,7 +159,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 .await?;
             let params = runinator_workflows::parse_switch_parameters(node)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
-            let context = runtime_context(&workflow_run, &node_runs);
+            let context = runtime_context(db, &workflow_run, &node_runs).await;
             let target = runinator_workflows::evaluate_switch(&params, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
             let output = SwitchOutput {
@@ -217,7 +217,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 .await?;
             let params = runinator_workflows::parse_emit_parameters(node)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
-            let context = runtime_context(&workflow_run, &node_runs);
+            let context = runtime_context(db, &workflow_run, &node_runs).await;
             let data = runinator_workflows::resolve_value_refs(&params.data, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
             let output = EmitOutput {

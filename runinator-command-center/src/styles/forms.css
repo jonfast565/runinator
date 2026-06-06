@@ -1,7 +1,7 @@
 .form-section {
   display: grid;
   gap: 8px;
-  border-top: 1px solid #e5ebf1;
+  border-top: 1px solid var(--border-subtle);
   padding-top: 10px;
 }
 

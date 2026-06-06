@@ -1,19 +1,16 @@
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{ParameterMetadata, ResultMetadata, RuninatorType},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
 };
 use serde_json::{Value, json};
 
+use crate::errors::{HTTP_ERROR, INVALID_JSON, INVALID_PARAMS};
+
 pub(crate) fn parse_params<T: serde::de::DeserializeOwned>(
     request: &ProviderExecutionRequest,
 ) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
-        Box::new(RuntimeError::new(
-            "github.invalid_params".into(),
-            e.to_string(),
-        )) as SendableError
-    })
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| INVALID_PARAMS.error(e))
 }
 
 pub(crate) fn first_pull_number(
@@ -21,10 +18,9 @@ pub(crate) fn first_pull_number(
 ) -> Result<Option<i64>, SendableError> {
     let text = response.text()?;
     let value: Value = serde_json::from_str(&text).map_err(|err| {
-        RuntimeError::new(
-            "github.invalid_json".into(),
-            format!("GitHub pull request list response was not JSON: {err}"),
-        )
+        INVALID_JSON.error(format!(
+            "GitHub pull request list response was not JSON: {err}"
+        ))
     })?;
     Ok(value
         .as_array()
@@ -39,10 +35,7 @@ pub(crate) fn checks_summary_response(
     let status = response.status();
     let text = response.text()?;
     if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            "github.http_error".into(),
-            format!("HTTP {status}: {text}"),
-        )));
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
     }
     let raw: Value = serde_json::from_str(&text)
         .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }));
@@ -107,16 +100,12 @@ pub(crate) fn summarize_check_runs(raw: Value) -> Value {
 }
 
 pub(crate) fn json_response(
-    provider: &str,
     response: reqwest::blocking::Response,
 ) -> Result<TaskExecutionResult, SendableError> {
     let status = response.status();
     let text = response.text()?;
     if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            format!("{provider}.http_error"),
-            format!("HTTP {status}: {text}"),
-        )));
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
     }
     let output = if text.trim().is_empty() {
         json!({ "status": status.as_u16() })
@@ -125,7 +114,7 @@ pub(crate) fn json_response(
             .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }))
     };
     Ok(TaskExecutionResult {
-        message: Some(format!("{provider} action completed")),
+        message: Some("github action completed".into()),
         output_json: Some(output.into()),
         chunks: Vec::new(),
         artifacts: Vec::new(),

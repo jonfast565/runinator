@@ -1,4 +1,5 @@
 mod command;
+mod errors;
 mod params;
 mod provider;
 

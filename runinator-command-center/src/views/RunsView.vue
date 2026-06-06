@@ -31,7 +31,7 @@
             <div class="panel details runs-detail-panel">
               <WorkflowRunDetail />
               <h2 class="runs-detail-heading">Structured Result</h2>
-              <pre class="output runs-detail-output">{{ selectedOutput }}</pre>
+              <JsonEditor class="runs-detail-output" :model-value="selectedOutput" readonly title="" />
               <h2 class="runs-detail-heading">Run Output Chunks</h2>
               <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
               <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
@@ -69,6 +69,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { fetchWorkflowNodeRunArtifacts } from "../api/commandCenterApi";
+import JsonEditor from "../components/shared/JsonEditor.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
@@ -110,5 +111,14 @@ const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLog
 .runs-detail-shell > .split-pane {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.runs-detail-output {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.runs-detail-output :deep(.json-editor-container) {
+  max-height: 260px;
 }
 </style>

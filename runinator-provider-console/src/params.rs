@@ -1,8 +1,7 @@
-use runinator_models::{
-    errors::{RuntimeError, SendableError},
-    runs::ProviderExecutionRequest,
-};
+use runinator_models::{errors::SendableError, runs::ProviderExecutionRequest};
 use serde::{Deserialize, Serialize};
+
+use crate::errors::{INVALID_PARAMS, IO};
 
 #[derive(Deserialize)]
 pub(crate) struct ConsoleParams {
@@ -20,14 +19,9 @@ pub(crate) struct ConsoleResult {
 pub(crate) fn parse_params(
     request: &ProviderExecutionRequest,
 ) -> Result<ConsoleParams, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| {
-        Box::new(RuntimeError::new(
-            "console.invalid_params".into(),
-            e.to_string(),
-        )) as SendableError
-    })
+    serde_json::from_value(request.parameters.clone().into()).map_err(|e| INVALID_PARAMS.error(e))
 }
 
 pub(crate) fn to_runtime_error(err: std::io::Error) -> SendableError {
-    Box::new(RuntimeError::new("console.io".into(), err.to_string()))
+    IO.error(err)
 }

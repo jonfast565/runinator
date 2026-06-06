@@ -4,8 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::errors::SendableError;
 use runinator_plugin::cancel::CancellationToken;
+
+use crate::errors::{CANCELED, NONZERO_EXIT, TIMEOUT};
 
 pub(crate) fn run_command(
     program: &str,
@@ -24,20 +26,14 @@ pub(crate) fn run_command(
         if token.is_cancelled() {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "command.canceled".into(),
-                format!("{program} command canceled"),
-            )));
+            return Err(CANCELED.error(format!("{program} command canceled")));
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Box::new(RuntimeError::new(
-                "command.timeout".into(),
-                format!(
-                    "{program} command timed out after {} seconds",
-                    timeout.as_secs()
-                ),
+            return Err(TIMEOUT.error(format!(
+                "{program} command timed out after {} seconds",
+                timeout.as_secs()
             )));
         }
         if child.try_wait()?.is_some() {
@@ -48,10 +44,7 @@ pub(crate) fn run_command(
 
     let output = child.wait_with_output()?;
     if !output.status.success() {
-        return Err(Box::new(RuntimeError::new(
-            "command.nonzero_exit".into(),
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        )));
+        return Err(NONZERO_EXIT.error(String::from_utf8_lossy(&output.stderr)));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

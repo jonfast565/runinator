@@ -10,6 +10,7 @@ use runinator_models::{
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    settings::{SettingKind, SettingRecord},
     workflows::{
         WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
         WorkflowRun, WorkflowStatus, WorkflowTrigger,
@@ -1598,5 +1599,61 @@ impl DatabaseImpl for PostgresDb {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
+    }
+
+    async fn upsert_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+        value: Vec<u8>,
+        updated_at: i64,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&queries::upsert_setting(SqlDialect::Postgres))
+            .bind(kind.as_str())
+            .bind(scope)
+            .bind(name)
+            .bind(value)
+            .bind(updated_at)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn fetch_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> Result<Option<SettingRecord>, SendableError> {
+        let row = sqlx::query(&queries::fetch_setting(SqlDialect::Postgres))
+            .bind(kind.as_str())
+            .bind(scope)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| mappers::postgres_row_to_setting(&row)))
+    }
+
+    async fn delete_setting(
+        &self,
+        kind: SettingKind,
+        scope: String,
+        name: String,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&queries::delete_setting(SqlDialect::Postgres))
+            .bind(kind.as_str())
+            .bind(scope)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_settings(&self) -> Result<Vec<SettingRecord>, SendableError> {
+        let rows = sqlx::query(queries::list_settings())
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(mappers::postgres_row_to_setting).collect())
     }
 }

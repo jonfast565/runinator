@@ -1,8 +1,9 @@
 mod dynamo;
+mod errors;
 
 use log::info;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata,
         ResultMetadata, RuninatorType,
@@ -84,12 +85,9 @@ impl Provider for AwsProvider {
                     artifacts: vec![result.artifact],
                 })
             }
-            _ => Err(Box::new(RuntimeError::new(
-                "UNSUPPORTED_CALL".to_string(),
-                format!(
-                    "Unsupported AWS provider call '{}'",
-                    request.action_function
-                ),
+            _ => Err(errors::UNSUPPORTED_CALL.error(format!(
+                "Unsupported AWS provider call '{}'",
+                request.action_function
             ))),
         }
     }

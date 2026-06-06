@@ -116,9 +116,10 @@ Worker-originated control requests travel to the web service over the broker
 over the `control` channel. There is no direct worker-to-waker channel.
 
 Local runtime files are written under `~/.runinator/` by default. This includes
-the SQLite database at `~/.runinator/runinator.db`, credentials at
-`~/.runinator/credentials.enc.json`, application logs under
-`~/.runinator/logs/`, and supervisor state under `~/.runinator/supervisor/`.
+the SQLite database at `~/.runinator/runinator.db` (which also holds config and
+secrets in the `settings` table, with each value encrypted at rest by
+`RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
+supervisor state under `~/.runinator/supervisor/`.
 The local supervisor runs `runinatorctl workflows apply` against the pack at
 `packs/sdlc/sdlc.wdlp`.
 Child process stdout and stderr are collected under

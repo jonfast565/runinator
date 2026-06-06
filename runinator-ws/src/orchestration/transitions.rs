@@ -236,7 +236,7 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
         message.clone(),
     )
     .await?;
-    let mut context = runtime_context(workflow_run, node_runs);
+    let mut context = runtime_context(db, workflow_run, node_runs).await;
     if let Some(output) = output_json {
         set_step_output(&mut context, &node.id, output);
     }

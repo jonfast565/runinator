@@ -1,3 +1,4 @@
+mod error;
 mod metadata;
 mod params;
 mod provider;

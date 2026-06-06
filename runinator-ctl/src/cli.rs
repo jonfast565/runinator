@@ -166,21 +166,13 @@ pub enum WorkflowCommands {
     Validate { file: PathBuf },
     /// Import a workflow pack (.wdl, .wdlp, or a directory of .wdl files), or save a workflow
     /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
-    /// bundle (a `.wdlp` "settings" entry or a sibling settings.wdls/settings.json) is imported too
-    /// to seed config/secret slots, unless --skip-settings is given. When no path is given, falls
-    /// back to the `~/.runinator/workflows` folder if it exists.
-    Apply {
-        file: Option<PathBuf>,
-        /// Skip importing the pack's settings bundle (config/secret slots).
-        #[arg(long)]
-        skip_settings: bool,
-    },
+    /// bundle (a `.wdlp` "settings" entry or a sibling settings.wdls/settings.json) is always
+    /// imported too to seed config/secret slots. When no path is given, falls back to the
+    /// `~/.runinator/workflows` folder if it exists.
+    Apply { file: Option<PathBuf> },
     /// Watch a workflow pack, re-apply it on changes, and optionally run a workflow.
     Dev {
         file: Option<PathBuf>,
-        /// Skip importing the pack's settings bundle (config/secret slots).
-        #[arg(long)]
-        skip_settings: bool,
         /// Workflow id or name to run after each successful apply.
         #[arg(long)]
         run: Option<String>,

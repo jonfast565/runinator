@@ -1,20 +1,15 @@
 use runinator_models::json;
-use runinator_models::{
-    errors::{RuntimeError, SendableError},
-    runs::TaskExecutionResult,
-};
+use runinator_models::{errors::SendableError, runs::TaskExecutionResult};
+
+use crate::error::HTTP_ERROR;
 
 pub(crate) fn json_response(
-    provider: &str,
     response: reqwest::blocking::Response,
 ) -> Result<TaskExecutionResult, SendableError> {
     let status = response.status();
     let text = response.text()?;
     if !status.is_success() {
-        return Err(Box::new(RuntimeError::new(
-            format!("{provider}.http_error"),
-            format!("HTTP {status}: {text}"),
-        )));
+        return Err(HTTP_ERROR.error(format!("HTTP {status}: {text}")));
     }
     let output = if text.trim().is_empty() {
         json!({ "status": status.as_u16() })
@@ -23,7 +18,7 @@ pub(crate) fn json_response(
             .unwrap_or_else(|_| json!({ "body": text, "status": status.as_u16() }))
     };
     Ok(TaskExecutionResult {
-        message: Some(format!("{provider} action completed")),
+        message: Some("jira action completed".into()),
         output_json: Some(output),
         chunks: Vec::new(),
         artifacts: Vec::new(),
