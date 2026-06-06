@@ -122,6 +122,15 @@ cargo run -p runinator-supervisor -- stop
 - Preserve graceful shutdown with `Notify` and `ctrl_c` patterns in service binaries.
 - Avoid holding locks across `.await`.
 
+### Error Dictionaries
+
+Every error a crate emits carries a stable numbered code from a per-crate dictionary built on `ErrorDescriptor` (`runinator-models::errors`). A descriptor pairs a numbered code, a dotted runtime key (kept for back-compat lookups), and a short summary; it renders as `"CODE - summary: detail"`. Each crate's `errors.rs` keeps an ordered `DICTIONARY: &[ErrorDescriptor]` exposed through a trait: providers implement `ProviderErrors`, every other crate implements `EngineErrors`.
+
+- Prefixes name the domain, like providers (`JIRA`, `SLACK`, …). `RUNI` is the fallback for the engine *runtime* crates that have no self-contained error vocabulary — `runinator-ws`, `-worker`, `-waker`, `-plugin`, `-database`, `-utilities` — partitioned by per-crate number range (ws=`RUNI1xx`, worker=`RUNI2xx`, …). Crates with their own domain vocabulary get a crate-specific prefix instead: `runinator-broker`=`BROKER`, `-comm`=`COMM`, `-api`=`API`, `-wdl`=`WDL`, `-workflows`=`WORKFLOW`.
+- For ad-hoc errors, build a descriptor and call `.error(detail)` (or `.bare()`); do not hand-roll `RuntimeError::new` with a one-off code string. Add new errors as the next number in that crate's range.
+- For crates whose errors are a `thiserror` enum, keep the enum (matching, `#[from]`/`#[source]` stay intact) and apply the code two ways: prefix each variant's `#[error("CODE - …")]` string, and add a parallel `ErrorDescriptor` `DICTIONARY` + `EngineErrors` impl in the same `errors.rs`. Keep the `#[error]` literal and its dictionary entry in sync.
+- lib crates expose `pub mod errors;` so their bins reference descriptors by path; a bin that owns its `errors.rs` may need `#![allow(dead_code)]` since bins flag unused `pub` items. The desktop `runinator-command-center` is out of scope for this catalog.
+
 ## Tests And Verification
 
 Before handing off non-trivial Rust changes, run the narrowest useful checks first:

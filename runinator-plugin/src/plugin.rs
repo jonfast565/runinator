@@ -1,7 +1,7 @@
 use libloading::{Library, Symbol};
 use log::{debug, warn};
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     providers::{ProviderMetadata, validate_provider_metadata},
     runs::{
         ProviderExecutionEvent, ProviderExecutionRequest, ProviderExecutionResponse,
@@ -86,20 +86,15 @@ impl Plugin {
 
         let marker_result = unsafe { (marker_symbol)() };
         if marker_result != 1 {
-            return Err(Box::new(RuntimeError::new(
-                "1".to_string(),
-                "Marker function did not return expected value".to_string(),
-            )));
+            return Err(crate::errors::MARKER_INVALID.bare());
         }
 
         let version_symbol: Symbol<PluginAbiVersionFn> =
             unsafe { lib.get(PLUGIN_ABI_VERSION_FN_NAME.as_bytes())? };
         let abi_version = unsafe { (version_symbol)() };
         if abi_version < 1 {
-            return Err(Box::new(RuntimeError::new(
-                "plugin.abi.unsupported".to_string(),
-                format!("Plugin ABI version {abi_version} is not supported; ABI 1 is required"),
-            )));
+            return Err(crate::errors::ABI_UNSUPPORTED
+                .error(format!("ABI {abi_version} found; ABI 1 is required")));
         }
         let _: Symbol<PluginServiceCallFn> =
             unsafe { lib.get(PLUGIN_SERVICE_CALL_FN_NAME.as_bytes())? };
@@ -154,10 +149,7 @@ impl Plugin {
         }
 
         if result != 0 {
-            return Err(Box::new(RuntimeError::new(
-                "plugin.v2.execution_failed".to_string(),
-                "Plugin execution failed".to_string(),
-            )));
+            return Err(crate::errors::EXECUTION_FAILED.bare());
         }
 
         let response_file = File::open(&response_path)?;
@@ -176,10 +168,7 @@ impl Plugin {
             metadata.name = self.name.clone();
         }
         validate_provider_metadata(&metadata).map_err(|err| {
-            Box::new(RuntimeError::new(
-                "plugin.metadata.invalid".into(),
-                format!("{}: {err}", self.name),
-            )) as SendableError
+            crate::errors::METADATA_INVALID.error(format!("{}: {err}", self.name))
         })?;
         Ok(metadata)
     }
@@ -187,13 +176,10 @@ impl Plugin {
 
 fn path_to_cstring(path: &Path, kind: &str) -> Result<CString, SendableError> {
     CString::new(path.to_string_lossy().as_bytes()).map_err(|err| {
-        Box::new(RuntimeError::new(
-            "plugin.path.invalid".into(),
-            format!(
-                "Plugin {kind} path contains an interior nul byte: {} ({err})",
-                path.display()
-            ),
-        )) as SendableError
+        crate::errors::PATH_INVALID.error(format!(
+            "{kind} path contains an interior nul byte: {} ({err})",
+            path.display()
+        ))
     })
 }
 

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::value::Value;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
@@ -13,7 +13,7 @@ use runinator_models::{
         WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
+use sqlx::{ColumnIndex, Decode, Row, Type};
 
 fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
@@ -23,6 +23,32 @@ fn parse_type(raw: String) -> RuninatorType {
     let value = parse_json(raw);
     serde_json::from_value(value.clone().into())
         .unwrap_or_else(|_| RuninatorType::from_json_schema(&value))
+}
+
+fn parse_action_command(raw: String) -> Result<ActionCommand, SendableError> {
+    serde_json::from_str::<ActionCommand>(&raw)
+        .map_err(|err| crate::errors::ACTION_DISPATCH_INVALID_JSON.error(err))
+}
+
+/// define a row mapper generic over any sqlx row, with the column-decode bounds every mapper needs.
+///
+/// the `$row` identifier is supplied by the caller so the body and the generated signature share a
+/// hygiene context. every column this codebase reads decodes as one of `i64`, `String`, `bool`,
+/// `Option<i64>`, or `Option<String>`, indexed by column name.
+macro_rules! row_mapper {
+    ($name:ident($row:ident) -> $ret:ty $body:block) => {
+        pub fn $name<R>($row: &R) -> $ret
+        where
+            R: Row,
+            for<'c> &'c str: ColumnIndex<R>,
+            for<'d> i64: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> String: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> bool: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<i64>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<String>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Vec<u8>: Decode<'d, R::Database> + Type<R::Database>,
+        $body
+    };
 }
 
 macro_rules! run_summary_from_row {
@@ -51,13 +77,7 @@ macro_rules! run_summary_from_row {
     }};
 }
 
-pub fn sqlite_row_to_run_summary(row: &SqliteRow) -> RunSummary {
-    run_summary_from_row!(row)
-}
-
-pub fn postgres_row_to_run_summary(row: &PgRow) -> RunSummary {
-    run_summary_from_row!(row)
-}
+row_mapper!(row_to_run_summary(row) -> RunSummary { run_summary_from_row!(row) });
 
 macro_rules! setting_from_row {
     ($row:expr) => {{
@@ -71,13 +91,7 @@ macro_rules! setting_from_row {
     }};
 }
 
-pub fn sqlite_row_to_setting(row: &SqliteRow) -> SettingRecord {
-    setting_from_row!(row)
-}
-
-pub fn postgres_row_to_setting(row: &PgRow) -> SettingRecord {
-    setting_from_row!(row)
-}
+row_mapper!(row_to_setting(row) -> SettingRecord { setting_from_row!(row) });
 
 macro_rules! run_chunk_from_row {
     ($row:expr) => {{
@@ -93,13 +107,7 @@ macro_rules! run_chunk_from_row {
     }};
 }
 
-pub fn sqlite_row_to_run_chunk(row: &SqliteRow) -> RunChunk {
-    run_chunk_from_row!(row)
-}
-
-pub fn postgres_row_to_run_chunk(row: &PgRow) -> RunChunk {
-    run_chunk_from_row!(row)
-}
+row_mapper!(row_to_run_chunk(row) -> RunChunk { run_chunk_from_row!(row) });
 
 macro_rules! run_artifact_from_row {
     ($row:expr) => {{
@@ -117,13 +125,7 @@ macro_rules! run_artifact_from_row {
     }};
 }
 
-pub fn sqlite_row_to_run_artifact(row: &SqliteRow) -> RunArtifact {
-    run_artifact_from_row!(row)
-}
-
-pub fn postgres_row_to_run_artifact(row: &PgRow) -> RunArtifact {
-    run_artifact_from_row!(row)
-}
+row_mapper!(row_to_run_artifact(row) -> RunArtifact { run_artifact_from_row!(row) });
 
 macro_rules! workflow_from_row {
     ($row:expr) => {{
@@ -141,13 +143,7 @@ macro_rules! workflow_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow(row: &SqliteRow) -> WorkflowDefinition {
-    workflow_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow(row: &PgRow) -> WorkflowDefinition {
-    workflow_from_row!(row)
-}
+row_mapper!(row_to_workflow(row) -> WorkflowDefinition { workflow_from_row!(row) });
 
 macro_rules! workflow_trigger_from_row {
     ($row:expr) => {{
@@ -174,13 +170,7 @@ macro_rules! workflow_trigger_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_trigger(row: &SqliteRow) -> WorkflowTrigger {
-    workflow_trigger_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow_trigger(row: &PgRow) -> WorkflowTrigger {
-    workflow_trigger_from_row!(row)
-}
+row_mapper!(row_to_workflow_trigger(row) -> WorkflowTrigger { workflow_trigger_from_row!(row) });
 
 macro_rules! workflow_run_from_row {
     ($row:expr) => {{
@@ -209,13 +199,7 @@ macro_rules! workflow_run_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_run(row: &SqliteRow) -> WorkflowRun {
-    workflow_run_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow_run(row: &PgRow) -> WorkflowRun {
-    workflow_run_from_row!(row)
-}
+row_mapper!(row_to_workflow_run(row) -> WorkflowRun { workflow_run_from_row!(row) });
 
 macro_rules! workflow_node_run_from_row {
     ($row:expr) => {{
@@ -245,13 +229,7 @@ macro_rules! workflow_node_run_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_node_run(row: &SqliteRow) -> WorkflowNodeRun {
-    workflow_node_run_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow_node_run(row: &PgRow) -> WorkflowNodeRun {
-    workflow_node_run_from_row!(row)
-}
+row_mapper!(row_to_workflow_node_run(row) -> WorkflowNodeRun { workflow_node_run_from_row!(row) });
 
 macro_rules! workflow_node_run_chunk_from_row {
     ($row:expr) => {{
@@ -267,13 +245,9 @@ macro_rules! workflow_node_run_chunk_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_node_run_chunk(row: &SqliteRow) -> WorkflowNodeRunChunk {
+row_mapper!(row_to_workflow_node_run_chunk(row) -> WorkflowNodeRunChunk {
     workflow_node_run_chunk_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow_node_run_chunk(row: &PgRow) -> WorkflowNodeRunChunk {
-    workflow_node_run_chunk_from_row!(row)
-}
+});
 
 macro_rules! workflow_node_run_artifact_from_row {
     ($row:expr) => {{
@@ -291,13 +265,9 @@ macro_rules! workflow_node_run_artifact_from_row {
     }};
 }
 
-pub fn sqlite_row_to_workflow_node_run_artifact(row: &SqliteRow) -> WorkflowNodeRunArtifact {
+row_mapper!(row_to_workflow_node_run_artifact(row) -> WorkflowNodeRunArtifact {
     workflow_node_run_artifact_from_row!(row)
-}
-
-pub fn postgres_row_to_workflow_node_run_artifact(row: &PgRow) -> WorkflowNodeRunArtifact {
-    workflow_node_run_artifact_from_row!(row)
-}
+});
 
 macro_rules! catalog_item_from_row {
     ($row:expr) => {{
@@ -315,13 +285,7 @@ macro_rules! catalog_item_from_row {
     }};
 }
 
-pub fn sqlite_row_to_catalog_item(row: &SqliteRow) -> Value {
-    catalog_item_from_row!(row)
-}
-
-pub fn postgres_row_to_catalog_item(row: &PgRow) -> Value {
-    catalog_item_from_row!(row)
-}
+row_mapper!(row_to_catalog_item(row) -> Value { catalog_item_from_row!(row) });
 
 macro_rules! automation_record_from_row {
     ($row:expr) => {{
@@ -356,13 +320,7 @@ macro_rules! automation_record_from_row {
     }};
 }
 
-pub fn sqlite_row_to_automation_record(row: &SqliteRow) -> Value {
-    automation_record_from_row!(row)
-}
-
-pub fn postgres_row_to_automation_record(row: &PgRow) -> Value {
-    automation_record_from_row!(row)
-}
+row_mapper!(row_to_automation_record(row) -> Value { automation_record_from_row!(row) });
 
 macro_rules! idempotency_key_from_row {
     ($row:expr) => {{
@@ -376,13 +334,7 @@ macro_rules! idempotency_key_from_row {
     }};
 }
 
-pub fn sqlite_row_to_idempotency_key(row: &SqliteRow) -> Value {
-    idempotency_key_from_row!(row)
-}
-
-pub fn postgres_row_to_idempotency_key(row: &PgRow) -> Value {
-    idempotency_key_from_row!(row)
-}
+row_mapper!(row_to_idempotency_key(row) -> Value { idempotency_key_from_row!(row) });
 
 macro_rules! action_dispatch_from_row {
     ($row:expr) => {{
@@ -413,33 +365,16 @@ macro_rules! action_dispatch_from_row {
     }};
 }
 
-fn parse_action_command(raw: String) -> Result<ActionCommand, SendableError> {
-    serde_json::from_str::<ActionCommand>(&raw).map_err(|err| {
-        Box::new(RuntimeError::new(
-            "database.action_dispatch.invalid_command_json".into(),
-            format!("Stored action dispatch command is invalid JSON: {err}"),
-        )) as SendableError
-    })
-}
-
-pub fn sqlite_row_to_action_dispatch(
-    row: &SqliteRow,
-) -> Result<ActionDispatchRecord, SendableError> {
+row_mapper!(row_to_action_dispatch(row) -> Result<ActionDispatchRecord, SendableError> {
     action_dispatch_from_row!(row)
-}
-
-pub fn postgres_row_to_action_dispatch(row: &PgRow) -> Result<ActionDispatchRecord, SendableError> {
-    action_dispatch_from_row!(row)
-}
+});
 
 macro_rules! orchestration_event_from_row {
     ($row:expr) => {{
-        let event_id = $row.get::<String, _>("event_id").parse().map_err(|err| {
-            Box::new(RuntimeError::new(
-                "database.orchestration_event.invalid_event_id".into(),
-                format!("Stored orchestration event id is invalid: {err}"),
-            )) as SendableError
-        })?;
+        let event_id = $row
+            .get::<String, _>("event_id")
+            .parse()
+            .map_err(|err| crate::errors::ORCHESTRATION_EVENT_INVALID_ID.error(err))?;
         Ok(OrchestrationEvent {
             event_id,
             workflow_run_id: $row.get("workflow_run_id"),
@@ -453,29 +388,16 @@ macro_rules! orchestration_event_from_row {
     }};
 }
 
-pub fn sqlite_row_to_orchestration_event(
-    row: &SqliteRow,
-) -> Result<OrchestrationEvent, SendableError> {
+row_mapper!(row_to_orchestration_event(row) -> Result<OrchestrationEvent, SendableError> {
     orchestration_event_from_row!(row)
-}
-
-pub fn postgres_row_to_orchestration_event(
-    row: &PgRow,
-) -> Result<OrchestrationEvent, SendableError> {
-    orchestration_event_from_row!(row)
-}
+});
 
 macro_rules! ready_node_from_row {
     ($row:expr) => {{
         let source_event_id = $row
             .get::<String, _>("source_event_id")
             .parse()
-            .map_err(|err| {
-                Box::new(RuntimeError::new(
-                    "database.ready_node.invalid_source_event_id".into(),
-                    format!("Stored ready-node source event id is invalid: {err}"),
-                )) as SendableError
-            })?;
+            .map_err(|err| crate::errors::READY_NODE_INVALID_SOURCE_EVENT_ID.error(err))?;
         Ok(ReadyNodeRecord {
             id: $row.get("id"),
             source_event_id,
@@ -501,13 +423,9 @@ macro_rules! ready_node_from_row {
     }};
 }
 
-pub fn sqlite_row_to_ready_node(row: &SqliteRow) -> Result<ReadyNodeRecord, SendableError> {
+row_mapper!(row_to_ready_node(row) -> Result<ReadyNodeRecord, SendableError> {
     ready_node_from_row!(row)
-}
-
-pub fn postgres_row_to_ready_node(row: &PgRow) -> Result<ReadyNodeRecord, SendableError> {
-    ready_node_from_row!(row)
-}
+});
 
 macro_rules! notification_from_row {
     ($row:expr) => {{
@@ -530,13 +448,7 @@ macro_rules! notification_from_row {
     }};
 }
 
-pub fn sqlite_row_to_notification(row: &SqliteRow) -> Notification {
-    notification_from_row!(row)
-}
-
-pub fn postgres_row_to_notification(row: &PgRow) -> Notification {
-    notification_from_row!(row)
-}
+row_mapper!(row_to_notification(row) -> Notification { notification_from_row!(row) });
 
 #[cfg(test)]
 #[path = "mappers_tests.rs"]

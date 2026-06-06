@@ -1,4 +1,5 @@
 pub mod discovery;
+pub mod errors;
 pub mod wire;
 
 pub use wire::{WireCodec, WireError};

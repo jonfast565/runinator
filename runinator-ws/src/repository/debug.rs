@@ -134,12 +134,7 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
     patch: Value,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let invalid = |detail: &str| -> SendableError {
-        Box::new(RuntimeError::new(
-            "workflow.debug.invalid_patch".into(),
-            detail.into(),
-        ))
-    };
+    let invalid = |detail: &str| crate::errors::DEBUG_INVALID_PATCH.error(detail);
     let patch_obj = patch
         .as_object()
         .ok_or_else(|| invalid("Debug patch must be a JSON object"))?;
@@ -209,10 +204,7 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     let workflow_run_id = command.workflow_run_id;
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.pause.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
+        return Err(crate::errors::PAUSE_NOT_FOUND.error(workflow_run_id));
     };
     if run.status.is_terminal() {
         return Ok(TaskResponse {
@@ -271,10 +263,7 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     let workflow_run_id = command.workflow_run_id;
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.resume.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
+        return Err(crate::errors::RESUME_NOT_FOUND.error(workflow_run_id));
     };
     if run.status.is_terminal() {
         return Ok(TaskResponse {
@@ -332,10 +321,7 @@ async fn cancel_workflow_run_command<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     let workflow_run_id = command.workflow_run_id;
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.cancel.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
+        return Err(crate::errors::CANCEL_NOT_FOUND.error(workflow_run_id));
     };
     if run.status.is_terminal() {
         return Ok(TaskResponse {
@@ -374,12 +360,7 @@ async fn publish_worker_control_command(
     broker
         .publish_control(command)
         .await
-        .map_err(|err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "workflow.control.publish".into(),
-                err.to_string(),
-            ))
-        })
+        .map_err(|err| crate::errors::CONTROL_PUBLISH.error(err))
 }
 
 pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
@@ -413,12 +394,10 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     message: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let active_node_id = run.active_node_id.clone().ok_or_else(|| -> SendableError {
-        Box::new(RuntimeError::new(
-            "workflow.debug.no_active_node".into(),
-            "No active node to skip".into(),
-        ))
-    })?;
+    let active_node_id = run
+        .active_node_id
+        .clone()
+        .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to skip"))?;
     let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
     let latest_node_run = nodes
         .into_iter()
@@ -467,12 +446,10 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     parameters: Value,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
-    let active_node_id = run.active_node_id.clone().ok_or_else(|| -> SendableError {
-        Box::new(RuntimeError::new(
-            "workflow.debug.no_active_node".into(),
-            "No active node to re-run".into(),
-        ))
-    })?;
+    let active_node_id = run
+        .active_node_id
+        .clone()
+        .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to re-run"))?;
     let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
     let latest_node_run = nodes
         .into_iter()
@@ -530,10 +507,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     from_step_id: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(source) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.replay.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
+        return Err(crate::errors::REPLAY_NOT_FOUND.error(workflow_run_id));
     };
     let snapshot = match source.workflow_snapshot.clone() {
         Some(snap) => snap,
@@ -614,10 +588,8 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         .await?;
 
         let Some(refreshed) = db.fetch_workflow_run(new_run.id).await? else {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.replay.not_found".into(),
-                format!("Replay run {} disappeared", new_run.id),
-            )));
+            return Err(crate::errors::REPLAY_NOT_FOUND
+                .error(format!("replay run {} disappeared", new_run.id)));
         };
         return Ok(refreshed);
     }
@@ -650,10 +622,7 @@ pub fn ancestors_in_snapshot(
     }
 
     if !nodes.iter().any(|node| node.id == target_node_id) {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.replay.missing_step".into(),
-            format!("Step {target_node_id} not found in workflow snapshot"),
-        )));
+        return Err(crate::errors::REPLAY_MISSING_STEP.error(target_node_id));
     }
 
     // build reverse adjacency: for each node, the set of nodes that transition into it.
@@ -688,12 +657,9 @@ pub fn ancestors_in_snapshot(
                     | WorkflowNodeKind::Race
             )
         {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.replay.control_flow".into(),
-                format!(
-                    "Cannot restart from step {target_node_id}: ancestor {node_id} is a control-flow node ({:?}) whose state is not safely replayable.",
-                    node.kind
-                ),
+            return Err(crate::errors::REPLAY_CONTROL_FLOW.error(format!(
+                "cannot restart from step {target_node_id}: ancestor {node_id} is a control-flow node ({:?}) whose state is not safely replayable",
+                node.kind
             )));
         }
         if let Some(parents) = reverse.get(&node_id) {
@@ -765,16 +731,10 @@ async fn require_debug_run<T: DatabaseImpl>(
     workflow_run_id: i64,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.not_found".into(),
-            format!("Workflow run {workflow_run_id} not found"),
-        )));
+        return Err(crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id));
     };
     if run.status.is_terminal() {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.terminal".into(),
-            format!("Workflow run {workflow_run_id} is terminal"),
-        )));
+        return Err(crate::errors::DEBUG_TERMINAL.error(workflow_run_id));
     }
     if !run
         .state
@@ -782,10 +742,7 @@ async fn require_debug_run<T: DatabaseImpl>(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        return Err(Box::new(RuntimeError::new(
-            "workflow.debug.disabled".into(),
-            format!("Workflow run {workflow_run_id} is not a debug run"),
-        )));
+        return Err(crate::errors::DEBUG_DISABLED.error(workflow_run_id));
     }
     Ok(run)
 }

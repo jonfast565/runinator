@@ -1,5 +1,6 @@
 mod broker;
 mod config;
+mod errors;
 mod executor;
 mod output_sink;
 mod provider_repository;
@@ -13,7 +14,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;
 use runinator_comm::WireCodec;
-use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::errors::SendableError;
 use runinator_models::workflow_state::TaskStatusOutput;
 use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{
@@ -40,9 +41,7 @@ fn main() -> Result<(), SendableError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|err| {
-            Box::new(RuntimeError::new("worker.runtime".into(), err.to_string())) as SendableError
-        })?;
+        .map_err(|err| errors::RUNTIME_BUILD.error(err))?;
     runtime.block_on(run(config))
 }
 
@@ -79,12 +78,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|err| {
-                Box::new(RuntimeError::new(
-                    "worker.signal.ctrl_c".into(),
-                    format!("Failed to listen for Ctrl+C: {err}"),
-                )) as SendableError
-            })?;
+            signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
             info!("Shutdown signal received. Stopping worker...");
             shutdown.notify_waiters();
         }
@@ -151,10 +145,7 @@ fn handle_worker_task_result(
         }
         Err(err) => {
             error!("Worker task join error: {}", err);
-            Err(Box::new(RuntimeError::new(
-                "worker.loop.join".into(),
-                err.to_string(),
-            )))
+            Err(errors::LOOP_JOIN.error(err))
         }
     }
 }
@@ -178,12 +169,7 @@ fn build_api_client(
     config: &config::Config,
 ) -> Result<AsyncApiClient<StaticLocator>, SendableError> {
     let locator = StaticLocator::new(config.api_base_url.clone());
-    AsyncApiClient::new(locator).map_err(|err| {
-        Box::new(RuntimeError::new(
-            "worker.api.client".into(),
-            err.to_string(),
-        )) as SendableError
-    })
+    AsyncApiClient::new(locator).map_err(|err| errors::API_CLIENT.error(err))
 }
 
 // register the built-in providers with the web service on startup. best-effort: a failure here
@@ -236,12 +222,7 @@ async fn run_worker_loop(
                 continue;
             }
             permit = semaphore.clone().acquire_owned() => {
-                permit.map_err(|err| {
-                    Box::new(RuntimeError::new(
-                        "worker.concurrency.closed".into(),
-                        err.to_string(),
-                    )) as SendableError
-                })?
+                permit.map_err(|err| errors::CONCURRENCY_CLOSED.error(err))?
             }
         };
 

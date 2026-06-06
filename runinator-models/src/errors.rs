@@ -69,3 +69,11 @@ pub trait ProviderErrors {
     /// every error this provider can emit, ordered by code.
     fn error_dictionary() -> &'static [ErrorDescriptor];
 }
+
+/// exposes an engine crate's full error dictionary for documentation and lookup.
+/// the engine counterpart to [`ProviderErrors`]; entries share the `RUNI` prefix
+/// with per-crate number ranges.
+pub trait EngineErrors {
+    /// every error this engine crate can emit, ordered by code.
+    fn error_dictionary() -> &'static [ErrorDescriptor];
+}

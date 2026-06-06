@@ -31,10 +31,7 @@ pub(super) async fn process_subflow_node<T: DatabaseImpl>(
             return Ok(());
         }
         let Some(subflow_run) = db.fetch_workflow_run(subflow_run_id).await? else {
-            return Err(Box::new(RuntimeError::new(
-                "workflow.subflow.run_missing".into(),
-                format!("Subflow run {subflow_run_id} not found"),
-            )));
+            return Err(crate::errors::SUBFLOW_RUN_MISSING.error(subflow_run_id));
         };
         match subflow_run.status {
             WorkflowStatus::Succeeded => {
@@ -243,25 +240,14 @@ pub(super) async fn resolve_subflow_id<T: DatabaseImpl>(
             let workflow = db
                 .fetch_workflow_by_name(workflow_name.to_string())
                 .await?
-                .ok_or_else(|| {
-                    Box::new(RuntimeError::new(
-                        "workflow.subflow.missing".into(),
-                        format!("Subflow workflow {workflow_name} not found"),
-                    )) as SendableError
-                })?;
+                .ok_or_else(|| crate::errors::SUBFLOW_MISSING.error(workflow_name))?;
             if let Some(id) = workflow.id {
                 return Ok(id);
             }
-            return Err(Box::new(RuntimeError::new(
-                "workflow.subflow.missing_id".into(),
-                format!("Subflow workflow {workflow_name} has no id"),
-            )));
+            return Err(crate::errors::SUBFLOW_MISSING_ID.error(workflow_name));
         }
     }
-    Err(Box::new(RuntimeError::new(
-        "workflow.subflow.target_missing".into(),
-        format!("Subflow node {} is missing a target", node.id),
-    )))
+    Err(crate::errors::SUBFLOW_TARGET_MISSING.error(&node.id))
 }
 
 /// create a child workflow run, stamp its parent linkage into state, and enqueue its start node so
@@ -274,12 +260,10 @@ pub(super) async fn create_subflow_run<T: DatabaseImpl>(
     parent_run_id: i64,
     parent_node_id: &str,
 ) -> Result<WorkflowRun, SendableError> {
-    let snapshot = db.fetch_workflow(workflow_id).await?.ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "workflow.not_found".into(),
-            format!("Workflow {workflow_id} not found"),
-        )) as SendableError
-    })?;
+    let snapshot = db
+        .fetch_workflow(workflow_id)
+        .await?
+        .ok_or_else(|| crate::errors::WORKFLOW_NOT_FOUND.error(workflow_id))?;
     let state = runinator_models::json!({
         "control": { "pause_requested": false },
         "subflow_parent": { "run_id": parent_run_id, "node_id": parent_node_id }

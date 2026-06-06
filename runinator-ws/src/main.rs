@@ -11,7 +11,7 @@ use runinator_broker::{
     tcp::client::TcpBroker,
 };
 use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
-use runinator_models::errors::{RuntimeError, SendableError};
+use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -142,31 +142,16 @@ async fn build_broker(
         "rabbitmq" => rabbitmq_config.result_queue.as_str(),
         _ => "",
     };
-    runinator_broker::ensure_named_workflow_result_channel(backend, result_channel).map_err(
-        |err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "ws.broker.workflow_results".into(),
-                err.to_string(),
-            ))
-        },
-    )?;
+    runinator_broker::ensure_named_workflow_result_channel(backend, result_channel)
+        .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
 
     let broker: Arc<dyn Broker> = match backend {
         "http" => {
-            let url = reqwest::Url::parse(endpoint).map_err(|err| -> SendableError {
-                Box::new(RuntimeError::new(
-                    "ws.broker.invalid_endpoint".into(),
-                    err.to_string(),
-                ))
-            })?;
+            let url = reqwest::Url::parse(endpoint)
+                .map_err(|err| runinator_ws::errors::BROKER_INVALID_ENDPOINT.error(err))?;
             let client = reqwest::Client::builder()
                 .build()
-                .map_err(|err| -> SendableError {
-                    Box::new(RuntimeError::new(
-                        "ws.broker.client".into(),
-                        err.to_string(),
-                    ))
-                })?;
+                .map_err(|err| runinator_ws::errors::BROKER_CLIENT.error(err))?;
             Arc::new(HttpBroker::new(url, client))
         }
         "in-memory" => Arc::new(InMemoryBroker::new()),
@@ -174,41 +159,27 @@ async fn build_broker(
         "kafka" => build_kafka_broker(kafka_config)?,
         "rabbitmq" => build_rabbitmq_broker(rabbitmq_config).await?,
         other => {
-            return Err(Box::new(RuntimeError::new(
-                "ws.broker.unknown_backend".into(),
-                format!("Unknown broker backend '{other}'"),
-            )));
+            return Err(runinator_ws::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'")));
         }
     };
 
-    runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref()).map_err(
-        |err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "ws.broker.workflow_results".into(),
-                err.to_string(),
-            ))
-        },
-    )?;
+    runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref())
+        .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
 
     Ok(broker)
 }
 
 #[cfg(feature = "kafka")]
 fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config).map_err(
-        |err| -> SendableError {
-            Box::new(RuntimeError::new("ws.broker.kafka".into(), err.to_string()))
-        },
-    )?;
+    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config)
+        .map_err(|err| runinator_ws::errors::BROKER_KAFKA.error(err))?;
     Ok(Arc::new(broker))
 }
 
 #[cfg(not(feature = "kafka"))]
 fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(Box::new(RuntimeError::new(
-        "ws.broker.kafka_feature_disabled".into(),
-        "Broker backend 'kafka' requires building runinator-ws with --features kafka".into(),
-    )))
+    Err(runinator_ws::errors::BROKER_KAFKA_FEATURE_DISABLED
+        .error("build runinator-ws with --features kafka"))
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -217,12 +188,7 @@ async fn build_rabbitmq_broker(
 ) -> Result<Arc<dyn Broker>, SendableError> {
     let broker = runinator_broker::adapters::rabbitmq::RabbitMqBroker::connect(config)
         .await
-        .map_err(|err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "ws.broker.rabbitmq".into(),
-                err.to_string(),
-            ))
-        })?;
+        .map_err(|err| runinator_ws::errors::BROKER_RABBITMQ.error(err))?;
     Ok(Arc::new(broker))
 }
 
@@ -230,10 +196,8 @@ async fn build_rabbitmq_broker(
 async fn build_rabbitmq_broker(
     _config: RabbitMqBrokerConfig,
 ) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(Box::new(RuntimeError::new(
-        "ws.broker.rabbitmq_feature_disabled".into(),
-        "Broker backend 'rabbitmq' requires building runinator-ws with --features rabbitmq".into(),
-    )))
+    Err(runinator_ws::errors::BROKER_RABBITMQ_FEATURE_DISABLED
+        .error("build runinator-ws with --features rabbitmq"))
 }
 
 #[cfg(test)]

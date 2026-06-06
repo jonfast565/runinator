@@ -1,38 +1,39 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_models::errors::SendableError;
-use sqlx::{ConnectOptions, Executor, SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions};
+use sqlx::{
+    ConnectOptions, Executor, MySqlPool,
+    migrate::Migrator,
+    mysql::{MySqlConnectOptions, MySqlPoolOptions},
+};
 
 use crate::{backend::SqlBackend, queries::SqlDialect};
 
-static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
+static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("./migrations/mysql");
 
-pub struct SqliteDb {
-    pub pool: SqlitePool,
+pub struct MySqlDb {
+    pub pool: MySqlPool,
 }
 
 #[cfg(test)]
-#[path = "sqlite_tests.rs"]
+#[path = "mysql_tests.rs"]
 mod tests;
 
-impl SqliteDb {
-    pub async fn new(filename: &str) -> Result<Self, SendableError> {
-        let options = SqliteConnectOptions::new()
-            .filename(filename)
-            .create_if_missing(true);
-        let options_with_logs = options
+impl MySqlDb {
+    pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
+        let options = MySqlConnectOptions::from_str(connection_str)?
             .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
-        let unmutable_options = options_with_logs.clone();
-        let connection = SqlitePool::connect_with(unmutable_options).await?;
-        Ok(SqliteDb { pool: connection })
+
+        let pool = MySqlPoolOptions::new().connect_with(options).await?;
+        Ok(Self { pool })
     }
 
     pub async fn run_migrations(&self) -> Result<(), SendableError> {
-        info!("Running embedded SQLite migrations");
-        SQLITE_MIGRATOR
+        info!("Running embedded MySQL/MariaDB migrations");
+        MYSQL_MIGRATOR
             .run(&self.pool)
             .await
             .map_err(|err| -> SendableError { Box::new(err) })?;
@@ -42,14 +43,12 @@ impl SqliteDb {
     async fn execute_script(&self, script: &str) -> Result<(), SendableError> {
         let sql = script.trim();
         if sql.is_empty() {
-            debug!("No SQL to execute");
             return Ok(());
         }
 
         for statement in sql.split(';') {
             let stmt = statement.trim();
             if stmt.is_empty() {
-                debug!("Skipping empty statement");
                 continue;
             }
 
@@ -67,15 +66,15 @@ impl SqliteDb {
     }
 }
 
-impl SqlBackend for SqliteDb {
-    type Db = sqlx::Sqlite;
+impl SqlBackend for MySqlDb {
+    type Db = sqlx::MySql;
 
-    fn pool(&self) -> &SqlitePool {
+    fn pool(&self) -> &MySqlPool {
         &self.pool
     }
 
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::Sqlite
+        SqlDialect::MySql
     }
 
     async fn init(&self, paths: &[String]) -> Result<(), SendableError> {

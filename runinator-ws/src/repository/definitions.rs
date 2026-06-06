@@ -51,14 +51,10 @@ async fn validate_workflow_subflows<T: DatabaseImpl>(
             match db.fetch_workflow(subflow_id).await {
                 Ok(Some(_)) => {} // workflow exists, validation passes
                 _ => {
-                    let err = RuntimeError::new(
-                        "workflow.subflow.invalid_id".into(),
-                        format!(
-                            "Node '{}' references non-existent workflow with id {subflow_id}",
-                            node.id
-                        ),
-                    );
-                    return Err(Box::new(err));
+                    return Err(crate::errors::SUBFLOW_INVALID_ID.error(format!(
+                        "node '{}' references non-existent workflow with id {subflow_id}",
+                        node.id
+                    )));
                 }
             }
         }
@@ -201,12 +197,9 @@ async fn validate_subflow_targets<T: DatabaseImpl>(
             {
                 continue;
             }
-            return Err(Box::new(RuntimeError::new(
-                "workflow.import.unknown_subflow".into(),
-                format!(
-                    "workflow '{}' references unknown subflow workflow '{name}'",
-                    workflow.name
-                ),
+            return Err(crate::errors::IMPORT_UNKNOWN_SUBFLOW.error(format!(
+                "workflow '{}' references unknown subflow workflow '{name}'",
+                workflow.name
             )));
         }
     }
@@ -287,10 +280,7 @@ fn parse_trigger_datetime(value: &str) -> Result<DateTime<Utc>, SendableError> {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
         .map_err(|err| {
-            Box::new(RuntimeError::new(
-                "workflow.import.invalid_trigger_blackout".into(),
-                format!("invalid trigger blackout datetime '{value}': {err}"),
-            )) as SendableError
+            crate::errors::IMPORT_INVALID_TRIGGER_BLACKOUT.error(format!("'{value}': {err}"))
         })
 }
 

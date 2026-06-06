@@ -1,6 +1,7 @@
 pub mod app_data;
 pub mod data_export;
 pub mod dirutils;
+pub mod errors;
 pub mod ffiutils;
 pub mod logger;
 pub mod pack;

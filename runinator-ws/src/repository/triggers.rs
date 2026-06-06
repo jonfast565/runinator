@@ -60,10 +60,7 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
     debug: bool,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(trigger) = db.fetch_workflow_trigger(trigger_id).await? else {
-        return Err(Box::new(RuntimeError::new(
-            "workflow_trigger.not_found".into(),
-            format!("Workflow trigger {trigger_id} not found"),
-        )));
+        return Err(crate::errors::WORKFLOW_TRIGGER_NOT_FOUND.error(trigger_id));
     };
     let workflow_snapshot = support::fetch_workflow_snapshot(db, trigger.workflow_id).await?;
     let mut state = trigger_state(&trigger);

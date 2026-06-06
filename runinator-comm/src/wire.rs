@@ -14,7 +14,12 @@ pub struct WireError(serde_json::Error);
 
 impl fmt::Display for WireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "wire codec error: {}", self.0)
+        write!(
+            f,
+            "{} - wire codec error: {}",
+            crate::errors::WIRE_CODEC.code,
+            self.0
+        )
     }
 }
 

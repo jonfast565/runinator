@@ -4,24 +4,19 @@ pub(super) async fn fetch_workflow_snapshot<T: DatabaseImpl>(
     db: &T,
     workflow_id: i64,
 ) -> Result<WorkflowDefinition, SendableError> {
-    db.fetch_workflow(workflow_id).await?.ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "workflow.not_found".into(),
-            format!("Workflow {workflow_id} not found"),
-        )) as SendableError
-    })
+    db.fetch_workflow(workflow_id)
+        .await?
+        .ok_or_else(|| crate::errors::WORKFLOW_NOT_FOUND.error(workflow_id))
 }
 
 pub(super) async fn enqueue_start_ready_node<T: DatabaseImpl>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<(), SendableError> {
-    let workflow = run.workflow_snapshot.as_ref().ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "workflow_run.snapshot_missing".into(),
-            format!("Workflow run {} is missing its workflow snapshot", run.id),
-        )) as SendableError
-    })?;
+    let workflow = run
+        .workflow_snapshot
+        .as_ref()
+        .ok_or_else(|| crate::errors::WORKFLOW_RUN_SNAPSHOT_MISSING.error(run.id))?;
     let (start, _) = runinator_workflows::parse_nodes(workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let event = NewOrchestrationEvent::new(

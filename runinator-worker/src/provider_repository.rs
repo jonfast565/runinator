@@ -1,10 +1,6 @@
 use std::collections::HashMap;
 
-use runinator_models::{
-    bundles::ProviderBundle,
-    errors::{RuntimeError, SendableError},
-    workflows::WorkflowAction,
-};
+use runinator_models::{bundles::ProviderBundle, errors::SendableError, workflows::WorkflowAction};
 use runinator_plugin::{plugin::Plugin, provider::Provider};
 use runinator_provider_ai::AiCommandProvider;
 use runinator_provider_approval::ApprovalProvider;
@@ -54,8 +50,5 @@ pub fn resolve_provider(
         return Ok(Box::new(plugin.clone()));
     }
 
-    Err(Box::new(RuntimeError::new(
-        "worker.provider.not_found".into(),
-        format!("Cannot find plugin/provider {}", action.provider),
-    )))
+    Err(crate::errors::PROVIDER_NOT_FOUND.error(&action.provider))
 }

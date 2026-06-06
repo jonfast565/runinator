@@ -1,3 +1,4 @@
+use runinator_models::errors::{EngineErrors, ErrorDescriptor};
 use thiserror::Error;
 
 /// a byte span into the source text, used to anchor diagnostics.
@@ -63,28 +64,47 @@ pub(crate) fn render_snippet(src: &str, span: Span, label: &str, message: &str) 
 #[derive(Debug, Error)]
 pub enum WdlError {
     /// the grammar rejected the source. carries pest's rendered message.
-    #[error("parse error:\n{0}")]
+    #[error("WDL001 - parse error:\n{0}")]
     Parse(String),
 
     /// the parse tree was structurally valid but semantically malformed.
-    #[error("syntax error at {}..{}: {message}", span.start, span.end)]
+    #[error("WDL002 - syntax error at {}..{}: {message}", span.start, span.end)]
     Syntax { span: Span, message: String },
 
     /// semantic analysis rejected the document (bad reference, type mismatch, scope error).
-    #[error("semantic error at {}..{}: {message}", span.start, span.end)]
+    #[error("WDL003 - semantic error at {}..{}: {message}", span.start, span.end)]
     Semantic { span: Span, message: String },
 
     /// lowering the ast to the json model failed.
-    #[error("lowering error: {0}")]
+    #[error("WDL004 - lowering error: {0}")]
     Lower(String),
 
     /// the lowered definition failed the shared workflow validator.
-    #[error("validation error: {0}")]
+    #[error("WDL005 - validation error: {0}")]
     Validation(String),
 
     /// decompiling a json definition back to wdl failed.
-    #[error("decompile error: {0}")]
+    #[error("WDL006 - decompile error: {0}")]
     Decompile(String),
+}
+
+// numbered error dictionary for the wdl surface language.
+pub const PARSE: ErrorDescriptor = ErrorDescriptor::new("WDL001", "wdl.parse", "Parse error");
+pub const SYNTAX: ErrorDescriptor = ErrorDescriptor::new("WDL002", "wdl.syntax", "Syntax error");
+pub const SEMANTIC: ErrorDescriptor =
+    ErrorDescriptor::new("WDL003", "wdl.semantic", "Semantic error");
+pub const LOWER: ErrorDescriptor = ErrorDescriptor::new("WDL004", "wdl.lower", "Lowering error");
+pub const VALIDATION: ErrorDescriptor =
+    ErrorDescriptor::new("WDL005", "wdl.validation", "Validation error");
+pub const DECOMPILE: ErrorDescriptor =
+    ErrorDescriptor::new("WDL006", "wdl.decompile", "Decompile error");
+
+pub const DICTIONARY: &[ErrorDescriptor] = &[PARSE, SYNTAX, SEMANTIC, LOWER, VALIDATION, DECOMPILE];
+
+impl EngineErrors for WdlError {
+    fn error_dictionary() -> &'static [ErrorDescriptor] {
+        DICTIONARY
+    }
 }
 
 impl WdlError {
@@ -111,9 +131,15 @@ impl WdlError {
     /// to their `Display`.
     pub fn render(&self, src: &str) -> String {
         match self {
-            Self::Syntax { span, message } | Self::Semantic { span, message } => {
-                render_snippet(src, *span, "error", message)
+            Self::Syntax { span, message } => {
+                render_snippet(src, *span, "error", &format!("{} - {message}", SYNTAX.code))
             }
+            Self::Semantic { span, message } => render_snippet(
+                src,
+                *span,
+                "error",
+                &format!("{} - {message}", SEMANTIC.code),
+            ),
             other => other.to_string(),
         }
     }

@@ -18,14 +18,12 @@ rdkafka = { version = "0.39", features = ["cmake-build"], optional = true }
 lapin = { version = "4.9.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 runinator-comm = { path = "../runinator-comm" }
+runinator-models = { path = "../runinator-models" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2.0.18"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 uuid = { version = "1", features = ["serde", "v4"] }
-
-[dev-dependencies]
-runinator-models = { path = "../runinator-models" }
 
 [features]
 kafka = ["dep:rdkafka"]

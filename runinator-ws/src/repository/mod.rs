@@ -6,7 +6,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
     debug::{DEBUG_RERUN, DEBUG_SKIPPED, DEBUG_SUPERSEDED},
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     runs::{NewRunArtifact, NewRunChunk},
     web::TaskResponse,

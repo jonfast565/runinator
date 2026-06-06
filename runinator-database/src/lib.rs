@@ -4,9 +4,13 @@ use interfaces::DatabaseImpl;
 use log::info;
 use runinator_models::errors::SendableError;
 
+pub mod backend;
 mod common;
+pub mod errors;
 pub mod interfaces;
 mod mappers;
+pub mod mysql;
+mod operations;
 pub mod postgres;
 mod queries;
 pub mod sqlite;

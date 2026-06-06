@@ -1,5 +1,6 @@
 mod background;
 mod config;
+pub mod errors;
 mod events;
 mod handlers;
 mod models;

@@ -22,21 +22,12 @@ pub(crate) async fn build_broker(
 
     let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
         "http" => {
-            let url = reqwest::Url::parse(&config.broker_endpoint).map_err(|err| {
-                Box::new(RuntimeError::new(
-                    "worker.broker.invalid_endpoint".into(),
-                    err.to_string(),
-                )) as SendableError
-            })?;
+            let url = reqwest::Url::parse(&config.broker_endpoint)
+                .map_err(|err| crate::errors::BROKER_INVALID_ENDPOINT.error(err))?;
 
             let client = reqwest::Client::builder()
                 .build()
-                .map_err(|err| -> SendableError {
-                    Box::new(RuntimeError::new(
-                        "worker.broker.client".into(),
-                        err.to_string(),
-                    ))
-                })?;
+                .map_err(|err| crate::errors::BROKER_CLIENT.error(err))?;
 
             Arc::new(HttpBroker::new(url, client))
         }
@@ -64,10 +55,7 @@ pub(crate) async fn build_broker(
             .await?
         }
         other => {
-            return Err(Box::new(RuntimeError::new(
-                "worker.broker.unknown_backend".into(),
-                format!("Unknown broker backend '{other}'"),
-            )));
+            return Err(crate::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'")));
         }
     };
 
@@ -82,23 +70,15 @@ pub(crate) async fn build_broker(
 
 #[cfg(feature = "kafka")]
 fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config).map_err(
-        |err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "worker.broker.kafka".into(),
-                err.to_string(),
-            ))
-        },
-    )?;
+    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config)
+        .map_err(|err| crate::errors::BROKER_KAFKA.error(err))?;
     Ok(Arc::new(broker))
 }
 
 #[cfg(not(feature = "kafka"))]
 fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(Box::new(RuntimeError::new(
-        "worker.broker.kafka_feature_disabled".into(),
-        "Broker backend 'kafka' requires building runinator-worker with --features kafka".into(),
-    )))
+    Err(crate::errors::BROKER_KAFKA_FEATURE_DISABLED
+        .error("build runinator-worker with --features kafka"))
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -107,12 +87,7 @@ async fn build_rabbitmq_broker(
 ) -> Result<Arc<dyn Broker>, SendableError> {
     let broker = runinator_broker::adapters::rabbitmq::RabbitMqBroker::connect(config)
         .await
-        .map_err(|err| -> SendableError {
-            Box::new(RuntimeError::new(
-                "worker.broker.rabbitmq".into(),
-                err.to_string(),
-            ))
-        })?;
+        .map_err(|err| crate::errors::BROKER_RABBITMQ.error(err))?;
     Ok(Arc::new(broker))
 }
 
@@ -120,16 +95,18 @@ async fn build_rabbitmq_broker(
 async fn build_rabbitmq_broker(
     _config: RabbitMqBrokerConfig,
 ) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(Box::new(RuntimeError::new(
-        "worker.broker.rabbitmq_feature_disabled".into(),
-        "Broker backend 'rabbitmq' requires building runinator-worker with --features rabbitmq"
-            .into(),
-    )))
+    Err(crate::errors::BROKER_RABBITMQ_FEATURE_DISABLED
+        .error("build runinator-worker with --features rabbitmq"))
 }
 
 pub(crate) fn broker_error(context: &'static str, err: BrokerError) -> SendableError {
+    // keep the per-context dotted key for back-compat while rendering the numbered code.
+    let descriptor = crate::errors::BROKER_OPERATION;
     Box::new(RuntimeError::new(
         format!("worker.broker.{context}"),
-        err.to_string(),
+        format!(
+            "{} - {}: {context}: {err}",
+            descriptor.code, descriptor.summary
+        ),
     ))
 }

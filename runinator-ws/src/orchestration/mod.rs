@@ -5,7 +5,7 @@ use chrono::Utc;
 use runinator_comm::{ActionCommand, WireCodec};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    errors::{RuntimeError, SendableError},
+    errors::SendableError,
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     value::Value,
     workflow_state::{

@@ -1,13 +1,13 @@
 use super::*;
 use crate::interfaces::DatabaseImpl;
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
     runs::NewRunChunk,
     settings::SettingKind,
     workflows::{
-        WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowStatus, WorkflowTrigger,
-        WorkflowTriggerKind,
+        WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowStatus,
+        WorkflowTrigger, WorkflowTriggerKind,
     },
 };
 use uuid::Uuid;

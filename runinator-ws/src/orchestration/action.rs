@@ -9,12 +9,10 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let action = node.action.as_ref().ok_or_else(|| {
-        Box::new(RuntimeError::new(
-            "workflow.node.action_missing".into(),
-            format!("Action node {} has no action configuration", node.id),
-        )) as SendableError
-    })?;
+    let action = node
+        .action
+        .as_ref()
+        .ok_or_else(|| crate::errors::ACTION_CONFIG_MISSING.error(&node.id))?;
     // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
     // fresh visit so the action dispatches again instead of transitioning from the stale run.
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));

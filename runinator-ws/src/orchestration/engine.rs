@@ -66,12 +66,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         None => db
             .fetch_workflow(workflow_run.workflow_id)
             .await?
-            .ok_or_else(|| {
-                Box::new(RuntimeError::new(
-                    "workflow.not_found".into(),
-                    format!("Workflow {} not found", workflow_run.workflow_id),
-                )) as SendableError
-            })?,
+            .ok_or_else(|| crate::errors::WORKFLOW_NOT_FOUND.error(workflow_run.workflow_id))?,
     };
     let (start, nodes) = runinator_workflows::validate_workflow(&workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
@@ -351,10 +346,7 @@ impl WorkflowProgressKey {
         workflow_run_id: i64,
     ) -> Result<Self, SendableError> {
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-            return Err(Box::new(RuntimeError::new(
-                "workflow_run.not_found".into(),
-                format!("Workflow run {workflow_run_id} not found"),
-            )));
+            return Err(crate::errors::WORKFLOW_RUN_NOT_FOUND.error(workflow_run_id));
         };
         let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
         Ok(Self::from_parts(&run, &nodes))
