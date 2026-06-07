@@ -1,10 +1,10 @@
 <template>
-  <div class="connection-strip">
+  <div class="connection-cluster">
     <span class="connection-pill" :class="{ connected: app.serviceConnected, waiting: !app.serviceConnected }">
       {{ app.serviceConnected ? "Connected" : "Waiting for service" }}
     </span>
-    <span class="service-url">{{ app.serviceLabel }}</span>
-    <span class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
+    <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
+    <span v-if="!app.isRealtime" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
     <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
       <span
         v-for="proc in supervisor.status.value?.processes ?? []"
@@ -66,17 +66,21 @@ function formatUptime(seconds: number): string {
 </script>
 
 <style scoped>
-.connection-strip {
+.connection-cluster {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+}
+.connection-cluster .service-url {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .supervisor-pills {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
 }
 .supervisor-pill {
   font-size: 10px;

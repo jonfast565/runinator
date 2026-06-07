@@ -1,28 +1,47 @@
+use std::sync::Arc;
+
+use runinator_broker::{Broker, EventMessage};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::runs::RunStatus;
-use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::repository;
 
-#[derive(Clone, Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AppEvent {
-    RunStatusChanged { run_id: i64, terminal: bool },
-    RunChunkAdded { run_id: i64 },
-    WorkflowsChanged,
-    WorkflowRunChanged { run_id: i64 },
-    WorkflowRunActivity,
-    TasksChanged,
-    ArtifactCreated { artifact_id: i64, run_id: i64 },
-    NotificationCreated { notification_id: i64 },
-    NotificationsChanged,
+// the UI event contract lives in runinator-comm so it can cross the broker fan-out events channel.
+pub use runinator_comm::UiEvent as AppEvent;
+
+/// fan-out bus for UI events. emitting publishes to the broker `events` channel; the per-replica
+/// event consumer ([`crate::background::run_event_consumer`]) is the sole writer to the local
+/// broadcast that feeds this replica's WebSocket clients. this keeps every ws replica's clients in
+/// sync regardless of which replica did the work.
+#[derive(Clone)]
+pub struct EventBus {
+    local: broadcast::Sender<AppEvent>,
+    broker: Arc<dyn Broker>,
 }
 
-pub type EventSender = broadcast::Sender<AppEvent>;
+impl EventBus {
+    pub fn new(local: broadcast::Sender<AppEvent>, broker: Arc<dyn Broker>) -> Self {
+        Self { local, broker }
+    }
+
+    /// subscribe a WebSocket client to this replica's locally-broadcast events.
+    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
+        self.local.subscribe()
+    }
+}
+
+// the threaded handle stays named EventSender so handler/loop signatures are unchanged.
+pub type EventSender = EventBus;
 
 pub(crate) fn emit(events: &EventSender, event: AppEvent) {
-    let _ = events.send(event);
+    // publish to the broker; the per-replica consumer re-broadcasts to every replica's clients.
+    let broker = events.broker.clone();
+    tokio::spawn(async move {
+        if let Err(err) = broker.publish_event(EventMessage::new(event)).await {
+            log::warn!("failed to publish UI event: {}", err);
+        }
+    });
 }
 
 pub(crate) fn emit_workflow_run(events: &EventSender, run_id: i64) {

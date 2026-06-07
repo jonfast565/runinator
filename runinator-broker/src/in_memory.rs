@@ -1,14 +1,17 @@
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
+
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Default)]
 struct BrokerState {
@@ -33,6 +36,8 @@ struct Leased<T> {
     leased_until: Instant,
 }
 
+type EventReceiver = Arc<AsyncMutex<broadcast::Receiver<EventDelivery>>>;
+
 #[derive(Clone)]
 pub struct InMemoryBroker {
     state: Arc<Mutex<BrokerState>>,
@@ -41,6 +46,9 @@ pub struct InMemoryBroker {
     result_notify: Arc<Notify>,
     wake_notify: Arc<Notify>,
     ingress_notify: Arc<Notify>,
+    // fan-out: every subscriber drains its own receiver of every published event.
+    event_tx: broadcast::Sender<EventDelivery>,
+    event_subscribers: Arc<Mutex<HashMap<String, EventReceiver>>>,
     lease_duration: Duration,
 }
 
@@ -61,6 +69,7 @@ impl InMemoryBroker {
 
 impl Default for InMemoryBroker {
     fn default() -> Self {
+        let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Self {
             state: Arc::new(Mutex::new(BrokerState::default())),
             notify: Arc::new(Notify::new()),
@@ -68,8 +77,23 @@ impl Default for InMemoryBroker {
             result_notify: Arc::new(Notify::new()),
             wake_notify: Arc::new(Notify::new()),
             ingress_notify: Arc::new(Notify::new()),
+            event_tx,
+            event_subscribers: Arc::new(Mutex::new(HashMap::new())),
             lease_duration: Self::DEFAULT_LEASE_DURATION,
         }
+    }
+}
+
+impl InMemoryBroker {
+    /// get-or-create the dedicated fan-out receiver for one subscriber id.
+    fn event_receiver(&self, consumer: &str) -> EventReceiver {
+        let mut guard = self.event_subscribers.lock();
+        if let Some(rx) = guard.get(consumer) {
+            return Arc::clone(rx);
+        }
+        let rx = Arc::new(AsyncMutex::new(self.event_tx.subscribe()));
+        guard.insert(consumer.to_string(), Arc::clone(&rx));
+        rx
     }
 }
 
@@ -375,6 +399,27 @@ impl Broker for InMemoryBroker {
             Err(BrokerError::UnknownDelivery(delivery_id))
         }
     }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        // fan-out, best-effort: no subscribers is not an error.
+        let _ = self.event_tx.send(message.into());
+        Ok(())
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        let receiver = self.event_receiver(consumer);
+        let mut guard = receiver.lock().await;
+        loop {
+            match guard.recv().await {
+                Ok(delivery) => return Ok(delivery),
+                // a slow subscriber that lagged behind just resumes from the newest events.
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(BrokerError::Internal("event channel closed".into()));
+                }
+            }
+        }
+    }
 }
 
 fn reclaim_expired_actions(state: &mut BrokerState, now: Instant) {
@@ -598,6 +643,27 @@ mod tests {
             .ack_ingress("ws", delivery.delivery_id)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn in_memory_broker_fans_out_events_to_every_subscriber() {
+        use crate::EventMessage;
+        use runinator_comm::UiEvent;
+
+        let broker = InMemoryBroker::new();
+        // both subscribers must register before publishing so each gets the event.
+        let _ = broker.event_receiver("ws-a");
+        let _ = broker.event_receiver("ws-b");
+
+        broker
+            .publish_event(EventMessage::new(UiEvent::WorkflowsChanged))
+            .await
+            .unwrap();
+
+        let a = broker.receive_event("ws-a").await.unwrap();
+        let b = broker.receive_event("ws-b").await.unwrap();
+        assert!(matches!(a.event, UiEvent::WorkflowsChanged));
+        assert!(matches!(b.event, UiEvent::WorkflowsChanged));
     }
 
     fn action_command() -> ActionCommand {

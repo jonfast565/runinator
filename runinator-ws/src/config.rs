@@ -6,6 +6,9 @@ use clap::{Parser, ValueEnum};
 pub(crate) enum DatabaseKind {
     Sqlite,
     Postgres,
+    /// MySQL or MariaDB (alias: mariadb).
+    #[value(alias = "mariadb")]
+    Mysql,
 }
 
 #[derive(Debug, Parser)]

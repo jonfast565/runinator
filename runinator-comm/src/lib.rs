@@ -220,6 +220,23 @@ impl DebugCommand {
     }
 }
 
+/// a live UI hint fanned out to every web-service replica so connected WebSocket clients refetch.
+/// best-effort: a dropped event at worst leaves a panel briefly stale until the next event. carried
+/// on the broker fan-out `events` channel (every ws pod receives every event).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UiEvent {
+    RunStatusChanged { run_id: i64, terminal: bool },
+    RunChunkAdded { run_id: i64 },
+    WorkflowsChanged,
+    WorkflowRunChanged { run_id: i64 },
+    WorkflowRunActivity,
+    TasksChanged,
+    ArtifactCreated { artifact_id: i64, run_id: i64 },
+    NotificationCreated { notification_id: i64 },
+    NotificationsChanged,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowResultEvent {
     pub event_id: Uuid,

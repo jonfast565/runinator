@@ -1,6 +1,7 @@
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -10,6 +11,7 @@ const DEFAULT_CONTROL_QUEUE: &str = "runinator.control";
 const DEFAULT_RESULT_QUEUE: &str = "runinator.results";
 const DEFAULT_WAKE_QUEUE: &str = "runinator.wake";
 const DEFAULT_INGRESS_QUEUE: &str = "runinator.ingress";
+const DEFAULT_EVENT_EXCHANGE: &str = "runinator.events";
 const DEFAULT_CLIENT_ID: &str = "runinator";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +22,8 @@ pub struct RabbitMqBrokerConfig {
     pub result_queue: String,
     pub wake_queue: String,
     pub ingress_queue: String,
+    // fan-out exchange for UI events; each subscriber binds its own exclusive queue.
+    pub event_exchange: String,
     pub client_id: String,
 }
 
@@ -32,8 +36,15 @@ impl RabbitMqBrokerConfig {
             result_queue: DEFAULT_RESULT_QUEUE.into(),
             wake_queue: DEFAULT_WAKE_QUEUE.into(),
             ingress_queue: DEFAULT_INGRESS_QUEUE.into(),
+            event_exchange: DEFAULT_EVENT_EXCHANGE.into(),
             client_id: DEFAULT_CLIENT_ID.into(),
         }
+    }
+
+    /// override the fan-out exchange used for UI events.
+    pub fn with_event_exchange(mut self, event_exchange: impl Into<String>) -> Self {
+        self.event_exchange = event_exchange.into();
+        self
     }
 
     pub fn with_queues(
@@ -113,6 +124,8 @@ struct RabbitMqBrokerInner {
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     wake_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    // each subscriber gets its own exclusive auto-delete queue bound to the fan-out exchange.
+    event_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     pending: Mutex<HashMap<Uuid, lapin::message::Delivery>>,
 }
 
@@ -143,6 +156,7 @@ impl RabbitMqBrokerInner {
         declare_queue(&channel, &config.result_queue).await?;
         declare_queue(&channel, &config.wake_queue).await?;
         declare_queue(&channel, &config.ingress_queue).await?;
+        declare_fanout_exchange(&channel, &config.event_exchange).await?;
 
         Ok(Self {
             channel,
@@ -151,8 +165,66 @@ impl RabbitMqBrokerInner {
             result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
+            event_consumers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// get-or-create one subscriber's exclusive queue bound to the fan-out events exchange.
+    async fn event_consumer(
+        &self,
+        config: &RabbitMqBrokerConfig,
+        consumer_id: &str,
+    ) -> Result<Arc<AsyncMutex<lapin::Consumer>>, BrokerError> {
+        if let Some(consumer) = self.event_consumers.lock().get(consumer_id).cloned() {
+            return Ok(consumer);
+        }
+
+        // a per-subscriber exclusive, auto-delete queue bound to the fanout exchange gives this
+        // replica its own copy of every event; auto-ack since UI events are best-effort.
+        let queue_name = format!("{}.events.{}", config.client_id, consumer_id);
+        self.channel
+            .queue_declare(
+                queue_name.as_str().into(),
+                lapin::options::QueueDeclareOptions {
+                    durable: false,
+                    exclusive: true,
+                    auto_delete: true,
+                    ..Default::default()
+                },
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("event_queue_declare"))?;
+        self.channel
+            .queue_bind(
+                queue_name.as_str().into(),
+                config.event_exchange.as_str().into(),
+                "".into(),
+                lapin::options::QueueBindOptions::default(),
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("event_queue_bind"))?;
+        let tag = format!("{}.events.{}", config.client_id, consumer_id);
+        let consumer = Arc::new(AsyncMutex::new(
+            self.channel
+                .basic_consume(
+                    queue_name.as_str().into(),
+                    tag.into(),
+                    lapin::options::BasicConsumeOptions {
+                        no_ack: true,
+                        ..Default::default()
+                    },
+                    lapin::types::FieldTable::default(),
+                )
+                .await
+                .map_err(rabbitmq_error("event_consume"))?,
+        ));
+        self.event_consumers
+            .lock()
+            .insert(consumer_id.to_string(), Arc::clone(&consumer));
+        Ok(consumer)
     }
 
     async fn consumer(
@@ -222,6 +294,47 @@ async fn declare_queue(channel: &lapin::Channel, queue: &str) -> Result<(), Brok
         .await
         .map(|_| ())
         .map_err(rabbitmq_error("queue_declare"))
+}
+
+#[cfg(feature = "rabbitmq")]
+async fn declare_fanout_exchange(
+    channel: &lapin::Channel,
+    exchange: &str,
+) -> Result<(), BrokerError> {
+    channel
+        .exchange_declare(
+            exchange.into(),
+            lapin::ExchangeKind::Fanout,
+            lapin::options::ExchangeDeclareOptions {
+                durable: true,
+                ..Default::default()
+            },
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(rabbitmq_error("exchange_declare"))
+}
+
+#[cfg(feature = "rabbitmq")]
+async fn publish_fanout(
+    channel: &lapin::Channel,
+    exchange: &str,
+    payload: String,
+) -> Result<(), BrokerError> {
+    channel
+        .basic_publish(
+            exchange.into(),
+            "".into(),
+            lapin::options::BasicPublishOptions::default(),
+            payload.as_bytes(),
+            lapin::BasicProperties::default(),
+        )
+        .await
+        .map_err(rabbitmq_error("publish_event"))?
+        .await
+        .map_err(rabbitmq_error("publish_event_confirm"))?;
+    Ok(())
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -466,6 +579,26 @@ impl Broker for RabbitMqBroker {
     async fn nack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_delivery(self.inner.take_pending(delivery_id)?).await
     }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_fanout(&self.inner.channel, &self.config.event_exchange, payload).await
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        let subscriber = self.inner.event_consumer(&self.config, consumer).await?;
+        let mut guard = subscriber.lock().await;
+        let delivery = guard
+            .next()
+            .await
+            .ok_or_else(|| BrokerError::Internal("rabbitmq event stream ended".into()))?
+            .map_err(rabbitmq_error("receive_event"))?;
+        let message: EventMessage = serde_json::from_slice(&delivery.data)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        // auto-ack consumer: nothing to track.
+        Ok(EventDelivery::from(message))
+    }
 }
 
 #[async_trait]
@@ -548,6 +681,14 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn nack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn publish_event(&self, _message: EventMessage) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn receive_event(&self, _consumer: &str) -> Result<EventDelivery, BrokerError> {
         Err(rabbitmq_feature_error())
     }
 }

@@ -18,7 +18,9 @@ metadata:
   name: runinator-ws
   namespace: runinator
 spec:
-  replicas: 1
+  # multi-replica safe: durable claims/leases (FOR UPDATE SKIP LOCKED), shared-group result/ingress
+  # consumers, broker-deduped wakes, and broker fan-out of UI events. HPA manages the live count.
+  replicas: 2
   selector:
     matchLabels:
       app: runinator-ws

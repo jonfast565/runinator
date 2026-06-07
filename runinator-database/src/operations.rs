@@ -120,16 +120,37 @@ where
         .fetch_one(self.pool())
         .await?
         .get("next_sequence");
-        let row = sqlx::query(&self.render(
+        let columns = "id, run_id, sequence, stream, content, created_at";
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO run_chunks (run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            ))
+            .bind(run_id)
+            .bind(sequence)
+            .bind(chunk.stream.as_str())
+            .bind(chunk.content.as_str())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM run_chunks WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_run_chunk(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO run_chunks (run_id, sequence, stream, content, created_at)
              VALUES (?, ?, ?, ?, ?)
-             RETURNING id, run_id, sequence, stream, content, created_at",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(run_id)
         .bind(sequence)
         .bind(chunk.stream.as_str())
         .bind(chunk.content.as_str())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_run_chunk(&row))
@@ -157,18 +178,41 @@ where
         run_id: i64,
         artifact: &NewRunArtifact,
     ) -> Result<RunArtifact, SendableError> {
-        let row = sqlx::query(&self.render(
+        let columns = "id, run_id, name, mime_type, size_bytes, uri, metadata, created_at";
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO run_artifacts (run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(run_id)
+            .bind(artifact.name.as_str())
+            .bind(artifact.mime_type.as_str())
+            .bind(artifact.size_bytes)
+            .bind(artifact.uri.as_str())
+            .bind(artifact.metadata.to_string())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM run_artifacts WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_run_artifact(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO run_artifacts (run_id, name, mime_type, size_bytes, uri, metadata, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, run_id, name, mime_type, size_bytes, uri, metadata, created_at",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(run_id)
         .bind(artifact.name.as_str())
         .bind(artifact.mime_type.as_str())
         .bind(artifact.size_bytes)
         .bind(artifact.uri.as_str())
         .bind(artifact.metadata.to_string())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_run_artifact(&row))
@@ -219,10 +263,8 @@ where
             .map(|row| row.get::<i64, _>("id")),
         };
 
-        // postgres cannot autoincrement an identity column from a bound NULL id; mariadb has no
-        // RETURNING on ON DUPLICATE KEY UPDATE. both insert a fresh row when there is no id.
-        if workflow_id.is_none() && matches!(self.dialect(), SqlDialect::Postgres | SqlDialect::MySql)
-        {
+        // postgres cannot autoincrement an identity column from a bound NULL id, so insert fresh.
+        if workflow_id.is_none() && self.dialect() == SqlDialect::Postgres {
             let row = sqlx::query(&self.render(
                 "INSERT INTO workflows (name, version, enabled, input_schema, definition, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -240,14 +282,24 @@ where
             return Ok(mappers::row_to_workflow(&row));
         }
 
-        // mysql upserts with ON DUPLICATE KEY UPDATE and reads the row back (no RETURNING). the id
-        // is always known on this path because the no-id case is handled above.
+        // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
+        // row back on the same pinned connection (by id, or by LAST_INSERT_ID for a fresh insert).
         if self.dialect() == SqlDialect::MySql {
+            let columns =
+                "id, name, version, enabled, input_schema, definition, created_at, updated_at";
             let conflict = queries::on_conflict_update(
                 SqlDialect::MySql,
                 "id",
-                &["name", "version", "enabled", "input_schema", "definition", "updated_at"],
+                &[
+                    "name",
+                    "version",
+                    "enabled",
+                    "input_schema",
+                    "definition",
+                    "updated_at",
+                ],
             );
+            let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
@@ -260,12 +312,25 @@ where
             .bind(workflow.definition.to_string())
             .bind(now)
             .bind(now)
-            .execute(self.pool())
+            .execute(&mut *conn)
             .await?;
-            let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
-                .bind(workflow_id)
-                .fetch_one(self.pool())
-                .await?;
+            let row = match workflow_id {
+                Some(existing) => {
+                    sqlx::query(
+                        &self.render(&format!("SELECT {columns} FROM workflows WHERE id = ?")),
+                    )
+                    .bind(existing)
+                    .fetch_one(&mut *conn)
+                    .await?
+                }
+                None => {
+                    sqlx::query(&self.render(&format!(
+                        "SELECT {columns} FROM workflows WHERE id = LAST_INSERT_ID()"
+                    )))
+                    .fetch_one(&mut *conn)
+                    .await?
+                }
+            };
             return Ok(mappers::row_to_workflow(&row));
         }
 
@@ -332,10 +397,8 @@ where
     ) -> Result<WorkflowTrigger, SendableError> {
         let now = Utc::now().timestamp();
 
-        // postgres cannot autoincrement an identity column from a bound NULL id; mariadb has no
-        // RETURNING on ON DUPLICATE KEY UPDATE. both insert a fresh row when there is no id.
-        if trigger.id.is_none() && matches!(self.dialect(), SqlDialect::Postgres | SqlDialect::MySql)
-        {
+        // postgres cannot autoincrement an identity column from a bound NULL id, so insert fresh.
+        if trigger.id.is_none() && self.dialect() == SqlDialect::Postgres {
             let row = sqlx::query(&self.render(
                 "INSERT INTO workflow_triggers (workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -356,9 +419,10 @@ where
             return Ok(mappers::row_to_workflow_trigger(&row));
         }
 
-        // mysql upserts with ON DUPLICATE KEY UPDATE and reads the row back (no RETURNING); the id
-        // is known here because the no-id case is handled above.
+        // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
+        // row back on the same pinned connection (by id, or by LAST_INSERT_ID for a fresh insert).
         if self.dialect() == SqlDialect::MySql {
+            let columns = "id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
             let conflict = queries::on_conflict_update(
                 SqlDialect::MySql,
                 "id",
@@ -374,6 +438,7 @@ where
                     "updated_at",
                 ],
             );
+            let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO workflow_triggers (id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
@@ -389,12 +454,25 @@ where
             .bind(trigger.metadata.to_string())
             .bind(trigger.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
             .bind(now)
-            .execute(self.pool())
+            .execute(&mut *conn)
             .await?;
-            let row = sqlx::query(&self.render("SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE id = ?"))
-                .bind(trigger.id)
-                .fetch_one(self.pool())
-                .await?;
+            let row = match trigger.id {
+                Some(existing) => {
+                    sqlx::query(&self.render(&format!(
+                        "SELECT {columns} FROM workflow_triggers WHERE id = ?"
+                    )))
+                    .bind(existing)
+                    .fetch_one(&mut *conn)
+                    .await?
+                }
+                None => {
+                    sqlx::query(&self.render(&format!(
+                        "SELECT {columns} FROM workflow_triggers WHERE id = LAST_INSERT_ID()"
+                    )))
+                    .fetch_one(&mut *conn)
+                    .await?
+                }
+            };
             return Ok(mappers::row_to_workflow_trigger(&row));
         }
 
@@ -569,19 +647,40 @@ where
                 .fetch_one(&mut *tx)
                 .await?;
             let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
-            let run_row = sqlx::query(&self.render(
-                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
-                 VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)
-                 RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name",
-            ))
-            .bind(trigger.workflow_id)
-            .bind(serde_json::to_string(&workflow_snapshot)?)
-            .bind(WorkflowStatus::Queued.as_str())
-            .bind(trigger_parameters(&trigger).to_string())
-            .bind(trigger_state(&trigger).to_string())
-            .bind(now.timestamp())
-            .fetch_one(&mut *tx)
-            .await?;
+            let run_columns = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name";
+            // the transaction pins a connection, so LAST_INSERT_ID is valid for the mysql read-back.
+            let run_row = if self.dialect() == SqlDialect::MySql {
+                sqlx::query(&self.render(
+                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)",
+                ))
+                .bind(trigger.workflow_id)
+                .bind(serde_json::to_string(&workflow_snapshot)?)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(trigger_parameters(&trigger).to_string())
+                .bind(trigger_state(&trigger).to_string())
+                .bind(now.timestamp())
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(&self.render(&format!(
+                    "SELECT {run_columns} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+                )))
+                .fetch_one(&mut *tx)
+                .await?
+            } else {
+                sqlx::query(&self.render(&format!(
+                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
+                     VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)
+                     RETURNING {run_columns}",
+                )))
+                .bind(trigger.workflow_id)
+                .bind(serde_json::to_string(&workflow_snapshot)?)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(trigger_parameters(&trigger).to_string())
+                .bind(trigger_state(&trigger).to_string())
+                .bind(now.timestamp())
+                .fetch_one(&mut *tx)
+                .await?
+            };
             let run = mappers::row_to_workflow_run(&run_row);
 
             sqlx::query(&self.render("UPDATE workflow_trigger_firings SET workflow_run_id = ? WHERE trigger_id = ? AND fire_key = ?"))
@@ -613,17 +712,41 @@ where
         state: Value,
         name: Option<String>,
     ) -> Result<WorkflowRun, SendableError> {
-        let row = sqlx::query(&self.render(
+        let columns = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name";
+        let snapshot = serde_json::to_string(&workflow_snapshot)?;
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+            ))
+            .bind(workflow_id)
+            .bind(snapshot)
+            .bind(WorkflowStatus::Queued.as_str())
+            .bind(parameters.to_string())
+            .bind(state.to_string())
+            .bind(created_at)
+            .bind(name)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_workflow_run(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
              VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
-             RETURNING id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(workflow_id)
-        .bind(serde_json::to_string(&workflow_snapshot)?)
+        .bind(snapshot)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
         .bind(state.to_string())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .bind(name)
         .fetch_one(self.pool())
         .await?;
@@ -843,18 +966,42 @@ where
         node_id: String,
         parameters: Value,
     ) -> Result<WorkflowNodeRun, SendableError> {
-        let row = sqlx::query(&self.render(
+        let columns = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message";
+        let empty_state = Value::Object(Default::default()).to_string();
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(workflow_run_id)
+            .bind(node_id)
+            .bind(WorkflowStatus::Queued.as_str())
+            .bind(0i64)
+            .bind(parameters.to_string())
+            .bind(empty_state)
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_node_runs WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_workflow_node_run(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(workflow_run_id)
         .bind(node_id)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(0i64)
         .bind(parameters.to_string())
-        .bind(Value::Object(Default::default()).to_string())
-        .bind(Utc::now().timestamp())
+        .bind(empty_state)
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_workflow_node_run(&row))
@@ -929,16 +1076,37 @@ where
             .fetch_one(self.pool())
             .await?
             .get("next_sequence");
-        let row = sqlx::query(&self.render(
+        let columns = "id, workflow_node_run_id, sequence, stream, content, created_at";
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            ))
+            .bind(workflow_node_run_id)
+            .bind(sequence)
+            .bind(chunk.stream.as_str())
+            .bind(chunk.content.as_str())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_node_chunks WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_workflow_node_run_chunk(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at)
              VALUES (?, ?, ?, ?, ?)
-             RETURNING id, workflow_node_run_id, sequence, stream, content, created_at",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(workflow_node_run_id)
         .bind(sequence)
         .bind(chunk.stream.as_str())
         .bind(chunk.content.as_str())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_workflow_node_run_chunk(&row))
@@ -969,18 +1137,42 @@ where
         workflow_node_run_id: i64,
         artifact: &NewRunArtifact,
     ) -> Result<WorkflowNodeRunArtifact, SendableError> {
-        let row = sqlx::query(&self.render(
+        let columns =
+            "id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at";
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(workflow_node_run_id)
+            .bind(artifact.name.as_str())
+            .bind(artifact.mime_type.as_str())
+            .bind(artifact.size_bytes)
+            .bind(artifact.uri.as_str())
+            .bind(artifact.metadata.to_string())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_node_artifacts WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_workflow_node_run_artifact(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(workflow_node_run_id)
         .bind(artifact.name.as_str())
         .bind(artifact.mime_type.as_str())
         .bind(artifact.size_bytes)
         .bind(artifact.uri.as_str())
         .bind(artifact.metadata.to_string())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_workflow_node_run_artifact(&row))
@@ -1429,7 +1621,8 @@ where
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
-        let columns = "id, uri, item_type, name, version, document, metadata, created_at, updated_at";
+        let columns =
+            "id, uri, item_type, name, version, document, metadata, created_at, updated_at";
         let document = item
             .get("document")
             .cloned()
@@ -1440,7 +1633,14 @@ where
             let conflict = queries::on_conflict_update(
                 SqlDialect::MySql,
                 "uri",
-                &["item_type", "name", "version", "document", "metadata", "updated_at"],
+                &[
+                    "item_type",
+                    "name",
+                    "version",
+                    "document",
+                    "metadata",
+                    "updated_at",
+                ],
             );
             sqlx::query(&self.render(&format!(
                 "INSERT INTO catalog_items (uri, item_type, name, version, document, metadata, created_at, updated_at)
@@ -1846,11 +2046,36 @@ where
         &self,
         notification: &NewNotification,
     ) -> Result<Notification, SendableError> {
-        let row = sqlx::query(&self.render(
+        let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO notifications (workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(notification.workflow_run_id)
+            .bind(notification.workflow_node_id.clone())
+            .bind(notification.channel.as_str())
+            .bind(notification.severity.as_str())
+            .bind(notification.title.as_str())
+            .bind(notification.body.clone())
+            .bind(notification.target.clone())
+            .bind(notification.metadata.to_string())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM notifications WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_notification(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
             "INSERT INTO notifications (workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at",
-        ))
+             RETURNING {columns}",
+        )))
         .bind(notification.workflow_run_id)
         .bind(notification.workflow_node_id.clone())
         .bind(notification.channel.as_str())
@@ -1859,7 +2084,7 @@ where
         .bind(notification.body.clone())
         .bind(notification.target.clone())
         .bind(notification.metadata.to_string())
-        .bind(Utc::now().timestamp())
+        .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_notification(&row))
@@ -1897,16 +2122,17 @@ where
 
         // mysql has no UPDATE ... RETURNING, so update then read the row back by id.
         if self.dialect() == SqlDialect::MySql {
-            sqlx::query(&self.render(
-                "UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ?",
-            ))
+            sqlx::query(
+                &self
+                    .render("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ?"),
+            )
             .bind(Utc::now().timestamp())
             .bind(notification_id)
             .execute(self.pool())
             .await?;
-            let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM notifications WHERE id = ?",
-            )))
+            let row = sqlx::query(
+                &self.render(&format!("SELECT {columns} FROM notifications WHERE id = ?",)),
+            )
             .bind(notification_id)
             .fetch_optional(self.pool())
             .await?;
@@ -1940,10 +2166,14 @@ where
         value: Vec<u8>,
         updated_at: i64,
     ) -> Result<(), SendableError> {
-        sqlx::query(&self.render(
-            "INSERT INTO settings (kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(kind, scope, name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        ))
+        let conflict = queries::on_conflict_update(
+            self.dialect(),
+            "kind, scope, name",
+            &["value", "updated_at"],
+        );
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO settings (kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?) {conflict}",
+        )))
         .bind(kind.as_str())
         .bind(scope)
         .bind(name)

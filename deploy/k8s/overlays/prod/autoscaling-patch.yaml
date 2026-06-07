@@ -1,0 +1,36 @@
+# Production autoscaling bounds. Tune min/max per cluster capacity and expected load.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  minReplicas: 3
+  maxReplicas: 20
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  minReplicas: 3
+  maxReplicas: 50
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-waker
+  namespace: runinator
+spec:
+  minReplicas: 2
+  maxReplicas: 10
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-command-center-web
+  namespace: runinator
+spec:
+  minReplicas: 2
+  maxReplicas: 10

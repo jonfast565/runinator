@@ -10,7 +10,7 @@ use runinator_broker::{
     in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
 };
-use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
+use runinator_database::{mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -120,6 +120,20 @@ async fn main() -> Result<(), SendableError> {
 
             info!("Starting Runinator webservice with Postgres database");
             let db = Arc::new(PostgresDb::new(&url).await?);
+            run_webserver(db, notify.clone(), port, broker).await?;
+        }
+        DatabaseKind::Mysql => {
+            let url = database_url
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "--database-url must be provided when --database=mysql",
+                    )
+                })
+                .map_err(|err| -> SendableError { Box::new(err) })?;
+
+            info!("Starting Runinator webservice with MySQL/MariaDB database");
+            let db = Arc::new(MySqlDb::new(&url).await?);
             run_webserver(db, notify.clone(), port, broker).await?;
         }
     }

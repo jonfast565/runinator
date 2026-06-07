@@ -18,6 +18,8 @@ resources:
   - worker.yaml
   - pack-import.yaml
   - command-center.yaml
+  - autoscaling.yaml
+  - pdb.yaml
 
 images:
   - name: runinator-ws

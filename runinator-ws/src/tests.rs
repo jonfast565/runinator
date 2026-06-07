@@ -6,8 +6,8 @@ use std::{
 
 use runinator_broker::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
-    in_memory::InMemoryBroker,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage, in_memory::InMemoryBroker,
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
@@ -551,11 +551,12 @@ async fn result_consumer_acks_duplicate_deliveries_and_persists_results_once() {
     let broker = Arc::new(RecordingBroker::new());
     let broker_for_consumer: Arc<dyn Broker> = broker.clone();
     let (events, _rx) = tokio::sync::broadcast::channel(16);
+    let bus = crate::events::EventBus::new(events, broker_for_consumer.clone());
     let shutdown = Arc::new(Notify::new());
     let consumer = tokio::spawn(crate::result_consumer::run_result_consumer(
         db.clone(),
         broker_for_consumer,
-        events,
+        bus,
         shutdown.clone(),
     ));
 
@@ -622,11 +623,12 @@ async fn result_consumer_dead_letters_poison_result_events_after_retries() {
     let broker = Arc::new(RecordingBroker::new());
     let broker_for_consumer: Arc<dyn Broker> = broker.clone();
     let (events, _rx) = tokio::sync::broadcast::channel(16);
+    let bus = crate::events::EventBus::new(events, broker_for_consumer.clone());
     let shutdown = Arc::new(Notify::new());
     let consumer = tokio::spawn(crate::result_consumer::run_result_consumer_with_policy(
         db.clone(),
         broker_for_consumer,
-        events,
+        bus,
         shutdown.clone(),
         crate::result_consumer::ResultConsumerPolicy::new(2, Duration::from_millis(1)),
     ));
@@ -844,6 +846,14 @@ impl Broker for RecordingBroker {
 
     async fn nack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.inner.nack_ingress(consumer, delivery_id).await
+    }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        self.inner.publish_event(message).await
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        self.inner.receive_event(consumer).await
     }
 }
 

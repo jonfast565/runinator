@@ -10,10 +10,10 @@ pub use capabilities::{
     ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
 };
 pub use errors::BrokerError;
-pub use runinator_comm::{ControlCommand, WakeCommand, WsIngressCommand};
+pub use runinator_comm::{ControlCommand, UiEvent, WakeCommand, WsIngressCommand};
 pub use types::{
-    BrokerDelivery, BrokerMessage, ControlDelivery, IngressDelivery, IngressMessage,
-    ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    BrokerDelivery, BrokerMessage, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 
 use async_trait::async_trait;
@@ -89,4 +89,16 @@ pub trait Broker: Send + Sync + 'static {
         consumer: &str,
         delivery_id: uuid::Uuid,
     ) -> Result<(), BrokerError>;
+
+    /// Publish a UI event on the fan-out `events` channel (web service -> every web-service replica).
+    ///
+    /// Unlike the other channels this is broadcast, not competing-consumer: every subscriber that
+    /// has called [`Broker::receive_event`] receives its own copy. Best-effort, so there is no ack.
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError>;
+
+    /// Wait for and retrieve the next UI event for the supplied subscriber.
+    ///
+    /// `consumer` identifies one fan-out subscriber (use a per-replica id); each distinct consumer
+    /// drains its own stream of every published event.
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError>;
 }

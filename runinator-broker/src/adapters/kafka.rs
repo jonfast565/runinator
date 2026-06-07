@@ -1,6 +1,7 @@
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -10,6 +11,7 @@ const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
 const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
 const DEFAULT_WAKE_TOPIC: &str = "runinator.wake";
 const DEFAULT_INGRESS_TOPIC: &str = "runinator.ingress";
+const DEFAULT_EVENT_TOPIC: &str = "runinator.events";
 const DEFAULT_CLIENT_ID: &str = "runinator";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +22,8 @@ pub struct KafkaBrokerConfig {
     pub result_topic: String,
     pub wake_topic: String,
     pub ingress_topic: String,
+    // fan-out: every subscriber uses a distinct group (keyed by consumer id) to read all events.
+    pub event_topic: String,
     pub client_id: String,
 }
 
@@ -32,8 +36,15 @@ impl KafkaBrokerConfig {
             result_topic: DEFAULT_RESULT_TOPIC.into(),
             wake_topic: DEFAULT_WAKE_TOPIC.into(),
             ingress_topic: DEFAULT_INGRESS_TOPIC.into(),
+            event_topic: DEFAULT_EVENT_TOPIC.into(),
             client_id: DEFAULT_CLIENT_ID.into(),
         }
+    }
+
+    /// override the fan-out topic used for UI events.
+    pub fn with_event_topic(mut self, event_topic: impl Into<String>) -> Self {
+        self.event_topic = event_topic.into();
+        self
     }
 
     pub fn with_topics(
@@ -104,6 +115,7 @@ struct KafkaBrokerInner {
     result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     wake_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    event_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     pending: Mutex<HashMap<Uuid, PendingDelivery>>,
 }
 
@@ -129,6 +141,7 @@ enum KafkaChannel {
     Result,
     Wake,
     Ingress,
+    Event,
 }
 
 #[cfg(feature = "kafka")]
@@ -149,6 +162,7 @@ impl KafkaBrokerInner {
             result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
+            event_consumers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
     }
@@ -165,6 +179,7 @@ impl KafkaBrokerInner {
             KafkaChannel::Result => &self.result_consumers,
             KafkaChannel::Wake => &self.wake_consumers,
             KafkaChannel::Ingress => &self.ingress_consumers,
+            KafkaChannel::Event => &self.event_consumers,
         };
 
         if let Some(consumer) = map.lock().get(consumer_id).cloned() {
@@ -221,13 +236,19 @@ fn build_consumer(
         channel_name(channel),
         consumer_id
     );
+    // events are a fan-out, best-effort stream: a fresh per-replica group starts at the tail so a
+    // restarting pod does not replay historical UI events. work channels replay from earliest.
+    let offset_reset = match channel {
+        KafkaChannel::Event => "latest",
+        _ => "earliest",
+    };
     let consumer: rdkafka::consumer::StreamConsumer = ClientConfig::new()
         .set("bootstrap.servers", &config.bootstrap_servers)
         .set("group.id", group_id)
         .set("client.id", client_id)
         .set("enable.auto.commit", "false")
         .set("enable.auto.offset.store", "false")
-        .set("auto.offset.reset", "earliest")
+        .set("auto.offset.reset", offset_reset)
         .create()
         .map_err(kafka_error("consumer"))?;
     consumer
@@ -347,6 +368,7 @@ fn topic_for(config: &KafkaBrokerConfig, channel: KafkaChannel) -> &str {
         KafkaChannel::Result => &config.result_topic,
         KafkaChannel::Wake => &config.wake_topic,
         KafkaChannel::Ingress => &config.ingress_topic,
+        KafkaChannel::Event => &config.event_topic,
     }
 }
 
@@ -358,6 +380,7 @@ fn channel_name(channel: KafkaChannel) -> &'static str {
         KafkaChannel::Result => "results",
         KafkaChannel::Wake => "wake",
         KafkaChannel::Ingress => "ingress",
+        KafkaChannel::Event => "events",
     }
 }
 
@@ -537,6 +560,20 @@ impl Broker for KafkaBroker {
     async fn nack_ingress(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_pending(self.inner.take_pending(delivery_id)?)
     }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        // empty key: events are not partitioned by entity, fan-out reads every partition.
+        publish_json(&self.inner.producer, &self.config.event_topic, "", payload).await
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        // each subscriber's unique group reads every partition; best-effort, so no offset commit.
+        let (message, _pending) =
+            receive_json::<EventMessage>(self, KafkaChannel::Event, consumer).await?;
+        Ok(EventDelivery::from(message))
+    }
 }
 
 #[async_trait]
@@ -619,6 +656,14 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_ingress(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn publish_event(&self, _message: EventMessage) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn receive_event(&self, _consumer: &str) -> Result<EventDelivery, BrokerError> {
         Err(kafka_feature_error())
     }
 }

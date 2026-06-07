@@ -1,6 +1,6 @@
 use crate::{
-    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -58,6 +58,16 @@ pub struct PublishIngressRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveIngressResponse {
     pub delivery: IngressDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishEventRequest {
+    pub message: EventMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveEventResponse {
+    pub delivery: EventDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -18,7 +18,8 @@ metadata:
   name: runinator-command-center-web
   namespace: runinator
 spec:
-  replicas: 1
+  # stateless nginx; it proxies /api and /ws to the runinator-ws Service (kube-proxy load-balanced).
+  replicas: 2
   selector:
     matchLabels:
       app: runinator-command-center-web

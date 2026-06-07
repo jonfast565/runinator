@@ -1,6 +1,6 @@
 use crate::{
-    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,11 +13,13 @@ pub enum TcpRequest {
     PublishResult { message: ResultMessage },
     PublishWake { message: WakeMessage },
     PublishIngress { message: IngressMessage },
+    PublishEvent { message: EventMessage },
     Receive { consumer: String },
     ReceiveControl { consumer: String },
     ReceiveResult { consumer: String },
     ReceiveWake { consumer: String },
     ReceiveIngress { consumer: String },
+    ReceiveEvent { consumer: String },
     Ack { consumer: String, delivery_id: Uuid },
     AckControl { consumer: String, delivery_id: Uuid },
     AckResult { consumer: String, delivery_id: Uuid },
@@ -38,5 +40,6 @@ pub enum TcpResponse {
     ResultDelivery { delivery: ResultDelivery },
     WakeDelivery { delivery: WakeDelivery },
     IngressDelivery { delivery: IngressDelivery },
+    EventDelivery { delivery: EventDelivery },
     Error { message: String },
 }

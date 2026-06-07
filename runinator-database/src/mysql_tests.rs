@@ -26,7 +26,9 @@ fn base_url() -> Option<String> {
 
 // split a `.../dbname` url into (server-url-without-db, dbname).
 fn split_url(url: &str) -> (String, String) {
-    let (server, db) = url.rsplit_once('/').expect("url must contain a database path");
+    let (server, db) = url
+        .rsplit_once('/')
+        .expect("url must contain a database path");
     (server.to_string(), db.to_string())
 }
 
@@ -123,7 +125,10 @@ async fn mariadb_full_lifecycle() {
     assert_eq!(db.fetch_workflows().await.unwrap().len(), 1);
 
     // trigger upsert (insert then update by id).
-    let saved = db.upsert_workflow_trigger(&sample_trigger(id)).await.unwrap();
+    let saved = db
+        .upsert_workflow_trigger(&sample_trigger(id))
+        .await
+        .unwrap();
     let trigger_id = saved.id.expect("trigger insert assigns an id");
     let mut retrig = saved.clone();
     retrig.enabled = false;
@@ -147,7 +152,10 @@ async fn mariadb_full_lifecycle() {
         )
         .await
         .unwrap();
-    assert!(claimed.iter().any(|r| r.id == run.id), "claim must return the queued run");
+    assert!(
+        claimed.iter().any(|r| r.id == run.id),
+        "claim must return the queued run"
+    );
     // a second claim under the live lease returns nothing new.
     let again = db
         .claim_workflow_runs_for_scheduler(
@@ -179,24 +187,45 @@ async fn mariadb_full_lifecycle() {
             message: None,
         },
     };
-    assert!(db.apply_workflow_result_event(&event).await.unwrap(), "first apply succeeds");
-    assert!(!db.apply_workflow_result_event(&event).await.unwrap(), "replay is ignored");
+    assert!(
+        db.apply_workflow_result_event(&event).await.unwrap(),
+        "first apply succeeds"
+    );
+    assert!(
+        !db.apply_workflow_result_event(&event).await.unwrap(),
+        "replay is ignored"
+    );
 
     // idempotency keys exercise the reserved-word `key` quoting + ON DUPLICATE KEY first-writer-wins.
     let scope = "scope-x".to_string();
     let key = "key-y".to_string();
-    db.put_idempotency_key(scope.clone(), key.clone(), runinator_models::json!({"v": 1}))
-        .await
-        .unwrap();
-    db.put_idempotency_key(scope.clone(), key.clone(), runinator_models::json!({"v": 2}))
-        .await
-        .unwrap();
+    db.put_idempotency_key(
+        scope.clone(),
+        key.clone(),
+        runinator_models::json!({"v": 1}),
+    )
+    .await
+    .unwrap();
+    db.put_idempotency_key(
+        scope.clone(),
+        key.clone(),
+        runinator_models::json!({"v": 2}),
+    )
+    .await
+    .unwrap();
     let fetched = db
         .fetch_idempotency_key(scope.clone(), key.clone())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.get("result").and_then(|r| r.get("v")).and_then(Value::as_i64), Some(1), "first writer wins");
+    assert_eq!(
+        fetched
+            .get("result")
+            .and_then(|r| r.get("v"))
+            .and_then(Value::as_i64),
+        Some(1),
+        "first writer wins"
+    );
 
     // action dispatch enqueue (idempotent) + multi-row claim.
     let d1 = db
@@ -215,18 +244,24 @@ async fn mariadb_full_lifecycle() {
     assert!(dispatch_claim.iter().any(|d| d.id == d1.id));
 
     // notifications: create then mark-read (UPDATE then SELECT on mysql).
-    let note = db
-        .create_notification(&Default::default())
-        .await
-        .unwrap();
+    let note = db.create_notification(&Default::default()).await.unwrap();
     let read = db.mark_notification_read(note.id).await.unwrap().unwrap();
     assert!(read.read_at.is_some());
-    assert!(db.mark_notification_read(i64::MAX).await.unwrap().is_none(), "missing id returns None");
+    assert!(
+        db.mark_notification_read(i64::MAX).await.unwrap().is_none(),
+        "missing id returns None"
+    );
 
     // settings round trip (LONGBLOB value, composite PK upsert).
-    db.upsert_setting(SettingKind::Secret, "jira".into(), "token".into(), b"cipher".to_vec(), 100)
-        .await
-        .unwrap();
+    db.upsert_setting(
+        SettingKind::Secret,
+        "jira".into(),
+        "token".into(),
+        b"cipher".to_vec(),
+        100,
+    )
+    .await
+    .unwrap();
     let setting = db
         .fetch_setting(SettingKind::Secret, "jira".into(), "token".into())
         .await
@@ -239,10 +274,18 @@ async fn mariadb_full_lifecycle() {
     db.upsert_catalog_item(item.clone()).await.unwrap();
     let item2 = runinator_models::json!({ "uri": "cat://x", "item_type": "t2", "name": "n", "version": "1" });
     let upserted = db.upsert_catalog_item(item2).await.unwrap();
-    assert_eq!(upserted.get("item_type").and_then(Value::as_str), Some("t2"));
+    assert_eq!(
+        upserted.get("item_type").and_then(Value::as_str),
+        Some("t2")
+    );
 
     // legacy run row mapper reads the reserved-word `trigger` column.
-    assert!(db.fetch_runs_by_status(RunStatus::Running).await.unwrap().is_empty());
+    assert!(
+        db.fetch_runs_by_status(RunStatus::Running)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     drop_db(&server, &dbname).await;
 }

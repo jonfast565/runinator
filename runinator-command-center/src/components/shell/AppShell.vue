@@ -3,7 +3,6 @@
     <SidebarNav />
     <section class="workspace">
       <TopToolbar @refresh="refreshActive" />
-      <ConnectionStrip />
       <main>
         <slot />
       </main>
@@ -24,7 +23,6 @@ import { useAppStore } from "../../stores/app";
 import { useKeyboardShortcuts } from "../../composables/useKeyboardShortcuts";
 import { useTasksStore } from "../../stores/tasks";
 import TaskEditorModal from "../shared/TaskEditorModal.vue";
-import ConnectionStrip from "./ConnectionStrip.vue";
 import SidebarNav from "./SidebarNav.vue";
 import ToastHost from "./ToastHost.vue";
 import TopToolbar from "./TopToolbar.vue";

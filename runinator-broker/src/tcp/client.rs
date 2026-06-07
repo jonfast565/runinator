@@ -1,7 +1,8 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use std::time::Duration;
@@ -280,6 +281,26 @@ impl Broker for TcpBroker {
             })
             .await?;
         Self::expect_ok(response)
+    }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        let response = self.request(TcpRequest::PublishEvent { message }).await?;
+        Self::expect_ok(response)
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveEvent {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::EventDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected event delivery response".into(),
+            )),
+        }
     }
 }
 

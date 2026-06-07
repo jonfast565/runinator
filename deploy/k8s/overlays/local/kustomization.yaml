@@ -11,9 +11,13 @@ resources:
 # default StorageClass (e.g. local-path on k3d). If your local cluster has no
 # default storage provisioner, see overlays/local/README.md for a hostPath
 # fallback patch.
+# Local keeps every service horizontally scalable (base defaults to 2 replicas each); it only trims
+# resource requests and HPA upper bounds so a laptop-class single-node cluster can still run the
+# multi-replica stack. HPAs need metrics-server; without it the services simply stay at their
+# Deployment replica count (still > 1) and `kubectl scale` continues to work.
 patches:
-  - path: replicas-patch.yaml
   - path: resources-patch.yaml
+  - path: autoscaling-patch.yaml
 
 # Default image refs are local dev tags. build.ps1 -DeployKube renders matching
 # tags into a copied overlay under target/k8s-render before applying.

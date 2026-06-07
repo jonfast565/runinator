@@ -8,6 +8,7 @@
       <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" placeholder="Search" />
     </div>
     <div class="actions">
+      <ConnectionStrip />
       <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
       <button class="btn" :disabled="app.serviceBlocked" @click="$emit('refresh')">
         <Icon name="refresh" />
@@ -29,6 +30,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
+import ConnectionStrip from "./ConnectionStrip.vue";
 import { navItemForTab, useAppStore } from "../../stores/app";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";

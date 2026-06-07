@@ -1,9 +1,9 @@
 use crate::{
     http::types::{
-        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishIngressRequest,
-        PublishRequest, PublishResultRequest, PublishWakeRequest, ReceiveControlResponse,
-        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
-        ReceiveWakeResponse,
+        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishEventRequest,
+        PublishIngressRequest, PublishRequest, PublishResultRequest, PublishWakeRequest,
+        ReceiveControlResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
+        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
     Broker, BrokerError,
 };
@@ -64,6 +64,8 @@ where
         .route("/ingress/receive", post(receive_ingress::<B>))
         .route("/ingress/ack", post(ack_ingress::<B>))
         .route("/ingress/nack", post(nack_ingress::<B>))
+        .route("/events/publish", post(publish_event::<B>))
+        .route("/events/receive", post(receive_event::<B>))
         .route("/receive", post(receive::<B>))
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
@@ -298,6 +300,32 @@ where
             .await,
         StatusCode::OK,
     )
+}
+
+async fn publish_event<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishEventRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_event(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_event<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_event(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveEventResponse { delivery }),
+        Err(err) => error_response(err),
+    }
 }
 
 async fn receive<B>(

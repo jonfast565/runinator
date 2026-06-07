@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{
-    ActionCommand, ControlCommand, WakeCommand, WorkflowResultEvent, WsIngressCommand,
+    ActionCommand, ControlCommand, UiEvent, WakeCommand, WorkflowResultEvent, WsIngressCommand,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -92,6 +92,42 @@ pub struct IngressDelivery {
     pub dedupe_key: String,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
+}
+
+/// a UI event published on the broker fan-out `events` channel. best-effort: no dedupe, no ack.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventMessage {
+    pub event: UiEvent,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// a UI event delivery handed to one fan-out subscriber. every subscriber receives its own copy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventDelivery {
+    pub delivery_id: Uuid,
+    pub event: UiEvent,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+impl EventMessage {
+    pub fn new(event: UiEvent) -> Self {
+        Self {
+            event,
+            enqueued_at: utc_now(),
+        }
+    }
+}
+
+impl From<EventMessage> for EventDelivery {
+    fn from(message: EventMessage) -> Self {
+        Self {
+            delivery_id: Uuid::new_v4(),
+            event: message.event,
+            enqueued_at: message.enqueued_at,
+        }
+    }
 }
 
 impl WakeMessage {

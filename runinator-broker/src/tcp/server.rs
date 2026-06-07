@@ -143,6 +143,13 @@ where
             .nack_ingress(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
+        Ok(TcpRequest::PublishEvent { message }) => {
+            broker.publish_event(message).await.map(|_| TcpResponse::Ok)
+        }
+        Ok(TcpRequest::ReceiveEvent { consumer }) => broker
+            .receive_event(&consumer)
+            .await
+            .map(|delivery| TcpResponse::EventDelivery { delivery }),
         Err(err) => Ok(TcpResponse::Error {
             message: err.to_string(),
         }),

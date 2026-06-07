@@ -2,13 +2,15 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use log::{error, info};
-use runinator_database::{postgres::PostgresDb, sqlite::SqliteDb};
+use runinator_database::{mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb};
 use runinator_models::errors::SendableError;
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
 enum Backend {
     Sqlite,
     Postgres,
+    #[value(alias = "mariadb")]
+    Mysql,
 }
 
 #[derive(Parser, Debug)]
@@ -67,6 +69,11 @@ async fn run() -> Result<(), SendableError> {
         Backend::Postgres => {
             info!("Connecting to postgres");
             let db = PostgresDb::new(&url).await?;
+            db.run_migrations().await?;
+        }
+        Backend::Mysql => {
+            info!("Connecting to mysql/mariadb");
+            let db = MySqlDb::new(&url).await?;
             db.run_migrations().await?;
         }
     }

@@ -86,16 +86,17 @@ export const useAppStore = defineStore("app", () => {
   const serviceConnected = computed(() => Boolean(serviceUrl.value || backendReachable.value));
   const serviceBlocked = computed(() => initialLoading.value || (!errorText.value && !serviceConnected.value));
   const loadingMessage = computed(() => (serviceConnected.value ? "Loading Runinator..." : "Waiting for Runinator service..."));
+  const isRealtime = computed(() => eventStreamState.value === "connected");
   const eventStreamLabel = computed(() => {
     switch (eventStreamState.value) {
       case "connected":
-        return "WS live";
+        return "RT";
       case "connecting":
-        return "WS connecting";
+        return "Connecting";
       case "fallback":
         return "Polling";
       default:
-        return "WS offline";
+        return "Offline";
     }
   });
 
@@ -169,6 +170,7 @@ export const useAppStore = defineStore("app", () => {
     serviceConnected,
     serviceBlocked,
     loadingMessage,
+    isRealtime,
     eventStreamLabel,
     setStatus,
     setError,

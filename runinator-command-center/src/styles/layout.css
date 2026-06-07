@@ -114,8 +114,7 @@
   to { transform: rotate(360deg); }
 }
 
-.topbar,
-.connection-strip {
+.topbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -156,13 +155,7 @@
   margin-left: auto;
 }
 
-.connection-strip {
-  min-height: 38px;
-  padding-block: 7px;
-}
-
 .service-url {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -453,9 +446,5 @@ main {
 
   .toolbar-search {
     width: min(100%, 260px);
-  }
-
-  .connection-strip {
-    flex-wrap: wrap;
   }
 }

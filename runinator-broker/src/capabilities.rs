@@ -40,7 +40,8 @@ mod tests {
     use super::*;
     use crate::{
         in_memory::InMemoryBroker, BrokerDelivery, BrokerMessage, ControlCommand, ControlDelivery,
-        IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+        EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
+        ResultMessage, WakeDelivery, WakeMessage,
     };
 
     #[test]
@@ -175,6 +176,14 @@ mod tests {
             _consumer: &str,
             _delivery_id: Uuid,
         ) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn publish_event(&self, _message: EventMessage) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
+        async fn receive_event(&self, _consumer: &str) -> Result<EventDelivery, BrokerError> {
             unreachable!()
         }
     }

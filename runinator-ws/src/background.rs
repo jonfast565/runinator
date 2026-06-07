@@ -4,13 +4,15 @@ use log::{error, info, warn};
 use runinator_broker::Broker;
 use runinator_comm::{ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, broadcast};
 use uuid::Uuid;
 
 use crate::{
     events::{AppEvent, EventSender, emit, emit_workflow_run},
     repository,
 };
+
+const EVENT_CONSUMER_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
 const INGRESS_CONSUMER_ID: &str = "runinator-ws-ingress";
 const WAKE_PUBLISH_INTERVAL: Duration = Duration::from_millis(1000);
@@ -224,6 +226,41 @@ async fn apply_ingress<T: DatabaseImpl>(
             }
             emit_workflow_run(events, *workflow_run_id);
             Ok(())
+        }
+    }
+}
+
+/// consume the broker fan-out events channel and re-broadcast every event to this replica's local
+/// WebSocket clients. each replica subscribes with its own per-replica `instance_id`, so every
+/// replica receives every UI event regardless of which replica emitted it.
+pub(crate) async fn run_event_consumer(
+    broker: Arc<dyn Broker>,
+    local: broadcast::Sender<AppEvent>,
+    instance_id: String,
+    shutdown: Arc<Notify>,
+) {
+    info!("Event consumer started");
+    loop {
+        let received = tokio::select! {
+            _ = shutdown.notified() => {
+                info!("Event consumer shutting down");
+                return;
+            }
+            received = broker.receive_event(&instance_id) => received,
+        };
+        match received {
+            // a send error just means no WebSocket clients are connected right now; events are
+            // best-effort, so drop it.
+            Ok(delivery) => {
+                let _ = local.send(delivery.event);
+            }
+            Err(err) => {
+                error!("Failed to receive UI event: {}", err);
+                tokio::select! {
+                    _ = shutdown.notified() => return,
+                    _ = tokio::time::sleep(EVENT_CONSUMER_RETRY_BACKOFF) => {}
+                }
+            }
         }
     }
 }

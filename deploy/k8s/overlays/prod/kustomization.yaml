@@ -31,3 +31,4 @@ images:
 patches:
   - path: resources-patch.yaml
   - path: storage-class-patch.yaml
+  - path: autoscaling-patch.yaml

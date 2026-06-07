@@ -1,11 +1,13 @@
 use crate::{
     http::types::{
-        AckRequest, PublishControlRequest, PublishIngressRequest, PublishRequest,
-        PublishWakeRequest, ReceiveControlResponse, ReceiveIngressResponse, ReceiveRequest,
-        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
+        AckRequest, PublishControlRequest, PublishEventRequest, PublishIngressRequest,
+        PublishRequest, PublishWakeRequest, ReceiveControlResponse, ReceiveEventResponse,
+        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
+        ReceiveWakeResponse,
     },
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -354,5 +356,49 @@ impl Broker for HttpBroker {
 
     async fn nack_ingress(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("ingress/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
+        let url = self.endpoint("events/publish")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&PublishEventRequest { message })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected event publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
+        let url = self.endpoint("events/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveEventResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected event receive status: {status}"
+            ))),
+        }
     }
 }

@@ -1,0 +1,33 @@
+# Laptop-friendly autoscaling bounds: keep the multi-replica floor from base (minReplicas: 2) but
+# cap the ceiling so a single-node cluster is not overwhelmed. Raise these as local capacity allows.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  maxReplicas: 3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  maxReplicas: 4
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-waker
+  namespace: runinator
+spec:
+  maxReplicas: 3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runinator-command-center-web
+  namespace: runinator
+spec:
+  maxReplicas: 3

@@ -1,0 +1,46 @@
+# Disruption budgets keep each load-balanced service available during voluntary disruptions
+# (node drains, rolling updates, scale-down). maxUnavailable: 1 is safe once a Deployment runs
+# >= 2 replicas; the local overlay (single replica each) deletes these so node drains aren't blocked.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runinator-ws
+  namespace: runinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: runinator-ws
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: runinator-worker
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runinator-waker
+  namespace: runinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: runinator-waker
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runinator-command-center-web
+  namespace: runinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: runinator-command-center-web
