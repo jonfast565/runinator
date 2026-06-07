@@ -11,6 +11,20 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.form-grid > label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.form-grid > label > span,
+.form-grid > label > strong {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .json-section {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

@@ -4,7 +4,10 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2>Config &amp; Secrets</h2>
+            <div class="secrets-toolbar-copy">
+              <h2>Config &amp; Secrets</h2>
+              <p>Provider credentials and service config values available to workflows.</p>
+            </div>
             <div class="btn-row">
               <button class="btn" @click="secrets.refreshSecrets">
                 <Icon name="refresh" />
@@ -14,6 +17,20 @@
                 <Icon name="trash" />
                 <span>Remove</span>
               </button>
+            </div>
+          </div>
+          <div class="secrets-summary">
+            <div>
+              <span>Entries</span>
+              <strong>{{ secrets.filteredSecrets.length }}</strong>
+            </div>
+            <div>
+              <span>Scopes</span>
+              <strong>{{ knownScopes.length }}</strong>
+            </div>
+            <div>
+              <span>Selected</span>
+              <strong>{{ secrets.selectedSecret ? "1" : "0" }}</strong>
             </div>
           </div>
           <DataTable>
@@ -46,51 +63,63 @@
       <template #second>
         <form class="panel secret-form" @submit.prevent="secrets.saveDraft">
           <div class="panel-toolbar">
-            <h2>{{ formTitle }}</h2>
-            <button class="btn" type="button" @click="secrets.clearDraft">
-              <Icon name="x" />
-              <span>Clear</span>
-            </button>
+            <div class="secrets-toolbar-copy">
+              <h2>{{ formTitle }}</h2>
+              <p>{{ hint }}</p>
+            </div>
+            <div class="btn-row">
+              <button class="btn" type="button" @click="secrets.clearDraft">
+                <Icon name="x" />
+                <span>Clear</span>
+              </button>
+              <button class="btn btn-primary" type="submit">
+                <Icon name="save" />
+                <span>{{ saveLabel }}</span>
+              </button>
+            </div>
           </div>
-          <fieldset class="kind-field">
-            <legend>Kind</legend>
-            <div class="kind-options">
-              <label class="kind-option" :class="{ active: secrets.draft.kind === 'secret' }">
-                <input type="radio" name="setting-kind" value="secret" v-model="secrets.draft.kind" />
-                <span class="kind-option-body">
-                  <span class="kind-option-title">Secret</span>
-                  <span class="kind-option-desc">Encrypted, resolved at the worker</span>
-                </span>
+          <div class="secret-form-body">
+            <fieldset class="kind-field">
+              <legend>Kind</legend>
+              <div class="kind-options">
+                <label class="kind-option" :class="{ active: secrets.draft.kind === 'secret' }">
+                  <input type="radio" name="setting-kind" value="secret" v-model="secrets.draft.kind" />
+                  <span class="kind-option-body">
+                    <span class="kind-option-title">Secret</span>
+                    <span class="kind-option-desc">Encrypted, resolved at the worker</span>
+                  </span>
+                </label>
+                <label class="kind-option" :class="{ active: secrets.draft.kind === 'config' }">
+                  <input type="radio" name="setting-kind" value="config" v-model="secrets.draft.kind" />
+                  <span class="kind-option-body">
+                    <span class="kind-option-title">Config</span>
+                    <span class="kind-option-desc">Plain JSON, resolved by the web service</span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+            <div class="form-grid secret-form-grid">
+              <label>
+                <span>Scope</span>
+                <input v-model="secrets.draft.scope" list="secret-scopes" placeholder="github" />
               </label>
-              <label class="kind-option" :class="{ active: secrets.draft.kind === 'config' }">
-                <input type="radio" name="setting-kind" value="config" v-model="secrets.draft.kind" />
-                <span class="kind-option-body">
-                  <span class="kind-option-title">Config</span>
-                  <span class="kind-option-desc">Plain JSON, resolved by the web service</span>
-                </span>
+              <label>
+                <span>Name</span>
+                <input v-model="secrets.draft.name" placeholder="token" />
+              </label>
+              <label class="secret-value-field">
+                <span>{{ isConfig ? "Config Value (JSON)" : "Secret Value" }}</span>
+                <textarea v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
               </label>
             </div>
-          </fieldset>
-          <label>
-            Scope
-            <input v-model="secrets.draft.scope" list="secret-scopes" placeholder="github" />
-          </label>
-          <datalist id="secret-scopes">
-            <option v-for="scope in knownScopes" :key="scope" :value="scope" />
-          </datalist>
-          <label>
-            Name
-            <input v-model="secrets.draft.name" placeholder="token" />
-          </label>
-          <label>
-            {{ isConfig ? "Config Value (JSON)" : "Secret Value" }}
-            <textarea v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
-          </label>
-          <p class="hint">{{ hint }}</p>
-          <button class="btn btn-primary" type="submit">
-            <Icon name="save" />
-            <span>{{ saveLabel }}</span>
-          </button>
+            <datalist id="secret-scopes">
+              <option v-for="scope in knownScopes" :key="scope" :value="scope" />
+            </datalist>
+            <div class="secret-reference-card">
+              <span>Reference</span>
+              <code>{{ settingRef(secrets.draft.kind, secrets.draft.scope, secrets.draft.name) }}</code>
+            </div>
+          </div>
         </form>
       </template>
     </SplitPane>
@@ -141,15 +170,57 @@ onMounted(() => {
   overflow: auto;
 }
 
-.secret-form label {
+.secrets-toolbar-copy {
   display: grid;
-  color: #4b5663;
-  font-size: 12px;
   gap: 4px;
 }
 
+.secrets-toolbar-copy p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.secrets-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.secrets-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 10px 12px;
+}
+
+.secrets-summary span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.secrets-summary strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.secret-form-body {
+  display: grid;
+  gap: 14px;
+}
+
+.secret-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.secret-value-field {
+  grid-column: 1 / -1;
+}
+
 .secret-form textarea {
-  min-height: 130px;
+  min-height: 180px;
 }
 
 .kind-field {
@@ -157,12 +228,13 @@ onMounted(() => {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .kind-field legend {
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 12px;
+  font-weight: 650;
   padding: 0;
 }
 
@@ -176,28 +248,28 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  border: 1px solid #d7dce3;
-  border-radius: 8px;
-  background: #fff;
-  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 12px;
   cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .kind-option:hover {
-  border-color: #b9c4d2;
-  background: #fbfcfe;
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .kind-option.active {
-  border-color: #3b82f6;
-  background: #f4f8ff;
-  box-shadow: 0 0 0 1px #3b82f6 inset;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
 .kind-option input {
   margin: 2px 0 0;
-  accent-color: #3b82f6;
+  accent-color: var(--accent);
   flex: 0 0 auto;
 }
 
@@ -208,20 +280,41 @@ onMounted(() => {
 }
 
 .kind-option-title {
-  color: #17202a;
+  color: var(--text);
   font-size: 13px;
   font-weight: 600;
 }
 
 .kind-option-desc {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
 }
 
-.hint {
-  color: #66717e;
+.secret-reference-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 10px 12px;
+}
+
+.secret-reference-card span {
+  color: var(--text-muted);
   font-size: 12px;
-  margin: 0;
+}
+
+.secret-reference-card code {
+  overflow-wrap: anywhere;
+  color: var(--accent-text);
+}
+
+@media (max-width: 980px) {
+  .secrets-summary,
+  .secret-form-grid,
+  .kind-options {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

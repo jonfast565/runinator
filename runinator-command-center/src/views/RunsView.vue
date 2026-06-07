@@ -3,14 +3,38 @@
     <SplitPane class="runs-layout" storage-key="command-center.runs.split" :initial-first-pct="28" :min-first="340" :min-second="720">
       <template #first>
         <div class="panel runs-list-panel">
-          <h2>Runs</h2>
-          <RunTable
-            :runs="workflows.recentWorkflowRuns"
-            :selected-run-id="workflows.selectedWorkflowRunId"
-            :workflow-names="workflowNames"
-            show-workflow
-            @select="workflows.selectWorkflowRun"
-          />
+          <div class="panel-toolbar">
+            <div class="runs-copy">
+              <h2>Runs</h2>
+              <p>Recent workflow executions, filtered by the current search when present.</p>
+            </div>
+            <button class="btn" @click="workflows.fetchRecentWorkflowRuns()">
+              <span>Refresh</span>
+            </button>
+          </div>
+          <div class="runs-summary">
+            <div>
+              <span>Visible</span>
+              <strong>{{ workflows.recentWorkflowRuns.length }}</strong>
+            </div>
+            <div>
+              <span>Active</span>
+              <strong>{{ activeRunCount }}</strong>
+            </div>
+            <div>
+              <span>Selected</span>
+              <strong>{{ selectedRunLabel }}</strong>
+            </div>
+          </div>
+          <div class="table-scroll runs-table-scroll">
+            <RunTable
+              :runs="workflows.recentWorkflowRuns"
+              :selected-run-id="workflows.selectedWorkflowRunId"
+              :workflow-names="workflowNames"
+              show-workflow
+              @select="workflows.selectWorkflowRun"
+            />
+          </div>
         </div>
       </template>
       <template #second>
@@ -30,33 +54,51 @@
           <template #second>
             <div class="panel details runs-detail-panel">
               <WorkflowRunDetail />
-              <h2 class="runs-detail-heading">Structured Result</h2>
-              <JsonEditor class="runs-detail-output" :model-value="selectedOutput" readonly title="" />
-              <h2 class="runs-detail-heading">Run Output Chunks</h2>
-              <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
-              <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
-              <div class="table-scroll compact-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>MIME</th>
-                      <th>Size</th>
-                      <th>URI</th>
-                      <th>Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="artifact in artifacts" :key="artifact.id">
-                      <td>{{ artifact.name }}</td>
-                      <td>{{ artifact.mime_type }}</td>
-                      <td>{{ artifact.size_bytes }}</td>
-                      <td>{{ artifact.uri }}</td>
-                      <td>{{ formatDate(artifact.created_at) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              <section class="runs-detail-section">
+                <div class="runs-section-header">
+                  <h2 class="runs-detail-heading">Structured Result</h2>
+                  <span>Workflow output JSON</span>
+                </div>
+                <JsonEditor class="runs-detail-output" :model-value="selectedOutput" readonly title="" />
+              </section>
+              <section class="runs-detail-section">
+                <div class="runs-section-header">
+                  <h2 class="runs-detail-heading">Run Output Chunks</h2>
+                  <span>Streamed log and output segments</span>
+                </div>
+                <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
+              </section>
+              <section class="runs-detail-section">
+                <div class="runs-section-header">
+                  <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
+                  <span>{{ artifacts.length ? `${artifacts.length} attached` : "No artifacts on the selected node" }}</span>
+                </div>
+                <div class="table-scroll compact-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>MIME</th>
+                        <th>Size</th>
+                        <th>URI</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!artifacts.length" class="muted">
+                        <td colspan="5">No artifacts available.</td>
+                      </tr>
+                      <tr v-for="artifact in artifacts" :key="artifact.id">
+                        <td>{{ artifact.name }}</td>
+                        <td>{{ artifact.mime_type }}</td>
+                        <td>{{ artifact.size_bytes }}</td>
+                        <td>{{ artifact.uri }}</td>
+                        <td>{{ formatDate(artifact.created_at) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             </div>
           </template>
         </SplitPane>
@@ -89,6 +131,9 @@ const artifacts = ref<RunArtifact[]>([]);
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
 const selectedNodeRunIdRef = ref(workflows.selectedWorkflowNodeRunId);
 const workflowNames = computed(() => Object.fromEntries(workflows.workflows.filter((workflow) => workflow.id).map((workflow) => [workflow.id!, workflow.name])));
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
+const activeRunCount = computed(() => workflows.recentWorkflowRuns.filter((run) => !TERMINAL_STATUSES.has(run.status)).length);
+const selectedRunLabel = computed(() => (workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None"));
 
 useWorkflowRunStream();
 
@@ -101,6 +146,56 @@ const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLog
 </script>
 
 <style scoped>
+.runs-pane {
+  overflow: hidden;
+}
+
+.runs-list-panel,
+.runs-detail-panel {
+  min-height: 0;
+}
+
+.runs-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.runs-copy p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.runs-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.runs-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 10px 12px;
+}
+
+.runs-summary span,
+.runs-section-header span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.runs-summary strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.runs-table-scroll {
+  flex: 1 1 auto;
+}
+
 .runs-detail-shell {
   display: flex;
   flex-direction: column;
@@ -113,6 +208,28 @@ const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLog
   min-height: 0;
 }
 
+.runs-detail-panel {
+  overflow: auto;
+}
+
+.runs-detail-section {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.runs-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.runs-detail-heading {
+  margin: 0;
+}
+
 .runs-detail-output {
   flex: 0 0 auto;
   min-height: 0;
@@ -120,5 +237,11 @@ const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLog
 
 .runs-detail-output :deep(.json-editor-container) {
   max-height: 260px;
+}
+
+@media (max-width: 980px) {
+  .runs-summary {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

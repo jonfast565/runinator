@@ -3,7 +3,10 @@
     <div class="dev-layout">
       <section class="panel dev-panel">
         <div class="panel-toolbar">
-          <h2>Dev Pack</h2>
+          <div class="dev-toolbar-copy">
+            <h2>Dev Pack</h2>
+            <p>Inspect, edit, apply, and run a local pack without leaving the desktop client.</p>
+          </div>
           <div class="actions">
             <button class="btn" :disabled="busy || !packPath.trim()" :title="`Inspect (${modKeyLabel}I)`" @click="inspectPackNow">
               <Icon name="refresh" />
@@ -128,7 +131,10 @@
 
       <section class="panel dev-editor-panel">
         <div class="panel-toolbar">
-          <h2>{{ selectedFilePath ? relativePath(selectedFilePath) : "Source" }}</h2>
+          <div class="dev-toolbar-copy">
+            <h2>{{ selectedFilePath ? relativePath(selectedFilePath) : "Source" }}</h2>
+            <p>{{ selectedFilePath ? "Live source editing for the selected pack file." : "Select a watched file to inspect its source." }}</p>
+          </div>
           <div class="actions">
             <button class="btn" :disabled="!canSaveSource || saving" @click="saveSelectedSource">
               <Icon name="save" />
@@ -160,7 +166,10 @@
 
       <section class="panel dev-run-panel">
         <div class="panel-toolbar">
-          <h2>Latest Run</h2>
+          <div class="dev-toolbar-copy">
+            <h2>Latest Run</h2>
+            <p>{{ latestRunId ? "Track the active or most recent run created from this panel." : "Run a selected workflow and inspect its latest execution here." }}</p>
+          </div>
           <div class="actions">
             <button class="btn btn-primary" :disabled="!canRun" :title="`Run (${modKeyLabel}↵)`" @click="runSelectedWorkflow">
               <Icon name="play" />
@@ -645,10 +654,21 @@ function fileMeta(file: DevPackFile) {
   overflow: auto;
 }
 
+.dev-toolbar-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.dev-toolbar-copy p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .dev-layout {
   display: grid;
   min-height: 100%;
-  gap: 10px;
+  gap: 12px;
   grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
   grid-template-rows: minmax(520px, 1fr) minmax(220px, 34vh);
 }
@@ -665,6 +685,15 @@ function fileMeta(file: DevPackFile) {
 
 .dev-form-grid {
   grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.dev-form-grid label {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
 }
 
 .dev-pack-diff {
@@ -672,8 +701,8 @@ function fileMeta(file: DevPackFile) {
 }
 
 .dev-shortcuts {
-  margin-top: 6px;
-  color: #8a94a0;
+  margin-top: 2px;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
@@ -710,7 +739,7 @@ function fileMeta(file: DevPackFile) {
 
 .dev-options {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -718,25 +747,34 @@ function fileMeta(file: DevPackFile) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #344255;
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text);
   font-size: 13px;
+  padding: 0 10px;
 }
 
 .dev-status-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
-  color: #344255;
+  margin-top: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text);
   font-size: 13px;
+  padding: 10px 12px;
 }
 
 .dev-error {
   margin-top: 8px;
-  border-left: 3px solid #dc2626;
-  background: #fff1f1;
-  color: #9f1239;
-  padding: 8px 10px;
+  border-left: 3px solid var(--danger-solid);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  padding: 10px 12px;
   white-space: pre-wrap;
   font-size: 12px;
 }
@@ -750,22 +788,22 @@ function fileMeta(file: DevPackFile) {
 
 .dev-metrics div,
 .dev-run-summary div {
-  border: 1px solid #d8e0e8;
-  border-radius: 6px;
-  padding: 8px;
-  background: #fbfcfe;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface-subtle);
 }
 
 .dev-metrics span,
 .dev-run-summary span {
   display: block;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .dev-metrics strong,
 .dev-run-summary strong {
-  color: #17202b;
+  color: var(--text);
   font-size: 15px;
 }
 
@@ -783,13 +821,13 @@ function fileMeta(file: DevPackFile) {
 }
 
 .dev-section-header span {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .dev-file-list {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   overflow: auto;
 }
 
@@ -797,22 +835,22 @@ function fileMeta(file: DevPackFile) {
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr);
   gap: 3px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #17202b;
-  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text);
+  padding: 9px 10px;
   text-align: left;
 }
 
 .dev-file-list button:hover,
 .dev-file-list button.selected {
-  border-color: #b7c8dc;
-  background: #eef5ff;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .dev-file-kind {
-  color: #4d5d70;
+  color: var(--text-subtle);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -826,7 +864,7 @@ function fileMeta(file: DevPackFile) {
 
 .dev-file-meta {
   grid-column: 2;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -844,10 +882,11 @@ function fileMeta(file: DevPackFile) {
   flex: 1 1 auto;
   min-height: 0;
   border: 0;
-  border-top: 1px solid #d8e0e8;
-  padding: 10px;
+  border-top: 1px solid var(--border-subtle);
+  padding: 12px 0 0;
   resize: none;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: transparent;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .dev-run-summary {
@@ -863,23 +902,25 @@ function fileMeta(file: DevPackFile) {
   font-variant-numeric: tabular-nums;
 }
 .dev-run-counts .ok {
-  color: #166534;
+  color: var(--success-fg);
 }
 .dev-run-counts .failed {
-  color: #b91c1c;
+  color: var(--danger-fg);
 }
 .dev-run-counts .running {
-  color: #1d4ed8;
+  color: var(--accent-text);
 }
 
 .dev-run-timeline {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
 }
 
 .empty-state {
-  color: #66717e;
+  color: var(--text-muted);
   padding: 14px 0;
 }
 
