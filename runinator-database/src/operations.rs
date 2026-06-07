@@ -1735,6 +1735,9 @@ where
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
+        // catalog_items.id is a uuid primary key with no db default; generate one for the insert
+        // path. on a uri conflict the update set never touches id, so existing rows keep theirs.
+        let id = Uuid::new_v4();
         let columns =
             "id, uri, item_type, name, version, document, metadata, created_at, updated_at";
         let document = item
@@ -1757,9 +1760,10 @@ where
                 ],
             );
             sqlx::query(&self.render(&format!(
-                "INSERT INTO catalog_items (uri, item_type, name, version, document, metadata, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+                "INSERT INTO catalog_items (id, uri, item_type, name, version, document, metadata, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
+            .bind(id)
             .bind(json_str(&item, "uri"))
             .bind(json_str(&item, "item_type"))
             .bind(json_str(&item, "name"))
@@ -1780,11 +1784,12 @@ where
         }
 
         let row = sqlx::query(&self.render(
-            "INSERT INTO catalog_items (uri, item_type, name, version, document, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO catalog_items (id, uri, item_type, name, version, document, metadata, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(uri) DO UPDATE SET item_type = excluded.item_type, name = excluded.name, version = excluded.version, document = excluded.document, metadata = excluded.metadata, updated_at = excluded.updated_at
              RETURNING id, uri, item_type, name, version, document, metadata, created_at, updated_at",
         ))
+        .bind(id)
         .bind(json_str(&item, "uri"))
         .bind(json_str(&item, "item_type"))
         .bind(json_str(&item, "name"))
