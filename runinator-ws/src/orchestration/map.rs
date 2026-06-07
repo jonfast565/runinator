@@ -208,7 +208,7 @@ async fn create_map_child_run<T: DatabaseImpl>(
     frame: &MapFrame,
     index: i64,
     item: Value,
-) -> Result<i64, SendableError> {
+) -> Result<Uuid, SendableError> {
     let snapshot = match parent_run.workflow_snapshot.clone() {
         Some(snapshot) => snapshot,
         None => db

@@ -105,6 +105,10 @@ the run context (after `config` resolves, with secrets left as `secret://` strin
 omitted fields and never overwriting a supplied value; one default may read another. They survive
 compile → decompile → recompile and are stored on the field in `input_type`.
 
+**Version**: the optional `v` suffix in the workflow header is a semantic version,
+`v<major>[.<minor>[.<patch>]]` (e.g. `v1`, `v1.2`, `v1.2.3`). Missing components default to
+zero, so `v1` lowers to `1.0.0`. The decompiler always emits the canonical full form.
+
 **Triggers**: a workflow header may declare cron schedules that fire runs of the workflow:
 
 ```

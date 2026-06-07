@@ -3,6 +3,7 @@
 // the grammar can evolve independently of the json wire model.
 
 use crate::errors::Span;
+use runinator_models::semver::SemVer;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -12,7 +13,7 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub name: String,
-    pub version: Option<i64>,
+    pub version: Option<SemVer>,
     pub input: Option<TypeExpr>,
     /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
     /// action calls by `...name` spreads during desugaring.

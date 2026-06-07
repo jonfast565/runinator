@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 pub const API_PROVIDERS: &str = "/providers";
 pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
@@ -33,118 +35,122 @@ pub const API_IDEMPOTENCY_KEYS: &str = "/idempotency_keys";
 pub const API_CREDENTIALS: &str = "/credentials";
 pub const API_REPLICAS: &str = "/replicas";
 
-pub fn api_workflow(workflow_id: i64) -> String {
+pub fn api_workflow(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}")
 }
 
-pub fn api_workflow_export(workflow_id: i64) -> String {
+pub fn api_workflow_export(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/export")
 }
 
-pub fn api_workflow_triggers(workflow_id: i64) -> String {
+pub fn api_workflow_duplicate(workflow_id: Uuid) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/duplicate")
+}
+
+pub fn api_workflow_triggers(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/triggers")
 }
 
-pub fn api_workflow_runs(workflow_id: i64) -> String {
+pub fn api_workflow_runs(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/runs")
 }
 
-pub fn api_workflow_trigger(trigger_id: i64) -> String {
+pub fn api_workflow_trigger(trigger_id: Uuid) -> String {
     format!("/workflow_triggers/{trigger_id}")
 }
 
-pub fn api_workflow_trigger_runs(trigger_id: i64) -> String {
+pub fn api_workflow_trigger_runs(trigger_id: Uuid) -> String {
     format!("/workflow_triggers/{trigger_id}/runs")
 }
 
-pub fn api_workflow_run(workflow_run_id: i64) -> String {
+pub fn api_workflow_run(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}")
 }
 
-pub fn api_workflow_run_rename(workflow_run_id: i64) -> String {
+pub fn api_workflow_run_rename(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/rename")
 }
 
-pub fn api_workflow_run_replay(workflow_run_id: i64) -> String {
+pub fn api_workflow_run_replay(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/replay")
 }
 
-pub fn api_workflow_run_command(workflow_run_id: i64, command: &str) -> String {
+pub fn api_workflow_run_command(workflow_run_id: Uuid, command: &str) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/{command}")
 }
 
-pub fn api_workflow_run_nodes(workflow_run_id: i64) -> String {
+pub fn api_workflow_run_nodes(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/nodes")
 }
 
-pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: i64) -> String {
+pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/renew")
 }
 
-pub fn api_scheduler_workflow_run_claim_release(workflow_run_id: i64) -> String {
+pub fn api_scheduler_workflow_run_claim_release(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/release")
 }
 
-pub fn api_scheduler_ready_node_process(ready_node_id: i64) -> String {
+pub fn api_scheduler_ready_node_process(ready_node_id: Uuid) -> String {
     format!("/scheduler/ready_nodes/{ready_node_id}/process")
 }
 
-pub fn api_scheduler_action_dispatch_published(dispatch_id: i64) -> String {
+pub fn api_scheduler_action_dispatch_published(dispatch_id: Uuid) -> String {
     format!("/scheduler/action_dispatches/{dispatch_id}/published")
 }
 
-pub fn api_scheduler_action_dispatch_failed(dispatch_id: i64) -> String {
+pub fn api_scheduler_action_dispatch_failed(dispatch_id: Uuid) -> String {
     format!("/scheduler/action_dispatches/{dispatch_id}/failed")
 }
 
-pub fn api_run(run_id: i64) -> String {
+pub fn api_run(run_id: Uuid) -> String {
     format!("{API_RUNS}/{run_id}")
 }
 
-pub fn api_run_chunks(run_id: i64) -> String {
+pub fn api_run_chunks(run_id: Uuid) -> String {
     format!("{API_RUNS}/{run_id}/chunks")
 }
 
-pub fn api_run_artifacts(run_id: i64) -> String {
+pub fn api_run_artifacts(run_id: Uuid) -> String {
     format!("{API_RUNS}/{run_id}/artifacts")
 }
 
-pub fn api_workflow_node_run(node_run_id: i64) -> String {
+pub fn api_workflow_node_run(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}")
 }
 
-pub fn api_workflow_node_run_chunks(node_run_id: i64) -> String {
+pub fn api_workflow_node_run_chunks(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/chunks")
 }
 
-pub fn api_workflow_node_run_artifacts(node_run_id: i64) -> String {
+pub fn api_workflow_node_run_artifacts(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/artifacts")
 }
 
-pub fn api_workflow_node_run_claim(node_run_id: i64) -> String {
+pub fn api_workflow_node_run_claim(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/claim")
 }
 
-pub fn api_workflow_node_run_release(node_run_id: i64) -> String {
+pub fn api_workflow_node_run_release(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/release")
 }
 
-pub fn api_approval_command(approval_id: i64, command: &str) -> String {
+pub fn api_approval_command(approval_id: Uuid, command: &str) -> String {
     format!("{API_APPROVALS}/{approval_id}/{command}")
 }
 
-pub fn api_replica(replica_id: i64) -> String {
+pub fn api_replica(replica_id: Uuid) -> String {
     format!("{API_REPLICAS}/{replica_id}")
 }
 
-pub fn api_replica_heartbeat(replica_id: i64) -> String {
+pub fn api_replica_heartbeat(replica_id: Uuid) -> String {
     format!("{API_REPLICAS}/{replica_id}/heartbeat")
 }
 
-pub fn api_replica_offline(replica_id: i64) -> String {
+pub fn api_replica_offline(replica_id: Uuid) -> String {
     format!("{API_REPLICAS}/{replica_id}/offline")
 }
 
-pub fn api_replica_providers(replica_id: i64) -> String {
+pub fn api_replica_providers(replica_id: Uuid) -> String {
     format!("{API_REPLICAS}/{replica_id}/providers")
 }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
@@ -40,7 +41,7 @@ pub(crate) struct ImportWdlRequest {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub workflow_id: Option<i64>,
+    pub workflow_id: Option<Uuid>,
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
 }

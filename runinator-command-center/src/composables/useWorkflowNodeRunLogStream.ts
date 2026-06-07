@@ -5,7 +5,7 @@ import { buildWebSocketUrl } from "../utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 
-export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
+export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
   const app = useAppStore();
   const chunks = ref<RunChunk[]>([]);
   const lastChunkAt = ref<number>(0);
@@ -18,7 +18,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
     reconnectTimer = null;
   }
 
-  function connect(id: number) {
+  function connect(id: string) {
     clearReconnectTimer();
     if (nodeRunId.value !== id) return;
     if (!app.serviceUrl) return;
@@ -60,7 +60,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<number>) {
       disconnect();
       chunks.value = [];
       lastChunkAt.value = 0;
-      if (id > 0) connect(id);
+      if (id) connect(id);
     },
     { immediate: true }
   );

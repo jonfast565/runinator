@@ -6,7 +6,7 @@ use runinator_models::runs::ProviderExecutionRequest;
 fn test_jira_provider_missing_base_url() {
     let provider = JiraProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "jira".into(),
         action_function: "search".into(),
         parameters: json!({
@@ -30,7 +30,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
     // a bad config value should produce a descriptive error, not "builder error".
     let provider = JiraProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "jira".into(),
         action_function: "search".into(),
         parameters: json!({
@@ -60,7 +60,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
 fn test_jira_search_empty_base_url_is_clear() {
     let provider = JiraProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "jira".into(),
         action_function: "search".into(),
         parameters: json!({

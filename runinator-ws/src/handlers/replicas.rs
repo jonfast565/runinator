@@ -1,4 +1,5 @@
 use std::{net::SocketAddr, sync::Arc};
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -31,7 +32,7 @@ pub(crate) async fn heartbeat_replica<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
-    Path(replica_id): Path<i64>,
+    Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaHeartbeatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::heartbeat_replica(
@@ -52,7 +53,7 @@ pub(crate) async fn heartbeat_replica<T: DatabaseImpl>(
 
 pub(crate) async fn mark_replica_offline<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(replica_id): Path<i64>,
+    Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaOfflineRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::mark_replica_offline(db.as_ref(), replica_id, request.runtime_id).await {
@@ -76,7 +77,7 @@ pub(crate) async fn get_replicas<T: DatabaseImpl>(
 
 pub(crate) async fn upsert_replica_provider<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(replica_id): Path<i64>,
+    Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaProviderRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await {
@@ -90,7 +91,7 @@ pub(crate) async fn upsert_replica_provider<T: DatabaseImpl>(
 
 pub(crate) async fn get_replica_providers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(replica_id): Path<i64>,
+    Path(replica_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_replica_provider_registrations(db.as_ref(), replica_id).await {
         Ok(registrations) => (

@@ -121,8 +121,8 @@ fn static_node_output_type(
             )))
         }
         WorkflowNodeKind::Subflow => Ok(Some(WorkflowType::structure([
-            ("subflow_run_id", WorkflowType::Integer),
-            ("subflow_workflow_id", WorkflowType::Integer),
+            ("subflow_run_id", WorkflowType::String),
+            ("subflow_workflow_id", WorkflowType::String),
             ("run_name", WorkflowType::String),
             ("reused", WorkflowType::Boolean),
             ("status", WorkflowType::String),
@@ -776,8 +776,8 @@ fn common_type(left: WorkflowType, right: WorkflowType) -> Option<WorkflowType> 
 
 fn workflow_context_type() -> WorkflowType {
     WorkflowType::structure([
-        ("run_id", WorkflowType::Integer),
-        ("workflow_id", WorkflowType::Integer),
+        ("run_id", WorkflowType::String),
+        ("workflow_id", WorkflowType::String),
         ("name", WorkflowType::String),
         ("state", WorkflowType::Any),
     ])

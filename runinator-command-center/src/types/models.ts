@@ -170,8 +170,8 @@ export interface ProviderMetadata {
 }
 
 export interface RunSummary {
-  id: number;
-  workflow_id?: number;
+  id: string;
+  workflow_id?: string;
   workflow_snapshot?: WorkflowDefinition | null;
   status: string;
   parameters?: JsonRecord;
@@ -181,7 +181,7 @@ export interface RunSummary {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
-  workflow_run_id?: number | null;
+  workflow_run_id?: string | null;
   workflow_node_id?: string | null;
   active_node_id?: string | null;
   state?: JsonRecord;
@@ -189,15 +189,15 @@ export interface RunSummary {
 }
 
 export interface RunChunk {
-  id: number;
+  id: string;
   stream: string;
   content: string;
 }
 
 export interface RunArtifact {
-  id: number;
-  run_id: number;
-  workflow_node_run_id?: number | null;
+  id: string;
+  run_id: string;
+  workflow_node_run_id?: string | null;
   name: string;
   mime_type: string;
   size_bytes: number;
@@ -210,8 +210,8 @@ export type NotificationChannel = "in_app" | "email" | "slack";
 export type NotificationSeverity = "info" | "success" | "warning" | "error";
 
 export interface Notification {
-  id: number;
-  workflow_run_id?: number | null;
+  id: string;
+  workflow_run_id?: string | null;
   workflow_node_id?: string | null;
   channel: NotificationChannel | string;
   severity: NotificationSeverity | string;
@@ -224,7 +224,7 @@ export interface Notification {
 }
 
 export interface ScheduledTask {
-  id: number | null;
+  id: string | null;
   name: string;
   cron_schedule: string;
   action_name: string;
@@ -242,9 +242,10 @@ export interface SaveTaskResponse {
 }
 
 export interface WorkflowDefinition {
-  id: number | null;
+  id: string | null;
   name: string;
-  version: number;
+  // semantic version string, e.g. "1.2.0".
+  version: string;
   enabled: boolean;
   input_type: RuninatorType;
   definition: JsonRecord;
@@ -295,8 +296,8 @@ export interface WdlCompletionItem {
 export type WorkflowTriggerKind = "cron" | "manual";
 
 export interface WorkflowTrigger {
-  id: number | null;
-  workflow_id: number;
+  id: string | null;
+  workflow_id: string;
   kind: WorkflowTriggerKind;
   enabled: boolean;
   configuration: JsonRecord;
@@ -309,8 +310,8 @@ export interface WorkflowTrigger {
 }
 
 export interface WorkflowNodeRun {
-  id: number;
-  workflow_run_id: number;
+  id: string;
+  workflow_run_id: string;
   node_id: string;
   status: string;
   attempt: number;
@@ -325,7 +326,7 @@ export interface WorkflowNodeRun {
 }
 
 export interface WorkflowRunDetail {
-  run: RunSummary & { workflow_id: number; workflow_snapshot?: WorkflowDefinition | null; message?: string | null };
+  run: RunSummary & { workflow_id: string; workflow_snapshot?: WorkflowDefinition | null; message?: string | null };
   nodes: WorkflowNodeRun[];
 }
 
@@ -344,7 +345,7 @@ export interface CredentialSummary {
 }
 
 export interface WorkflowRunCreated {
-  id: number;
+  id: string;
 }
 
 export interface ServiceStatus {
@@ -356,7 +357,7 @@ export type ReplicaKind = "worker" | "waker" | "webservice";
 export type ReplicaStatus = "live" | "stale" | "offline";
 
 export interface ReplicaRecord {
-  replica_id: number;
+  replica_id: string;
   replica_type: ReplicaKind;
   instance_id: string;
   runtime_id: string;

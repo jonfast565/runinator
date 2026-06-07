@@ -25,12 +25,13 @@ use runinator_models::{
 };
 
 use contracts::{RESOURCE_ARTIFACT_URI_PREFIX, RESOURCE_WORKFLOW_RUN_URI_PREFIX};
-use protocol::{json_export_response, json_tool_response, required_i64, required_value};
+use protocol::{json_export_response, json_tool_response, required_uuid, required_value};
 use resources::{
     resource_entries_from_runs, resource_entries_from_workflow_runs, resource_path_for_uri,
     resource_templates,
 };
 use tools::{fixed_tools, parse_tool_workflow_id, tools_from_workflows};
+use uuid::Uuid;
 
 #[derive(Parser)]
 struct Args {
@@ -126,9 +127,10 @@ impl McpServer {
             .unwrap_or_else(|| response.clone());
         let workflow_run_id = workflow_run
             .get("id")
-            .and_then(Value::as_i64)
-            .unwrap_or_default();
-        if workflow_run_id > 0
+            .and_then(Value::as_str)
+            .and_then(|raw| raw.parse::<Uuid>().ok());
+        let workflow_run_id_display = workflow_run_id.map(|id| id.to_string()).unwrap_or_default();
+        if let Some(workflow_run_id) = workflow_run_id
             && let Some(completed) = self.wait_for_quick_completion(workflow_run_id)?
         {
             workflow_run = completed;
@@ -145,7 +147,7 @@ impl McpServer {
             return Ok(json!({
                 "content": [{
                     "type": "text",
-                    "text": format!("Runinator workflow finished with status {}. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id}", status.as_str())
+                    "text": format!("Runinator workflow finished with status {}. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id_display}", status.as_str())
                 }],
                 "structuredContent": {
                     "workflow_run": workflow_run,
@@ -157,7 +159,7 @@ impl McpServer {
         Ok(json!({
             "content": [{
                 "type": "text",
-                "text": format!("Runinator workflow queued. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id}")
+                "text": format!("Runinator workflow queued. Workflow run resource: {RESOURCE_WORKFLOW_RUN_URI_PREFIX}{workflow_run_id_display}")
             }],
             "structuredContent": response,
             "isError": false,
@@ -175,7 +177,7 @@ impl McpServer {
                 json_tool_response("Workflow definitions", workflows, false)?
             }
             "runinator_get_workflow" => {
-                let workflow_id = required_i64(&arguments, "workflow_id")?;
+                let workflow_id = required_uuid(&arguments, "workflow_id")?;
                 let workflow = self.fetch_api_json(&api_workflow(workflow_id))?;
                 json_tool_response("Workflow definition", workflow, false)?
             }
@@ -186,7 +188,11 @@ impl McpServer {
             }
             "runinator_save_workflow" => {
                 let workflow = required_value(&arguments, "workflow")?;
-                let saved = if let Some(workflow_id) = workflow.get("id").and_then(Value::as_i64) {
+                let saved = if let Some(workflow_id) = workflow
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|raw| raw.parse::<Uuid>().ok())
+                {
                     self.patch_api_json(&api_workflow(workflow_id), workflow)?
                 } else {
                     self.post_api_json(API_WORKFLOWS, workflow)?
@@ -216,7 +222,7 @@ impl McpServer {
                 let sources = collect_wdl_sources(&arguments)?;
                 let options = runinator_wdl::CompileOptions {
                     enabled: true,
-                    default_version: 1,
+                    default_version: runinator_models::semver::SemVer::default(),
                 };
                 let mut workflows = Vec::with_capacity(sources.len());
                 for source in &sources {
@@ -242,7 +248,11 @@ impl McpServer {
                 json_tool_response("Workflow pack imported", result, false)?
             }
             "runinator_export_workflow_bundle" => {
-                let path = match arguments.get("workflow_id").and_then(Value::as_i64) {
+                let path = match arguments
+                    .get("workflow_id")
+                    .and_then(Value::as_str)
+                    .and_then(|raw| raw.parse::<Uuid>().ok())
+                {
                     Some(workflow_id) => format!("{}/export", api_workflow(workflow_id)),
                     None => API_WORKFLOWS_EXPORT.to_string(),
                 };
@@ -358,7 +368,7 @@ impl McpServer {
             .map_err(|err| err.to_string())
     }
 
-    fn wait_for_quick_completion(&self, run_id: i64) -> Result<Option<Value>, String> {
+    fn wait_for_quick_completion(&self, run_id: Uuid) -> Result<Option<Value>, String> {
         for _ in 0..10 {
             let run = self.fetch_api_json(&api_workflow_run(run_id))?;
             let status = run
@@ -397,7 +407,12 @@ impl McpServer {
             Ok(Value::Array(items)) => items,
             _ => Vec::new(),
         };
-        workflow_runs.sort_by_key(|run| run.get("id").and_then(Value::as_i64).unwrap_or_default());
+        workflow_runs.sort_by_key(|run| {
+            run.get("created_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        });
         workflow_runs.reverse();
         workflow_runs.truncate(20);
 
@@ -416,19 +431,28 @@ impl McpServer {
                 runs.extend(items);
             }
         }
-        runs.sort_by_key(|run| run.get("id").and_then(Value::as_i64).unwrap_or_default());
+        runs.sort_by_key(|run| {
+            run.get("created_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        });
         runs.reverse();
         runs.truncate(20);
 
         let mut resources = resource_entries_from_workflow_runs(&workflow_runs);
         resources.extend(resource_entries_from_runs(&runs));
         for run in &runs {
-            let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
+            let Some(run_id) = run
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|raw| raw.parse::<Uuid>().ok())
+            else {
                 continue;
             };
             if let Ok(Value::Array(artifacts)) = self.fetch_api_json(&api_run_artifacts(run_id)) {
                 for artifact in artifacts {
-                    let Some(artifact_id) = artifact.get("id").and_then(Value::as_i64) else {
+                    let Some(artifact_id) = artifact.get("id").and_then(Value::as_str) else {
                         continue;
                     };
                     let name = artifact

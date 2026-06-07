@@ -591,10 +591,12 @@ fn runinator_type_reports_specific_union_validation_errors() {
 
 #[test]
 fn workflow_bundle_uses_importer_shape() {
+    let wf_id = "019ea000-0000-7000-8000-000000000007";
+    let trig_id = "019ea000-0000-7000-8000-000000000003";
     let bundle: WorkflowBundle = serde_json::from_value(json!({
         "workflows": [
             {
-                "id": 7,
+                "id": wf_id,
                 "name": "dev workflow",
                 "version": 1,
                 "enabled": true,
@@ -604,8 +606,8 @@ fn workflow_bundle_uses_importer_shape() {
         ],
         "triggers": [
             {
-                "id": 3,
-                "workflow_id": 7,
+                "id": trig_id,
+                "workflow_id": wf_id,
                 "kind": "manual",
                 "enabled": true,
                 "configuration": {},
@@ -618,8 +620,14 @@ fn workflow_bundle_uses_importer_shape() {
     }))
     .unwrap();
 
-    assert_eq!(bundle.workflows[0].id, Some(7));
-    assert_eq!(bundle.triggers[0].workflow_id, 7);
+    assert_eq!(
+        bundle.workflows[0].id,
+        Some(wf_id.parse::<uuid::Uuid>().unwrap())
+    );
+    assert_eq!(
+        bundle.triggers[0].workflow_id,
+        wf_id.parse::<uuid::Uuid>().unwrap()
+    );
 
     let value = serde_json::to_value(bundle).unwrap();
     assert!(value.get("workflows").is_some());

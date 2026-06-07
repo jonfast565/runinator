@@ -174,8 +174,8 @@ fn worker_validates_provider_output_fields_when_present() {
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: 42,
-        workflow_node_run_id: 99,
+        workflow_run_id: Uuid::new_v4(),
+        workflow_node_run_id: Uuid::new_v4(),
         node_id: "node-a".into(),
         action: WorkflowAction {
             provider: "test".into(),

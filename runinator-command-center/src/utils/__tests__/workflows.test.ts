@@ -28,11 +28,17 @@ import {
 } from "../workflows";
 import { newWorkflowTriggerDraft } from "../../stores/workflows";
 
+const WORKFLOW_ID = "00000000-0000-0000-0000-000000000001";
+const RUN_ID = "00000000-0000-0000-0000-000000000010";
+const NODE_RUN_ID = "00000000-0000-0000-0000-000000000011";
+const SEARCH_WORKFLOW_ID = "00000000-0000-0000-0000-000000000034";
+const SEARCH_RUN_ID = "00000000-0000-0000-0000-000000000012";
+
 describe("workflow graph utils", () => {
   const workflow: WorkflowDefinition = {
-    id: 1,
+    id: WORKFLOW_ID,
     name: "Flow",
-    version: 1,
+    version: "1.0.0",
     enabled: true,
     input_type: { type: "any" },
     definition: {
@@ -254,20 +260,21 @@ describe("workflow graph utils", () => {
     expect(conditionNode.transitions?.branches).toHaveLength(1);
     expect(createWorkflowNode("action", nodes)).toMatchObject({ kind: "action", action: { provider: "", function: "" }, retry: { max_attempts: 1 } });
     for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "emit", "subflow"] as const) {
-      expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind });
+      expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind, retry: { max_attempts: 1 } });
     }
   });
 
   it("creates workflow trigger drafts with kind-specific defaults", () => {
-    expect(newWorkflowTriggerDraft(42, "cron")).toMatchObject({
-      workflow_id: 42,
+    const workflowId = "00000000-0000-0000-0000-000000000042";
+    expect(newWorkflowTriggerDraft(workflowId, "cron")).toMatchObject({
+      workflow_id: workflowId,
       kind: "cron",
       enabled: true,
       configuration: { cron: "0 * * * *", parameters: {} },
       metadata: {}
     });
-    expect(newWorkflowTriggerDraft(42, "manual")).toMatchObject({
-      workflow_id: 42,
+    expect(newWorkflowTriggerDraft(workflowId, "manual")).toMatchObject({
+      workflow_id: workflowId,
       kind: "manual",
       enabled: true,
       configuration: {},
@@ -714,8 +721,8 @@ describe("workflow graph utils", () => {
     const normalized = normalizeWorkflowDefinition(workflow);
     const nodes = buildGraphNodes(normalized, {
       run: {
-        id: 10,
-        workflow_id: 1,
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
         status: "succeeded",
         active_node_id: "end",
         created_at: "",
@@ -730,8 +737,8 @@ describe("workflow graph utils", () => {
   it("marks the active workflow node as running before its node run appears", () => {
     const nodes = buildGraphNodes(workflow, {
       run: {
-        id: 10,
-        workflow_id: 1,
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
         status: "running",
         active_node_id: "b",
         created_at: "",
@@ -740,8 +747,8 @@ describe("workflow graph utils", () => {
       },
       nodes: [
         {
-          id: 1,
-          workflow_run_id: 10,
+          id: NODE_RUN_ID,
+          workflow_run_id: RUN_ID,
           node_id: "a",
           status: "succeeded",
           attempt: 1,
@@ -759,8 +766,8 @@ describe("workflow graph utils", () => {
   it("marks the active workflow node as debug paused", () => {
     const nodes = buildGraphNodes(workflow, {
       run: {
-        id: 10,
-        workflow_id: 1,
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
         status: "debug_paused",
         active_node_id: "b",
         created_at: "",
@@ -776,28 +783,28 @@ describe("workflow graph utils", () => {
 
   it("builds workflow run search text with workflow identity", () => {
     expect(workflowRunSearchText({
-      id: 12,
-      workflow_id: 34,
+      id: SEARCH_RUN_ID,
+      workflow_id: SEARCH_WORKFLOW_ID,
       status: "failed",
       created_at: "",
       started_at: null,
       finished_at: null
     }, "Nightly Import")).toContain("nightly import");
     expect(workflowRunSearchText({
-      id: 12,
-      workflow_id: 34,
+      id: SEARCH_RUN_ID,
+      workflow_id: SEARCH_WORKFLOW_ID,
       status: "failed",
       created_at: "",
       started_at: null,
       finished_at: null
-    }, "Nightly Import")).toContain("34");
+    }, "Nightly Import")).toContain(SEARCH_WORKFLOW_ID);
   });
 
   it("marks the active terminal workflow node from the run status", () => {
     const nodes = buildGraphNodes(workflow, {
       run: {
-        id: 10,
-        workflow_id: 1,
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
         status: "failed",
         active_node_id: "b",
         created_at: "",

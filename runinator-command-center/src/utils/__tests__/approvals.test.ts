@@ -12,30 +12,30 @@ describe("approval utils", () => {
 
   it("reads approval ids from workflow node run state", () => {
     const nodeRun: WorkflowNodeRun = {
-      id: 1,
-      workflow_run_id: 10,
+      id: "00000000-0000-0000-0000-000000000001",
+      workflow_run_id: "00000000-0000-0000-0000-000000000010",
       node_id: "approval",
       status: "approval_required",
       attempt: 1,
       parameters: {},
-      state: { approval_id: 42 },
+      state: { approval_id: "00000000-0000-0000-0000-000000000042" },
       message: null
     };
 
-    expect(approvalIdFromNodeRun(nodeRun)).toBe(42);
+    expect(approvalIdFromNodeRun(nodeRun)).toBe("00000000-0000-0000-0000-000000000042");
   });
 
   it("selects the pending approval for a workflow node", () => {
     const approval = selectWorkflowApprovalRecord(
       [
-        { id: 2, workflow_run_id: 10, node_id: "approval", status: "approved" },
-        { id: 3, workflow_run_id: 11, node_id: "approval", status: "pending" },
-        { id: 4, workflow_run_id: 10, node_id: "approval", status: "pending" }
+        { id: "00000000-0000-0000-0000-000000000002", workflow_run_id: "00000000-0000-0000-0000-000000000010", node_id: "approval", status: "approved" },
+        { id: "00000000-0000-0000-0000-000000000003", workflow_run_id: "00000000-0000-0000-0000-000000000011", node_id: "approval", status: "pending" },
+        { id: "00000000-0000-0000-0000-000000000004", workflow_run_id: "00000000-0000-0000-0000-000000000010", node_id: "approval", status: "pending" }
       ],
-      10,
+      "00000000-0000-0000-0000-000000000010",
       "approval"
     );
 
-    expect(approval?.id).toBe(4);
+    expect(approval?.id).toBe("00000000-0000-0000-0000-000000000004");
   });
 });

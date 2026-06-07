@@ -44,7 +44,7 @@ export function switchCaseEditor(value: JsonRecord): SwitchCaseEditor {
   return { match_kind: "equals", match_json: pretty(value.equals ?? ""), target };
 }
 
-export function newWorkflowTriggerDraft(workflowId: number, kind: WorkflowTriggerKind = "cron"): WorkflowTrigger {
+export function newWorkflowTriggerDraft(workflowId: string, kind: WorkflowTriggerKind = "cron"): WorkflowTrigger {
   return {
     id: null,
     workflow_id: workflowId,
@@ -106,7 +106,7 @@ export function newWorkflowDraft(): WorkflowDefinition {
   return {
     id: null,
     name: "New Workflow",
-    version: 1,
+    version: "1.0.0",
     enabled: true,
     input_type: { type: "struct", fields: {}, additional: { type: "any" } },
     definition: {

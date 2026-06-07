@@ -6,6 +6,7 @@
 // mirror the keys it reads and writes. unmodeled keys round-trip through `#[serde(flatten)]` bags.
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::value::{Map, Value};
 
@@ -173,7 +174,7 @@ pub struct MapFrame {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapChild {
     pub index: i64,
-    pub child_run_id: i64,
+    pub child_run_id: Uuid,
 }
 
 /// child-run marker stored under `state.map_child`: where the body re-enters the map (and must
@@ -247,9 +248,9 @@ pub struct WaitElapsedOutput {
 /// `subflow_run_id` is required; the rest default so a partial snapshot still deserializes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubflowState {
-    pub subflow_run_id: i64,
+    pub subflow_run_id: Uuid,
     #[serde(default)]
-    pub subflow_workflow_id: i64,
+    pub subflow_workflow_id: Uuid,
     #[serde(default)]
     pub run_name: Option<String>,
     #[serde(default)]
@@ -260,7 +261,7 @@ pub struct SubflowState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalState {
     pub approval: Value,
-    pub approval_id: Option<i64>,
+    pub approval_id: Option<Uuid>,
 }
 
 // node output payloads (serialized into the output_json carrier).
@@ -326,7 +327,7 @@ pub struct JoinOutput {
 /// subflow completion/failure/timeout output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubflowOutcome {
-    pub subflow_run_id: i64,
+    pub subflow_run_id: Uuid,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<Value>,
@@ -353,21 +354,21 @@ pub struct SkippedOutput {
 /// the `workflow` entry injected into the template-evaluation scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowContextHeader {
-    pub run_id: i64,
-    pub workflow_id: i64,
+    pub run_id: Uuid,
+    pub workflow_id: Uuid,
     pub state: Value,
 }
 
 /// idempotency-key record stored for action nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionIdempotencyRecord {
-    pub workflow_node_run_id: i64,
+    pub workflow_node_run_id: Uuid,
 }
 
 /// automation record payload posted when an approval node parks a run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRecord {
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     pub node_id: String,
     pub approval_type: String,
     pub prompt: String,

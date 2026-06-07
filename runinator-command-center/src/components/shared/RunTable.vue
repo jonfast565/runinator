@@ -38,10 +38,10 @@ import StatusBadge from "./StatusBadge.vue";
 
 const props = defineProps<{
   runs: RunSummary[];
-  selectedRunId: number;
+  selectedRunId: string | null;
   compact?: boolean;
   showWorkflow?: boolean;
-  workflowNames?: Record<number, string>;
+  workflowNames?: Record<string, string>;
 }>();
 
 defineEmits<{

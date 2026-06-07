@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -20,7 +21,7 @@ use crate::responses::api_error;
 pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(workflow_run_id): Path<i64>,
+    Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::create_workflow_node_run(
@@ -45,7 +46,7 @@ pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
 pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::update_workflow_node_run(
@@ -72,7 +73,7 @@ pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
 pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::claim_workflow_node_run_executor(
@@ -94,7 +95,7 @@ pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
 pub(crate) async fn release_workflow_node_run_executor<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::release_workflow_node_run_executor(
@@ -115,7 +116,7 @@ pub(crate) async fn release_workflow_node_run_executor<T: DatabaseImpl>(
 
 pub(crate) async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Query(query): Query<ChunkQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflow_node_run_chunks(
@@ -137,7 +138,7 @@ pub(crate) async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
 pub(crate) async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
@@ -154,7 +155,7 @@ pub(crate) async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
 
 pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflow_node_run_artifacts(db.as_ref(), node_run_id).await {
         Ok(artifacts) => (
@@ -168,7 +169,7 @@ pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
 pub(crate) async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {

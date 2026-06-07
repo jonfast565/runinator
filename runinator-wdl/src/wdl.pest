@@ -16,7 +16,7 @@ secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
 workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ trigger_decl* ~ alias_decl* ~ start_decl? ~ stmt* ~ "}" }
-version  = @{ "v" ~ ASCII_DIGIT+ }
+version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 
 // header trigger declarations. a `trigger cron "<expr>"` schedules runs of this workflow on the
 // cron expression; an optional `with { ... }` object supplies the run input. triggers belong to

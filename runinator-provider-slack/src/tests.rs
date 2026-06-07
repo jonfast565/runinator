@@ -5,7 +5,7 @@ use runinator_models::runs::ProviderExecutionRequest;
 fn missing_token_is_invalid() {
     let provider = SlackProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "slack".into(),
         action_function: "send_message".into(),
         parameters: json!({

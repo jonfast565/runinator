@@ -28,8 +28,8 @@ use uuid::Uuid;
 fn workflow_run_stream_terminal_status_stays_snapshot_message() {
     let response = crate::models::WorkflowRunResponse {
         run: runinator_models::workflows::WorkflowRun {
-            id: 42,
-            workflow_id: 7,
+            id: Uuid::now_v7(),
+            workflow_id: Uuid::now_v7(),
             workflow_snapshot: None,
             status: runinator_models::workflows::WorkflowStatus::Succeeded,
             active_node_id: None,
@@ -191,6 +191,81 @@ async fn ready_node_processing_reduces_start_to_action_dispatch() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn action_failure_schedules_retry_with_backoff() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "action-retry");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+            {
+                "id": "run",
+                "kind": "action",
+                "action": {
+                    "provider": "test",
+                    "function": "execute",
+                    "configuration": { "message": "hello" }
+                },
+                "retry": { "max_attempts": 3 },
+                "transitions": { "on_failure": { "$node": "failed" } }
+            },
+            { "id": "failed", "kind": "fail" },
+            { "id": "end", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    drain_ready_nodes(&db).await;
+    let dispatch = db.fetch_pending_action_dispatches(10).await.unwrap()[0].clone();
+    db.mark_action_dispatch_published(dispatch.id)
+        .await
+        .unwrap();
+    let event = WorkflowResultEvent::status(&dispatch.command, WorkflowStatus::Failed, None, None);
+    crate::repository::apply_workflow_result_event(&db, &event)
+        .await
+        .unwrap();
+
+    drain_ready_nodes(&db).await;
+
+    let (updated, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.status, WorkflowStatus::Waiting);
+    assert_eq!(updated.active_node_id.as_deref(), Some("run"));
+    let run_node = nodes.iter().find(|node| node.node_id == "run").unwrap();
+    assert_eq!(run_node.status, WorkflowStatus::Queued);
+    assert_eq!(run_node.attempt, 1);
+    let retry_ready = db
+        .fetch_pending_ready_nodes(chrono::Utc::now(), 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|ready| ready.workflow_run_id == run.id && ready.node_id == "run")
+        .expect("retry ready node is pending");
+    assert!(retry_ready.ready_at > chrono::Utc::now());
+    assert!(
+        db.fetch_pending_action_dispatches(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn merges_json_objects() {
     let defaults = json!({ "a": 1, "b": 2 });
@@ -332,19 +407,21 @@ async fn export_one_includes_only_that_workflow_and_its_triggers() {
 #[tokio::test]
 async fn import_upserts_workflows_before_triggers() {
     let (db, path) = test_db().await;
+    let wf_id = Uuid::now_v7();
+    let trig_id = Uuid::now_v7();
     let bundle = WorkflowBundle {
-        workflows: vec![workflow(Some(77), "imported")],
-        triggers: vec![trigger(Some(88), 77)],
+        workflows: vec![workflow(Some(wf_id), "imported")],
+        triggers: vec![trigger(Some(trig_id), wf_id)],
     };
 
     let saved = crate::repository::import_workflow_bundle(&db, bundle)
         .await
         .unwrap();
 
-    assert_eq!(saved.workflows[0].id, Some(77));
-    assert_eq!(saved.triggers[0].id, Some(88));
-    assert!(db.fetch_workflow(77).await.unwrap().is_some());
-    assert_eq!(db.fetch_workflow_triggers(77).await.unwrap().len(), 1);
+    assert_eq!(saved.workflows[0].id, Some(wf_id));
+    assert_eq!(saved.triggers[0].id, Some(trig_id));
+    assert!(db.fetch_workflow(wf_id).await.unwrap().is_some());
+    assert_eq!(db.fetch_workflow_triggers(wf_id).await.unwrap().len(), 1);
     let _ = std::fs::remove_file(path);
 }
 
@@ -361,7 +438,7 @@ async fn import_skips_workflow_when_name_already_exists() {
     let initial_version = initial.workflows[0].version;
     let initial_definition = initial.workflows[0].definition.clone();
     let mut changed = workflow(None, "Core Team SDLC Pipeline");
-    changed.version = 2;
+    changed.version = runinator_models::semver::SemVer::new(2, 0, 0);
     changed.definition = WorkflowGraph::from_value(json!({
         "start": "done",
         "nodes": [
@@ -399,11 +476,14 @@ async fn import_overwrite_updates_existing_workflow_in_place() {
         .await
         .unwrap();
     let existing_id = initial.workflows[0].id;
-    assert_ne!(initial.workflows[0].version, 2);
+    assert_ne!(
+        initial.workflows[0].version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
 
     // an explicit re-apply carries no id and no newer timestamp, but overwrite must still win.
     let mut changed = workflow(None, "Core Team SDLC Pipeline");
-    changed.version = 2;
+    changed.version = runinator_models::semver::SemVer::new(2, 0, 0);
     changed.definition = WorkflowGraph::from_value(json!({
         "start": "done",
         "nodes": [
@@ -426,7 +506,10 @@ async fn import_overwrite_updates_existing_workflow_in_place() {
     assert_eq!(workflows.len(), 1);
     assert_eq!(saved.workflows[0].id, existing_id);
     assert_eq!(workflows[0].id, existing_id);
-    assert_eq!(workflows[0].version, 2);
+    assert_eq!(
+        workflows[0].version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -444,7 +527,7 @@ async fn import_upserts_existing_workflow_when_id_is_present() {
 
     // a save from the command center carries the existing id and must overwrite.
     let mut changed = initial.workflows[0].clone();
-    changed.version = 2;
+    changed.version = runinator_models::semver::SemVer::new(2, 0, 0);
     changed.definition = WorkflowGraph::from_value(json!({
         "start": "done",
         "nodes": [
@@ -465,8 +548,14 @@ async fn import_upserts_existing_workflow_when_id_is_present() {
     assert_eq!(workflows.len(), 1);
     assert_eq!(saved.workflows[0].id, existing_id);
     // an upsert bumps the version to 2; a skip would have left it at 1.
-    assert_eq!(workflows[0].version, 2);
-    assert_eq!(saved.workflows[0].version, 2);
+    assert_eq!(
+        workflows[0].version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
+    assert_eq!(
+        saved.workflows[0].version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -483,7 +572,7 @@ async fn import_overwrites_id_less_workflow_when_incoming_is_newer() {
 
     // a pack import carrying a future updated_at is newer than the stored copy.
     let mut newer = workflow(None, "pack");
-    newer.version = 5;
+    newer.version = runinator_models::semver::SemVer::new(5, 0, 0);
     newer.updated_at = chrono::DateTime::from_timestamp(4_102_444_800, 0);
     let saved = crate::repository::import_workflow_bundle(
         &db,
@@ -497,8 +586,14 @@ async fn import_overwrites_id_less_workflow_when_incoming_is_newer() {
     let workflows = db.fetch_workflows().await.unwrap();
 
     assert_eq!(workflows.len(), 1);
-    assert_eq!(workflows[0].version, 5);
-    assert_eq!(saved.workflows[0].version, 5);
+    assert_eq!(
+        workflows[0].version,
+        runinator_models::semver::SemVer::new(5, 0, 0)
+    );
+    assert_eq!(
+        saved.workflows[0].version,
+        runinator_models::semver::SemVer::new(5, 0, 0)
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -516,7 +611,7 @@ async fn import_skips_id_less_workflow_when_incoming_is_older() {
 
     // a pack import carrying a past updated_at is older than the stored copy.
     let mut older = workflow(None, "pack");
-    older.version = 5;
+    older.version = runinator_models::semver::SemVer::new(5, 0, 0);
     older.updated_at = chrono::DateTime::from_timestamp(1, 0);
     crate::repository::import_workflow_bundle(
         &db,
@@ -531,6 +626,44 @@ async fn import_skips_id_less_workflow_when_incoming_is_older() {
 
     assert_eq!(workflows.len(), 1);
     assert_eq!(workflows[0].version, initial_version);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn duplicate_workflow_creates_bumped_sibling() {
+    let (db, path) = test_db().await;
+    let initial = crate::repository::import_workflow_bundle(
+        &db,
+        WorkflowBundle {
+            workflows: vec![workflow(None, "Core Team SDLC Pipeline")],
+            triggers: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let original = initial.workflows[0].clone();
+    let original_id = original.id.unwrap();
+
+    let copy = crate::repository::duplicate_workflow(
+        &db,
+        original_id,
+        runinator_models::semver::SemVerBump::Minor,
+    )
+    .await
+    .unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    // a new disabled row sharing the name, with the minor version bumped.
+    assert_eq!(workflows.len(), 2);
+    assert_ne!(copy.id, original.id);
+    assert_eq!(copy.name, original.name);
+    assert!(!copy.enabled);
+    assert_eq!(
+        copy.version,
+        original
+            .version
+            .bump(runinator_models::semver::SemVerBump::Minor)
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -712,7 +845,11 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
         .unwrap()
 }
 
-fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str) -> ActionCommand {
+fn action_command(
+    workflow_run_id: Uuid,
+    workflow_node_run_id: Uuid,
+    node_id: &str,
+) -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
         workflow_run_id,
@@ -879,11 +1016,11 @@ impl Broker for RecordingBroker {
     }
 }
 
-fn workflow(id: Option<i64>, name: &str) -> WorkflowDefinition {
+fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id,
         name: name.into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::from_json_schema(
             &json!({ "type": "object" }),
@@ -904,9 +1041,9 @@ fn workflow(id: Option<i64>, name: &str) -> WorkflowDefinition {
 #[test]
 fn ancestors_in_snapshot_returns_topological_path() {
     let snapshot = WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "ancestors".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
         definition: WorkflowGraph::from_value(json!({
@@ -939,9 +1076,9 @@ fn ancestors_in_snapshot_returns_topological_path() {
 #[test]
 fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
     let snapshot = WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "loop_ancestor".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
         definition: WorkflowGraph::from_value(json!({
@@ -972,9 +1109,9 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
 #[test]
 fn ancestors_in_snapshot_rejects_missing_step() {
     let snapshot = WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "missing".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
         definition: WorkflowGraph::from_value(json!({
@@ -992,7 +1129,7 @@ fn ancestors_in_snapshot_rejects_missing_step() {
     assert!(result.is_err());
 }
 
-fn trigger(id: Option<i64>, workflow_id: i64) -> WorkflowTrigger {
+fn trigger(id: Option<Uuid>, workflow_id: Uuid) -> WorkflowTrigger {
     WorkflowTrigger {
         id,
         workflow_id,
@@ -1027,7 +1164,7 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
             {
                 "id": "subflow-node",
                 "kind": "subflow",
-                "subflow_id": 999,  // non-existent workflow id
+                "subflow_id": Uuid::now_v7().to_string(),  // non-existent workflow id
                 "transitions": { "next": { "$node": "end" } }
             },
             { "id": "end", "kind": "end" }
@@ -1090,7 +1227,10 @@ async fn drain_ready_nodes(db: &SqliteDb) {
 }
 
 /// drive a run to a terminal state, simulating workers that succeed every dispatched action.
-async fn run_to_completion(db: &SqliteDb, run_id: i64) -> runinator_models::workflows::WorkflowRun {
+async fn run_to_completion(
+    db: &SqliteDb,
+    run_id: Uuid,
+) -> runinator_models::workflows::WorkflowRun {
     for _ in 0..64 {
         drain_ready_nodes(db).await;
         let (run, _) = crate::repository::fetch_workflow_run(db, run_id)
@@ -1127,7 +1267,7 @@ async fn run_to_completion(db: &SqliteDb, run_id: i64) -> runinator_models::work
     run
 }
 
-async fn seed_run(db: &SqliteDb, name: &str, definition: Value) -> i64 {
+async fn seed_run(db: &SqliteDb, name: &str, definition: Value) -> Uuid {
     let mut workflow = workflow(None, name);
     workflow.definition = WorkflowGraph::from_value(definition).unwrap();
     let workflow = db.upsert_workflow(&workflow).await.unwrap();
@@ -1313,7 +1453,7 @@ async fn reducer_maps_items_through_target_node() {
 }
 
 /// fetch the ordered per-item outputs recorded on a run's `map` node.
-async fn map_node_outputs(db: &SqliteDb, run_id: i64) -> Vec<Value> {
+async fn map_node_outputs(db: &SqliteDb, run_id: Uuid) -> Vec<Value> {
     let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
     nodes
         .iter()
@@ -1513,7 +1653,11 @@ async fn reducer_parks_approval_then_resolution_wakes_and_completes() {
         .await
         .unwrap();
     assert_eq!(approvals.len(), 1);
-    let approval_id = approvals[0].get("id").and_then(Value::as_i64).unwrap();
+    let approval_id = approvals[0]
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uuid>().ok())
+        .unwrap();
     crate::repository::resolve_approval(&db, approval_id, true, None, None, None)
         .await
         .unwrap();

@@ -23,7 +23,7 @@ describe("service connection state", () => {
     app.setReplicaState(
       [
         {
-          replica_id: 1,
+          replica_id: "00000000-0000-0000-0000-000000000001",
           replica_type: "worker",
           instance_id: "worker-1",
           runtime_id: "runtime",
@@ -60,9 +60,9 @@ describe("service connection state", () => {
     resources.selectedResourceRecord = resources.resourceRecords[0];
     secrets.secrets = [{ scope: "github", name: "default" }];
     secrets.selectSecret(secrets.secrets[0]);
-    workflows.workflows = [{ ...workflows.workflowDraft, id: 7, name: "Stale Workflow" }];
-    workflows.workflowRuns = [{ id: 9, status: "running", created_at: "", started_at: null, finished_at: null }];
-    workflows.selectedWorkflowRunId = 9;
+    workflows.workflows = [{ ...workflows.workflowDraft, id: "00000000-0000-0000-0000-000000000007", name: "Stale Workflow" }];
+    workflows.workflowRuns = [{ id: "00000000-0000-0000-0000-000000000009", status: "running", created_at: "", started_at: null, finished_at: null }];
+    workflows.selectedWorkflowRunId = "00000000-0000-0000-0000-000000000009";
 
     providers.clearProviders();
     resources.clearResources();
@@ -76,6 +76,6 @@ describe("service connection state", () => {
     expect(secrets.selectedSecretKey).toBe("");
     expect(workflows.workflows).toEqual([]);
     expect(workflows.workflowRuns).toEqual([]);
-    expect(workflows.selectedWorkflowRunId).toBe(0);
+    expect(workflows.selectedWorkflowRunId).toBeNull();
   });
 });

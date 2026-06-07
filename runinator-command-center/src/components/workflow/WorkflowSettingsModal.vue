@@ -9,7 +9,7 @@
       <section class="form-section">
         <div class="form-grid">
           <label>Name <input v-model="workflows.workflowDraft.name" @input="workflows.markWorkflowDirty" /></label>
-          <label>Version <input v-model.number="workflows.workflowDraft.version" type="number" min="1" @input="workflows.markWorkflowDirty" /></label>
+          <label>Version <input v-model="workflows.workflowDraft.version" type="text" placeholder="1.0.0" pattern="\d+\.\d+\.\d+" @input="workflows.markWorkflowDirty" /></label>
           <label>Concurrency <input v-model.number="workflows.workflowConcurrency" type="number" min="1" max="256" @input="workflows.markWorkflowDirty" /></label>
           <label class="checkbox"><input v-model="workflows.workflowDraft.enabled" type="checkbox" @change="workflows.markWorkflowDirty" /> Enabled</label>
         </div>
@@ -86,6 +86,7 @@
 
       <div class="modal-actions">
         <button type="button" class="danger" :disabled="!workflows.workflowDraft.id" @click="workflows.deleteSelectedWorkflow">Delete Workflow</button>
+        <button type="button" :disabled="!workflows.workflowDraft.id || workflows.isDirty" @click="workflows.duplicateSelectedWorkflow('minor')">Duplicate (bump version)</button>
         <button type="submit">Done</button>
       </div>
     </form>

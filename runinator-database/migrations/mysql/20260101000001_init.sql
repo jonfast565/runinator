@@ -1,9 +1,11 @@
 -- Initial schema for the Runinator web service (MySQL/MariaDB).
--- Text columns that are primary keys, unique, indexed, or foreign keys use VARCHAR so they can
--- carry an index (MySQL cannot index a bare TEXT without a prefix length).
+-- All surrogate keys (primary/foreign/event ids) are UUIDs generated app-side and stored as
+-- BINARY(16) (sqlx encodes uuid::Uuid as 16 raw bytes for mysql). Columns that hold workflow graph
+-- node identifiers or external identity strings stay TEXT/VARCHAR; VARCHAR is used where a column is
+-- a primary key, unique, indexed, or foreign key (MySQL cannot index a bare TEXT without a prefix).
 
 CREATE TABLE IF NOT EXISTS runs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     status VARCHAR(64) NOT NULL,
     parameters LONGTEXT NOT NULL,
     output_json LONGTEXT NULL,
@@ -12,13 +14,13 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
     created_at BIGINT NOT NULL,
-    workflow_run_id BIGINT NULL,
+    workflow_run_id BINARY(16) NULL,
     workflow_node_id TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS run_chunks (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES runs(id),
+    id BINARY(16) PRIMARY KEY,
+    run_id BINARY(16) NOT NULL REFERENCES runs(id),
     sequence BIGINT NOT NULL,
     stream TEXT NOT NULL,
     content LONGTEXT NOT NULL,
@@ -26,8 +28,8 @@ CREATE TABLE IF NOT EXISTS run_chunks (
 );
 
 CREATE TABLE IF NOT EXISTS run_artifacts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES runs(id),
+    id BINARY(16) PRIMARY KEY,
+    run_id BINARY(16) NOT NULL REFERENCES runs(id),
     name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
@@ -37,7 +39,7 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
 );
 
 CREATE TABLE IF NOT EXISTS workflows (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     version BIGINT NOT NULL,
     enabled TINYINT(1) NOT NULL,
@@ -48,8 +50,8 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_triggers (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_id BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+    id BINARY(16) PRIMARY KEY,
+    workflow_id BINARY(16) NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
     kind VARCHAR(64) NOT NULL,
     enabled TINYINT(1) NOT NULL,
     configuration LONGTEXT NOT NULL,
@@ -62,8 +64,8 @@ CREATE TABLE IF NOT EXISTS workflow_triggers (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_runs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_id BIGINT NOT NULL REFERENCES workflows(id),
+    id BINARY(16) PRIMARY KEY,
+    workflow_id BINARY(16) NOT NULL REFERENCES workflows(id),
     workflow_snapshot LONGTEXT NULL,
     status VARCHAR(64) NOT NULL,
     active_node_id TEXT NULL,
@@ -79,8 +81,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_runs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_run_id BIGINT NOT NULL REFERENCES workflow_runs(id),
+    id BINARY(16) PRIMARY KEY,
+    workflow_run_id BINARY(16) NOT NULL REFERENCES workflow_runs(id),
     node_id TEXT NOT NULL,
     status VARCHAR(64) NOT NULL,
     attempt BIGINT NOT NULL DEFAULT 0,
@@ -95,8 +97,8 @@ CREATE TABLE IF NOT EXISTS workflow_node_runs (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_chunks (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_node_run_id BIGINT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
+    id BINARY(16) PRIMARY KEY,
+    workflow_node_run_id BINARY(16) NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     sequence BIGINT NOT NULL,
     stream TEXT NOT NULL,
     content LONGTEXT NOT NULL,
@@ -104,8 +106,8 @@ CREATE TABLE IF NOT EXISTS workflow_node_chunks (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_node_run_id BIGINT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
+    id BINARY(16) PRIMARY KEY,
+    workflow_node_run_id BINARY(16) NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
@@ -115,26 +117,26 @@ CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_result_events (
-    event_id VARCHAR(64) PRIMARY KEY,
-    workflow_run_id BIGINT NOT NULL,
-    workflow_node_run_id BIGINT NOT NULL,
+    event_id BINARY(16) PRIMARY KEY,
+    workflow_run_id BINARY(16) NOT NULL,
+    workflow_node_run_id BINARY(16) NOT NULL,
     node_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     created_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS workflow_trigger_firings (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    trigger_id BIGINT NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
+    id BINARY(16) PRIMARY KEY,
+    trigger_id BINARY(16) NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
     fire_key VARCHAR(255) NOT NULL,
-    workflow_run_id BIGINT NULL REFERENCES workflow_runs(id),
+    workflow_run_id BINARY(16) NULL REFERENCES workflow_runs(id),
     scheduler_id TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     UNIQUE(trigger_id, fire_key)
 );
 
 CREATE TABLE IF NOT EXISTS catalog_items (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     uri VARCHAR(512) NOT NULL UNIQUE,
     item_type VARCHAR(128) NOT NULL,
     name TEXT NOT NULL,
@@ -146,10 +148,10 @@ CREATE TABLE IF NOT EXISTS catalog_items (
 );
 
 CREATE TABLE IF NOT EXISTS automation_records (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     record_type VARCHAR(128) NOT NULL,
-    workflow_run_id BIGINT NULL,
-    external_item_id BIGINT NULL,
+    workflow_run_id BINARY(16) NULL,
+    external_item_id BINARY(16) NULL,
     node_id TEXT NULL,
     provider TEXT NOT NULL,
     resource_type TEXT NOT NULL,
@@ -170,7 +172,7 @@ CREATE TABLE IF NOT EXISTS automation_records (
 );
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     scope VARCHAR(255) NOT NULL,
     `key` VARCHAR(255) NOT NULL,
     result LONGTEXT NOT NULL,
@@ -179,7 +181,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BINARY(16) PRIMARY KEY,
     dedupe_key VARCHAR(255) NOT NULL UNIQUE,
     command_json LONGTEXT NOT NULL,
     attempts BIGINT NOT NULL DEFAULT 0,
@@ -190,8 +192,8 @@ CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workflow_run_id BIGINT NULL,
+    id BINARY(16) PRIMARY KEY,
+    workflow_run_id BINARY(16) NULL,
     workflow_node_id TEXT NULL,
     channel TEXT NOT NULL,
     severity TEXT NOT NULL,

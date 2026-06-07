@@ -29,8 +29,8 @@ async fn http_broker_delivers_published_messages() {
     let message = BrokerMessage {
         command: ActionCommand {
             command_id: Uuid::new_v4(),
-            workflow_run_id: 42,
-            workflow_node_run_id: 99,
+            workflow_run_id: Uuid::from_u128(42),
+            workflow_node_run_id: Uuid::from_u128(99),
             node_id: "run".into(),
             action: WorkflowAction {
                 provider: "test".into(),
@@ -49,8 +49,8 @@ async fn http_broker_delivers_published_messages() {
 
     broker.publish(message).await.unwrap();
     let delivery = broker.receive("test-consumer").await.unwrap();
-    assert_eq!(delivery.command.workflow_run_id, 42);
-    assert_eq!(delivery.command.workflow_node_run_id, 99);
+    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
+    assert_eq!(delivery.command.workflow_node_run_id, Uuid::from_u128(99));
     assert_eq!(delivery.dedupe_key, "http-test");
     broker
         .ack("test-consumer", delivery.delivery_id)
@@ -74,11 +74,14 @@ async fn http_broker_delivers_control_messages() {
     );
 
     broker
-        .publish_control(ControlCommand::new(42, ControlKind::Cancel))
+        .publish_control(ControlCommand::new(
+            Uuid::from_u128(42),
+            ControlKind::Cancel,
+        ))
         .await
         .unwrap();
     let delivery = broker.receive_control("test-consumer").await.unwrap();
-    assert_eq!(delivery.command.workflow_run_id, 42);
+    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
     assert!(matches!(delivery.command.kind, ControlKind::Cancel));
     broker
         .ack_control("test-consumer", delivery.delivery_id)
@@ -118,8 +121,8 @@ async fn http_broker_delivers_result_events() {
         .await
         .unwrap();
     let delivery = broker.receive_result("result-consumer").await.unwrap();
-    assert_eq!(delivery.event.workflow_run_id, 42);
-    assert_eq!(delivery.event.workflow_node_run_id, 99);
+    assert_eq!(delivery.event.workflow_run_id, Uuid::from_u128(42));
+    assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
     assert_eq!(delivery.dedupe_key, "http-result-test");
     match delivery.event.kind {
         WorkflowResultEventKind::Chunk { chunk } => assert_eq!(chunk.content, "hello"),
@@ -157,8 +160,9 @@ async fn http_broker_fans_out_events_to_every_subscriber() {
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
 
+    let run_id = Uuid::from_u128(7);
     broker
-        .publish_event(EventMessage::new(UiEvent::WorkflowRunChanged { run_id: 7 }))
+        .publish_event(EventMessage::new(UiEvent::WorkflowRunChanged { run_id }))
         .await
         .unwrap();
 
@@ -172,8 +176,8 @@ async fn http_broker_fans_out_events_to_every_subscriber() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(matches!(a.event, UiEvent::WorkflowRunChanged { run_id: 7 }));
-    assert!(matches!(b.event, UiEvent::WorkflowRunChanged { run_id: 7 }));
+    assert!(matches!(a.event, UiEvent::WorkflowRunChanged { run_id: r } if r == run_id));
+    assert!(matches!(b.event, UiEvent::WorkflowRunChanged { run_id: r } if r == run_id));
 
     server.abort();
 }
@@ -181,8 +185,8 @@ async fn http_broker_fans_out_events_to_every_subscriber() {
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: 42,
-        workflow_node_run_id: 99,
+        workflow_run_id: Uuid::from_u128(42),
+        workflow_node_run_id: Uuid::from_u128(99),
         node_id: "run".into(),
         action: WorkflowAction {
             provider: "test".into(),

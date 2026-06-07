@@ -18,9 +18,9 @@ interface RunStreamHandle {
 export function useWorkflowRunStream() {
   const workflows = useWorkflowsStore();
   const app = useAppStore();
-  const sockets = new Map<number, RunStreamHandle>();
+  const sockets = new Map<string, RunStreamHandle>();
 
-  function disposeHandle(runId: number) {
+  function disposeHandle(runId: string) {
     const handle = sockets.get(runId);
     if (!handle) return;
     handle.disposed = true;
@@ -34,7 +34,7 @@ export function useWorkflowRunStream() {
     sockets.delete(runId);
   }
 
-  function ensureHandle(runId: number): RunStreamHandle {
+  function ensureHandle(runId: string): RunStreamHandle {
     const existing = sockets.get(runId);
     if (existing) return existing;
     const handle: RunStreamHandle = {
@@ -48,7 +48,7 @@ export function useWorkflowRunStream() {
     return handle;
   }
 
-  function connect(runId: number) {
+  function connect(runId: string) {
     if (!runId || !app.serviceUrl) return;
     const handle = ensureHandle(runId);
     if (handle.reconnectTimer) {
@@ -89,7 +89,7 @@ export function useWorkflowRunStream() {
     };
   }
 
-  function syncSockets(ids: number[]) {
+  function syncSockets(ids: string[]) {
     const set = new Set(ids);
     for (const id of [...sockets.keys()]) {
       if (!set.has(id)) disposeHandle(id);

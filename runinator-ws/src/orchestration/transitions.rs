@@ -1,5 +1,9 @@
 use super::context::{runtime_context, set_step_output};
 use super::*;
+use uuid::Uuid;
+
+const RETRY_BACKOFF_BASE_SECONDS: i64 = 1;
+const RETRY_BACKOFF_MAX_SECONDS: i64 = 300;
 
 // --- shared db-direct reducer helpers -----------------------------------------
 
@@ -15,40 +19,26 @@ pub(super) async fn retry_or_transition<T: DatabaseImpl>(
     message: Option<String>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    if node_run.attempt < node.retry.max_attempts {
-        db.update_workflow_node_run(
-            node_run.id,
-            WorkflowStatus::Queued,
-            None,
-            None,
-            output_json,
-            None,
-            Some("retry_queued".into()),
-            message,
-        )
-        .await?;
-        db.update_workflow_run_status(
-            workflow_run.id,
-            WorkflowStatus::Running,
-            Some(node.id.clone()),
-            None,
-            None,
-        )
-        .await
-    } else {
-        transition_from_node(
-            db,
-            workflow_run,
-            node,
-            node_run,
-            status,
-            output_json,
-            message,
-            node_runs,
-        )
-        .await?;
-        Ok(())
-    }
+    transition_from_node(
+        db,
+        workflow_run,
+        node,
+        node_run,
+        status,
+        output_json,
+        message,
+        node_runs,
+    )
+    .await?;
+    Ok(())
+}
+
+fn retry_backoff_delay(attempt: i64) -> chrono::Duration {
+    let exponent = attempt.saturating_sub(1).clamp(0, 30) as u32;
+    let seconds = RETRY_BACKOFF_BASE_SECONDS
+        .saturating_mul(2_i64.saturating_pow(exponent))
+        .clamp(RETRY_BACKOFF_BASE_SECONDS, RETRY_BACKOFF_MAX_SECONDS);
+    chrono::Duration::seconds(seconds)
 }
 
 /// time out the in-flight run with a node-specific message, retrying if attempts remain.
@@ -168,7 +158,7 @@ pub(super) fn timed_out_since_created(node: &WorkflowNode, run: &WorkflowNodeRun
 /// the timeout check fires even when no external wake-up arrives.
 pub(super) async fn arm_node_timeout<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node: &WorkflowNode,
 ) -> Result<(), SendableError> {
     let Some(timeout) = node.timeout_seconds else {
@@ -199,7 +189,10 @@ pub(super) async fn maybe_wake_subflow_parent<T: DatabaseImpl>(
         return Ok(());
     };
     let (Some(parent_run_id), Some(parent_node_id)) = (
-        parent.get("run_id").and_then(Value::as_i64),
+        parent
+            .get("run_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| raw.parse::<Uuid>().ok()),
         parent.get("node_id").and_then(Value::as_str),
     ) else {
         return Ok(());
@@ -225,6 +218,11 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
     message: Option<String>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Option<String>, SendableError> {
+    if retryable_status(status) && node_run.attempt < node.retry.max_attempts {
+        schedule_node_retry(db, workflow_run, node, node_run, output_json, message).await?;
+        return Ok(Some(node.id.clone()));
+    }
+
     db.update_workflow_node_run(
         node_run.id,
         status,
@@ -277,6 +275,63 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
             Ok(None)
         }
     }
+}
+
+async fn schedule_node_retry<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_run: &WorkflowNodeRun,
+    output_json: Option<Value>,
+    message: Option<String>,
+) -> Result<(), SendableError> {
+    let next_attempt = node_run.attempt + 1;
+    let delay = retry_backoff_delay(node_run.attempt);
+    let ready_at = Utc::now() + delay;
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Queued,
+        None,
+        None,
+        output_json,
+        None,
+        Some("retry_queued".into()),
+        message,
+    )
+    .await?;
+    db.update_workflow_run_status(
+        workflow_run.id,
+        WorkflowStatus::Waiting,
+        Some(node.id.clone()),
+        None,
+        Some(format!(
+            "Retrying node {} attempt {} of {} after {} second(s)",
+            node.id,
+            next_attempt,
+            node.retry.max_attempts,
+            delay.num_seconds()
+        )),
+    )
+    .await?;
+    let event = NewOrchestrationEvent::new(
+        workflow_run.id,
+        Some(node.id.clone()),
+        "node_retry_scheduled",
+        runinator_models::json!({
+            "node_id": node.id,
+            "workflow_node_run_id": node_run.id,
+            "attempt": next_attempt,
+            "max_attempts": node.retry.max_attempts,
+            "backoff_seconds": delay.num_seconds(),
+        }),
+    );
+    db.enqueue_ready_node(event, node.id.clone(), ready_at)
+        .await?;
+    Ok(())
+}
+
+fn retryable_status(status: WorkflowStatus) -> bool {
+    matches!(status, WorkflowStatus::Failed | WorkflowStatus::TimedOut)
 }
 
 pub(super) async fn ensure_node_run<T: DatabaseImpl>(

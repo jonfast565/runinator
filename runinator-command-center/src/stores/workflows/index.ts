@@ -8,6 +8,7 @@ import {
   decompileToWdl,
   deleteWorkflow,
   deleteWorkflowTrigger,
+  duplicateWorkflow,
   downloadBlob,
   downloadTextFile,
   fetchWorkflowNodeRunArtifacts,
@@ -99,7 +100,7 @@ import { useResourcesStore } from "../resources";
 
 export const useWorkflowsStore = defineStore("workflows", () => {
   const workflows = ref<WorkflowDefinition[]>([]);
-  const selectedWorkflowId = ref<number | null>(null);
+  const selectedWorkflowId = ref<string | null>(null);
   const workflowDraft = reactive<WorkflowDefinition>(newWorkflowDraft());
   const workflowJson = ref("{}");
   const workflowWdl = ref("");
@@ -112,7 +113,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const triggerEditorOpen = ref(false);
   const triggerEditorCreating = ref(false);
   const triggerEditorError = ref("");
-  const triggerDraft = reactive<WorkflowTrigger>(newWorkflowTriggerDraft(0, "cron"));
+  const triggerDraft = reactive<WorkflowTrigger>(newWorkflowTriggerDraft("", "cron"));
   const triggerJson = reactive({ configuration: "{}", metadata: "{}" });
   const workflowEditorMode = ref<"graph" | "json" | "wdl">("graph");
   const workflowLayoutDirection = ref<WorkflowLayoutDirection>("horizontal");
@@ -124,7 +125,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowRuns = ref<RunSummary[]>([]);
   const workflowLayoutVersion = ref(0);
   const workflowRunsByRunId = computed(() => {
-    const groups: Record<number, RunSummary[]> = {};
+    const groups: Record<string, RunSummary[]> = {};
     for (const run of workflowRuns.value) {
       const runId = run.id;
       if (!groups[runId]) groups[runId] = [];
@@ -140,22 +141,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     return list.slice(0, 50);
   });
-  const selectedWorkflowRunId = ref(0);
+  const selectedWorkflowRunId = ref<string | null>(null);
   const workflowRunDetail = ref<WorkflowRunDetail | null>(null);
-  const openRunIds = ref<number[]>([]);
-  const runDetailById = reactive(new Map<number, WorkflowRunDetail | null>());
+  const openRunIds = ref<string[]>([]);
+  const runDetailById = reactive(new Map<string, WorkflowRunDetail | null>());
   const MAX_OPEN_RUN_TABS = 8;
-  const latestWorkflowRunPushVersion = new Map<number, number>();
-  const latestWorkflowRunHttpRequest = new Map<number, number>();
+  const latestWorkflowRunPushVersion = new Map<string, number>();
+  const latestWorkflowRunHttpRequest = new Map<string, number>();
   let nextWorkflowRunDetailVersion = 0;
   let nextWorkflowRunHttpRequestId = 0;
   let nextBreakpointMutationId = 0;
-  let pendingBreakpointPatch: { runId: number; breakpoints: string[]; mutationId: number } | null = null;
+  let pendingBreakpointPatch: { runId: string; breakpoints: string[]; mutationId: number } | null = null;
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
   const selectedGraphEdgeId = ref("");
   const selectedWorkflowRunNodeId = ref("");
-  const selectedWorkflowNodeRunId = ref(0);
+  const selectedWorkflowNodeRunId = ref<string | null>(null);
   const stepEditor = reactive({
     id: "",
     name: "",
@@ -187,7 +188,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     race_winner: "first_success" as BranchPolicyName,
     emit_event_type: "workflow.event",
     emit_data_json: "{}",
-    subflow_id: 0,
+    subflow_id: "",
     subflow_parameters_json: "{}",
     locked: false,
     skipped: false,
@@ -279,7 +280,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       .join(",");
   });
   const subflowNames = computed(
-    () => new Map(workflows.value.filter((w) => w.id != null).map((w) => [w.id as number, w.name]))
+    () => new Map(workflows.value.filter((w) => w.id != null).map((w) => [w.id as string, w.name]))
   );
   const graphNodes = computed(() => buildGraphNodes(workflowDraft, null, subflowNames.value, useProvidersStore().providers));
   const graphEdges = computed(() => buildGraphEdges(workflowDraft));
@@ -329,9 +330,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runDetailById.clear();
     pendingBreakpointPatch = null;
     workflowNodeDetailExtra.value = "";
-    selectedWorkflowRunId.value = 0;
+    selectedWorkflowRunId.value = null;
     selectedWorkflowRunNodeId.value = "";
-    selectedWorkflowNodeRunId.value = 0;
+    selectedWorkflowNodeRunId.value = null;
     clearWorkflowTriggerState();
     if (isDirty.value) return;
     selectedWorkflowId.value = null;
@@ -557,7 +558,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     await fetchWorkflowRunDetail(runId, true);
   }
 
-  async function replaySelectedWorkflowRun(runId?: number, fromStepId?: string) {
+  async function replaySelectedWorkflowRun(runId?: string, fromStepId?: string) {
     const targetId = runId ?? workflowRunDetail.value?.run.id;
     if (!targetId) return;
     const label = fromStepId
@@ -582,7 +583,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return created.id;
   }
 
-  async function renameSelectedWorkflowRun(runId: number, name: string | null) {
+  async function renameSelectedWorkflowRun(runId: string, name: string | null) {
     if (!runId) return;
     const response = await app
       .runOperation(`Renaming run ${runId}`, () => renameWorkflowRunApi(runId, name))
@@ -600,18 +601,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   // watch expressions persisted per workflow id in localStorage.
   const WATCH_STORAGE_PREFIX = "runinator.watch.";
-  const watchExpressionsByWorkflowId = ref<Record<number, string[]>>(loadAllWatchExpressions());
+  const watchExpressionsByWorkflowId = ref<Record<string, string[]>>(loadAllWatchExpressions());
 
-  function loadAllWatchExpressions(): Record<number, string[]> {
+  function loadAllWatchExpressions(): Record<string, string[]> {
     const storage = typeof window !== "undefined" ? window.localStorage : undefined;
     if (!storage) return {};
-    const result: Record<number, string[]> = {};
+    const result: Record<string, string[]> = {};
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
       if (!key || !key.startsWith(WATCH_STORAGE_PREFIX)) continue;
-      const idStr = key.slice(WATCH_STORAGE_PREFIX.length);
-      const id = Number(idStr);
-      if (!Number.isFinite(id)) continue;
+      const id = key.slice(WATCH_STORAGE_PREFIX.length);
+      if (!id) continue;
       try {
         const parsed = JSON.parse(storage.getItem(key) ?? "[]");
         if (Array.isArray(parsed)) {
@@ -630,7 +630,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return watchExpressionsByWorkflowId.value[workflowId] ?? [];
   });
 
-  function persistWatchExpressions(workflowId: number, list: string[]) {
+  function persistWatchExpressions(workflowId: string, list: string[]) {
     const storage = typeof window !== "undefined" ? window.localStorage : undefined;
     if (!storage) return;
     storage.setItem(`${WATCH_STORAGE_PREFIX}${workflowId}`, JSON.stringify(list));
@@ -655,11 +655,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     persistWatchExpressions(workflowId, next);
   }
 
-  async function fetchWorkflowRunsForSelected(workflowId: number) {
+  async function fetchWorkflowRunsForSelected(workflowId: string) {
     console.info("[command-center] refreshing workflow runs", { workflowId });
     workflowRuns.value = await app.runOperation("Loading workflow runs", () => fetchWorkflowRuns(workflowId)).catch(() => []);
     if (!workflowRuns.value.some((run) => run.id === selectedWorkflowRunId.value)) {
-      selectedWorkflowRunId.value = workflowRuns.value[0]?.id ?? 0;
+      selectedWorkflowRunId.value = workflowRuns.value[0]?.id ?? null;
     }
   }
 
@@ -667,15 +667,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     console.info("[command-center] refreshing recent workflow runs");
     workflowRuns.value = await app.runOperation("Loading workflow runs", () => fetchWorkflowRuns()).catch(() => []);
     const previousRunId = selectedWorkflowRunId.value;
-    if (selectedWorkflowRunId.value === 0 && workflowRuns.value.length > 0) {
-      const first = workflowRuns.value[0]?.id ?? 0;
+    if (selectedWorkflowRunId.value === null && workflowRuns.value.length > 0) {
+      const first = workflowRuns.value[0]?.id ?? null;
       if (first) {
         openRunInTab(first);
         activateRunTab(first);
       }
     }
-    if (selectedWorkflowRunId.value > 0 && (!workflowRunDetail.value || previousRunId !== selectedWorkflowRunId.value)) {
-      await fetchWorkflowRunDetail(selectedWorkflowRunId.value, true);
+    const currentRunId = selectedWorkflowRunId.value;
+    if (currentRunId !== null && (!workflowRunDetail.value || previousRunId !== currentRunId)) {
+      await fetchWorkflowRunDetail(currentRunId, true);
     }
   }
 
@@ -685,7 +686,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return fetchWorkflowRunDetail(run.id);
   }
 
-  function openRunInTab(runId: number) {
+  function openRunInTab(runId: string) {
     if (!runId) return;
     const ids = openRunIds.value;
     if (!ids.includes(runId)) {
@@ -701,7 +702,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
   }
 
-  function activateRunTab(runId: number) {
+  function activateRunTab(runId: string) {
     if (!runId) return;
     if (!openRunIds.value.includes(runId)) openRunInTab(runId);
     selectedWorkflowRunId.value = runId;
@@ -713,7 +714,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
   }
 
-  function closeRunTab(runId: number) {
+  function closeRunTab(runId: string) {
     const ids = openRunIds.value;
     const index = ids.indexOf(runId);
     if (index === -1) return;
@@ -723,18 +724,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     latestWorkflowRunPushVersion.delete(runId);
     latestWorkflowRunHttpRequest.delete(runId);
     if (selectedWorkflowRunId.value === runId) {
-      const replacement = next[Math.min(index, next.length - 1)] ?? 0;
+      const replacement = next[Math.min(index, next.length - 1)] ?? null;
       if (replacement) {
         activateRunTab(replacement);
       } else {
-        selectedWorkflowRunId.value = 0;
+        selectedWorkflowRunId.value = null;
         workflowRunDetail.value = null;
         selectedWorkflowRunNodeId.value = "";
       }
     }
   }
 
-  async function fetchWorkflowRunDetail(workflowRunId: number, silent = false) {
+  async function fetchWorkflowRunDetail(workflowRunId: string, silent = false) {
     console.info("[command-center] refreshing workflow run detail", { workflowRunId, silent });
     const requestStartedVersion = ++nextWorkflowRunDetailVersion;
     const requestId = ++nextWorkflowRunHttpRequestId;
@@ -770,7 +771,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (!openRunIds.value.includes(detail.run.id)) {
         openRunIds.value = [...openRunIds.value, detail.run.id].slice(-MAX_OPEN_RUN_TABS);
       }
-      if (selectedWorkflowRunId.value === 0) {
+      if (selectedWorkflowRunId.value === null) {
         selectedWorkflowRunId.value = detail.run.id;
       }
     }
@@ -807,7 +808,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
   }
 
-  function clearPendingBreakpointPatch(runId: number, mutationId: number) {
+  function clearPendingBreakpointPatch(runId: string, mutationId: number) {
     if (pendingBreakpointPatch?.runId === runId && pendingBreakpointPatch.mutationId === mutationId) {
       pendingBreakpointPatch = null;
       return true;
@@ -1112,7 +1113,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         setStepEditorError("Subflow parameters must be a JSON object");
         return false;
       }
-      next.subflow_id = Math.max(0, Number(stepEditor.subflow_id ?? 0));
+      if (!String(stepEditor.subflow_id ?? "").trim()) {
+        setStepEditorError("Subflow workflow id is required");
+        return false;
+      }
+      next.subflow_id = String(stepEditor.subflow_id ?? "").trim();
       next.parameters = subflowParameters;
     } else {
       delete next.subflow_id;
@@ -1164,7 +1169,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.race_winner = branchPolicyName(node.parameters?.winner, "first_success");
     stepEditor.emit_event_type = String(node.parameters?.event_type ?? "workflow.event");
     stepEditor.emit_data_json = pretty(node.parameters?.data ?? {});
-    stepEditor.subflow_id = Number(node.subflow_id ?? 0);
+    stepEditor.subflow_id = String(node.subflow_id ?? "");
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
     stepEditor.locked = isLockedWorkflowNode(node);
     stepEditor.skipped = node.skipped === true;
@@ -1182,7 +1187,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function updateSelectedWorkflowNodeDetail() {
-    selectedWorkflowNodeRunId.value = 0;
+    selectedWorkflowNodeRunId.value = null;
     workflowNodeDetailExtra.value = "";
     const nodeId = selectedWorkflowRunNodeId.value || selectedStepId.value;
     const step = workflowRunDetail.value?.nodes.find((node) => node.node_id === nodeId);
@@ -1772,7 +1777,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     app.setError(message);
   }
 
-  function workflowSaveTriggers(workflowId: number | null | undefined): WorkflowTrigger[] {
+  function workflowSaveTriggers(workflowId: string | null | undefined): WorkflowTrigger[] {
     if (workflowId == null) return [];
     return workflowTriggers.value
       .filter((trigger) => trigger.workflow_id === workflowId)
@@ -1859,9 +1864,29 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       workflowJson.value = pretty(workflowDraft.definition);
       workflowRuns.value = [];
       workflowRunDetail.value = null;
-      selectedWorkflowRunId.value = 0;
+      selectedWorkflowRunId.value = null;
       isDirty.value = false;
     }
+  }
+
+  async function duplicateSelectedWorkflow(bump: "major" | "minor" | "patch" = "minor") {
+    const workflow = selectedWorkflow.value;
+    if (!workflow?.id) return;
+    if (isDirty.value) {
+      app.setError("Save or discard the current changes before duplicating this workflow.");
+      return;
+    }
+    const copy = await app
+      .runOperation(`Duplicating workflow ${workflow.name}`, () => duplicateWorkflow(workflow.id!, bump))
+      .catch((error) => {
+        app.setError(error instanceof Error ? error.message : "Failed to duplicate workflow");
+        return null;
+      });
+    if (!copy) return;
+    await refreshWorkflows();
+    selectedWorkflowId.value = copy.id;
+    await selectWorkflow(copy);
+    app.setStatus(`Duplicated ${workflow.name} as v${copy.version}`);
   }
 
   return {
@@ -1941,6 +1966,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     addWorkflow,
     saveSelectedWorkflow: saveSelectedWorkflowBundle,
     deleteSelectedWorkflow,
+    duplicateSelectedWorkflow,
     runSelectedWorkflow,
     runSelectedWorkflowDebug,
     stepSelectedWorkflowRun,

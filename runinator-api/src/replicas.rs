@@ -58,7 +58,7 @@ pub struct ReplicaSession {
 }
 
 impl ReplicaSession {
-    pub fn replica_id(&self) -> i64 {
+    pub fn replica_id(&self) -> Uuid {
         self.replica.replica_id
     }
 

@@ -2,7 +2,7 @@ workflow "Ticket Work" v1 {
     // only the per-ticket payload is dynamic input; everything else is shared config.* and secret.*.
     input {
         ticket: { key: string, fields: { summary: string } }
-        parent_workflow_run_id: integer
+        parent_workflow_run_id: string
     }
 
     // reusable connection arg groups: each call spreads these with `...name` and adds its own args.

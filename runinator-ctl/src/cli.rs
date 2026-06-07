@@ -1,7 +1,28 @@
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
+
+/// cli-facing semantic-version bump level, mapped to the shared `SemVerBump`.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliBumpLevel {
+    Major,
+    #[default]
+    Minor,
+    Patch,
+}
+
+impl From<CliBumpLevel> for SemVerBump {
+    fn from(level: CliBumpLevel) -> Self {
+        match level {
+            CliBumpLevel::Major => SemVerBump::Major,
+            CliBumpLevel::Minor => SemVerBump::Minor,
+            CliBumpLevel::Patch => SemVerBump::Patch,
+        }
+    }
+}
 
 /// cli-facing setting kind, mapped to the shared `SettingKind`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -194,9 +215,16 @@ pub enum WorkflowCommands {
     },
     /// Export one workflow or the full workflow bundle.
     Export {
-        workflow_id: Option<i64>,
+        workflow_id: Option<Uuid>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Duplicate a workflow into a new version sharing its name (default bump: minor).
+    Duplicate {
+        /// Workflow id or name to duplicate.
+        workflow: String,
+        #[arg(long, value_enum, default_value_t = CliBumpLevel::default())]
+        bump: CliBumpLevel,
     },
     /// Create a workflow run.
     Run {
@@ -219,40 +247,40 @@ pub enum RunCommands {
         #[arg(long)]
         status: Option<String>,
         #[arg(long = "workflow-id")]
-        workflow_id: Option<i64>,
+        workflow_id: Option<Uuid>,
         #[arg(long)]
         open: bool,
     },
     /// Show a workflow run and its node runs.
-    Show { id: i64 },
+    Show { id: Uuid },
     /// Refresh a workflow run until interrupted or terminal.
     Watch {
-        id: i64,
+        id: Uuid,
         #[arg(long, default_value_t = 2)]
         interval_seconds: u64,
     },
     /// Print log chunks for a workflow node run.
     Logs {
-        node_run_id: i64,
+        node_run_id: Uuid,
         #[arg(long)]
         cursor: Option<i64>,
         #[arg(long, default_value_t = 100)]
         limit: i64,
     },
     /// Pause a workflow run.
-    Pause { id: i64 },
+    Pause { id: Uuid },
     /// Resume a workflow run.
-    Resume { id: i64 },
+    Resume { id: Uuid },
     /// Cancel a workflow run.
-    Cancel { id: i64 },
+    Cancel { id: Uuid },
     /// Replay a workflow run.
     Replay {
-        id: i64,
+        id: Uuid,
         #[arg(long = "from-step")]
         from_step_id: Option<String>,
     },
     /// Rename a workflow run.
-    Rename { id: i64, name: Option<String> },
+    Rename { id: Uuid, name: Option<String> },
 }
 
 #[derive(Debug, Subcommand)]
@@ -260,13 +288,13 @@ pub enum ApprovalCommands {
     /// List approval requests.
     List {
         #[arg(long = "workflow-run-id")]
-        workflow_run_id: Option<i64>,
+        workflow_run_id: Option<Uuid>,
         #[arg(long)]
         open: bool,
     },
     /// Approve an approval request.
     Approve {
-        id: i64,
+        id: Uuid,
         #[arg(long)]
         by: Option<String>,
         #[arg(long)]
@@ -276,7 +304,7 @@ pub enum ApprovalCommands {
     },
     /// Reject an approval request.
     Reject {
-        id: i64,
+        id: Uuid,
         #[arg(long)]
         by: Option<String>,
         #[arg(long)]
@@ -294,7 +322,7 @@ pub enum TriggerCommands {
     Due,
     /// Create a run from a trigger.
     Run {
-        trigger_id: i64,
+        trigger_id: Uuid,
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
         #[arg(long = "json-file")]

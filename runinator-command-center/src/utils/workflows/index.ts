@@ -82,13 +82,15 @@ export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "ri
 export const workflowEdgeStyles: WorkflowEdgeStyle[] = ["bezier", "straight", "square"];
 const semanticTargetHandleId = "target:in";
 
-export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, subflowNames?: Map<number, string>, providers: ProviderMetadata[] = []): Node[] {
+export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRunDetail | null, subflowNames?: Map<string, string>, providers: ProviderMetadata[] = []): Node[] {
   const definition = workflow.definition ?? {};
   const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
   const issuesByNode = validationIssuesByNode(validateWorkflowIssues(definition, providers));
   const layout = workflowLayoutNodes(definition);
   const fallbackLayout = autoArrangeWorkflowLayout(definition);
-  const runByNode = new Map((detail?.nodes ?? []).map((run) => [run.node_id, run]));
+  const detailNodes = detail?.nodes ?? [];
+  const runByNode = new Map(detailNodes.map((run) => [run.node_id, run]));
+  const executionCounts = workflowRunExecutionCounts(detailNodes);
   const debug = detail?.run.state?.debug;
   const breakpointSet = new Set<string>(
     Array.isArray(debug?.breakpoints)
@@ -116,6 +118,7 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         validationCount: issuesByNode.get(id)?.length ?? 0,
         validationSeverity: validationSeverity(issuesByNode.get(id) ?? []),
         statusLabel: run ? `${run.status} a${run.attempt}` : status,
+        executionCount: executionCounts.get(id) ?? 0,
         approvalPrompt: approvalPrompt(node, run?.state),
         running: status === "running" || status === "queued",
         status,
@@ -137,6 +140,21 @@ export function workflowRunSearchText(run: RunSummary, workflowName = ""): strin
     run.status,
     run.trigger ?? ""
   ].join(" ").toLowerCase();
+}
+
+function workflowRunExecutionCounts(nodes: WorkflowRunDetail["nodes"]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const executions = workflowNodeRunExecutionCount(node);
+    if (executions <= 0) continue;
+    counts.set(node.node_id, (counts.get(node.node_id) ?? 0) + executions);
+  }
+  return counts;
+}
+
+function workflowNodeRunExecutionCount(node: WorkflowRunDetail["nodes"][number]): number {
+  if (Number.isFinite(node.attempt) && node.attempt > 0) return Math.floor(node.attempt);
+  return node.status === "queued" ? 0 : 1;
 }
 
 export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
@@ -761,12 +779,12 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
     id,
     kind,
     parameters: {},
+    retry: { max_attempts: 1 },
     transitions: {}
   };
   switch (kind) {
     case "action":
       node.action = { provider: "", function: "", timeout_seconds: 300, configuration: {} };
-      node.retry = { max_attempts: 1 };
       break;
     case "approval":
       node.parameters = { approval_type: "generic", prompt: "Approval required" };
@@ -809,7 +827,7 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
       node.parameters = { name: "", metadata: {} };
       break;
     case "subflow":
-      node.subflow_id = 0;
+      node.subflow_id = "";
       break;
   }
   return node;
@@ -1613,7 +1631,7 @@ function describeValue(value: unknown): string {
 }
 
 // each node kind renders a concise, never-"[object Object]" description of its activity.
-function nodeSummary(node: JsonRecord, subflowNames?: Map<number, string>): string {
+function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): string {
   const parameters = isRecord(node.parameters) ? node.parameters : {};
   switch (workflowNodeKind(node.kind)) {
     case "action": {
@@ -1668,10 +1686,10 @@ function nodeSummary(node: JsonRecord, subflowNames?: Map<number, string>): stri
     case "config":
       return describeValue(parameters.name) || "Config";
     case "subflow": {
-      const subflowId = node.subflow_id != null ? Number(node.subflow_id) : null;
-      const name = subflowId != null ? subflowNames?.get(subflowId) : undefined;
+      const subflowId = node.subflow_id != null ? String(node.subflow_id) : "";
+      const name = subflowId ? subflowNames?.get(subflowId) : undefined;
       if (name) return name;
-      return `Workflow ${subflowId ?? "-"}`;
+      return `Workflow ${subflowId || "-"}`;
     }
     case "start":
       return "Start";

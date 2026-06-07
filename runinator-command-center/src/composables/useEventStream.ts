@@ -35,7 +35,7 @@ export function useEventStream() {
     console.info("[command-center] server event", event);
     switch (event.type) {
       case "run_status_changed":
-        if (workflows.selectedWorkflowRunId > 0) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+        if (workflows.selectedWorkflowRunId) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
         break;
       case "resync":
         refreshActiveState();
@@ -46,7 +46,7 @@ export function useEventStream() {
         if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
         break;
       case "workflow_run_changed": {
-        const runId = event.run_id as number;
+        const runId = event.run_id as string;
         if (workflows.selectedWorkflowRunId === runId) {
           workflows.fetchWorkflowRunDetail(runId, true);
         }
@@ -77,7 +77,7 @@ export function useEventStream() {
   function refreshActiveState() {
     if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
-    if (workflows.selectedWorkflowRunId > 0) {
+    if (workflows.selectedWorkflowRunId) {
       workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
     }
     if (app.activeTab === "Artifacts") void artifacts.refreshArtifacts();

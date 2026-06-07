@@ -2,17 +2,20 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::Deref;
+use uuid::Uuid;
 
 use crate::value::{Map, Value};
 
 use crate::replicas::{TriggerActorType, TriggerSourceKind};
+use crate::semver::{SemVer, SemVerBump};
 use crate::types::RuninatorType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     pub name: String,
-    pub version: i64,
+    #[serde(default)]
+    pub version: SemVer,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
@@ -147,6 +150,13 @@ where
         .or_else(|_| Ok(RuninatorType::from_json_schema(&value)))
 }
 
+/// request body for duplicating a workflow into a new version sharing the same name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowDuplicateRequest {
+    #[serde(default)]
+    pub bump: SemVerBump,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowBundle {
     #[serde(default)]
@@ -188,8 +198,8 @@ impl TryFrom<&str> for WorkflowTriggerKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowTrigger {
-    pub id: Option<i64>,
-    pub workflow_id: i64,
+    pub id: Option<Uuid>,
+    pub workflow_id: Uuid,
     pub kind: WorkflowTriggerKind,
     pub enabled: bool,
     #[serde(default)]
@@ -714,7 +724,7 @@ pub struct WorkflowNode {
     #[serde(default)]
     pub max_iterations: Option<i64>,
     #[serde(default)]
-    pub subflow_id: Option<i64>,
+    pub subflow_id: Option<Uuid>,
     #[serde(default)]
     pub subflow: WorkflowSubflow,
     #[serde(default)]
@@ -723,8 +733,8 @@ pub struct WorkflowNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRun {
-    pub id: i64,
-    pub workflow_id: i64,
+    pub id: Uuid,
+    pub workflow_id: Uuid,
     #[serde(default)]
     pub workflow_snapshot: Option<WorkflowDefinition>,
     pub status: WorkflowStatus,
@@ -742,7 +752,7 @@ pub struct WorkflowRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_actor_type: Option<TriggerActorType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trigger_actor_replica_id: Option<i64>,
+    pub trigger_actor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_actor_display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -755,8 +765,8 @@ pub struct WorkflowRun {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowNodeRun {
-    pub id: i64,
-    pub workflow_run_id: i64,
+    pub id: Uuid,
+    pub workflow_run_id: Uuid,
     pub node_id: String,
     pub status: WorkflowStatus,
     pub attempt: i64,
@@ -769,9 +779,9 @@ pub struct WorkflowNodeRun {
     pub finished_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_executor_replica_id: Option<i64>,
+    pub current_executor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_executor_replica_id: Option<i64>,
+    pub last_executor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_claimed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -780,8 +790,8 @@ pub struct WorkflowNodeRun {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowNodeRunChunk {
-    pub id: i64,
-    pub workflow_node_run_id: i64,
+    pub id: Uuid,
+    pub workflow_node_run_id: Uuid,
     pub sequence: i64,
     pub stream: String,
     pub content: String,
@@ -790,8 +800,8 @@ pub struct WorkflowNodeRunChunk {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowNodeRunArtifact {
-    pub id: i64,
-    pub workflow_node_run_id: i64,
+    pub id: Uuid,
+    pub workflow_node_run_id: Uuid,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: i64,

@@ -22,7 +22,10 @@ fn loads_hello_world_smoke_pack_manifest() {
 
     assert_eq!(bundle.workflows.len(), 1);
     assert_eq!(bundle.workflows[0].name, "Hello World Test");
-    assert_eq!(bundle.workflows[0].version, 1);
+    assert_eq!(
+        bundle.workflows[0].version,
+        runinator_models::semver::SemVer::new(1, 0, 0)
+    );
     assert!(bundle.triggers.is_empty());
 }
 

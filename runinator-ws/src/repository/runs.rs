@@ -1,9 +1,10 @@
 use super::support;
 use super::*;
+use uuid::Uuid;
 
 pub async fn create_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
     parameters: Value,
     debug: bool,
     name: Option<String>,
@@ -52,9 +53,9 @@ pub async fn claim_ready_nodes<T: DatabaseImpl>(
 
 pub async fn complete_ready_node<T: DatabaseImpl>(
     db: &T,
-    ready_node_id: i64,
+    ready_node_id: Uuid,
     scheduler_id: String,
-    next_ready: Option<(i64, String, chrono::DateTime<Utc>)>,
+    next_ready: Option<(Uuid, String, chrono::DateTime<Utc>)>,
 ) -> Result<TaskResponse, SendableError> {
     let Some(ready_node) = db.fetch_ready_node(ready_node_id).await? else {
         return Err(crate::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
@@ -95,9 +96,9 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
 /// completed or claimed elsewhere and there was nothing to do.
 pub async fn drive_ready_node<T: DatabaseImpl>(
     db: &T,
-    ready_node_id: i64,
+    ready_node_id: Uuid,
     driver_id: String,
-) -> Result<Option<i64>, SendableError> {
+) -> Result<Option<Uuid>, SendableError> {
     let now = Utc::now();
     let lease_until = now + Duration::seconds(READY_NODE_DRIVE_LEASE_SECONDS);
     let Some(ready_node) = db
@@ -243,7 +244,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
 
 pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     scheduler_id: String,
     lease_until: chrono::DateTime<Utc>,
 ) -> Result<bool, SendableError> {
@@ -253,7 +254,7 @@ pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
 
 pub async fn release_workflow_run_claim<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     scheduler_id: String,
 ) -> Result<(), SendableError> {
     db.release_workflow_run_claim(workflow_run_id, scheduler_id)
@@ -268,7 +269,7 @@ pub async fn fetch_recent_workflow_runs<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
     db.fetch_workflow_runs_for_workflow(workflow_id).await
 }
@@ -286,7 +287,7 @@ pub async fn fetch_workflow_runs_by_name<T: DatabaseImpl>(
 
 pub async fn update_workflow_run_status<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     status: WorkflowStatus,
     active_node_id: Option<String>,
     state: Option<Value>,
@@ -302,7 +303,7 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 
 pub async fn set_workflow_run_name<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     name: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
     let trimmed = support::normalized_run_name(name);

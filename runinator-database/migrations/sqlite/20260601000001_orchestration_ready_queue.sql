@@ -1,9 +1,9 @@
 ALTER TABLE workflow_runs ADD COLUMN orchestration_version INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS workflow_orchestration_events (
-    event_id TEXT PRIMARY KEY,
-    workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
-    workflow_node_run_id INTEGER NULL REFERENCES workflow_node_runs(id),
+    event_id BLOB PRIMARY KEY,
+    workflow_run_id BLOB NOT NULL REFERENCES workflow_runs(id),
+    workflow_node_run_id BLOB NULL REFERENCES workflow_node_runs(id),
     node_id TEXT NULL,
     event_type TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS workflow_orchestration_events (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_ready_nodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_event_id TEXT NOT NULL REFERENCES workflow_orchestration_events(event_id),
-    workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs(id),
+    id BLOB PRIMARY KEY,
+    source_event_id BLOB NOT NULL REFERENCES workflow_orchestration_events(event_id),
+    workflow_run_id BLOB NOT NULL REFERENCES workflow_runs(id),
     node_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued',
     ready_at INTEGER NOT NULL,

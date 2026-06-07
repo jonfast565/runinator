@@ -14,6 +14,7 @@ use runinator_models::{
     },
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct ApiError {
@@ -91,7 +92,7 @@ pub struct WorkflowTriggerRunRequest {
 #[derive(Debug, Deserialize)]
 pub struct WorkflowRunStatusQuery {
     pub status: Option<WorkflowStatus>,
-    pub workflow_id: Option<i64>,
+    pub workflow_id: Option<Uuid>,
     pub name: Option<String>,
     pub open: Option<bool>,
 }
@@ -187,13 +188,13 @@ pub struct WorkflowNodeRunStatusRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowNodeRunExecutorClaimRequest {
-    pub replica_id: i64,
+    pub replica_id: Uuid,
     pub claimed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowNodeRunExecutorReleaseRequest {
-    pub replica_id: i64,
+    pub replica_id: Uuid,
     pub released_at: DateTime<Utc>,
 }
 
@@ -211,8 +212,8 @@ pub struct CatalogQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct AutomationRecordQuery {
-    pub workflow_run_id: Option<i64>,
-    pub external_item_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
+    pub external_item_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,7 +263,7 @@ pub struct CredentialPutRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct WebhookWakeRequest {
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     #[serde(default)]
     pub node_id: Option<String>,
     #[serde(default)]

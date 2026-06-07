@@ -1,5 +1,6 @@
 use super::support;
 use super::*;
+use uuid::Uuid;
 
 pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
     db: &T,
@@ -10,14 +11,14 @@ pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_triggers<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> Result<Vec<WorkflowTrigger>, SendableError> {
     db.fetch_workflow_triggers(workflow_id).await
 }
 
 pub async fn fetch_workflow_trigger<T: DatabaseImpl>(
     db: &T,
-    trigger_id: i64,
+    trigger_id: Uuid,
 ) -> Result<Option<WorkflowTrigger>, SendableError> {
     db.fetch_workflow_trigger(trigger_id).await
 }
@@ -44,7 +45,7 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
 
 pub async fn delete_workflow_trigger<T: DatabaseImpl>(
     db: &T,
-    trigger_id: i64,
+    trigger_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     db.delete_workflow_trigger(trigger_id).await?;
     Ok(TaskResponse {
@@ -55,10 +56,10 @@ pub async fn delete_workflow_trigger<T: DatabaseImpl>(
 
 pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
     db: &T,
-    trigger_id: i64,
+    trigger_id: Uuid,
     parameters: Value,
     debug: bool,
-    actor_replica_id: Option<i64>,
+    actor_replica_id: Option<Uuid>,
     actor_display_name: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(trigger) = db.fetch_workflow_trigger(trigger_id).await? else {

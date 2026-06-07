@@ -1,6 +1,7 @@
 use crate::value::Value;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -49,7 +50,7 @@ pub struct RunRequest {
     #[serde(default = "default_trigger")]
     pub trigger: String,
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_node_id: Option<String>,
 }
@@ -60,7 +61,7 @@ fn default_trigger() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
-    pub id: i64,
+    pub id: Uuid,
     pub status: RunStatus,
     pub parameters: Value,
     pub output_json: Option<Value>,
@@ -69,14 +70,14 @@ pub struct RunSummary {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     pub workflow_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunChunk {
-    pub id: i64,
-    pub run_id: i64,
+    pub id: Uuid,
+    pub run_id: Uuid,
     pub sequence: i64,
     pub stream: String,
     pub content: String,
@@ -85,8 +86,8 @@ pub struct RunChunk {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunArtifact {
-    pub id: i64,
-    pub run_id: i64,
+    pub id: Uuid,
+    pub run_id: Uuid,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: i64,
@@ -124,7 +125,7 @@ pub struct NewRunArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderExecutionRequest {
-    pub run_id: Option<i64>,
+    pub run_id: Option<Uuid>,
     pub action_name: String,
     pub action_function: String,
     #[serde(default)]

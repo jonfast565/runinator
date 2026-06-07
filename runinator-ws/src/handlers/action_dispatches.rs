@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -68,7 +69,7 @@ pub(crate) async fn claim_action_dispatches<T: DatabaseImpl>(
 
 pub(crate) async fn mark_action_dispatch_published<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(dispatch_id): Path<i64>,
+    Path(dispatch_id): Path<Uuid>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<crate::models::ApiResponse>)> {
     db.mark_action_dispatch_published(dispatch_id)
         .await
@@ -78,7 +79,7 @@ pub(crate) async fn mark_action_dispatch_published<T: DatabaseImpl>(
 
 pub(crate) async fn mark_action_dispatch_failed<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(dispatch_id): Path<i64>,
+    Path(dispatch_id): Path<Uuid>,
     Json(request): Json<ActionDispatchFailureRequest>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<crate::models::ApiResponse>)> {
     db.mark_action_dispatch_failed(dispatch_id, request.error)

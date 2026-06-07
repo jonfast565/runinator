@@ -15,6 +15,10 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
 
 import { decompileToWdl, fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
 
+const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
+const RUN_ID = "00000000-0000-0000-0000-000000000070";
+const TRIGGER_ID = "00000000-0000-0000-0000-000000000012";
+
 describe("workflow run detail state", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -32,11 +36,11 @@ describe("workflow run detail state", () => {
       resolveFetch = resolve;
     }));
 
-    const request = workflows.fetchWorkflowRunDetail(7, true);
-    const pushed = workflowDetail(7, "running", "ws");
+    const request = workflows.fetchWorkflowRunDetail(RUN_ID, true);
+    const pushed = workflowDetail(RUN_ID, "running", "ws");
     workflows.setWorkflowRunDetail(pushed);
 
-    resolveFetch(workflowDetail(7, "queued", "http"));
+    resolveFetch(workflowDetail(RUN_ID, "queued", "http"));
     await request;
 
     expect(workflows.workflowRunDetail?.run.status).toBe("running");
@@ -45,22 +49,22 @@ describe("workflow run detail state", () => {
 
   it("keeps an optimistic breakpoint through stale pushes until the server confirms it", async () => {
     const workflows = useWorkflowsStore();
-    workflows.setWorkflowRunDetail(workflowDetail(7, "debug_paused", "initial", []));
+    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "debug_paused", "initial", []));
     vi.mocked(patchWorkflowRunDebug).mockResolvedValue({ success: true, message: "ok" });
-    vi.mocked(fetchWorkflowRun).mockResolvedValue(workflowDetail(7, "debug_paused", "stale http", []));
+    vi.mocked(fetchWorkflowRun).mockResolvedValue(workflowDetail(RUN_ID, "debug_paused", "stale http", []));
 
     await workflows.toggleBreakpoint("task-1");
 
     expect(workflows.currentBreakpoints).toEqual(["task-1"]);
 
-    workflows.setWorkflowRunDetail(workflowDetail(7, "running", "stale ws", []));
+    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "stale ws", []));
 
     expect(workflows.workflowRunDetail?.run.status).toBe("running");
     expect(workflows.workflowRunDetail?.run.message).toBe("stale ws");
     expect(workflows.currentBreakpoints).toEqual(["task-1"]);
 
-    workflows.setWorkflowRunDetail(workflowDetail(7, "running", "confirmed ws", ["task-1"]));
-    workflows.setWorkflowRunDetail(workflowDetail(7, "running", "next ws", []));
+    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "confirmed ws", ["task-1"]));
+    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "next ws", []));
 
     expect(workflows.workflowRunDetail?.run.message).toBe("next ws");
     expect(workflows.currentBreakpoints).toEqual([]);
@@ -68,35 +72,35 @@ describe("workflow run detail state", () => {
 
   it("saves workflow edits as wdl and reloads workflow triggers", async () => {
     const workflows = useWorkflowsStore();
-    const draft = workflowDefinition(7, "bundle draft");
+    const draft = workflowDefinition(WORKFLOW_ID, "bundle draft");
     Object.assign(workflows.workflowDraft, draft);
     workflows.workflowJson = JSON.stringify(draft.definition);
-    workflows.workflowTriggers = [workflowTrigger(12, 7, "0 * * * *")];
+    workflows.workflowTriggers = [workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "0 * * * *")];
     vi.mocked(decompileToWdl).mockResolvedValue("workflow bundle_draft { start -> end }");
     vi.mocked(saveWorkflowWdl).mockResolvedValue({
-      workflows: [workflowDefinition(7, "bundle saved")],
-      triggers: [workflowTrigger(12, 7, "30 * * * *")]
+      workflows: [workflowDefinition(WORKFLOW_ID, "bundle saved")],
+      triggers: [workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "30 * * * *")]
     });
-    vi.mocked(fetchWorkflows).mockResolvedValue([workflowDefinition(7, "bundle saved")]);
+    vi.mocked(fetchWorkflows).mockResolvedValue([workflowDefinition(WORKFLOW_ID, "bundle saved")]);
 
     await workflows.saveSelectedWorkflow();
 
-    expect(decompileToWdl).toHaveBeenCalledWith(expect.objectContaining({ id: 7, name: "bundle draft" }));
+    expect(decompileToWdl).toHaveBeenCalledWith(expect.objectContaining({ id: WORKFLOW_ID, name: "bundle draft" }));
     expect(saveWorkflowWdl).toHaveBeenCalledWith({
       source: "workflow bundle_draft { start -> end }",
       enabled: true,
-      workflow_id: 7,
-      triggers: [expect.objectContaining({ id: 12, workflow_id: 7, configuration: { cron: "0 * * * *", parameters: {} } })]
+      workflow_id: WORKFLOW_ID,
+      triggers: [expect.objectContaining({ id: TRIGGER_ID, workflow_id: WORKFLOW_ID, configuration: { cron: "0 * * * *", parameters: {} } })]
     });
     expect(workflows.workflowDraft.name).toBe("bundle saved");
-    expect(workflows.workflowTriggers).toEqual([workflowTrigger(12, 7, "30 * * * *")]);
+    expect(workflows.workflowTriggers).toEqual([workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "30 * * * *")]);
   });
 
   it("validates nested typed workflow input shaped step parameters", async () => {
     const workflows = useWorkflowsStore();
     const providers = useProvidersStore();
     providers.providers = [nestedWorkflowInputProvider()];
-    await workflows.selectWorkflow(workflowDefinition(7, "nested input"));
+    await workflows.selectWorkflow(workflowDefinition(WORKFLOW_ID, "nested input"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "prepare",
       kind: "action",
@@ -143,7 +147,7 @@ describe("workflow run detail state", () => {
 
   it("exits inline node editing after a successful apply", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "inline edit"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
       kind: "action",
@@ -165,7 +169,7 @@ describe("workflow run detail state", () => {
 
   it("keeps inline node editing open when apply fails", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "inline edit"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "inline edit"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
       kind: "action",
@@ -182,7 +186,7 @@ describe("workflow run detail state", () => {
 
   it("does not remove protected terminal and entry nodes", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "protected nodes"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "protected nodes"));
 
     workflows.populateStepEditor("start");
 
@@ -198,7 +202,7 @@ describe("workflow run detail state", () => {
 
   it("does not allow protected node kinds to be changed", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "protected nodes"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "protected nodes"));
     workflows.populateStepEditor("start");
 
     workflows.stepEditor.kind = "action";
@@ -210,7 +214,7 @@ describe("workflow run detail state", () => {
 
   it("allows non-protected nodes to be locked", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "locked nodes"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "locked nodes"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "wait-1",
       kind: "wait",
@@ -230,7 +234,7 @@ describe("workflow run detail state", () => {
 
   it("marks and unmarks nodes as skipped", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "skipped nodes"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "skipped nodes"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "wait-1",
       kind: "wait",
@@ -254,7 +258,7 @@ describe("workflow run detail state", () => {
 
   it("does not remove or change the kind of manually locked nodes", () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(7, "locked nodes"));
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "locked nodes"));
     workflows.workflowDraft.definition.nodes.splice(1, 0, {
       id: "task-1",
       kind: "action",
@@ -277,11 +281,11 @@ describe("workflow run detail state", () => {
   });
 });
 
-function workflowDefinition(id: number, name: string): WorkflowDefinition {
+function workflowDefinition(id: string, name: string): WorkflowDefinition {
   return {
     id,
     name,
-    version: 1,
+    version: "1.0.0",
     enabled: true,
     input_type: { type: "struct", fields: {} },
     definition: {
@@ -295,7 +299,7 @@ function workflowDefinition(id: number, name: string): WorkflowDefinition {
   };
 }
 
-function workflowTrigger(id: number, workflowId: number, cron: string): WorkflowTrigger {
+function workflowTrigger(id: string, workflowId: string, cron: string): WorkflowTrigger {
   return {
     id,
     workflow_id: workflowId,
@@ -309,11 +313,11 @@ function workflowTrigger(id: number, workflowId: number, cron: string): Workflow
   };
 }
 
-function workflowDetail(id: number, status: string, message: string, breakpoints: string[] = []): WorkflowRunDetail {
+function workflowDetail(id: string, status: string, message: string, breakpoints: string[] = []): WorkflowRunDetail {
   return {
     run: {
       id,
-      workflow_id: 1,
+      workflow_id: WORKFLOW_ID,
       status,
       parameters: {},
       state: { debug: { enabled: true, breakpoints } },

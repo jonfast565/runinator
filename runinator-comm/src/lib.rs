@@ -49,8 +49,8 @@ pub enum GossipMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionCommand {
     pub command_id: Uuid,
-    pub workflow_run_id: i64,
-    pub workflow_node_run_id: i64,
+    pub workflow_run_id: Uuid,
+    pub workflow_node_run_id: Uuid,
     pub node_id: String,
     pub action: WorkflowAction,
     pub attempt: i64,
@@ -60,7 +60,7 @@ pub struct ActionCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionDispatchRecord {
-    pub id: i64,
+    pub id: Uuid,
     pub dedupe_key: String,
     pub command: ActionCommand,
     pub attempts: i64,
@@ -86,7 +86,7 @@ pub enum ControlKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlCommand {
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     pub kind: ControlKind,
 }
 
@@ -96,8 +96,8 @@ pub struct ControlCommand {
 /// `ready_at` arrives.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WakeCommand {
-    pub ready_node_id: i64,
-    pub workflow_run_id: i64,
+    pub ready_node_id: Uuid,
+    pub workflow_run_id: Uuid,
     pub node_id: String,
     pub ready_at: DateTime<Utc>,
     pub source_event_id: Uuid,
@@ -105,8 +105,8 @@ pub struct WakeCommand {
 
 impl WakeCommand {
     pub fn new(
-        ready_node_id: i64,
-        workflow_run_id: i64,
+        ready_node_id: Uuid,
+        workflow_run_id: Uuid,
         node_id: String,
         ready_at: DateTime<Utc>,
         source_event_id: Uuid,
@@ -133,19 +133,19 @@ impl WakeCommand {
 pub enum WsIngressCommand {
     /// waker -> ws: run the reducer for a now-due ready node.
     Drive {
-        ready_node_id: i64,
-        workflow_run_id: i64,
+        ready_node_id: Uuid,
+        workflow_run_id: Uuid,
         node_id: String,
     },
     /// worker -> ws: a control request raised by an executing action.
     Control {
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         kind: ControlKind,
     },
 }
 
 impl WsIngressCommand {
-    pub fn drive(ready_node_id: i64, workflow_run_id: i64, node_id: String) -> Self {
+    pub fn drive(ready_node_id: Uuid, workflow_run_id: Uuid, node_id: String) -> Self {
         Self::Drive {
             ready_node_id,
             workflow_run_id,
@@ -153,7 +153,7 @@ impl WsIngressCommand {
         }
     }
 
-    pub fn control(workflow_run_id: i64, kind: ControlKind) -> Self {
+    pub fn control(workflow_run_id: Uuid, kind: ControlKind) -> Self {
         Self::Control {
             workflow_run_id,
             kind,
@@ -206,13 +206,13 @@ pub enum DebugVerb {
 /// a [`DebugVerb`] addressed to a specific workflow run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugCommand {
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     #[serde(flatten)]
     pub verb: DebugVerb,
 }
 
 impl DebugCommand {
-    pub fn new(workflow_run_id: i64, verb: DebugVerb) -> Self {
+    pub fn new(workflow_run_id: Uuid, verb: DebugVerb) -> Self {
         Self {
             workflow_run_id,
             verb,
@@ -226,14 +226,14 @@ impl DebugCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEvent {
-    RunStatusChanged { run_id: i64, terminal: bool },
-    RunChunkAdded { run_id: i64 },
+    RunStatusChanged { run_id: Uuid, terminal: bool },
+    RunChunkAdded { run_id: Uuid },
     WorkflowsChanged,
-    WorkflowRunChanged { run_id: i64 },
+    WorkflowRunChanged { run_id: Uuid },
     WorkflowRunActivity,
     TasksChanged,
-    ArtifactCreated { artifact_id: i64, run_id: i64 },
-    NotificationCreated { notification_id: i64 },
+    ArtifactCreated { artifact_id: Uuid, run_id: Uuid },
+    NotificationCreated { notification_id: Uuid },
     NotificationsChanged,
 }
 
@@ -241,8 +241,8 @@ pub enum UiEvent {
 pub struct WorkflowResultEvent {
     pub event_id: Uuid,
     pub command_id: Uuid,
-    pub workflow_run_id: i64,
-    pub workflow_node_run_id: i64,
+    pub workflow_run_id: Uuid,
+    pub workflow_node_run_id: Uuid,
     pub node_id: String,
     pub kind: WorkflowResultEventKind,
     pub timestamp: DateTime<Utc>,
@@ -267,7 +267,7 @@ pub enum WorkflowResultEventKind {
 }
 
 impl ControlCommand {
-    pub fn new(workflow_run_id: i64, kind: ControlKind) -> Self {
+    pub fn new(workflow_run_id: Uuid, kind: ControlKind) -> Self {
         Self {
             workflow_run_id,
             kind,
@@ -302,7 +302,7 @@ impl WorkflowResultEvent {
 
     fn new(command: &ActionCommand, kind: WorkflowResultEventKind) -> Self {
         Self {
-            event_id: Uuid::new_v4(),
+            event_id: Uuid::now_v7(),
             command_id: command.command_id,
             workflow_run_id: command.workflow_run_id,
             workflow_node_run_id: command.workflow_node_run_id,

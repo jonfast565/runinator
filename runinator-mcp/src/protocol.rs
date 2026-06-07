@@ -1,11 +1,14 @@
 use runinator_models::json;
 use runinator_models::value::Value;
+use uuid::Uuid;
 
-pub(crate) fn required_i64(arguments: &Value, name: &str) -> Result<i64, String> {
+/// extract a required uuid argument (accepts a hyphenated uuid string).
+pub(crate) fn required_uuid(arguments: &Value, name: &str) -> Result<Uuid, String> {
     arguments
         .get(name)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| format!("missing integer argument '{name}'"))
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse().ok())
+        .ok_or_else(|| format!("missing uuid argument '{name}'"))
 }
 
 pub(crate) fn required_value(arguments: &Value, name: &str) -> Result<Value, String> {

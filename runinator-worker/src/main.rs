@@ -7,6 +7,7 @@ mod provider_repository;
 mod secrets;
 
 use std::{collections::HashMap, env, ffi::OsString, sync::Arc, time::Duration};
+use uuid::Uuid;
 
 use chrono::Utc;
 use config::parse_config;
@@ -250,14 +251,14 @@ async fn run_worker_loop(
     consumer_id: String,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
-    replica_id: Option<i64>,
+    replica_id: Option<Uuid>,
     max_concurrent_actions: usize,
     shutdown_grace: Duration,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     let max_concurrent_actions = max_concurrent_actions.max(1);
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
-    let in_flight = Arc::new(Mutex::new(HashMap::<i64, CancellationToken>::new()));
+    let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, CancellationToken>::new()));
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
         consumer_id.clone(),
@@ -343,7 +344,7 @@ async fn run_worker_loop(
     Ok(())
 }
 
-async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>) {
+async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, CancellationToken>>>) {
     let tokens = {
         let guard = in_flight.lock().await;
         guard.values().cloned().collect::<Vec<_>>()
@@ -371,7 +372,7 @@ async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
 async fn run_control_loop(
     broker: Arc<dyn Broker>,
     consumer_id: String,
-    in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     loop {
@@ -391,7 +392,7 @@ async fn run_control_loop(
 async fn handle_control_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
-    in_flight: &Arc<Mutex<HashMap<i64, CancellationToken>>>,
+    in_flight: &Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
     let control_kind = delivery.command.kind;
@@ -438,9 +439,9 @@ async fn process_delivery(
     consumer_id: &str,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
-    replica_id: Option<i64>,
+    replica_id: Option<Uuid>,
     delivery: runinator_broker::BrokerDelivery,
-    in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 ) -> Result<(), SendableError> {
     let command = delivery.command.clone();
     let action = command.action.clone();

@@ -59,7 +59,7 @@ impl Provider for EmailProvider {
                         ResultMetadata::new("sent", RuninatorType::Boolean),
                         ResultMetadata::new(
                             "notification_id",
-                            RuninatorType::Union(vec![RuninatorType::Integer, RuninatorType::Null]),
+                            RuninatorType::Union(vec![RuninatorType::String, RuninatorType::Null]),
                         ),
                         ResultMetadata::new("recipient", RuninatorType::String),
                     ]),
@@ -75,7 +75,7 @@ impl Provider for EmailProvider {
                     ParameterMetadata::optional("metadata", RuninatorType::map(RuninatorType::Any)),
                 ])
                 .with_results(vec![
-                    ResultMetadata::new("notification_id", RuninatorType::Integer),
+                    ResultMetadata::new("notification_id", RuninatorType::String),
                     ResultMetadata::new("title", RuninatorType::String),
                 ]),
             ],

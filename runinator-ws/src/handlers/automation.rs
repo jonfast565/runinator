@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -157,7 +158,7 @@ pub(crate) async fn create_approval<T: DatabaseImpl>(
 
 pub(crate) async fn approve_request<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(approval_id): Path<i64>,
+    Path(approval_id): Path<Uuid>,
     Json(request): Json<ApprovalResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::resolve_approval(
@@ -177,7 +178,7 @@ pub(crate) async fn approve_request<T: DatabaseImpl>(
 
 pub(crate) async fn reject_request<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(approval_id): Path<i64>,
+    Path(approval_id): Path<Uuid>,
     Json(request): Json<ApprovalResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::resolve_approval(

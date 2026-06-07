@@ -3,6 +3,7 @@ use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaListResponse, ReplicaProviderRegistration,
     ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest, ReplicaStatus,
 };
+use uuid::Uuid;
 
 const REPLICA_STALE_SECONDS: i64 = 30;
 
@@ -16,7 +17,7 @@ pub async fn register_replica<T: DatabaseImpl>(
 
 pub async fn heartbeat_replica<T: DatabaseImpl>(
     db: &T,
-    replica_id: i64,
+    replica_id: Uuid,
     request: ReplicaHeartbeatRequest,
     observed_ip: Option<String>,
 ) -> Result<Option<ReplicaRecord>, SendableError> {
@@ -25,7 +26,7 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
 
 pub async fn mark_replica_offline<T: DatabaseImpl>(
     db: &T,
-    replica_id: i64,
+    replica_id: Uuid,
     runtime_id: String,
 ) -> Result<Option<ReplicaRecord>, SendableError> {
     db.mark_replica_offline(replica_id, runtime_id).await
@@ -66,7 +67,7 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
 
 pub async fn upsert_replica_provider_registration<T: DatabaseImpl>(
     db: &T,
-    replica_id: i64,
+    replica_id: Uuid,
     request: ReplicaProviderRegistrationRequest,
 ) -> Result<ReplicaProviderRegistration, SendableError> {
     db.upsert_replica_provider_registration(replica_id, request)
@@ -75,7 +76,7 @@ pub async fn upsert_replica_provider_registration<T: DatabaseImpl>(
 
 pub async fn fetch_replica_provider_registrations<T: DatabaseImpl>(
     db: &T,
-    replica_id: i64,
+    replica_id: Uuid,
 ) -> Result<Vec<ReplicaProviderRegistration>, SendableError> {
     db.fetch_replica_provider_registrations(replica_id).await
 }

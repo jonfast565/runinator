@@ -16,8 +16,8 @@ import { useAppStore } from "./app";
 
 export const useTasksStore = defineStore("tasks", () => {
   const tasks = ref<ScheduledTask[]>([]);
-  const selectedTaskId = ref<number | null>(null);
-  const selectedRunId = ref(0);
+  const selectedTaskId = ref<string | null>(null);
+  const selectedRunId = ref<string | null>(null);
   const runs = ref<RunSummary[]>([]);
   const chunks = ref<RunChunk[]>([]);
   const artifacts = ref<RunArtifact[]>([]);
@@ -55,14 +55,14 @@ export const useTasksStore = defineStore("tasks", () => {
   async function refreshRunsForSelectedTask() {
     if (!selectedTaskId.value) {
       runs.value = [];
-      selectedRunId.value = 0;
+      selectedRunId.value = null;
       chunks.value = [];
       artifacts.value = [];
       return;
     }
     runs.value = await app.runOperation("Loading task runs", () => fetchTaskRuns(selectedTaskId.value!)).catch(() => []);
     if (!runs.value.some((run) => run.id === selectedRunId.value)) {
-      selectedRunId.value = runs.value[0]?.id ?? 0;
+      selectedRunId.value = runs.value[0]?.id ?? null;
     }
     if (selectedRunId.value) await selectRunById(selectedRunId.value);
   }
@@ -71,7 +71,7 @@ export const useTasksStore = defineStore("tasks", () => {
     await selectRunById(run.id);
   }
 
-  async function selectRunById(runId: number) {
+  async function selectRunById(runId: string) {
     selectedRunId.value = runId;
     const [nextChunks, nextArtifacts] = await Promise.all([
       app.runOperation("Loading run chunks", () => fetchRunChunks(runId)).catch(() => [] as RunChunk[]),

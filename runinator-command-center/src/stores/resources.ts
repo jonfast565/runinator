@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { approveApproval, fetchResourceRecords, rejectApproval } from "../api/commandCenterApi";
 import type { ResourceEndpoint } from "../types/app";
 import type { JsonRecord, WorkflowNodeRun } from "../types/models";
-import { approvalIdFromNodeRun, type ApprovalAction, positiveNumber, selectWorkflowApprovalRecord } from "../utils/approvals";
+import { approvalIdFromNodeRun, type ApprovalAction, nonEmptyString, selectWorkflowApprovalRecord } from "../utils/approvals";
 import { genericRecordSummary, genericRecordType } from "../utils/resources";
 import { useAppStore } from "./app";
 
@@ -24,7 +24,7 @@ export const useResourcesStore = defineStore("resources", () => {
   const selectedResourceRecord = ref<JsonRecord | null>(null);
   const app = useAppStore();
 
-  const canResolveApproval = computed(() => selectedResourceEndpoint.value === "approvals" && Number(selectedResourceRecord.value?.id ?? 0) > 0);
+  const canResolveApproval = computed(() => selectedResourceEndpoint.value === "approvals" && Boolean(nonEmptyString(selectedResourceRecord.value?.id)));
   const filteredResourceRecords = computed(() => {
     const query = app.normalizedSearch;
     if (!query) return resourceRecords.value;
@@ -53,7 +53,7 @@ export const useResourcesStore = defineStore("resources", () => {
     selectedResourceRecord.value = null;
   }
 
-  async function handleApprovalAction(approvalId: number, action: ApprovalAction) {
+  async function handleApprovalAction(approvalId: string, action: ApprovalAction) {
     const response = await app.runOperation(`${action === "approve" ? "Approving" : "Rejecting"} approval`, () =>
       action === "approve" ? approveApproval(approvalId) : rejectApproval(approvalId)
     );
@@ -63,27 +63,28 @@ export const useResourcesStore = defineStore("resources", () => {
 
   async function resolveApproval(action: ApprovalAction) {
     if (!canResolveApproval.value) return app.setError("No approval selected");
-    const approvalId = Number(selectedResourceRecord.value?.id);
+    const approvalId = nonEmptyString(selectedResourceRecord.value?.id);
+    if (!approvalId) return app.setError("No approval selected");
     await handleApprovalAction(approvalId, action);
   }
 
-  async function resolveWorkflowApproval(workflowRunId: number, nodeId: string, nodeRun: WorkflowNodeRun, action: ApprovalAction) {
+  async function resolveWorkflowApproval(workflowRunId: string, nodeId: string, nodeRun: WorkflowNodeRun, action: ApprovalAction) {
     const approvalId = await findWorkflowApprovalId(workflowRunId, nodeId, nodeRun);
-    if (approvalId <= 0) return;
+    if (!approvalId) return;
     await handleApprovalAction(approvalId, action);
   }
 
-  async function findWorkflowApprovalId(workflowRunId: number, nodeId: string, nodeRun: WorkflowNodeRun): Promise<number> {
+  async function findWorkflowApprovalId(workflowRunId: string, nodeId: string, nodeRun: WorkflowNodeRun): Promise<string | null> {
     const stateApprovalId = approvalIdFromNodeRun(nodeRun);
-    if (stateApprovalId > 0) return stateApprovalId;
+    if (stateApprovalId) return stateApprovalId;
 
     const approvals = await app.runOperation("Loading workflow approvals", () => fetchResourceRecords(`approvals?workflow_run_id=${workflowRunId}`));
     const approval = selectWorkflowApprovalRecord(approvals, workflowRunId, nodeId);
-    const approvalId = positiveNumber(approval?.id);
-    if (approvalId > 0) return approvalId;
+    const approvalId = nonEmptyString(approval?.id);
+    if (approvalId) return approvalId;
 
     app.setError(`No approval found for workflow node ${nodeId}`);
-    return 0;
+    return null;
   }
 
   function recordType(record: JsonRecord) {

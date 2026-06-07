@@ -12,6 +12,7 @@ use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
 use sqlx::Row;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 type E2eResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type ApiClient = AsyncApiClient<StaticLocator>;
@@ -70,7 +71,7 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
 
 async fn run_workflow_by_id(
     api: &ApiClient,
-    workflow_id: i64,
+    workflow_id: Uuid,
     parameters: Value,
 ) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
     let run = api.create_workflow_run(workflow_id, parameters).await?;
@@ -79,7 +80,7 @@ async fn run_workflow_by_id(
 
 async fn poll_workflow(
     api: &ApiClient,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
     for _ in 0..60 {
         let detail = api.fetch_workflow_run(workflow_run_id).await?;
@@ -102,13 +103,13 @@ fn latest_node<'a>(nodes: &'a [WorkflowNodeRun], node_id: &str) -> E2eResult<&'a
     nodes
         .iter()
         .filter(|node| node.node_id == node_id)
-        .max_by_key(|node| node.id)
+        .max_by_key(|node| node.created_at)
         .ok_or_else(|| format!("missing node run {node_id}").into())
 }
 
 async fn poll_node_chunks(
     api: &ApiClient,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
 ) -> E2eResult<Vec<runinator_models::workflows::WorkflowNodeRunChunk>> {
     for _ in 0..30 {
         let chunks = api
@@ -124,7 +125,7 @@ async fn poll_node_chunks(
 
 async fn assert_broker_result_events(
     sqlite_path: &Path,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
 ) -> E2eResult<()> {
     let url = format!("sqlite://{}", sqlite_path.display());
     let pool = sqlx::SqlitePool::connect(&url).await?;

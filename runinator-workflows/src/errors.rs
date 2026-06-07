@@ -1,5 +1,6 @@
 use runinator_models::errors::{EngineErrors, ErrorDescriptor};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct WorkflowTypeDiagnostic {
@@ -54,7 +55,7 @@ pub enum WorkflowValidationError {
     #[error("WORKFLOW019 - workflow node '{node}' parameters are invalid: {message}")]
     InvalidNodeParameters { node: String, message: String },
     #[error("WORKFLOW020 - workflow node '{node}' references non-existent workflow with id {id}")]
-    InvalidSubflowId { node: String, id: i64 },
+    InvalidSubflowId { node: String, id: Uuid },
     #[error("WORKFLOW021 - workflow type validation failed: {0}")]
     TypeError(String),
     #[error("WORKFLOW022 - workflow type validation failed: {}", .0.message)]

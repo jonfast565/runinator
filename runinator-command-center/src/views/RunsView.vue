@@ -139,7 +139,7 @@ useWorkflowRunStream();
 
 watch(() => workflows.selectedWorkflowNodeRunId, (id) => { selectedNodeRunIdRef.value = id; }, { immediate: true });
 watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
-  artifacts.value = id > 0 ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
+  artifacts.value = id ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
 }, { immediate: true });
 
 const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);

@@ -286,7 +286,7 @@ const autoApply = ref(Boolean(savedOptions.autoApply));
 const autoSave = ref(Boolean(savedOptions.autoSave));
 const debugRun = ref(Boolean(savedOptions.debugRun));
 const runWorkflowRef = ref(String(savedOptions.runWorkflowRef ?? ""));
-const recentRunIds = ref<number[]>([]);
+const recentRunIds = ref<string[]>([]);
 const recentPacks = ref<string[]>(loadRecentPacks());
 const runInputValue = ref<unknown>({});
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
@@ -294,7 +294,7 @@ const inspectResult = ref<DevPackInspectResult | null>(null);
 const selectedFilePath = ref(window.localStorage.getItem("runinator.devPack.file") || "");
 const sourceText = ref("");
 const savedSourceText = ref("");
-const latestRunId = ref(0);
+const latestRunId = ref<string | null>(null);
 const latestRunDetail = ref<WorkflowRunDetail | null>(null);
 const selectedRunNodeId = ref<string | null>(null);
 const errorText = ref("");
@@ -411,11 +411,11 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function rememberRun(id: number) {
+function rememberRun(id: string) {
   recentRunIds.value = [id, ...recentRunIds.value.filter((existing) => existing !== id)].slice(0, 8);
 }
 
-async function viewRun(id: number) {
+async function viewRun(id: string) {
   if (id === latestRunId.value && latestRunDetail.value) return;
   latestRunId.value = id;
   await refreshLatestRun();
@@ -547,10 +547,8 @@ async function runSelectedWorkflow() {
 
 function resolveRunWorkflow() {
   const value = runWorkflowRef.value;
-  const id = Number(value);
-  if (Number.isFinite(id) && id > 0) {
-    return availableWorkflows.value.find((workflow) => workflow.id === id) ?? workflows.workflows.find((workflow) => workflow.id === id);
-  }
+  const byId = availableWorkflows.value.find((workflow) => workflow.id === value) ?? workflows.workflows.find((workflow) => workflow.id === value);
+  if (byId) return byId;
   return availableWorkflows.value.find((workflow) => workflow.name === value) ?? workflows.workflows.find((workflow) => workflow.name === value);
 }
 

@@ -11,19 +11,23 @@ use std::{
 use runinator_models::json;
 use runinator_models::runs::ProviderExecutionRequest;
 use runinator_models::value::Value;
+use uuid::Uuid;
 
 use crate::send::send_notification;
 
 #[test]
 fn notification_action_posts_notification_record() {
-    let (service_url, request_handle) = spawn_notification_server(r#"{"id":99}"#);
+    let notification_id = Uuid::now_v7();
+    let (service_url, request_handle) =
+        spawn_notification_server(format!(r#"{{"id":"{notification_id}"}}"#));
     let _env = ServiceUrlEnvGuard::set(&service_url);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
+    let run_id = Uuid::now_v7();
     let request = ProviderExecutionRequest {
-        run_id: Some(41),
+        run_id: Some(run_id),
         action_name: "email".into(),
         action_function: "notify".into(),
         parameters: json!({
@@ -41,14 +45,14 @@ fn notification_action_posts_notification_record() {
     let result = runtime.block_on(send_notification(&request)).unwrap();
     assert_eq!(
         result.output_json.as_ref().unwrap()["notification_id"],
-        json!(99)
+        json!(notification_id.to_string())
     );
 
     let recorded = request_handle.join().unwrap();
     assert_eq!(recorded.path, "/notifications");
 
     let body: Value = serde_json::from_str(&recorded.body).unwrap();
-    assert_eq!(body["workflow_run_id"], json!(41));
+    assert_eq!(body["workflow_run_id"], json!(run_id.to_string()));
     assert_eq!(body["channel"], json!("in_app"));
     assert_eq!(body["severity"], json!("success"));
     assert_eq!(body["title"], json!("Build finished"));
@@ -63,7 +67,7 @@ struct RecordedRequest {
 }
 
 fn spawn_notification_server(
-    response_body: &'static str,
+    response_body: String,
 ) -> (String, thread::JoinHandle<RecordedRequest>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();

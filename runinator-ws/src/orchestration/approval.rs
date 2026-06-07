@@ -64,7 +64,10 @@ pub(super) async fn process_approval_node<T: DatabaseImpl>(
         .await?;
     let approval_state = ApprovalState {
         approval: node.parameters.clone().into(),
-        approval_id: approval.get("id").and_then(Value::as_i64),
+        approval_id: approval
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|raw| raw.parse::<Uuid>().ok()),
     };
     db.update_workflow_node_run(
         node_run.id,

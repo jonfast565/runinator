@@ -5148,6 +5148,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5163,6 +5164,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -5194,6 +5196,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -5209,6 +5212,7 @@ dependencies = [
  "serde",
  "serde_json",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -5267,6 +5271,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5277,6 +5282,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5317,6 +5323,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -5327,6 +5334,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5338,6 +5346,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5349,6 +5358,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5360,6 +5370,7 @@ dependencies = [
  "runinator-plugin",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5477,6 +5488,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -6253,6 +6265,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -6332,6 +6345,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami 1.6.1",
 ]
 
@@ -6369,6 +6383,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami 1.6.1",
 ]
 
@@ -6394,6 +6409,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

@@ -1,12 +1,13 @@
 use crate::value::Value;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
-    pub id: i64,
+    pub id: Uuid,
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_node_id: Option<String>,
     pub channel: String,
@@ -26,7 +27,7 @@ pub struct Notification {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NewNotification {
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_node_id: Option<String>,
     pub channel: String,

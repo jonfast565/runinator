@@ -8,6 +8,7 @@ pub mod orchestration;
 pub mod providers;
 pub mod replicas;
 pub mod runs;
+pub mod semver;
 pub mod settings;
 pub mod types;
 pub mod value;

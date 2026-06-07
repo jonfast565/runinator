@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS replicas (
-    replica_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    replica_id BLOB PRIMARY KEY,
     replica_type TEXT NOT NULL,
     instance_id TEXT NOT NULL,
     runtime_id TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS replicas (
 );
 
 CREATE TABLE IF NOT EXISTS replica_provider_registrations (
-    replica_id INTEGER NOT NULL REFERENCES replicas(replica_id) ON DELETE CASCADE,
+    replica_id BLOB NOT NULL REFERENCES replicas(replica_id) ON DELETE CASCADE,
     provider_name TEXT NOT NULL,
     provider_json TEXT NOT NULL DEFAULT '{}',
     first_registered_at INTEGER NOT NULL,
@@ -29,14 +29,14 @@ CREATE TABLE IF NOT EXISTS replica_provider_registrations (
 
 ALTER TABLE workflow_runs ADD COLUMN trigger_source_kind TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_actor_type TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN trigger_actor_replica_id INTEGER NULL REFERENCES replicas(replica_id);
+ALTER TABLE workflow_runs ADD COLUMN trigger_actor_replica_id BLOB NULL REFERENCES replicas(replica_id);
 ALTER TABLE workflow_runs ADD COLUMN trigger_actor_display_name TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_host TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_ip TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_metadata TEXT NOT NULL DEFAULT '{}';
 
-ALTER TABLE workflow_node_runs ADD COLUMN current_executor_replica_id INTEGER NULL REFERENCES replicas(replica_id);
-ALTER TABLE workflow_node_runs ADD COLUMN last_executor_replica_id INTEGER NULL REFERENCES replicas(replica_id);
+ALTER TABLE workflow_node_runs ADD COLUMN current_executor_replica_id BLOB NULL REFERENCES replicas(replica_id);
+ALTER TABLE workflow_node_runs ADD COLUMN last_executor_replica_id BLOB NULL REFERENCES replicas(replica_id);
 ALTER TABLE workflow_node_runs ADD COLUMN executor_claimed_at INTEGER NULL;
 ALTER TABLE workflow_node_runs ADD COLUMN executor_released_at INTEGER NULL;
 

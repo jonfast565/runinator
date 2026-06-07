@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     api_routes::API_PACKS_IMPORT,
     bundles::{PackImportResult, SecretBundle},
+    semver::SemVer,
     settings::SettingSummary,
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
@@ -291,7 +292,7 @@ fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
         Some("wdl") => {
             let data = fs::read_to_string(path)
                 .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-            let definition = compile_wdl(path, &data, 1)?;
+            let definition = compile_wdl(path, &data, SemVer::default())?;
             Ok(WorkflowBundle {
                 workflows: vec![definition],
                 triggers: Vec::new(),
@@ -304,7 +305,11 @@ fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
     }
 }
 
-fn compile_wdl(path: &Path, data: &str, default_version: i64) -> CommandResult<WorkflowDefinition> {
+fn compile_wdl(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+) -> CommandResult<WorkflowDefinition> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
@@ -339,7 +344,7 @@ fn load_wdl_directory(dir: &Path) -> CommandResult<WorkflowBundle> {
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)
             .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-        workflows.push(compile_wdl(wdl_path, &data, 1)?);
+        workflows.push(compile_wdl(wdl_path, &data, SemVer::default())?);
     }
     Ok(WorkflowBundle {
         workflows,
@@ -369,10 +374,13 @@ fn load_wdl_pack_manifest(path: &Path) -> CommandResult<WorkflowBundle> {
         .get("version")
         .and_then(|v| {
             v.as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| v.as_i64())
+                .and_then(|s| s.parse::<SemVer>().ok())
+                .or_else(|| {
+                    v.as_i64()
+                        .map(|major| SemVer::new(major.max(0) as u64, 0, 0))
+                })
         })
-        .unwrap_or(1);
+        .unwrap_or_default();
     let paths = wdl_pack_manifest_paths_from_value(path, &manifest)?;
 
     let mut workflows = Vec::with_capacity(paths.len());

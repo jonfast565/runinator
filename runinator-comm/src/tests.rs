@@ -9,38 +9,49 @@ use uuid::Uuid;
 #[test]
 fn wake_command_round_trips_with_json_and_dedupes_by_node() {
     let source = Uuid::new_v4();
-    let command = WakeCommand::new(7, 42, "node-a".into(), Utc::now(), source);
+    let ready_node_id = Uuid::now_v7();
+    let workflow_run_id = Uuid::now_v7();
+    let command = WakeCommand::new(
+        ready_node_id,
+        workflow_run_id,
+        "node-a".into(),
+        Utc::now(),
+        source,
+    );
     let encoded = command.to_wire().unwrap();
     let decoded = WakeCommand::from_wire(&encoded).unwrap();
 
-    assert_eq!(decoded.ready_node_id, 7);
-    assert_eq!(decoded.workflow_run_id, 42);
-    assert_eq!(decoded.dedupe_key(), format!("7:{source}"));
+    assert_eq!(decoded.ready_node_id, ready_node_id);
+    assert_eq!(decoded.workflow_run_id, workflow_run_id);
+    assert_eq!(decoded.dedupe_key(), format!("{ready_node_id}:{source}"));
 }
 
 #[test]
 fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
-    let drive = WsIngressCommand::drive(7, 42, "node-a".into());
+    let ready_node_id = Uuid::now_v7();
+    let workflow_run_id = Uuid::now_v7();
+    let drive = WsIngressCommand::drive(ready_node_id, workflow_run_id, "node-a".into());
     let decoded = WsIngressCommand::from_wire(&drive.to_wire().unwrap()).unwrap();
     assert!(matches!(
         decoded,
-        WsIngressCommand::Drive {
-            ready_node_id: 7,
-            ..
-        }
+        WsIngressCommand::Drive { ready_node_id: rid, .. } if rid == ready_node_id
     ));
-    assert_eq!(drive.dedupe_key(), "drive:7");
+    assert_eq!(drive.dedupe_key(), format!("drive:{ready_node_id}"));
 
-    let control = WsIngressCommand::control(42, ControlKind::Cancel);
-    assert_eq!(control.dedupe_key(), "control:42:Cancel");
+    let control = WsIngressCommand::control(workflow_run_id, ControlKind::Cancel);
+    assert_eq!(
+        control.dedupe_key(),
+        format!("control:{workflow_run_id}:Cancel")
+    );
 }
 
 #[test]
 fn workflow_result_events_round_trip_with_json() {
+    let workflow_node_run_id = Uuid::now_v7();
     let command = ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: 10,
-        workflow_node_run_id: 20,
+        workflow_run_id: Uuid::now_v7(),
+        workflow_node_run_id,
         node_id: "node-a".into(),
         action: WorkflowAction {
             provider: "test".into(),
@@ -65,7 +76,7 @@ fn workflow_result_events_round_trip_with_json() {
     let decoded = WorkflowResultEvent::from_wire(&encoded).unwrap();
 
     assert_eq!(decoded.command_id, command.command_id);
-    assert_eq!(decoded.workflow_node_run_id, 20);
+    assert_eq!(decoded.workflow_node_run_id, workflow_node_run_id);
     match decoded.kind {
         WorkflowResultEventKind::Chunk { chunk } => {
             assert_eq!(chunk.stream, "log");

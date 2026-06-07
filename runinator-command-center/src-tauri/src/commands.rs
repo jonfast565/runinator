@@ -14,6 +14,7 @@ use runinator_models::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
+use uuid::Uuid;
 
 use crate::{
     client::{build_state_url, get_json, handle_response, post_empty},
@@ -32,7 +33,7 @@ pub struct WorkflowWdlSaveRequest {
     pub source: String,
     pub enabled: bool,
     #[serde(default)]
-    pub workflow_id: Option<i64>,
+    pub workflow_id: Option<Uuid>,
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
 }
@@ -196,7 +197,7 @@ pub fn decompile_to_wdl(workflow: WorkflowDefinition) -> CommandResult<String> {
 #[tauri::command]
 pub async fn delete_workflow(
     state: State<'_, CommandCenterState>,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflows/{workflow_id}")).await?;
     let response = state.client.delete(url.clone()).send().await?;
@@ -205,9 +206,26 @@ pub async fn delete_workflow(
 }
 
 #[tauri::command]
+pub async fn duplicate_workflow(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    bump: Option<String>,
+) -> CommandResult<WorkflowDefinition> {
+    let bump = bump.unwrap_or_else(|| "minor".into());
+    let url = build_state_url(
+        &state,
+        &format!("workflows/{workflow_id}/duplicate?bump={bump}"),
+    )
+    .await?;
+    let response = state.client.post(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<WorkflowDefinition>().await?)
+}
+
+#[tauri::command]
 pub async fn fetch_workflow_triggers(
     state: State<'_, CommandCenterState>,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> CommandResult<Vec<WorkflowTrigger>> {
     get_json(&state, &format!("workflows/{workflow_id}/triggers")).await
 }
@@ -244,7 +262,7 @@ pub async fn save_workflow_trigger(
 #[tauri::command]
 pub async fn delete_workflow_trigger(
     state: State<'_, CommandCenterState>,
-    trigger_id: i64,
+    trigger_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_triggers/{trigger_id}")).await?;
     let response = state.client.delete(url.clone()).send().await?;
@@ -255,7 +273,7 @@ pub async fn delete_workflow_trigger(
 #[tauri::command]
 pub async fn fetch_run_chunks(
     state: State<'_, CommandCenterState>,
-    run_id: i64,
+    run_id: Uuid,
 ) -> CommandResult<Vec<RunChunk>> {
     get_json(&state, &format!("runs/{run_id}/chunks?limit=500")).await
 }
@@ -263,7 +281,7 @@ pub async fn fetch_run_chunks(
 #[tauri::command]
 pub async fn fetch_run_artifacts(
     state: State<'_, CommandCenterState>,
-    run_id: i64,
+    run_id: Uuid,
 ) -> CommandResult<Vec<RunArtifact>> {
     get_json(&state, &format!("runs/{run_id}/artifacts")).await
 }
@@ -271,7 +289,7 @@ pub async fn fetch_run_artifacts(
 #[tauri::command]
 pub async fn fetch_workflow_node_run_chunks(
     state: State<'_, CommandCenterState>,
-    node_run_id: i64,
+    node_run_id: Uuid,
 ) -> CommandResult<Vec<WorkflowNodeRunChunk>> {
     get_json(
         &state,
@@ -283,7 +301,7 @@ pub async fn fetch_workflow_node_run_chunks(
 #[tauri::command]
 pub async fn fetch_workflow_node_run_artifacts(
     state: State<'_, CommandCenterState>,
-    node_run_id: i64,
+    node_run_id: Uuid,
 ) -> CommandResult<Vec<WorkflowNodeRunArtifact>> {
     get_json(
         &state,
@@ -323,7 +341,7 @@ async fn save_workflow_to_service(
 #[tauri::command]
 pub async fn create_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_id: i64,
+    workflow_id: Uuid,
     debug: Option<bool>,
     parameters: Option<Value>,
 ) -> CommandResult<WorkflowRunCreated> {
@@ -342,7 +360,8 @@ pub async fn create_workflow_run(
     let id = body
         .get("run")
         .and_then(|run| run.get("id"))
-        .and_then(Value::as_i64)
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uuid>().ok())
         .ok_or_else(|| CommandError::Unexpected("missing workflow run id".into()))?;
     Ok(WorkflowRunCreated { id })
 }
@@ -350,7 +369,7 @@ pub async fn create_workflow_run(
 #[tauri::command]
 pub async fn step_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
         &state,
@@ -370,7 +389,7 @@ pub async fn step_workflow_run(
 #[tauri::command]
 pub async fn continue_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
         &state,
@@ -390,7 +409,7 @@ pub async fn continue_workflow_run(
 #[tauri::command]
 pub async fn cancel_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/cancel")).await?;
     let response = state
@@ -406,7 +425,7 @@ pub async fn cancel_workflow_run(
 #[tauri::command]
 pub async fn pause_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/pause")).await?;
     let response = state
@@ -422,7 +441,7 @@ pub async fn pause_workflow_run(
 #[tauri::command]
 pub async fn resume_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/resume")).await?;
     let response = state
@@ -438,7 +457,7 @@ pub async fn resume_workflow_run(
 #[tauri::command]
 pub async fn patch_workflow_run_debug(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     patch: Value,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/debug")).await?;
@@ -450,7 +469,7 @@ pub async fn patch_workflow_run_debug(
 #[tauri::command]
 pub async fn run_to_cursor_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node_id: String,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
@@ -471,7 +490,7 @@ pub async fn run_to_cursor_workflow_run(
 #[tauri::command]
 pub async fn skip_workflow_node(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     output_json: Value,
     message: Option<String>,
 ) -> CommandResult<TaskResponse> {
@@ -493,7 +512,7 @@ pub async fn skip_workflow_node(
 #[tauri::command]
 pub async fn rerun_workflow_node(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     parameters: Value,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
@@ -526,7 +545,7 @@ pub async fn fetch_supervisor_status(state: State<'_, CommandCenterState>) -> Co
 #[tauri::command]
 pub async fn replay_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     from_step_id: Option<String>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/replay")).await?;
@@ -541,7 +560,8 @@ pub async fn replay_workflow_run(
     let id = body
         .get("run")
         .and_then(|run| run.get("id"))
-        .and_then(Value::as_i64)
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uuid>().ok())
         .ok_or_else(|| CommandError::Unexpected("missing workflow run id".into()))?;
     Ok(WorkflowRunCreated { id })
 }
@@ -549,7 +569,7 @@ pub async fn replay_workflow_run(
 #[tauri::command]
 pub async fn rename_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     name: Option<String>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/rename")).await?;
@@ -566,7 +586,7 @@ pub async fn rename_workflow_run(
 #[tauri::command]
 pub async fn fetch_workflow_runs(
     state: State<'_, CommandCenterState>,
-    workflow_id: Option<i64>,
+    workflow_id: Option<Uuid>,
 ) -> CommandResult<Vec<WorkflowRun>> {
     match workflow_id {
         Some(workflow_id) => {
@@ -579,7 +599,7 @@ pub async fn fetch_workflow_runs(
 #[tauri::command]
 pub async fn fetch_workflow_run(
     state: State<'_, CommandCenterState>,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> CommandResult<WorkflowRunDetail> {
     let body: Value = get_json(&state, &format!("workflow_runs/{workflow_run_id}")).await?;
     let run = serde_json::from_value(
@@ -653,7 +673,7 @@ pub async fn delete_credential(
 #[tauri::command]
 pub async fn approve_approval(
     state: State<'_, CommandCenterState>,
-    approval_id: i64,
+    approval_id: Uuid,
 ) -> CommandResult<Value> {
     post_empty(&state, &format!("approvals/{approval_id}/approve")).await
 }
@@ -661,7 +681,7 @@ pub async fn approve_approval(
 #[tauri::command]
 pub async fn reject_approval(
     state: State<'_, CommandCenterState>,
-    approval_id: i64,
+    approval_id: Uuid,
 ) -> CommandResult<Value> {
     post_empty(&state, &format!("approvals/{approval_id}/reject")).await
 }
@@ -675,9 +695,9 @@ pub async fn fetch_all_artifacts(
 
 #[derive(serde::Deserialize)]
 pub struct ArtifactUploadRequest {
-    pub run_id: i64,
+    pub run_id: Uuid,
     #[serde(default)]
-    pub workflow_node_run_id: Option<i64>,
+    pub workflow_node_run_id: Option<Uuid>,
 }
 
 #[tauri::command]
@@ -744,7 +764,7 @@ pub struct ArtifactDownloadResult {
 pub async fn download_artifact(
     state: State<'_, CommandCenterState>,
     app: AppHandle,
-    artifact_id: i64,
+    artifact_id: Uuid,
     default_name: String,
 ) -> CommandResult<ArtifactDownloadResult> {
     use tauri_plugin_dialog::DialogExt;
@@ -793,7 +813,7 @@ pub async fn fetch_notifications(
 #[tauri::command]
 pub async fn mark_notification_read(
     state: State<'_, CommandCenterState>,
-    notification_id: i64,
+    notification_id: Uuid,
 ) -> CommandResult<Value> {
     post_empty(
         &state,

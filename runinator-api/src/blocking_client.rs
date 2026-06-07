@@ -5,15 +5,17 @@ use reqwest::{
 use runinator_models::json;
 use runinator_models::{
     api_routes::{
-        api_workflow, api_workflow_run_command, API_PACKS_IMPORT, API_PROVIDERS,
-        API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
+        api_workflow, api_workflow_duplicate, api_workflow_run_command, API_PACKS_IMPORT,
+        API_PROVIDERS, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
         WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
+    semver::SemVerBump,
     web::TaskResponse,
     workflows::{WorkflowBundle, WorkflowDefinition},
 };
+use uuid::Uuid;
 
 use crate::{
     error::{ApiError, Result},
@@ -56,6 +58,19 @@ where
         let response = self.client.post(url.clone()).json(provider).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<ProviderMetadata>()?)
+    }
+
+    /// Duplicate a workflow into a new version sharing its name, bumped by `bump`.
+    pub fn duplicate_workflow(
+        &self,
+        workflow_id: Uuid,
+        bump: SemVerBump,
+    ) -> Result<WorkflowDefinition> {
+        let mut url = self.build_url(&api_workflow_duplicate(workflow_id))?;
+        url.query_pairs_mut().append_pair("bump", bump.as_str());
+        let response = self.client.post(url.clone()).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<WorkflowDefinition>()?)
     }
 
     pub fn validate_workflow(&self, workflow: &WorkflowDefinition) -> Result<WorkflowDefinition> {
@@ -120,7 +135,7 @@ where
         self.import_bundle(bundle)
     }
 
-    pub fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
+    pub fn export_workflow_bundle(&self, workflow_id: Option<Uuid>) -> Result<WorkflowBundle> {
         let path = workflow_id
             .map(|id| format!("{}/export", api_workflow(id)))
             .unwrap_or_else(|| runinator_models::api_routes::API_WORKFLOWS_EXPORT.into());
@@ -130,21 +145,21 @@ where
         Ok(response.json::<WorkflowBundle>()?)
     }
 
-    pub fn pause_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub fn pause_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "pause")
     }
 
-    pub fn resume_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub fn resume_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "resume")
     }
 
-    pub fn cancel_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub fn cancel_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "cancel")
     }
 
     fn post_workflow_run_command(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         command: &str,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_run_command(workflow_run_id, command))?;

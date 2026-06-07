@@ -10,6 +10,7 @@
       </span>
       <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
+      <span v-if="executionCount > 1" class="node-execution-count" :title="`Executed ${executionCount} times`">{{ executionCount }}</span>
       <span
         v-if="kindDescription"
         class="node-info"
@@ -103,6 +104,7 @@ const props = defineProps<{
     validationSeverity?: WorkflowValidationSeverity;
     validationIssues?: WorkflowValidationIssue[];
     statusLabel?: string;
+    executionCount?: number;
     approvalPrompt?: string;
     running?: boolean;
     status?: string;
@@ -124,6 +126,7 @@ const inlineValue = ref(props.data.inlineEdit?.value ?? "");
 const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
 const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
+const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
 
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
@@ -287,6 +290,22 @@ async function resolveApproval(action: ApprovalAction) {
 
 .node-validation-badge.error {
   background: #dc2626;
+}
+
+.node-execution-count {
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b7c8dc;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .node-inline-editor {

@@ -1,6 +1,7 @@
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
-use super::transitions::transition_from_node;
+use super::transitions::retry_or_transition;
 use super::*;
+use uuid::Uuid;
 
 pub(super) async fn process_action_node<T: DatabaseImpl>(
     db: &T,
@@ -21,7 +22,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             return Ok(());
         }
         if node_run.status.is_terminal() {
-            transition_from_node(
+            retry_or_transition(
                 db,
                 workflow_run,
                 node,
@@ -87,7 +88,7 @@ async fn build_node_parameters<T: DatabaseImpl>(
 }
 
 fn build_action_command(
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node_run: &WorkflowNodeRun,
     action: &WorkflowAction,
     parameters: Value,

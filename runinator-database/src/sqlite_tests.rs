@@ -370,7 +370,7 @@ async fn upsert_workflow_without_id_updates_existing_name() {
     db.run_init_scripts(&Vec::new()).await.unwrap();
     let first = db.upsert_workflow(&workflow("pipeline")).await.unwrap();
     let mut updated = workflow("pipeline");
-    updated.version = 2;
+    updated.version = runinator_models::semver::SemVer::new(2, 0, 0);
     updated.definition = WorkflowGraph::from_value(
         runinator_models::json!({ "nodes": [{ "id": "done", "kind": "end" }] }),
     )
@@ -380,9 +380,39 @@ async fn upsert_workflow_without_id_updates_existing_name() {
     let workflows = db.fetch_workflows().await.unwrap();
 
     assert_eq!(second.id, first.id);
-    assert_eq!(second.version, 2);
+    assert_eq!(
+        second.version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
     assert_eq!(second.definition, updated.definition);
     assert_eq!(workflows.len(), 1);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn insert_workflow_creates_sibling_row_sharing_name() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-insert-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let first = db.upsert_workflow(&workflow("pipeline")).await.unwrap();
+    let mut copy = workflow("pipeline");
+    copy.version = runinator_models::semver::SemVer::new(1, 1, 0);
+
+    let second = db.insert_workflow(&copy).await.unwrap();
+    let workflows = db.fetch_workflows().await.unwrap();
+
+    // a fresh row, not an update of the original.
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.name, first.name);
+    assert_eq!(
+        second.version,
+        runinator_models::semver::SemVer::new(1, 1, 0)
+    );
+    assert_eq!(workflows.len(), 2);
 
     let _ = fs::remove_file(path);
 }
@@ -458,7 +488,7 @@ async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
     ));
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
-    let command = action_command(42, 99, "node-a");
+    let command = action_command(Uuid::new_v4(), Uuid::new_v4(), "node-a");
 
     let first = db
         .enqueue_action_dispatch("dispatch-key".into(), command.clone())
@@ -500,7 +530,7 @@ async fn malformed_action_dispatch_command_returns_error() {
     ));
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
-    let command = action_command(42, 99, "node-a");
+    let command = action_command(Uuid::new_v4(), Uuid::new_v4(), "node-a");
     let dispatch = db
         .enqueue_action_dispatch("dispatch-key".into(), command)
         .await
@@ -677,7 +707,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.to_string(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
         definition: WorkflowGraph::from_value(runinator_models::json!({ "nodes": [] })).unwrap(),
@@ -714,7 +744,11 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
     .unwrap()
 }
 
-fn action_command(workflow_run_id: i64, workflow_node_run_id: i64, node_id: &str) -> ActionCommand {
+fn action_command(
+    workflow_run_id: Uuid,
+    workflow_node_run_id: Uuid,
+    node_id: &str,
+) -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
         workflow_run_id,

@@ -1,6 +1,7 @@
 use super::context::runtime_context;
 use super::*;
 use super::{action, approval, basic, context, control_flow, map, subflow, transitions, wait};
+use uuid::Uuid;
 
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
 
@@ -346,14 +347,14 @@ pub(super) struct WorkflowProgressKey {
     status: WorkflowStatus,
     active_node_id: Option<String>,
     node_count: usize,
-    latest_active_node_run_id: Option<i64>,
+    latest_active_node_run_id: Option<Uuid>,
     latest_active_node_status: Option<WorkflowStatus>,
 }
 
 impl WorkflowProgressKey {
     async fn from_run<T: DatabaseImpl>(
         db: &T,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
     ) -> Result<Self, SendableError> {
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Err(crate::errors::WORKFLOW_RUN_NOT_FOUND.error(workflow_run_id));

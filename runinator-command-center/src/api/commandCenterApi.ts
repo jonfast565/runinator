@@ -31,7 +31,7 @@ import type {
 export interface WorkflowWdlSaveRequest {
   source: string;
   enabled: boolean;
-  workflow_id?: number | null;
+  workflow_id?: string | null;
   triggers?: WorkflowTrigger[];
 }
 
@@ -56,31 +56,31 @@ export async function saveTask(task: ScheduledTask, creating: boolean) {
   return command<SaveTaskResponse>("save_task", { request: { task, creating } });
 }
 
-export async function deleteTask(taskId: number) {
+export async function deleteTask(taskId: string) {
   return command<TaskResponse>("delete_task", { taskId });
 }
 
-export async function requestTaskRun(taskId: number) {
+export async function requestTaskRun(taskId: string) {
   return command<any>("request_task_run", { taskId });
 }
 
-export async function fetchTaskRuns(taskId: number) {
+export async function fetchTaskRuns(taskId: string) {
   return command<RunSummary[]>("fetch_task_runs", { taskId });
 }
 
-export async function fetchRunChunks(runId: number) {
+export async function fetchRunChunks(runId: string) {
   return command<RunChunk[]>("fetch_run_chunks", { runId });
 }
 
-export async function fetchRunArtifacts(runId: number) {
+export async function fetchRunArtifacts(runId: string) {
   return command<RunArtifact[]>("fetch_run_artifacts", { runId });
 }
 
-export async function fetchWorkflowNodeRunChunks(nodeRunId: number) {
+export async function fetchWorkflowNodeRunChunks(nodeRunId: string) {
   return command<RunChunk[]>("fetch_workflow_node_run_chunks", { nodeRunId });
 }
 
-export async function fetchWorkflowNodeRunArtifacts(nodeRunId: number) {
+export async function fetchWorkflowNodeRunArtifacts(nodeRunId: string) {
   return command<RunArtifact[]>("fetch_workflow_node_run_artifacts", { nodeRunId });
 }
 
@@ -146,11 +146,15 @@ export async function applyDevPack(path: string, skipSettings = false) {
   return command<DevPackApplyResult>("apply_dev_pack", { path, skipSettings });
 }
 
-export async function deleteWorkflow(workflowId: number) {
+export async function deleteWorkflow(workflowId: string) {
   return command<TaskResponse>("delete_workflow", { workflowId });
 }
 
-export async function fetchWorkflowTriggers(workflowId: number) {
+export async function duplicateWorkflow(workflowId: string, bump: "major" | "minor" | "patch" = "minor") {
+  return command<WorkflowDefinition>("duplicate_workflow", { workflowId, bump });
+}
+
+export async function fetchWorkflowTriggers(workflowId: string) {
   return command<WorkflowTrigger[]>("fetch_workflow_triggers", { workflowId });
 }
 
@@ -158,11 +162,11 @@ export async function saveWorkflowTrigger(trigger: WorkflowTrigger, creating: bo
   return command<WorkflowTrigger>("save_workflow_trigger", { trigger, creating });
 }
 
-export async function deleteWorkflowTrigger(triggerId: number) {
+export async function deleteWorkflowTrigger(triggerId: string) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
 }
 
-export async function createWorkflowRun(workflowId: number, options: { debug?: boolean; parameters?: unknown } = {}) {
+export async function createWorkflowRun(workflowId: string, options: { debug?: boolean; parameters?: unknown } = {}) {
   return command<WorkflowRunCreated>("create_workflow_run", {
     workflowId,
     debug: Boolean(options.debug),
@@ -170,31 +174,31 @@ export async function createWorkflowRun(workflowId: number, options: { debug?: b
   });
 }
 
-export async function fetchWorkflowRuns(workflowId?: number) {
+export async function fetchWorkflowRuns(workflowId?: string) {
   return command<RunSummary[]>("fetch_workflow_runs", { workflowId });
 }
 
-export async function fetchWorkflowRun(workflowRunId: number) {
+export async function fetchWorkflowRun(workflowRunId: string) {
   return command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
 }
 
-export async function stepWorkflowRun(workflowRunId: number) {
+export async function stepWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("step_workflow_run", { workflowRunId });
 }
 
-export async function continueWorkflowRun(workflowRunId: number) {
+export async function continueWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("continue_workflow_run", { workflowRunId });
 }
 
-export async function cancelWorkflowRun(workflowRunId: number) {
+export async function cancelWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("cancel_workflow_run", { workflowRunId });
 }
 
-export async function pauseWorkflowRun(workflowRunId: number) {
+export async function pauseWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("pause_workflow_run", { workflowRunId });
 }
 
-export async function resumeWorkflowRun(workflowRunId: number) {
+export async function resumeWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("resume_workflow_run", { workflowRunId });
 }
 
@@ -204,33 +208,33 @@ export type WorkflowDebugPatch = {
   one_shot_breakpoint?: string | null;
 };
 
-export async function patchWorkflowRunDebug(workflowRunId: number, patch: WorkflowDebugPatch) {
+export async function patchWorkflowRunDebug(workflowRunId: string, patch: WorkflowDebugPatch) {
   return command<TaskResponse>("patch_workflow_run_debug", { workflowRunId, patch });
 }
 
-export async function runToCursorWorkflowRun(workflowRunId: number, nodeId: string) {
+export async function runToCursorWorkflowRun(workflowRunId: string, nodeId: string) {
   return command<TaskResponse>("run_to_cursor_workflow_run", { workflowRunId, nodeId });
 }
 
-export async function skipWorkflowNode(workflowRunId: number, outputJson: any, message?: string) {
+export async function skipWorkflowNode(workflowRunId: string, outputJson: any, message?: string) {
   return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
 }
 
-export async function rerunWorkflowNode(workflowRunId: number, parameters: any) {
+export async function rerunWorkflowNode(workflowRunId: string, parameters: any) {
   return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
 }
 
-export async function replayWorkflowRun(workflowRunId: number, options: { fromStepId?: string } = {}) {
+export async function replayWorkflowRun(workflowRunId: string, options: { fromStepId?: string } = {}) {
   return command<WorkflowRunCreated>("replay_workflow_run", { workflowRunId, fromStepId: options.fromStepId ?? null });
 }
 
-export async function renameWorkflowRun(workflowRunId: number, name: string | null) {
+export async function renameWorkflowRun(workflowRunId: string, name: string | null) {
   return command<TaskResponse>("rename_workflow_run", { workflowRunId, name });
 }
 
 export type ArtifactUploadRequest = {
-  run_id: number;
-  workflow_node_run_id?: number | null;
+  run_id: string;
+  workflow_node_run_id?: string | null;
 };
 
 export type ArtifactDownloadResult = { saved_to: string | null };
@@ -243,7 +247,7 @@ export async function uploadArtifactFromPath(request: ArtifactUploadRequest) {
   return command<RunArtifact>("upload_artifact", { request });
 }
 
-export async function downloadArtifactToPath(artifactId: number, defaultName: string) {
+export async function downloadArtifactToPath(artifactId: string, defaultName: string) {
   return command<ArtifactDownloadResult>("download_artifact", { artifactId, defaultName });
 }
 
@@ -264,7 +268,7 @@ export async function uploadArtifactFromBrowser(request: ArtifactUploadRequest, 
   return (await response.json()) as RunArtifact;
 }
 
-export async function downloadArtifactInBrowser(artifactId: number, defaultName: string) {
+export async function downloadArtifactInBrowser(artifactId: string, defaultName: string) {
   const response = await fetch(`${apiBaseUrl()}/artifacts/${artifactId}/download`);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -333,7 +337,7 @@ export async function fetchNotifications(options: NotificationListOptions = {}) 
   });
 }
 
-export async function markNotificationRead(notificationId: number) {
+export async function markNotificationRead(notificationId: string) {
   return command<Notification>("mark_notification_read", { notificationId });
 }
 
@@ -401,10 +405,10 @@ export async function deleteCredential(scope: string, name: string, kind: Settin
   return command<any>("delete_credential", { scope, name, kind });
 }
 
-export async function approveApproval(approvalId: number) {
+export async function approveApproval(approvalId: string) {
   return command<any>("approve_approval", { approvalId });
 }
 
-export async function rejectApproval(approvalId: number) {
+export async function rejectApproval(approvalId: string) {
   return command<any>("reject_approval", { approvalId });
 }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -61,7 +62,7 @@ pub(crate) async fn create_notification<T: DatabaseImpl>(
 pub(crate) async fn mark_notification_read<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(notification_id): Path<i64>,
+    Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match db.mark_notification_read(notification_id).await {
         Ok(Some(notification)) => {

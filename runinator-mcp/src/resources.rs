@@ -11,6 +11,7 @@ use runinator_models::api_routes::{
 };
 use runinator_models::json;
 use runinator_models::value::Value;
+use uuid::Uuid;
 
 pub(crate) fn resource_templates() -> Vec<Value> {
     vec![
@@ -53,7 +54,7 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
     }
     if let Some(workflow_id) = uri
         .strip_prefix(RESOURCE_WORKFLOW_URI_PREFIX)
-        .and_then(|id| id.parse::<i64>().ok())
+        .and_then(|id| id.parse::<Uuid>().ok())
     {
         return Some(
             api_workflow(workflow_id)
@@ -63,7 +64,7 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
     }
     if let Some(workflow_run_id) = uri
         .strip_prefix(RESOURCE_WORKFLOW_RUN_URI_PREFIX)
-        .and_then(|id| id.parse::<i64>().ok())
+        .and_then(|id| id.parse::<Uuid>().ok())
     {
         return Some(
             api_workflow_run(workflow_run_id)
@@ -74,7 +75,7 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
     if let Some(raw) = uri.strip_prefix(RESOURCE_RUN_URI_PREFIX) {
         if let Some(run_id) = raw
             .strip_suffix("/chunks")
-            .and_then(|id| id.parse::<i64>().ok())
+            .and_then(|id| id.parse::<Uuid>().ok())
         {
             return Some(format!(
                 "{}/{}{}",
@@ -85,7 +86,7 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
         }
         if let Some(run_id) = raw
             .strip_suffix("/artifacts")
-            .and_then(|id| id.parse::<i64>().ok())
+            .and_then(|id| id.parse::<Uuid>().ok())
         {
             return Some(
                 api_run_artifacts(run_id)
@@ -93,13 +94,13 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
                     .to_string(),
             );
         }
-        if let Ok(run_id) = raw.parse::<i64>() {
+        if let Ok(run_id) = raw.parse::<Uuid>() {
             return Some(api_run(run_id).trim_start_matches('/').to_string());
         }
     }
     if let Some(artifact_id) = uri
         .strip_prefix(RESOURCE_ARTIFACT_URI_PREFIX)
-        .and_then(|id| id.parse::<i64>().ok())
+        .and_then(|id| id.parse::<Uuid>().ok())
     {
         return Some(format!(
             "{}/{}",
@@ -113,7 +114,7 @@ pub(crate) fn resource_path_for_uri(uri: &str) -> Option<String> {
 pub(crate) fn resource_entries_from_workflow_runs(workflow_runs: &[Value]) -> Vec<Value> {
     let mut resources = Vec::new();
     for run in workflow_runs {
-        let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
+        let Some(run_id) = run.get("id").and_then(Value::as_str) else {
             continue;
         };
         let status = run
@@ -132,7 +133,7 @@ pub(crate) fn resource_entries_from_workflow_runs(workflow_runs: &[Value]) -> Ve
 pub(crate) fn resource_entries_from_runs(runs: &[Value]) -> Vec<Value> {
     let mut resources = Vec::new();
     for run in runs {
-        let Some(run_id) = run.get("id").and_then(Value::as_i64) else {
+        let Some(run_id) = run.get("id").and_then(Value::as_str) else {
             continue;
         };
         let status = run

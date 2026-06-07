@@ -4,7 +4,7 @@ use super::*;
 fn test_github_provider_missing_token() {
     let provider = GitHubProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "github".into(),
         action_function: "create_pr".into(),
         parameters: runinator_models::json!({

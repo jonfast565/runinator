@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{providers::ProviderMetadata, value::Value};
 
@@ -110,7 +111,7 @@ pub struct ReplicaProviderRegistrationRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicaRecord {
-    pub replica_id: i64,
+    pub replica_id: Uuid,
     pub replica_type: ReplicaKind,
     pub instance_id: String,
     pub runtime_id: String,
@@ -136,7 +137,7 @@ pub struct ReplicaRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicaProviderRegistration {
-    pub replica_id: i64,
+    pub replica_id: Uuid,
     pub provider_name: String,
     pub provider: ProviderMetadata,
     pub first_registered_at: DateTime<Utc>,
@@ -164,7 +165,7 @@ pub struct WorkflowRunProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_type: Option<TriggerActorType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_replica_id: Option<i64>,
+    pub actor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,9 +179,9 @@ pub struct WorkflowRunProvenance {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowNodeRunExecutor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_executor_replica_id: Option<i64>,
+    pub current_executor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_executor_replica_id: Option<i64>,
+    pub last_executor_replica_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_claimed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

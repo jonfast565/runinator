@@ -9,18 +9,18 @@ use runinator_models::{
         api_run, api_run_artifacts, api_run_chunks, api_scheduler_action_dispatch_failed,
         api_scheduler_action_dispatch_published, api_scheduler_ready_node_process,
         api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
-        api_workflow, api_workflow_node_run, api_workflow_node_run_artifacts,
-        api_workflow_node_run_chunks, api_workflow_node_run_claim, api_workflow_node_run_release,
-        api_workflow_run, api_workflow_run_command, api_workflow_run_nodes,
-        api_workflow_run_rename, api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
-        api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_CREDENTIALS,
-        API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS,
-        API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
-        API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
-        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
-        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
-        API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
-        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        api_workflow, api_workflow_duplicate, api_workflow_node_run,
+        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
+        api_workflow_node_run_release, api_workflow_run, api_workflow_run_command,
+        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
+        api_workflow_runs, api_workflow_trigger, api_workflow_trigger_runs, api_workflow_triggers,
+        API_APPROVALS, API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS,
+        API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
+        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS,
+        API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::ReadyNodeRecord,
@@ -38,6 +38,7 @@ use runinator_models::{
         WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
     },
 };
+use uuid::Uuid;
 
 use crate::{
     error::{ApiError, Result},
@@ -95,7 +96,7 @@ where
 
     pub async fn heartbeat_replica(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         request: &ReplicaHeartbeatRequest,
     ) -> Result<ReplicaRecord> {
         let url = self.build_url(&api_replica_heartbeat(replica_id)).await?;
@@ -106,7 +107,7 @@ where
 
     pub async fn mark_replica_offline(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         request: &ReplicaOfflineRequest,
     ) -> Result<ReplicaRecord> {
         let url = self.build_url(&api_replica_offline(replica_id)).await?;
@@ -117,7 +118,7 @@ where
 
     pub async fn register_replica_provider(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         request: &ReplicaProviderRegistrationRequest,
     ) -> Result<ReplicaProviderRegistration> {
         let url = self.build_url(&api_replica_providers(replica_id)).await?;
@@ -128,7 +129,7 @@ where
 
     pub async fn fetch_replica_providers(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
     ) -> Result<Vec<ReplicaProviderRegistration>> {
         let url = self.build_url(&api_replica_providers(replica_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
@@ -154,7 +155,7 @@ where
         Ok(response.json::<ReplicaListResponse>().await?)
     }
 
-    pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary> {
+    pub async fn fetch_run(&self, run_id: Uuid) -> Result<RunSummary> {
         let url = self.build_url(&api_run(run_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -172,7 +173,7 @@ where
 
     pub async fn update_run(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         payload: &RunStatusPayload,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_run(run_id)).await?;
@@ -183,7 +184,7 @@ where
 
     pub async fn append_run_chunk(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         payload: &RunChunkPayload,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_run_chunks(run_id)).await?;
@@ -194,7 +195,7 @@ where
 
     pub async fn add_run_artifact(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         payload: &RunArtifactPayload,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_run_artifacts(run_id)).await?;
@@ -203,7 +204,7 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
-    pub async fn fetch_workflow(&self, workflow_id: i64) -> Result<WorkflowDefinition> {
+    pub async fn fetch_workflow(&self, workflow_id: Uuid) -> Result<WorkflowDefinition> {
         let url = self.build_url(&api_workflow(workflow_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -237,6 +238,19 @@ where
             Some(_) => self.client.patch(url.clone()).json(workflow).send().await?,
             None => self.client.post(url.clone()).json(workflow).send().await?,
         };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// duplicate a workflow into a new version sharing its name, bumped by `bump`.
+    pub async fn duplicate_workflow(
+        &self,
+        workflow_id: Uuid,
+        bump: runinator_models::semver::SemVerBump,
+    ) -> Result<WorkflowDefinition> {
+        let mut url = self.build_url(&api_workflow_duplicate(workflow_id)).await?;
+        url.query_pairs_mut().append_pair("bump", bump.as_str());
+        let response = self.client.post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }
@@ -308,7 +322,10 @@ where
         self.import_bundle(bundle).await
     }
 
-    pub async fn export_workflow_bundle(&self, workflow_id: Option<i64>) -> Result<WorkflowBundle> {
+    pub async fn export_workflow_bundle(
+        &self,
+        workflow_id: Option<Uuid>,
+    ) -> Result<WorkflowBundle> {
         let path = workflow_id
             .map(|id| format!("{}/export", api_workflow(id)))
             .unwrap_or_else(|| API_WORKFLOWS_EXPORT.into());
@@ -320,7 +337,7 @@ where
 
     pub async fn create_workflow_run(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
         parameters: Value,
     ) -> Result<WorkflowRun> {
         self.create_workflow_run_with_options(workflow_id, parameters, false, None)
@@ -329,7 +346,7 @@ where
 
     pub async fn create_named_workflow_run(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
         parameters: Value,
         name: String,
     ) -> Result<WorkflowRun> {
@@ -337,7 +354,7 @@ where
             .await
     }
 
-    pub async fn fetch_workflow_triggers(&self, workflow_id: i64) -> Result<Vec<WorkflowTrigger>> {
+    pub async fn fetch_workflow_triggers(&self, workflow_id: Uuid) -> Result<Vec<WorkflowTrigger>> {
         let url = self.build_url(&api_workflow_triggers(workflow_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -369,7 +386,7 @@ where
         Ok(response.json::<Vec<WorkflowRun>>().await?)
     }
 
-    pub async fn fetch_workflow_trigger(&self, trigger_id: i64) -> Result<WorkflowTrigger> {
+    pub async fn fetch_workflow_trigger(&self, trigger_id: Uuid) -> Result<WorkflowTrigger> {
         let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -395,7 +412,7 @@ where
         Ok(response.json::<WorkflowTrigger>().await?)
     }
 
-    pub async fn delete_workflow_trigger(&self, trigger_id: i64) -> Result<TaskResponse> {
+    pub async fn delete_workflow_trigger(&self, trigger_id: Uuid) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_trigger(trigger_id)).await?;
         let response = self.client.delete(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
@@ -404,7 +421,7 @@ where
 
     pub async fn create_workflow_trigger_run(
         &self,
-        trigger_id: i64,
+        trigger_id: Uuid,
         parameters: Value,
         debug: bool,
     ) -> Result<WorkflowRun> {
@@ -430,7 +447,7 @@ where
 
     pub async fn create_workflow_run_with_debug(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
         parameters: Value,
         debug: bool,
     ) -> Result<WorkflowRun> {
@@ -440,7 +457,7 @@ where
 
     pub async fn create_workflow_run_with_options(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
         parameters: Value,
         debug: bool,
         name: Option<String>,
@@ -500,7 +517,7 @@ where
 
     pub async fn renew_workflow_run_claim(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         scheduler_id: &str,
         lease_until: DateTime<Utc>,
     ) -> Result<TaskResponse> {
@@ -519,7 +536,7 @@ where
 
     pub async fn release_workflow_run_claim(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         scheduler_id: &str,
     ) -> Result<TaskResponse> {
         let url = self
@@ -538,7 +555,7 @@ where
     pub async fn fetch_workflow_runs(
         &self,
         status: Option<WorkflowStatus>,
-        workflow_id: Option<i64>,
+        workflow_id: Option<Uuid>,
     ) -> Result<Vec<WorkflowRun>> {
         let mut url = self.build_url(API_WORKFLOW_RUNS).await?;
         if let Some(status) = status {
@@ -569,7 +586,7 @@ where
 
     pub async fn update_workflow_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         status: WorkflowStatus,
         active_node_id: Option<String>,
         state: Option<Value>,
@@ -593,7 +610,7 @@ where
 
     pub async fn rename_workflow_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         name: Option<String>,
     ) -> Result<TaskResponse> {
         let url = self
@@ -609,24 +626,24 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
-    pub async fn pause_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub async fn pause_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "pause")
             .await
     }
 
-    pub async fn resume_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub async fn resume_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "resume")
             .await
     }
 
-    pub async fn cancel_workflow_run(&self, workflow_run_id: i64) -> Result<TaskResponse> {
+    pub async fn cancel_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
         self.post_workflow_run_command(workflow_run_id, "cancel")
             .await
     }
 
     pub async fn replay_workflow_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         from_step_id: Option<String>,
     ) -> Result<WorkflowRun> {
         let url = self
@@ -651,7 +668,7 @@ where
 
     async fn post_workflow_run_command(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         command: &str,
     ) -> Result<TaskResponse> {
         let url = self
@@ -723,9 +740,9 @@ where
 
     pub async fn process_ready_node(
         &self,
-        ready_node_id: i64,
+        ready_node_id: Uuid,
         scheduler_id: &str,
-        workflow_run_id: Option<i64>,
+        workflow_run_id: Option<Uuid>,
         node_id: Option<String>,
         next_ready_at: Option<DateTime<Utc>>,
     ) -> Result<TaskResponse> {
@@ -770,7 +787,7 @@ where
         Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
     }
 
-    pub async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<TaskResponse> {
+    pub async fn mark_action_dispatch_published(&self, dispatch_id: Uuid) -> Result<TaskResponse> {
         let url = self
             .build_url(&api_scheduler_action_dispatch_published(dispatch_id))
             .await?;
@@ -781,7 +798,7 @@ where
 
     pub async fn mark_action_dispatch_failed(
         &self,
-        dispatch_id: i64,
+        dispatch_id: Uuid,
         error: &str,
     ) -> Result<TaskResponse> {
         let url = self
@@ -799,7 +816,7 @@ where
 
     pub async fn fetch_workflow_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
     ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>)> {
         let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
         let response = self.client.get(url.clone()).send().await?;
@@ -824,7 +841,7 @@ where
 
     pub async fn create_workflow_node_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         node_id: &str,
         parameters: Value,
     ) -> Result<WorkflowNodeRun> {
@@ -844,7 +861,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn update_workflow_node_run(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         status: WorkflowStatus,
         attempt: Option<i64>,
         parameters: Option<Value>,
@@ -874,7 +891,7 @@ where
 
     pub async fn set_workflow_node_run_status(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         payload: &WorkflowNodeRunStatusPayload,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
@@ -885,8 +902,8 @@ where
 
     pub async fn claim_workflow_node_run_executor(
         &self,
-        node_run_id: i64,
-        replica_id: i64,
+        node_run_id: Uuid,
+        replica_id: Uuid,
         claimed_at: DateTime<Utc>,
     ) -> Result<TaskResponse> {
         let url = self
@@ -904,8 +921,8 @@ where
 
     pub async fn release_workflow_node_run_executor(
         &self,
-        node_run_id: i64,
-        replica_id: i64,
+        node_run_id: Uuid,
+        replica_id: Uuid,
         released_at: DateTime<Utc>,
     ) -> Result<TaskResponse> {
         let url = self
@@ -923,7 +940,7 @@ where
 
     pub async fn append_workflow_node_run_chunk(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         payload: &RunChunkPayload,
     ) -> Result<Vec<WorkflowNodeRunChunk>> {
         let url = self
@@ -936,7 +953,7 @@ where
 
     pub async fn fetch_workflow_node_run_chunks(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         cursor: Option<i64>,
         limit: i64,
     ) -> Result<Vec<WorkflowNodeRunChunk>> {
@@ -956,7 +973,7 @@ where
 
     pub async fn add_workflow_node_run_artifact(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         payload: &RunArtifactPayload,
     ) -> Result<Vec<WorkflowNodeRunArtifact>> {
         let url = self
@@ -974,7 +991,7 @@ where
         Ok(response.json::<Value>().await?)
     }
 
-    pub async fn fetch_approvals(&self, workflow_run_id: Option<i64>) -> Result<Vec<Value>> {
+    pub async fn fetch_approvals(&self, workflow_run_id: Option<Uuid>) -> Result<Vec<Value>> {
         let mut url = self.build_url(API_APPROVALS).await?;
         if let Some(workflow_run_id) = workflow_run_id {
             url.query_pairs_mut()
@@ -987,7 +1004,7 @@ where
 
     pub async fn approve_request(
         &self,
-        approval_id: i64,
+        approval_id: Uuid,
         resolved_by: Option<String>,
         message: Option<String>,
         output_json: Option<Value>,
@@ -998,7 +1015,7 @@ where
 
     pub async fn reject_request(
         &self,
-        approval_id: i64,
+        approval_id: Uuid,
         resolved_by: Option<String>,
         message: Option<String>,
         output_json: Option<Value>,
@@ -1009,7 +1026,7 @@ where
 
     async fn resolve_approval(
         &self,
-        approval_id: i64,
+        approval_id: Uuid,
         approved: bool,
         resolved_by: Option<String>,
         message: Option<String>,

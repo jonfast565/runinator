@@ -1,5 +1,6 @@
 use runinator_models::value::Value;
 use serde::Deserialize;
+use uuid::Uuid;
 
 #[derive(Deserialize, Default)]
 pub(crate) struct EmailSendParams {
@@ -38,7 +39,7 @@ pub(crate) struct NotificationSendParams {
 }
 
 pub(crate) struct NotificationPayload {
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     pub channel: String,
     pub severity: String,
     pub title: String,

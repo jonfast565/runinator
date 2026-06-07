@@ -13,14 +13,14 @@ describe("command center workflow node run API", () => {
   });
 
   it("requests workflow node run chunks by node run id", async () => {
-    await fetchWorkflowNodeRunChunks(42);
+    await fetchWorkflowNodeRunChunks("00000000-0000-0000-0000-000000000042");
 
-    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_chunks", { nodeRunId: 42 });
+    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_chunks", { nodeRunId: "00000000-0000-0000-0000-000000000042" });
   });
 
   it("requests workflow node run artifacts by node run id", async () => {
-    await fetchWorkflowNodeRunArtifacts(42);
+    await fetchWorkflowNodeRunArtifacts("00000000-0000-0000-0000-000000000042");
 
-    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_artifacts", { nodeRunId: 42 });
+    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_artifacts", { nodeRunId: "00000000-0000-0000-0000-000000000042" });
   });
 });

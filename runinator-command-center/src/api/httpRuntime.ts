@@ -42,9 +42,9 @@ function escape(part: string | number): string {
 const REGISTRY: Record<string, HttpDescriptor> = {
   fetch_workflows: { method: "GET", path: () => "workflows" },
   save_workflow: {
-    method: (args) => (arg<{ id?: number | null }>(args, "workflow").id != null ? "PATCH" : "POST"),
+    method: (args) => (arg<{ id?: string | null }>(args, "workflow").id != null ? "PATCH" : "POST"),
     path: (args) => {
-      const workflow = arg<{ id?: number | null }>(args, "workflow");
+      const workflow = arg<{ id?: string | null }>(args, "workflow");
       return workflow.id != null ? `workflows/${escape(workflow.id)}` : "workflows";
     },
     body: (args) => arg(args, "workflow")
@@ -62,17 +62,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   delete_workflow: {
     method: "DELETE",
-    path: (args) => `workflows/${escape(arg<number>(args, "workflowId"))}`
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}`
+  },
+  duplicate_workflow: {
+    method: "POST",
+    path: (args) => {
+      const bump = argOpt<string>(args, "bump") ?? "minor";
+      return `workflows/${escape(arg<string>(args, "workflowId"))}/duplicate?bump=${escape(bump)}`;
+    }
   },
   fetch_workflow_triggers: {
     method: "GET",
-    path: (args) => `workflows/${escape(arg<number>(args, "workflowId"))}/triggers`
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}/triggers`
   },
   save_workflow_trigger: {
     method: (args) => (arg<boolean>(args, "creating") ? "POST" : "PATCH"),
     path: (args) => {
       const creating = arg<boolean>(args, "creating");
-      const trigger = arg<{ id?: number | null; workflow_id: number }>(args, "trigger");
+      const trigger = arg<{ id?: string | null; workflow_id: string }>(args, "trigger");
       if (creating) return `workflows/${escape(trigger.workflow_id)}/triggers`;
       if (trigger.id == null) throw new Error("missing workflow trigger id");
       return `workflow_triggers/${escape(trigger.id)}`;
@@ -81,27 +88,27 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   delete_workflow_trigger: {
     method: "DELETE",
-    path: (args) => `workflow_triggers/${escape(arg<number>(args, "triggerId"))}`
+    path: (args) => `workflow_triggers/${escape(arg<string>(args, "triggerId"))}`
   },
   fetch_run_chunks: {
     method: "GET",
-    path: (args) => `runs/${escape(arg<number>(args, "runId"))}/chunks?limit=500`
+    path: (args) => `runs/${escape(arg<string>(args, "runId"))}/chunks?limit=500`
   },
   fetch_run_artifacts: {
     method: "GET",
-    path: (args) => `runs/${escape(arg<number>(args, "runId"))}/artifacts`
+    path: (args) => `runs/${escape(arg<string>(args, "runId"))}/artifacts`
   },
   fetch_workflow_node_run_chunks: {
     method: "GET",
-    path: (args) => `workflow_node_runs/${escape(arg<number>(args, "nodeRunId"))}/chunks?limit=500`
+    path: (args) => `workflow_node_runs/${escape(arg<string>(args, "nodeRunId"))}/chunks?limit=500`
   },
   fetch_workflow_node_run_artifacts: {
     method: "GET",
-    path: (args) => `workflow_node_runs/${escape(arg<number>(args, "nodeRunId"))}/artifacts`
+    path: (args) => `workflow_node_runs/${escape(arg<string>(args, "nodeRunId"))}/artifacts`
   },
   create_workflow_run: {
     method: "POST",
-    path: (args) => `workflows/${escape(arg<number>(args, "workflowId"))}/runs`,
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}/runs`,
     body: (args) => ({
       debug: argOpt<boolean>(args, "debug") ?? false,
       parameters: argOpt(args, "parameters") ?? {}
@@ -115,17 +122,17 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   resume_workflow_run: workflowRunAction("resume"),
   patch_workflow_run_debug: {
     method: "PATCH",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/debug`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug`,
     body: (args) => arg(args, "patch")
   },
   run_to_cursor_workflow_run: {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/debug/run_to_cursor`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug/run_to_cursor`,
     body: (args) => ({ node_id: arg(args, "nodeId") })
   },
   skip_workflow_node: {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/debug/skip`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug/skip`,
     body: (args) => ({
       output_json: arg(args, "outputJson"),
       message: argOpt(args, "message") ?? null
@@ -133,7 +140,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   rerun_workflow_node: {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/debug/rerun_node`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug/rerun_node`,
     body: (args) => ({ parameters: arg(args, "parameters") })
   },
   fetch_supervisor_status: {
@@ -143,25 +150,25 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   replay_workflow_run: {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/replay`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/replay`,
     body: (args) => ({ from_step_id: argOpt(args, "fromStepId") ?? null }),
     transform: extractWorkflowRunId
   },
   rename_workflow_run: {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/rename`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/rename`,
     body: (args) => ({ name: argOpt(args, "name") ?? null })
   },
   fetch_workflow_runs: {
     method: "GET",
     path: (args) => {
-      const workflowId = argOpt<number | null>(args, "workflowId");
+      const workflowId = argOpt<string | null>(args, "workflowId");
       return workflowId != null ? `workflow_runs?workflow_id=${escape(workflowId)}` : "workflow_runs";
     }
   },
   fetch_workflow_run: {
     method: "GET",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}`,
     transform: (raw) => {
       const body = raw as { run?: unknown; nodes?: unknown };
       if (!body || typeof body !== "object" || body.run == null) {
@@ -214,12 +221,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   approve_approval: {
     method: "POST",
-    path: (args) => `approvals/${escape(arg<number>(args, "approvalId"))}/approve`,
+    path: (args) => `approvals/${escape(arg<string>(args, "approvalId"))}/approve`,
     body: () => ({})
   },
   reject_approval: {
     method: "POST",
-    path: (args) => `approvals/${escape(arg<number>(args, "approvalId"))}/reject`,
+    path: (args) => `approvals/${escape(arg<string>(args, "approvalId"))}/reject`,
     body: () => ({})
   },
   fetch_all_artifacts: { method: "GET", path: () => "artifacts" },
@@ -234,7 +241,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   mark_notification_read: {
     method: "POST",
-    path: (args) => `notifications/${escape(arg<number>(args, "notificationId"))}/mark_read`,
+    path: (args) => `notifications/${escape(arg<string>(args, "notificationId"))}/mark_read`,
     body: () => ({})
   },
   mark_all_notifications_read: {
@@ -247,7 +254,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
 function workflowRunAction(action: string): HttpDescriptor {
   return {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/${action}`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/${action}`,
     body: () => ({})
   };
 }
@@ -255,15 +262,15 @@ function workflowRunAction(action: string): HttpDescriptor {
 function workflowRunDebugAction(action: string): HttpDescriptor {
   return {
     method: "POST",
-    path: (args) => `workflow_runs/${escape(arg<number>(args, "workflowRunId"))}/debug/${action}`,
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug/${action}`,
     body: () => ({})
   };
 }
 
-function extractWorkflowRunId(raw: unknown): { id: number } {
-  const body = raw as { run?: { id?: number } } | null;
+function extractWorkflowRunId(raw: unknown): { id: string } {
+  const body = raw as { run?: { id?: string } } | null;
   const id = body?.run?.id;
-  if (typeof id !== "number") throw new Error("missing workflow run id");
+  if (typeof id !== "string" || id.length === 0) throw new Error("missing workflow run id");
   return { id };
 }
 
@@ -328,7 +335,7 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   // workflow imports: after import, re-export the first saved workflow to
   // hydrate the bundle with server-assigned ids — mirrors the Tauri command.
   if (name === "save_workflow_bundle" || name === "save_workflow_wdl") {
-    const saved = raw as { workflows?: Array<{ id?: number | null }> };
+    const saved = raw as { workflows?: Array<{ id?: string | null }> };
     const id = saved.workflows?.[0]?.id;
     if (id == null) return saved as unknown as T;
     const exportResp = await fetch(`${base}/workflows/${escape(id)}/export`);

@@ -77,7 +77,7 @@ async function refresh() {
   }
 }
 
-async function markRead(id: number) {
+async function markRead(id: string) {
   await store.markRead(id);
 }
 

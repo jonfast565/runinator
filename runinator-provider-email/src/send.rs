@@ -156,7 +156,7 @@ pub(crate) async fn send_notification(
     })
 }
 
-async fn post_notification(payload: NotificationPayload) -> Result<i64, SendableError> {
+async fn post_notification(payload: NotificationPayload) -> Result<String, SendableError> {
     let service_url = env::var("RUNINATOR_SERVICE_URL")
         .map_err(|_| NOTIFICATION_SERVICE_URL.error("missing RUNINATOR_SERVICE_URL"))?;
     if service_url.trim().is_empty() {
@@ -188,7 +188,8 @@ async fn post_notification(payload: NotificationPayload) -> Result<i64, Sendable
         .await
         .map_err(|err| NOTIFICATION_RESPONSE.error(err))?;
     json.get("id")
-        .and_then(Value::as_i64)
+        .and_then(Value::as_str)
+        .map(str::to_string)
         .ok_or_else(|| NOTIFICATION_RESPONSE.error("missing notification id"))
 }
 

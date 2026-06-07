@@ -6,6 +6,9 @@ import { useAppStore } from "../../stores/app";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { WorkflowRunDetail } from "../../types/models";
 
+const RUN_ID = "00000000-0000-0000-0000-000000000042";
+const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
+
 class MockWebSocket {
   static sockets: MockWebSocket[] = [];
   onopen: (() => void) | null = null;
@@ -42,17 +45,17 @@ describe("useWorkflowRunStream", () => {
     const app = useAppStore();
     const workflows = useWorkflowsStore();
     app.setServiceUrl("http://127.0.0.1:8080/");
-    workflows.openRunInTab(42);
-    workflows.activateRunTab(42);
+    workflows.openRunInTab(RUN_ID);
+    workflows.activateRunTab(RUN_ID);
 
     const scope = effectScope();
     scope.run(() => useWorkflowRunStream());
     await nextTick();
 
     const socket = MockWebSocket.sockets[0];
-    expect(socket.url).toBe("ws://127.0.0.1:8080/ws/workflow-runs/42");
+    expect(socket.url).toBe(`ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}`);
 
-    socket.onmessage?.({ data: JSON.stringify(workflowDetail(42, "succeeded")) });
+    socket.onmessage?.({ data: JSON.stringify(workflowDetail(RUN_ID, "succeeded")) });
     socket.onclose?.();
     vi.advanceTimersByTime(3000);
 
@@ -62,11 +65,11 @@ describe("useWorkflowRunStream", () => {
   });
 });
 
-function workflowDetail(id: number, status: string): WorkflowRunDetail {
+function workflowDetail(id: string, status: string): WorkflowRunDetail {
   return {
     run: {
       id,
-      workflow_id: 1,
+      workflow_id: WORKFLOW_ID,
       status,
       parameters: {},
       state: {},

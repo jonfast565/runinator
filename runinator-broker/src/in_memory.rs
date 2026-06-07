@@ -591,8 +591,13 @@ mod tests {
     #[tokio::test]
     async fn in_memory_broker_redelivers_expired_wake_delivery() {
         let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
-        let command =
-            runinator_comm::WakeCommand::new(7, 42, "node-a".into(), Utc::now(), Uuid::new_v4());
+        let command = runinator_comm::WakeCommand::new(
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "node-a".into(),
+            Utc::now(),
+            Uuid::new_v4(),
+        );
         broker
             .publish_wake(crate::WakeMessage {
                 command,
@@ -621,7 +626,11 @@ mod tests {
     #[tokio::test]
     async fn in_memory_broker_round_trips_ingress_delivery() {
         let broker = InMemoryBroker::new();
-        let command = runinator_comm::WsIngressCommand::drive(7, 42, "node-a".into());
+        let command = runinator_comm::WsIngressCommand::drive(
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "node-a".into(),
+        );
         broker
             .publish_ingress(crate::IngressMessage {
                 command,
@@ -634,10 +643,7 @@ mod tests {
         let delivery = broker.receive_ingress("ws").await.unwrap();
         assert!(matches!(
             delivery.command,
-            runinator_comm::WsIngressCommand::Drive {
-                ready_node_id: 7,
-                ..
-            }
+            runinator_comm::WsIngressCommand::Drive { .. }
         ));
         broker
             .ack_ingress("ws", delivery.delivery_id)
@@ -669,8 +675,8 @@ mod tests {
     fn action_command() -> ActionCommand {
         ActionCommand {
             command_id: Uuid::new_v4(),
-            workflow_run_id: 42,
-            workflow_node_run_id: 99,
+            workflow_run_id: Uuid::now_v7(),
+            workflow_node_run_id: Uuid::now_v7(),
             node_id: "node-a".into(),
             action: WorkflowAction {
                 provider: "test".into(),

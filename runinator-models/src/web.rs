@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskResponse {
@@ -9,7 +10,7 @@ pub struct TaskResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskInput {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     pub name: String,
     pub cron_schedule: String,
     pub action_name: String,

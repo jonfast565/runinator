@@ -25,7 +25,7 @@ export const useNotificationsStore = defineStore("notifications", () => {
     notifications.value = [];
   }
 
-  async function markRead(id: number) {
+  async function markRead(id: string) {
     await app.runOperation("Marking notification read", () => markNotificationRead(id)).catch((error) => {
       app.setError(String(error));
     });

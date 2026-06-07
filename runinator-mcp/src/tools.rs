@@ -1,6 +1,7 @@
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
+use uuid::Uuid;
 
 pub(crate) fn tools_from_workflows(workflows: Vec<WorkflowDefinition>) -> Vec<Value> {
     workflows
@@ -99,11 +100,11 @@ fn object_schema(properties: Vec<(&str, Value)>, required: Vec<&str>) -> Value {
     })
 }
 
-pub(crate) fn parse_tool_workflow_id(name: &str) -> Option<i64> {
+pub(crate) fn parse_tool_workflow_id(name: &str) -> Option<Uuid> {
     name.split('_').next_back()?.parse().ok()
 }
 
-fn tool_name(wf: &WorkflowDefinition, id: i64) -> String {
+fn tool_name(wf: &WorkflowDefinition, id: Uuid) -> String {
     let slug = wf
         .name
         .chars()

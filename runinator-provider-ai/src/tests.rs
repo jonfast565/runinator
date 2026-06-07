@@ -4,7 +4,7 @@ use super::*;
 fn test_ai_command_provider_execution() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai".into(),
         action_function: "execute".into(),
         parameters: json!({
@@ -32,7 +32,7 @@ fn test_ai_command_provider_execution() {
 fn test_ai_command_fails_on_nonzero_exit() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai".into(),
         action_function: "execute".into(),
         parameters: json!({
@@ -55,7 +55,7 @@ fn test_ai_command_fails_on_nonzero_exit() {
 fn test_claude_code_stub_binary_passes_argv() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai-command".into(),
         action_function: "claude_code".into(),
         parameters: json!({
@@ -126,7 +126,7 @@ fn test_claude_code_stub_binary_passes_argv() {
 fn test_claude_code_nonzero_exit() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai-command".into(),
         action_function: "claude_code".into(),
         parameters: json!({
@@ -151,7 +151,7 @@ fn test_claude_code_nonzero_exit() {
 fn test_claude_code_invalid_params_missing_prompt() {
     let provider = AiCommandProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai-command".into(),
         action_function: "claude_code".into(),
         parameters: json!({
@@ -181,7 +181,7 @@ fn test_claude_code_json_output_parsed() {
     let provider = AiCommandProvider;
     // /bin/echo prints args plus a newline; we feed valid json as the trailing positional "prompt" and the provider parses it when output_format=json.
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "ai-command".into(),
         action_function: "claude_code".into(),
         parameters: json!({

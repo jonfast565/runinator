@@ -373,7 +373,7 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
 }"#;
 
     let formatted = format_str(src).expect("format");
-    let expected = r#"workflow "Fmt" v1 {
+    let expected = r#"workflow "Fmt" v1.0.0 {
     input {
         jira: {
             base_url: string,
@@ -1286,7 +1286,10 @@ fn parses_minimal_workflow() {
     "#;
     let doc = parse_document(src).expect("parse");
     assert_eq!(doc.workflow.name, "Hello");
-    assert_eq!(doc.workflow.version, Some(1));
+    assert_eq!(
+        doc.workflow.version,
+        Some(runinator_models::semver::SemVer::new(1, 0, 0))
+    );
     assert_eq!(doc.workflow.body.len(), 1);
 }
 

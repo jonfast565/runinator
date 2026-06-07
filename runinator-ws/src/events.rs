@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use runinator_broker::{Broker, EventMessage};
 use runinator_database::interfaces::DatabaseImpl;
@@ -44,11 +45,11 @@ pub(crate) fn emit(events: &EventSender, event: AppEvent) {
     });
 }
 
-pub(crate) fn emit_workflow_run(events: &EventSender, run_id: i64) {
+pub(crate) fn emit_workflow_run(events: &EventSender, run_id: Uuid) {
     emit(events, AppEvent::WorkflowRunChanged { run_id });
 }
 
-pub(crate) fn emit_task_run(events: &EventSender, run_id: i64, status: RunStatus) {
+pub(crate) fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus) {
     emit(
         events,
         AppEvent::RunStatusChanged {
@@ -69,7 +70,7 @@ pub(crate) fn is_terminal_run_status(status: RunStatus) -> bool {
 pub(crate) async fn emit_workflow_node_run<T: DatabaseImpl>(
     db: &T,
     events: &EventSender,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
 ) {
     if let Ok(Some(node_run)) = repository::fetch_workflow_node_run(db, workflow_node_run_id).await
     {

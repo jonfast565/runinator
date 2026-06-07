@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -17,7 +18,7 @@ use crate::responses::{api_error, bad_request};
 
 pub(crate) async fn get_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
+    Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
         Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
@@ -27,7 +28,7 @@ pub(crate) async fn get_run_artifacts<T: DatabaseImpl>(
 
 pub(crate) async fn add_run_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(run_id): Path<i64>,
+    Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
@@ -53,8 +54,8 @@ pub(crate) async fn upload_artifact<T: DatabaseImpl>(
     Extension(events): Extension<EventSender>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let mut run_id: Option<i64> = None;
-    let mut node_run_id: Option<i64> = None;
+    let mut run_id: Option<Uuid> = None;
+    let mut node_run_id: Option<Uuid> = None;
     let mut name: Option<String> = None;
     let mut mime_type: Option<String> = None;
     let mut file_name: Option<String> = None;
@@ -154,7 +155,7 @@ pub(crate) async fn upload_artifact<T: DatabaseImpl>(
 
 pub(crate) async fn download_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(artifact_id): Path<i64>,
+    Path(artifact_id): Path<Uuid>,
 ) -> Response {
     let artifact = match db.fetch_artifact(artifact_id).await {
         Ok(Some(artifact)) => artifact,

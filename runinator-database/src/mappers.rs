@@ -18,6 +18,7 @@ use runinator_models::{
     },
 };
 use sqlx::{ColumnIndex, Decode, Row, Type};
+use uuid::Uuid;
 
 fn parse_json(raw: String) -> Value {
     serde_json::from_str(&raw).unwrap_or(Value::Null)
@@ -38,7 +39,7 @@ fn parse_action_command(raw: String) -> Result<ActionCommand, SendableError> {
 ///
 /// the `$row` identifier is supplied by the caller so the body and the generated signature share a
 /// hygiene context. every column this codebase reads decodes as one of `i64`, `String`, `bool`,
-/// `Option<i64>`, or `Option<String>`, indexed by column name.
+/// `Uuid` (surrogate keys), `Option<i64>`, `Option<String>`, or `Option<Uuid>`, indexed by name.
 macro_rules! row_mapper {
     ($name:ident($row:ident) -> $ret:ty $body:block) => {
         pub fn $name<R>($row: &R) -> $ret
@@ -48,8 +49,10 @@ macro_rules! row_mapper {
             for<'d> i64: Decode<'d, R::Database> + Type<R::Database>,
             for<'d> String: Decode<'d, R::Database> + Type<R::Database>,
             for<'d> bool: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Uuid: Decode<'d, R::Database> + Type<R::Database>,
             for<'d> Option<i64>: Decode<'d, R::Database> + Type<R::Database>,
             for<'d> Option<String>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<Uuid>: Decode<'d, R::Database> + Type<R::Database>,
             for<'d> Vec<u8>: Decode<'d, R::Database> + Type<R::Database>,
         $body
     };
@@ -136,7 +139,7 @@ macro_rules! workflow_from_row {
         WorkflowDefinition {
             id: $row.get("id"),
             name: $row.get("name"),
-            version: $row.get("version"),
+            version: $row.get::<String, _>("version").parse().unwrap_or_default(),
             enabled: $row.get("enabled"),
             input_type: parse_type($row.get::<String, _>("input_schema")),
             definition: WorkflowGraph::from_value(parse_json($row.get::<String, _>("definition")))
@@ -314,7 +317,7 @@ row_mapper!(row_to_workflow_node_run_artifact(row) -> WorkflowNodeRunArtifact {
 macro_rules! catalog_item_from_row {
     ($row:expr) => {{
         runinator_models::json!({
-            "id": $row.get::<i64, _>("id"),
+            "id": $row.get::<Uuid, _>("id"),
             "uri": $row.get::<String, _>("uri"),
             "item_type": $row.get::<String, _>("item_type"),
             "name": $row.get::<String, _>("name"),
@@ -336,7 +339,10 @@ macro_rules! automation_record_from_row {
             data = Value::Object(Default::default());
         }
         if let Some(object) = data.as_object_mut() {
-            object.insert("id".into(), Value::from($row.get::<i64, _>("id")));
+            object.insert(
+                "id".into(),
+                Value::from($row.get::<Uuid, _>("id").to_string()),
+            );
             object.insert(
                 "record_type".into(),
                 Value::from($row.get::<String, _>("record_type")),
@@ -367,7 +373,7 @@ row_mapper!(row_to_automation_record(row) -> Value { automation_record_from_row!
 macro_rules! idempotency_key_from_row {
     ($row:expr) => {{
         runinator_models::json!({
-            "id": $row.get::<i64, _>("id"),
+            "id": $row.get::<Uuid, _>("id"),
             "scope": $row.get::<String, _>("scope"),
             "key": $row.get::<String, _>("key"),
             "result": parse_json($row.get::<String, _>("result")),
@@ -413,12 +419,8 @@ row_mapper!(row_to_action_dispatch(row) -> Result<ActionDispatchRecord, Sendable
 
 macro_rules! orchestration_event_from_row {
     ($row:expr) => {{
-        let event_id = $row
-            .get::<String, _>("event_id")
-            .parse()
-            .map_err(|err| crate::errors::ORCHESTRATION_EVENT_INVALID_ID.error(err))?;
         Ok(OrchestrationEvent {
-            event_id,
+            event_id: $row.get::<Uuid, _>("event_id"),
             workflow_run_id: $row.get("workflow_run_id"),
             workflow_node_run_id: $row.get("workflow_node_run_id"),
             node_id: $row.get("node_id"),
@@ -436,13 +438,9 @@ row_mapper!(row_to_orchestration_event(row) -> Result<OrchestrationEvent, Sendab
 
 macro_rules! ready_node_from_row {
     ($row:expr) => {{
-        let source_event_id = $row
-            .get::<String, _>("source_event_id")
-            .parse()
-            .map_err(|err| crate::errors::READY_NODE_INVALID_SOURCE_EVENT_ID.error(err))?;
         Ok(ReadyNodeRecord {
             id: $row.get("id"),
-            source_event_id,
+            source_event_id: $row.get::<Uuid, _>("source_event_id"),
             workflow_run_id: $row.get("workflow_run_id"),
             node_id: $row.get("node_id"),
             status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
@@ -536,8 +534,8 @@ row_mapper!(row_to_replica_provider_registration(row) -> Result<ReplicaProviderR
 macro_rules! notification_from_row {
     ($row:expr) => {{
         Notification {
-            id: $row.get::<i64, _>("id"),
-            workflow_run_id: $row.get::<Option<i64>, _>("workflow_run_id"),
+            id: $row.get::<Uuid, _>("id"),
+            workflow_run_id: $row.get::<Option<Uuid>, _>("workflow_run_id"),
             workflow_node_id: $row.get::<Option<String>, _>("workflow_node_id"),
             channel: $row.get::<String, _>("channel"),
             severity: $row.get::<String, _>("severity"),

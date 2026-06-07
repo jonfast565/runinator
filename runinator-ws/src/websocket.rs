@@ -1,4 +1,5 @@
 use std::time::Duration;
+use uuid::Uuid;
 
 use axum::{
     Extension,
@@ -29,7 +30,7 @@ pub(crate) async fn send_json<T: Serialize>(
 pub(crate) async fn send_run_chunks<T: DatabaseImpl>(
     db: &T,
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-    run_id: i64,
+    run_id: Uuid,
     cursor: &mut Option<i64>,
     limit: i64,
 ) -> Result<(), ()> {
@@ -46,7 +47,7 @@ pub(crate) async fn send_run_chunks<T: DatabaseImpl>(
 pub(crate) async fn send_workflow_node_run_chunks<T: DatabaseImpl>(
     db: &T,
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-    node_run_id: i64,
+    node_run_id: Uuid,
     cursor: &mut Option<i64>,
     limit: i64,
 ) -> Result<(), ()> {
@@ -63,7 +64,7 @@ pub(crate) async fn send_workflow_node_run_chunks<T: DatabaseImpl>(
 pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
     db: &T,
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-    run_id: i64,
+    run_id: Uuid,
 ) -> Result<(), ()> {
     let Some((run, nodes)) = repository::fetch_workflow_run(db, run_id)
         .await
@@ -158,7 +159,7 @@ pub(crate) async fn ws_events(
 pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(run_id): Path<i64>,
+    Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
     log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
@@ -211,7 +212,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
 pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(node_run_id): Path<i64>,
+    Path(node_run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
     log::info!(
@@ -268,7 +269,7 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
 pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
-    Path(run_id): Path<i64>,
+    Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
     log::info!("WebSocket upgrade request for /ws/run-stream/{}", run_id);

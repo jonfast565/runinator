@@ -21,6 +21,14 @@ pub(crate) fn json_opt_i64(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
 }
 
+/// extract a uuid-string field (e.g. a workflow-run/external-item key) as a `Uuid`.
+pub(crate) fn json_opt_uuid(value: &Value, key: &str) -> Option<uuid::Uuid> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse().ok())
+}
+
 pub(crate) fn json_metadata(value: &Value) -> String {
     value
         .get("metadata")

@@ -5,6 +5,8 @@ use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
 
+use runinator_models::semver::SemVer;
+
 use crate::ast::*;
 use crate::errors::{Span, WdlError};
 
@@ -90,7 +92,10 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
             Rule::string => name = plain_string(inner)?,
             Rule::version => {
                 let digits = inner.as_str().trim_start_matches('v');
-                version = Some(parse_i64(digits, span)?);
+                version =
+                    Some(digits.parse::<SemVer>().map_err(|err| {
+                        WdlError::syntax(span, format!("invalid version: {err}"))
+                    })?);
             }
             Rule::input_block => input = Some(parse_input_block(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),

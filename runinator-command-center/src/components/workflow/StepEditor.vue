@@ -411,8 +411,8 @@ function refLabel(value: unknown): string {
 
 // prefer the target workflow's name over its raw id, falling back to the id when unresolved.
 function subflowLabel(subflowId: unknown): string {
-  const id = subflowId != null ? Number(subflowId) : null;
-  if (id == null || Number.isNaN(id)) return "-";
+  const id = subflowId != null ? String(subflowId) : "";
+  if (!id) return "-";
   const name = workflows.workflows.find((workflow) => workflow.id === id)?.name;
   return name || `Workflow ${id}`;
 }

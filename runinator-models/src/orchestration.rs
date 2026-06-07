@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalItem {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -22,11 +22,11 @@ pub struct ExternalItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalResource {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
-    pub external_item_id: Option<i64>,
+    pub external_item_id: Option<Uuid>,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -41,9 +41,9 @@ pub struct ExternalResource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackItem {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -57,8 +57,8 @@ pub struct FeedbackItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequest {
-    pub id: Option<i64>,
-    pub workflow_run_id: i64,
+    pub id: Option<Uuid>,
+    pub workflow_run_id: Uuid,
     pub node_id: String,
     pub approval_type: String,
     pub status: String,
@@ -75,8 +75,8 @@ pub struct ApprovalRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
-    pub id: Option<i64>,
-    pub workflow_run_id: i64,
+    pub id: Option<Uuid>,
+    pub workflow_run_id: Uuid,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -90,8 +90,8 @@ pub struct Workspace {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeSet {
-    pub id: Option<i64>,
-    pub workflow_run_id: i64,
+    pub id: Option<Uuid>,
+    pub workflow_run_id: Uuid,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -104,8 +104,8 @@ pub struct ChangeSet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateStatus {
-    pub id: Option<i64>,
-    pub workflow_run_id: i64,
+    pub id: Option<Uuid>,
+    pub workflow_run_id: Uuid,
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
@@ -118,11 +118,11 @@ pub struct GateStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationEvent {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     #[serde(default)]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default)]
-    pub external_item_id: Option<i64>,
+    pub external_item_id: Option<Uuid>,
     pub provider: String,
     pub event_type: String,
     pub message: String,
@@ -133,7 +133,7 @@ pub struct AutomationEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogItem {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     pub uri: String,
     pub item_type: String,
     pub name: String,
@@ -148,7 +148,7 @@ pub struct CatalogItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdempotencyKey {
-    pub id: Option<i64>,
+    pub id: Option<Uuid>,
     pub scope: String,
     pub key: String,
     #[serde(default)]
@@ -159,9 +159,9 @@ pub struct IdempotencyKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestrationEvent {
     pub event_id: Uuid,
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_node_run_id: Option<i64>,
+    pub workflow_node_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     pub event_type: String,
@@ -173,9 +173,9 @@ pub struct OrchestrationEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewOrchestrationEvent {
     pub event_id: Uuid,
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_node_run_id: Option<i64>,
+    pub workflow_node_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     pub event_type: String,
@@ -186,13 +186,13 @@ pub struct NewOrchestrationEvent {
 
 impl NewOrchestrationEvent {
     pub fn new(
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         node_id: Option<String>,
         event_type: impl Into<String>,
         payload: Value,
     ) -> Self {
         Self {
-            event_id: Uuid::new_v4(),
+            event_id: Uuid::now_v7(),
             workflow_run_id,
             workflow_node_run_id: None,
             node_id,
@@ -205,9 +205,9 @@ impl NewOrchestrationEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadyNodeRecord {
-    pub id: i64,
+    pub id: Uuid,
     pub source_event_id: Uuid,
-    pub workflow_run_id: i64,
+    pub workflow_run_id: Uuid,
     pub node_id: String,
     pub status: WorkflowStatus,
     pub ready_at: DateTime<Utc>,
@@ -234,7 +234,7 @@ pub struct ReadyNodeClaimRequest {
 pub struct ReadyNodeProcessRequest {
     pub scheduler_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_run_id: Option<i64>,
+    pub workflow_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

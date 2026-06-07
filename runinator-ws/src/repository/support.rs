@@ -1,8 +1,9 @@
 use super::*;
+use uuid::Uuid;
 
 pub(super) async fn fetch_workflow_snapshot<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> Result<WorkflowDefinition, SendableError> {
     db.fetch_workflow(workflow_id)
         .await?
@@ -45,7 +46,7 @@ pub(super) fn normalized_run_name(name: Option<String>) -> Option<String> {
 
 pub(super) async fn enqueue_node_ready<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node_id: String,
     event_type: &str,
     ready_at: chrono::DateTime<Utc>,

@@ -10,12 +10,13 @@ use runinator_models::{
     },
 };
 use std::collections::HashMap;
+use uuid::Uuid;
 
 fn workflow(definition: runinator_models::value::Value) -> WorkflowDefinition {
     WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "test".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
         definition: WorkflowGraph::from_value(definition).unwrap(),
@@ -141,9 +142,9 @@ fn resolves_config_refs() {
 #[test]
 fn accepts_structurally_valid_refs_without_schema_path_validation() {
     let wf = WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "schema-boundary".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::from_json_schema(&runinator_models::json!({
             "type": "object",
@@ -592,9 +593,9 @@ fn test_workflow_state_machine_logic_integration() {
     });
 
     let wf = WorkflowDefinition {
-        id: Some(1),
+        id: Some(Uuid::now_v7()),
         name: "integration-test".into(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
         definition: WorkflowGraph::from_value(definition.clone()).unwrap(),

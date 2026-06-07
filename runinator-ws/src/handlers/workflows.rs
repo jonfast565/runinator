@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use axum::{
     Extension, Json,
@@ -8,7 +9,7 @@ use axum::{
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
-    workflows::{WorkflowBundle, WorkflowDefinition},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest},
 };
 use serde::Deserialize;
 
@@ -123,7 +124,7 @@ pub(crate) async fn export_workflow_bundle<T: DatabaseImpl>(
 
 pub(crate) async fn export_single_workflow_bundle<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(workflow_id): Path<i64>,
+    Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::export_workflow_bundle(db.as_ref(), Some(workflow_id)).await {
         Ok(bundle) if bundle.workflows.is_empty() => {
@@ -136,7 +137,7 @@ pub(crate) async fn export_single_workflow_bundle<T: DatabaseImpl>(
 
 pub(crate) async fn get_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(workflow_id): Path<i64>,
+    Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_workflow(db.as_ref(), workflow_id).await {
         Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
@@ -145,9 +146,24 @@ pub(crate) async fn get_workflow<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn duplicate_workflow<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(workflow_id): Path<Uuid>,
+    Query(request): Query<WorkflowDuplicateRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::duplicate_workflow(db.as_ref(), workflow_id, request.bump).await {
+        Ok(workflow) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn delete_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Path(workflow_id): Path<i64>,
+    Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::delete_workflow(db.as_ref(), workflow_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),

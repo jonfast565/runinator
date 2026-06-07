@@ -3,6 +3,7 @@
 // decompile a WorkflowDefinition back to wdl text. the runtime is unchanged; this crate
 // is purely an author-time front end.
 
+use runinator_models::semver::SemVer;
 use runinator_models::workflows::WorkflowDefinition;
 
 pub mod ast;
@@ -31,14 +32,14 @@ pub use completion::{
 pub struct CompileOptions {
     pub enabled: bool,
     /// fallback version when the source omits `vN`.
-    pub default_version: i64,
+    pub default_version: SemVer,
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
             enabled: false,
-            default_version: 1,
+            default_version: SemVer::default(),
         }
     }
 }

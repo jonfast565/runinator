@@ -4,7 +4,7 @@ use super::*;
 fn test_git_provider_unsupported_action() {
     let provider = GitProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "git".into(),
         action_function: "invalid".into(),
         parameters: json!({}),
@@ -43,7 +43,7 @@ fn metadata_includes_push_action() {
 fn push_requires_branch_before_execution() {
     let provider = GitProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "git".into(),
         action_function: "push".into(),
         parameters: json!({

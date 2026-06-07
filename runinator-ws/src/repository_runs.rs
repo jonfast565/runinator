@@ -5,10 +5,11 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
 };
+use uuid::Uuid;
 
 pub async fn fetch_run_chunks<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
+    run_id: Uuid,
     cursor: Option<i64>,
     limit: i64,
 ) -> Result<Vec<RunChunk>, SendableError> {
@@ -24,7 +25,7 @@ pub async fn fetch_runs_by_status<T: DatabaseImpl>(
 
 pub async fn update_run_status<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
+    run_id: Uuid,
     status: RunStatus,
     output_json: Option<Value>,
     message: Option<String>,
@@ -39,7 +40,7 @@ pub async fn update_run_status<T: DatabaseImpl>(
 
 pub async fn append_run_chunk<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
+    run_id: Uuid,
     chunk: &NewRunChunk,
 ) -> Result<RunChunk, SendableError> {
     db.append_run_chunk(run_id, chunk).await
@@ -47,14 +48,14 @@ pub async fn append_run_chunk<T: DatabaseImpl>(
 
 pub async fn fetch_run_artifacts<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
+    run_id: Uuid,
 ) -> Result<Vec<RunArtifact>, SendableError> {
     db.fetch_run_artifacts(run_id).await
 }
 
 pub async fn add_run_artifact<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
+    run_id: Uuid,
     artifact: &NewRunArtifact,
 ) -> Result<RunArtifact, SendableError> {
     db.add_run_artifact(run_id, artifact).await
@@ -68,8 +69,8 @@ pub async fn fetch_all_artifacts<T: DatabaseImpl>(
 
 pub async fn persist_artifact_file<T: DatabaseImpl>(
     db: &T,
-    run_id: i64,
-    workflow_node_run_id: Option<i64>,
+    run_id: Uuid,
+    workflow_node_run_id: Option<Uuid>,
     name: &str,
     mime_type: &str,
     bytes: &[u8],

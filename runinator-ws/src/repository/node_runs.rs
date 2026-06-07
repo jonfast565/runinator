@@ -1,9 +1,10 @@
 use super::support;
 use super::*;
+use uuid::Uuid;
 
 pub async fn fetch_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<Option<(WorkflowRun, Vec<WorkflowNodeRun>)>, SendableError> {
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Ok(None);
@@ -14,15 +15,15 @@ pub async fn fetch_workflow_run<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_node_run<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
 ) -> Result<Option<WorkflowNodeRun>, SendableError> {
     db.fetch_workflow_node_run(workflow_node_run_id).await
 }
 
 pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
-    replica_id: i64,
+    workflow_node_run_id: Uuid,
+    replica_id: Uuid,
     claimed_at: DateTime<Utc>,
 ) -> Result<TaskResponse, SendableError> {
     db.claim_workflow_node_run_executor(workflow_node_run_id, replica_id, claimed_at)
@@ -35,8 +36,8 @@ pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
 
 pub async fn release_workflow_node_run_executor<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
-    replica_id: i64,
+    workflow_node_run_id: Uuid,
+    replica_id: Uuid,
     released_at: DateTime<Utc>,
 ) -> Result<TaskResponse, SendableError> {
     db.release_workflow_node_run_executor(workflow_node_run_id, replica_id, released_at)
@@ -49,7 +50,7 @@ pub async fn release_workflow_node_run_executor<T: DatabaseImpl>(
 
 pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
     chunk: &NewRunChunk,
 ) -> Result<WorkflowNodeRunChunk, SendableError> {
     db.append_workflow_node_run_chunk(workflow_node_run_id, chunk)
@@ -58,7 +59,7 @@ pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_node_run_chunks<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
     cursor: Option<i64>,
     limit: i64,
 ) -> Result<Vec<WorkflowNodeRunChunk>, SendableError> {
@@ -68,7 +69,7 @@ pub async fn fetch_workflow_node_run_chunks<T: DatabaseImpl>(
 
 pub async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
     artifact: &NewRunArtifact,
 ) -> Result<WorkflowNodeRunArtifact, SendableError> {
     db.add_workflow_node_run_artifact(workflow_node_run_id, artifact)
@@ -77,7 +78,7 @@ pub async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
 
 pub async fn fetch_workflow_node_run_artifacts<T: DatabaseImpl>(
     db: &T,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
 ) -> Result<Vec<WorkflowNodeRunArtifact>, SendableError> {
     db.fetch_workflow_node_run_artifacts(workflow_node_run_id)
         .await
@@ -112,7 +113,7 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node_id: String,
     parameters: Value,
 ) -> Result<WorkflowNodeRun, SendableError> {
@@ -123,7 +124,7 @@ pub async fn create_workflow_node_run<T: DatabaseImpl>(
 #[allow(clippy::too_many_arguments)]
 pub async fn update_workflow_node_run<T: DatabaseImpl>(
     db: &T,
-    node_run_id: i64,
+    node_run_id: Uuid,
     status: WorkflowStatus,
     attempt: Option<i64>,
     parameters: Option<Value>,

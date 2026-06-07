@@ -22,8 +22,8 @@ async fn tcp_broker_delivers_published_messages() {
     let message = BrokerMessage {
         command: ActionCommand {
             command_id: Uuid::new_v4(),
-            workflow_run_id: 42,
-            workflow_node_run_id: 99,
+            workflow_run_id: Uuid::from_u128(42),
+            workflow_node_run_id: Uuid::from_u128(99),
             node_id: "run".into(),
             action: WorkflowAction {
                 provider: "test".into(),
@@ -42,8 +42,8 @@ async fn tcp_broker_delivers_published_messages() {
 
     broker.publish(message).await.unwrap();
     let delivery = broker.receive("test-consumer").await.unwrap();
-    assert_eq!(delivery.command.workflow_run_id, 42);
-    assert_eq!(delivery.command.workflow_node_run_id, 99);
+    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
+    assert_eq!(delivery.command.workflow_node_run_id, Uuid::from_u128(99));
     assert_eq!(delivery.dedupe_key, "tcp-test");
     broker
         .ack("test-consumer", delivery.delivery_id)
@@ -64,11 +64,14 @@ async fn tcp_broker_delivers_control_messages() {
     let broker = TcpBroker::new(addr.to_string());
 
     broker
-        .publish_control(ControlCommand::new(42, ControlKind::Cancel))
+        .publish_control(ControlCommand::new(
+            Uuid::from_u128(42),
+            ControlKind::Cancel,
+        ))
         .await
         .unwrap();
     let delivery = broker.receive_control("test-consumer").await.unwrap();
-    assert_eq!(delivery.command.workflow_run_id, 42);
+    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
     assert!(matches!(delivery.command.kind, ControlKind::Cancel));
     broker
         .ack_control("test-consumer", delivery.delivery_id)
@@ -105,8 +108,8 @@ async fn tcp_broker_delivers_result_events() {
         .await
         .unwrap();
     let delivery = broker.receive_result("result-consumer").await.unwrap();
-    assert_eq!(delivery.event.workflow_run_id, 42);
-    assert_eq!(delivery.event.workflow_node_run_id, 99);
+    assert_eq!(delivery.event.workflow_run_id, Uuid::from_u128(42));
+    assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
     assert_eq!(delivery.dedupe_key, "tcp-result-test");
     match delivery.event.kind {
         WorkflowResultEventKind::Chunk { chunk } => assert_eq!(chunk.content, "hello"),
@@ -146,8 +149,8 @@ async fn tcp_broker_times_out_publish_response() {
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: 42,
-        workflow_node_run_id: 99,
+        workflow_run_id: Uuid::from_u128(42),
+        workflow_node_run_id: Uuid::from_u128(99),
         node_id: "run".into(),
         action: WorkflowAction {
             provider: "test".into(),

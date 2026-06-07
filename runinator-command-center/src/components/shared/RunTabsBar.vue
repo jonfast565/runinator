@@ -22,26 +22,26 @@ import { useWorkflowsStore } from "../../stores/workflows";
 
 const workflows = useWorkflowsStore();
 
-function labelFor(runId: number): string {
+function labelFor(runId: string): string {
   const detail = workflows.runDetailById.get(runId);
   const summary = workflows.workflowRuns.find((run) => run.id === runId);
   const name = (detail?.run.name ?? summary?.name)?.trim();
   return name ? name : `Run #${runId}`;
 }
 
-function tabTitle(runId: number): string {
+function tabTitle(runId: string): string {
   const status = statusFor(runId) ?? "unknown";
   return `Run ${runId} · ${status}`;
 }
 
-function statusFor(runId: number): string | undefined {
+function statusFor(runId: string): string | undefined {
   const detail = workflows.runDetailById.get(runId);
   if (detail?.run.status) return detail.run.status;
   const summary = workflows.workflowRuns.find((run) => run.id === runId);
   return summary?.status;
 }
 
-function statusClass(runId: number): string {
+function statusClass(runId: string): string {
   const status = statusFor(runId);
   if (!status) return "pending";
   if (status === "succeeded") return "ok";

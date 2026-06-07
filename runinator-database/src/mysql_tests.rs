@@ -59,7 +59,7 @@ fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.to_string(),
-        version: 1,
+        version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
         definition: WorkflowGraph::from_value(runinator_models::json!({ "nodes": [] })).unwrap(),
@@ -68,7 +68,7 @@ fn sample_workflow(name: &str) -> WorkflowDefinition {
     }
 }
 
-fn sample_trigger(workflow_id: i64) -> WorkflowTrigger {
+fn sample_trigger(workflow_id: Uuid) -> WorkflowTrigger {
     WorkflowTrigger {
         id: None,
         workflow_id,
@@ -84,7 +84,7 @@ fn sample_trigger(workflow_id: i64) -> WorkflowTrigger {
     }
 }
 
-fn sample_action(workflow_run_id: i64, workflow_node_run_id: i64) -> ActionCommand {
+fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
         workflow_run_id,
@@ -115,10 +115,13 @@ async fn mariadb_full_lifecycle() {
     let id = created.id.expect("insert assigns an id");
     let mut updated = sample_workflow("alpha");
     updated.id = Some(id);
-    updated.version = 2;
+    updated.version = runinator_models::semver::SemVer::new(2, 0, 0);
     let after = db.upsert_workflow(&updated).await.unwrap();
     assert_eq!(after.id, Some(id));
-    assert_eq!(after.version, 2);
+    assert_eq!(
+        after.version,
+        runinator_models::semver::SemVer::new(2, 0, 0)
+    );
     // upsert by name with no id must find and update the existing row, not duplicate it.
     let by_name = db.upsert_workflow(&sample_workflow("alpha")).await.unwrap();
     assert_eq!(by_name.id, Some(id));
@@ -255,7 +258,10 @@ async fn mariadb_full_lifecycle() {
     let read = db.mark_notification_read(note.id).await.unwrap().unwrap();
     assert!(read.read_at.is_some());
     assert!(
-        db.mark_notification_read(i64::MAX).await.unwrap().is_none(),
+        db.mark_notification_read(Uuid::nil())
+            .await
+            .unwrap()
+            .is_none(),
         "missing id returns None"
     );
 
@@ -304,7 +310,8 @@ async fn mariadb_full_lifecycle() {
         .unwrap();
     let record_id = created_record
         .get("id")
-        .and_then(Value::as_i64)
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uuid>().ok())
         .expect("automation record insert assigns an id");
     assert_eq!(
         created_record.get("title").and_then(Value::as_str),

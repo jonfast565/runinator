@@ -1,6 +1,7 @@
 use super::context::{is_reentry_stale, runtime_context};
 use super::transitions::{arm_node_timeout, timed_out_since_created, transition_from_node};
 use super::*;
+use uuid::Uuid;
 
 pub(super) async fn process_subflow_node<T: DatabaseImpl>(
     db: &T,
@@ -230,7 +231,7 @@ pub(super) async fn process_subflow_node<T: DatabaseImpl>(
 pub(super) async fn resolve_subflow_id<T: DatabaseImpl>(
     db: &T,
     node: &WorkflowNode,
-) -> Result<i64, SendableError> {
+) -> Result<Uuid, SendableError> {
     if let Some(subflow_id) = node.subflow_id {
         return Ok(subflow_id);
     }
@@ -254,10 +255,10 @@ pub(super) async fn resolve_subflow_id<T: DatabaseImpl>(
 /// the reducer drives it. the parent linkage lets a terminal child wake the waiting parent node.
 pub(super) async fn create_subflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
     parameters: Value,
     run_name: Option<String>,
-    parent_run_id: i64,
+    parent_run_id: Uuid,
     parent_node_id: &str,
 ) -> Result<WorkflowRun, SendableError> {
     let snapshot = db

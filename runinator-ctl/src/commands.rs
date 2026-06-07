@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
+use uuid::Uuid;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
@@ -189,6 +190,24 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             if json_output || path.is_none() {
                 output::json(&bundle)?;
             }
+        }
+        WorkflowCommands::Duplicate { workflow, bump } => {
+            let existing = fetch_workflow_ref(client, workflow).await?;
+            let workflow_id = existing
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let copy = client
+                .duplicate_workflow(workflow_id, (*bump).into())
+                .await?;
+            if json_output {
+                return output::json(&copy);
+            }
+            println!(
+                "duplicated {} -> id {} v{}",
+                existing.name,
+                copy.id.unwrap_or_default(),
+                copy.version
+            );
         }
         WorkflowCommands::Run {
             workflow,
@@ -398,7 +417,7 @@ async fn dev_run_workflow(
     watch_run_until_terminal(client, run.id, Duration::from_secs(1)).await
 }
 
-async fn watch_run_until_terminal(client: &Client, run_id: i64, interval: Duration) -> Result<()> {
+async fn watch_run_until_terminal(client: &Client, run_id: Uuid, interval: Duration) -> Result<()> {
     loop {
         let (run, nodes) = client.fetch_workflow_run(run_id).await?;
         print_run_detail(&run, &nodes);
@@ -858,7 +877,7 @@ fn print_settings(entries: &[runinator_models::settings::SettingSummary]) {
 }
 
 async fn fetch_workflow_ref(client: &Client, workflow: &str) -> Result<WorkflowDefinition> {
-    if let Ok(id) = workflow.parse::<i64>() {
+    if let Ok(id) = workflow.parse::<Uuid>() {
         return Ok(client.fetch_workflow(id).await?);
     }
     Ok(client.fetch_workflow_by_name(workflow).await?)
@@ -867,7 +886,7 @@ async fn fetch_workflow_ref(client: &Client, workflow: &str) -> Result<WorkflowD
 async fn fetch_runs(
     client: &Client,
     status: Option<&str>,
-    workflow_id: Option<i64>,
+    workflow_id: Option<Uuid>,
     open: bool,
 ) -> Result<Vec<WorkflowRun>> {
     if let Some(status) = status {
@@ -897,7 +916,7 @@ async fn fetch_runs(
                     .await?,
             );
         }
-        runs.sort_by_key(|run| run.id);
+        runs.sort_by_key(|run| run.created_at);
         runs.reverse();
         return Ok(runs);
     }
@@ -1038,9 +1057,9 @@ fn print_approvals(approvals: &[Value]) {
     for approval in approvals {
         println!(
             "{:<6} {:<18} {:<10} {:<24} {}",
-            value_i64(approval, "id").unwrap_or_default(),
+            value_display(approval, "id"),
             value_str(approval, "status").unwrap_or("-"),
-            value_i64(approval, "workflow_run_id").unwrap_or_default(),
+            value_display(approval, "workflow_run_id"),
             output::truncate(value_str(approval, "node_id").unwrap_or("-"), 24),
             output::truncate(value_str(approval, "prompt").unwrap_or(""), 64)
         );
@@ -1114,6 +1133,10 @@ fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
-fn value_i64(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
+fn value_display(value: &Value, key: &str) -> String {
+    match value.get(key) {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        _ => "-".into(),
+    }
 }

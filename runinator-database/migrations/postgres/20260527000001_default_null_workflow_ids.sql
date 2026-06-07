@@ -1,31 +1,7 @@
-CREATE OR REPLACE FUNCTION runinator_default_workflow_id()
-RETURNS trigger AS $$
-BEGIN
-    IF NEW.id IS NULL THEN
-        NEW.id := nextval('workflows_id_seq');
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Obsolete under UUID keys: ids are generated app-side, so the old NULL-id backfill triggers that
+-- pulled from the bigserial sequences are no longer needed. Drop them if a prior migration created
+-- them; on a fresh UUID schema these are no-ops.
 DROP TRIGGER IF EXISTS default_workflow_id ON workflows;
-CREATE TRIGGER default_workflow_id
-BEFORE INSERT ON workflows
-FOR EACH ROW
-EXECUTE FUNCTION runinator_default_workflow_id();
-
-CREATE OR REPLACE FUNCTION runinator_default_workflow_trigger_id()
-RETURNS trigger AS $$
-BEGIN
-    IF NEW.id IS NULL THEN
-        NEW.id := nextval('workflow_triggers_id_seq');
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+DROP FUNCTION IF EXISTS runinator_default_workflow_id();
 DROP TRIGGER IF EXISTS default_workflow_trigger_id ON workflow_triggers;
-CREATE TRIGGER default_workflow_trigger_id
-BEFORE INSERT ON workflow_triggers
-FOR EACH ROW
-EXECUTE FUNCTION runinator_default_workflow_trigger_id();
+DROP FUNCTION IF EXISTS runinator_default_workflow_trigger_id();

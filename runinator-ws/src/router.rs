@@ -75,8 +75,8 @@ use crate::handlers::{
     wdl::{analyze_wdl, compile_wdl, complete_wdl, decompile_to_wdl, format_wdl, import_wdl},
     webhook::webhook_wake,
     workflows::{
-        delete_workflow, export_single_workflow_bundle, export_workflow_bundle, get_workflow,
-        get_workflows, import_workflow_bundle, upsert_workflow, validate_workflow,
+        delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
+        get_workflow, get_workflows, import_workflow_bundle, upsert_workflow, validate_workflow,
     },
 };
 use crate::websocket::{ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run};
@@ -144,6 +144,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflows/{id}/export",
             get(export_single_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/duplicate",
+            post(duplicate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/triggers",

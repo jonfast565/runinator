@@ -1,11 +1,12 @@
 use super::support;
 use super::*;
+use uuid::Uuid;
 
 /// dispatch a single canonical [`DebugVerb`] against a run. every debug operation funnels through
 /// here so the per-verb behavior lives in exactly one place.
 pub async fn apply_debug_command<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     verb: DebugVerb,
 ) -> Result<TaskResponse, SendableError> {
     match verb {
@@ -52,7 +53,7 @@ async fn persist_debug_frame<T: DatabaseImpl>(
 
 pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
     persist_debug_frame(
@@ -74,7 +75,7 @@ pub async fn step_debug_workflow_run<T: DatabaseImpl>(
 
 pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
     persist_debug_frame(
@@ -96,7 +97,7 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
 
 pub async fn set_debug_breakpoints<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     breakpoints: Vec<String>,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
@@ -113,7 +114,7 @@ pub async fn set_debug_breakpoints<T: DatabaseImpl>(
 
 pub async fn set_debug_mode<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     mode: DebugMode,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
@@ -130,7 +131,7 @@ pub async fn set_debug_mode<T: DatabaseImpl>(
 
 pub async fn update_workflow_run_debug<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     patch: Value,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
@@ -192,7 +193,7 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
 
 pub async fn pause_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     let command = ControlCommand::new(workflow_run_id, ControlKind::Pause);
     pause_workflow_run_command(db, &command).await
@@ -251,7 +252,7 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
 
 pub async fn resume_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     let command = ControlCommand::new(workflow_run_id, ControlKind::Resume);
     resume_workflow_run_command(db, &command).await
@@ -307,7 +308,7 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
 pub async fn cancel_workflow_run<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
     let response = cancel_workflow_run_command(db, &command).await?;
@@ -365,7 +366,7 @@ async fn publish_worker_control_command(
 
 pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     node_id: String,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
@@ -389,7 +390,7 @@ pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
 
 pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     output_json: Value,
     message: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
@@ -442,7 +443,7 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
 
 pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     parameters: Value,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
@@ -503,7 +504,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
 
 pub async fn replay_workflow_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
     from_step_id: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(source) = db.fetch_workflow_run(workflow_run_id).await? else {
@@ -746,7 +747,7 @@ fn transition_targets(node: &runinator_models::workflows::WorkflowNode) -> Vec<S
 
 async fn require_debug_run<T: DatabaseImpl>(
     db: &T,
-    workflow_run_id: i64,
+    workflow_run_id: Uuid,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Err(crate::errors::DEBUG_NOT_FOUND.error(workflow_run_id));

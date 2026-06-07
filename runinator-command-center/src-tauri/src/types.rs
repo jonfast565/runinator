@@ -4,6 +4,7 @@ use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceStatus {
@@ -27,7 +28,7 @@ pub struct WorkflowRunDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRunCreated {
-    pub id: i64,
+    pub id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

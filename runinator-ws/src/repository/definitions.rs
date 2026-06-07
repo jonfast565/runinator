@@ -1,5 +1,7 @@
 use super::*;
 use super::{catalog, triggers};
+use runinator_models::semver::SemVerBump;
+use uuid::Uuid;
 
 #[cfg(test)]
 pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
@@ -46,7 +48,7 @@ async fn validate_workflow_subflows<T: DatabaseImpl>(
     for node in &workflow.definition.nodes {
         if node.kind == WorkflowNodeKind::Subflow
             && let Some(subflow_id) = node.subflow_id
-            && subflow_id > 0
+            && !subflow_id.is_nil()
         {
             match db.fetch_workflow(subflow_id).await {
                 Ok(Some(_)) => {} // workflow exists, validation passes
@@ -84,7 +86,7 @@ pub async fn fetch_workflows<T: DatabaseImpl>(
 
 pub async fn fetch_workflow<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> Result<Option<WorkflowDefinition>, SendableError> {
     let Some(workflow) = db.fetch_workflow(workflow_id).await? else {
         return Ok(None);
@@ -286,7 +288,7 @@ fn parse_trigger_datetime(value: &str) -> Result<DateTime<Utc>, SendableError> {
 
 pub async fn export_workflow_bundle<T: DatabaseImpl>(
     db: &T,
-    workflow_id: Option<i64>,
+    workflow_id: Option<Uuid>,
 ) -> Result<WorkflowBundle, SendableError> {
     let workflows = match workflow_id {
         Some(id) => match fetch_workflow(db, id).await? {
@@ -321,9 +323,30 @@ async fn normalize_persisted_workflow<T: DatabaseImpl>(
     db.upsert_workflow(&normalized).await
 }
 
+// duplicate a workflow into a new row that shares its name but carries a bumped semantic
+// version. the copy is a fresh, disabled draft (new id) so it never clobbers the original or
+// inherits its triggers; the highest-versioned sibling is left to the caller to promote.
+pub async fn duplicate_workflow<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    bump: SemVerBump,
+) -> Result<WorkflowDefinition, SendableError> {
+    let Some(existing) = fetch_workflow(db, workflow_id).await? else {
+        return Err(crate::errors::WORKFLOW_NOT_FOUND.error(format!("id {workflow_id}")));
+    };
+    let mut copy = existing;
+    copy.id = None;
+    copy.version = copy.version.bump(bump);
+    copy.enabled = false;
+    copy.created_at = None;
+    copy.updated_at = None;
+    let copy = validate_workflow_definition_with_catalog(db, &copy).await?;
+    db.insert_workflow(&copy).await
+}
+
 pub async fn delete_workflow<T: DatabaseImpl>(
     db: &T,
-    workflow_id: i64,
+    workflow_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     db.delete_workflow(workflow_id).await?;
     Ok(TaskResponse {

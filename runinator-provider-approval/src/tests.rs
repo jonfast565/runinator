@@ -4,7 +4,7 @@ use super::*;
 fn test_approval_provider_execution() {
     let provider = ApprovalProvider;
     let request = ProviderExecutionRequest {
-        run_id: Some(1),
+        run_id: Some(uuid::Uuid::now_v7()),
         action_name: "approval".into(),
         action_function: "prepare".into(),
         parameters: json!({

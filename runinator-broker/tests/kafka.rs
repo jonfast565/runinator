@@ -61,7 +61,7 @@ async fn kafka_broker_delivers_published_messages() {
             .unwrap();
         broker.ack(&consumer, delivery.delivery_id).await.unwrap();
         if delivery.command.command_id == command_id {
-            assert_eq!(delivery.command.workflow_run_id, 42);
+            assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
             break;
         }
     }
@@ -74,7 +74,10 @@ async fn kafka_broker_delivers_control_messages() {
         return;
     };
     broker
-        .publish_control(ControlCommand::new(4242, ControlKind::Cancel))
+        .publish_control(ControlCommand::new(
+            Uuid::from_u128(4242),
+            ControlKind::Cancel,
+        ))
         .await
         .unwrap();
 
@@ -130,7 +133,7 @@ async fn kafka_broker_delivers_result_events() {
             .await
             .unwrap();
         if delivery.event.event_id == event_id {
-            assert_eq!(delivery.event.workflow_node_run_id, 99);
+            assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
             break;
         }
     }
@@ -177,8 +180,8 @@ async fn kafka_broker_nack_redelivers_messages() {
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: 42,
-        workflow_node_run_id: 99,
+        workflow_run_id: Uuid::from_u128(42),
+        workflow_node_run_id: Uuid::from_u128(99),
         node_id: "run".into(),
         action: WorkflowAction {
             provider: "test".into(),

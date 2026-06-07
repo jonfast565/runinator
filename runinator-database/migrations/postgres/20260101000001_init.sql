@@ -1,7 +1,9 @@
 -- Initial schema for the Runinator web service (Postgres).
+-- All surrogate keys (primary/foreign/event ids) are UUIDs generated app-side. Columns that hold
+-- workflow graph node identifiers or external identity strings stay TEXT.
 
 CREATE TABLE IF NOT EXISTS runs (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     status TEXT NOT NULL,
     parameters TEXT NOT NULL,
     output_json TEXT NULL,
@@ -10,13 +12,13 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at BIGINT NULL,
     finished_at BIGINT NULL,
     created_at BIGINT NOT NULL,
-    workflow_run_id BIGINT NULL,
+    workflow_run_id UUID NULL,
     workflow_node_id TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS run_chunks (
-    id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES runs(id),
+    id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES runs(id),
     sequence BIGINT NOT NULL,
     stream TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -24,8 +26,8 @@ CREATE TABLE IF NOT EXISTS run_chunks (
 );
 
 CREATE TABLE IF NOT EXISTS run_artifacts (
-    id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES runs(id),
+    id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES runs(id),
     name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
 );
 
 CREATE TABLE IF NOT EXISTS workflows (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     version BIGINT NOT NULL,
     enabled BOOLEAN NOT NULL,
@@ -46,8 +48,8 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_triggers (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_id BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
     enabled BOOLEAN NOT NULL,
     configuration TEXT NOT NULL DEFAULT '{}',
@@ -60,8 +62,8 @@ CREATE TABLE IF NOT EXISTS workflow_triggers (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_runs (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_id BIGINT NOT NULL REFERENCES workflows(id),
+    id UUID PRIMARY KEY,
+    workflow_id UUID NOT NULL REFERENCES workflows(id),
     workflow_snapshot TEXT NULL,
     status TEXT NOT NULL,
     active_node_id TEXT NULL,
@@ -76,15 +78,9 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     scheduler_claimed_until BIGINT NULL
 );
 
--- Forward-compat for older databases predating these columns.
-ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_snapshot TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS name TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS scheduler_claimed_by TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS scheduler_claimed_until BIGINT NULL;
-
 CREATE TABLE IF NOT EXISTS workflow_node_runs (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_run_id BIGINT NOT NULL REFERENCES workflow_runs(id),
+    id UUID PRIMARY KEY,
+    workflow_run_id UUID NOT NULL REFERENCES workflow_runs(id),
     node_id TEXT NOT NULL,
     status TEXT NOT NULL,
     attempt BIGINT NOT NULL DEFAULT 0,
@@ -99,8 +95,8 @@ CREATE TABLE IF NOT EXISTS workflow_node_runs (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_chunks (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_node_run_id BIGINT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    workflow_node_run_id UUID NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     sequence BIGINT NOT NULL,
     stream TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -108,8 +104,8 @@ CREATE TABLE IF NOT EXISTS workflow_node_chunks (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_node_run_id BIGINT NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    workflow_node_run_id UUID NOT NULL REFERENCES workflow_node_runs(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
@@ -119,26 +115,26 @@ CREATE TABLE IF NOT EXISTS workflow_node_artifacts (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_result_events (
-    event_id TEXT PRIMARY KEY,
-    workflow_run_id BIGINT NOT NULL,
-    workflow_node_run_id BIGINT NOT NULL,
+    event_id UUID PRIMARY KEY,
+    workflow_run_id UUID NOT NULL,
+    workflow_node_run_id UUID NOT NULL,
     node_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     created_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS workflow_trigger_firings (
-    id BIGSERIAL PRIMARY KEY,
-    trigger_id BIGINT NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    trigger_id UUID NOT NULL REFERENCES workflow_triggers(id) ON DELETE CASCADE,
     fire_key TEXT NOT NULL,
-    workflow_run_id BIGINT NULL REFERENCES workflow_runs(id),
+    workflow_run_id UUID NULL REFERENCES workflow_runs(id),
     scheduler_id TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     UNIQUE(trigger_id, fire_key)
 );
 
 CREATE TABLE IF NOT EXISTS catalog_items (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     uri TEXT NOT NULL UNIQUE,
     item_type TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -150,10 +146,10 @@ CREATE TABLE IF NOT EXISTS catalog_items (
 );
 
 CREATE TABLE IF NOT EXISTS automation_records (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     record_type TEXT NOT NULL,
-    workflow_run_id BIGINT NULL,
-    external_item_id BIGINT NULL,
+    workflow_run_id UUID NULL,
+    external_item_id UUID NULL,
     node_id TEXT NULL,
     provider TEXT NOT NULL DEFAULT '',
     resource_type TEXT NOT NULL DEFAULT '',
@@ -174,7 +170,7 @@ CREATE TABLE IF NOT EXISTS automation_records (
 );
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     scope TEXT NOT NULL,
     key TEXT NOT NULL,
     result TEXT NOT NULL DEFAULT '{}',
@@ -183,7 +179,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     dedupe_key TEXT NOT NULL UNIQUE,
     command_json TEXT NOT NULL,
     attempts BIGINT NOT NULL DEFAULT 0,
@@ -194,8 +190,8 @@ CREATE TABLE IF NOT EXISTS workflow_action_dispatches (
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-    id BIGSERIAL PRIMARY KEY,
-    workflow_run_id BIGINT NULL,
+    id UUID PRIMARY KEY,
+    workflow_run_id UUID NULL,
     workflow_node_id TEXT NULL,
     channel TEXT NOT NULL,
     severity TEXT NOT NULL DEFAULT 'info',

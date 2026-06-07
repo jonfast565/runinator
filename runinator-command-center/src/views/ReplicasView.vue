@@ -118,7 +118,7 @@ import { formatDate, pretty } from "../utils/format";
 
 const app = useAppStore();
 const loading = ref(false);
-const selectedReplicaId = ref<number | null>(null);
+const selectedReplicaId = ref<string | null>(null);
 
 const filteredReplicas = computed(() => {
   const query = app.normalizedSearch;

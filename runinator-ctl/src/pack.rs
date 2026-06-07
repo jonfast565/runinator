@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use runinator_models::bundles::SecretBundle;
+use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
 
@@ -131,7 +132,7 @@ pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
         Some("wdlp") => load_wdl_pack_manifest(path),
         Some("wdl") => {
             let data = fs::read_to_string(path)?;
-            let definition = compile_wdl(path, &data, 1)?;
+            let definition = compile_wdl(path, &data, SemVer::default())?;
             Ok(WorkflowBundle {
                 workflows: vec![definition],
                 triggers: Vec::new(),
@@ -143,7 +144,7 @@ pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
 
 // format and compile one .wdl source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
-fn compile_wdl(path: &Path, data: &str, default_version: i64) -> Result<WorkflowDefinition> {
+fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
@@ -177,7 +178,7 @@ fn load_wdl_directory(dir: &Path) -> Result<WorkflowBundle> {
     let mut workflows = Vec::with_capacity(wdl_paths.len());
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)?;
-        workflows.push(compile_wdl(wdl_path, &data, 1)?);
+        workflows.push(compile_wdl(wdl_path, &data, SemVer::default())?);
     }
     Ok(WorkflowBundle {
         workflows,
@@ -206,10 +207,13 @@ fn load_wdl_pack_manifest(path: &Path) -> Result<WorkflowBundle> {
         .get("version")
         .and_then(|v| {
             v.as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| v.as_i64())
+                .and_then(|s| s.parse::<SemVer>().ok())
+                .or_else(|| {
+                    v.as_i64()
+                        .map(|major| SemVer::new(major.max(0) as u64, 0, 0))
+                })
         })
-        .unwrap_or(1);
+        .unwrap_or_default();
 
     let entries = wdl_pack_manifest_paths_from_value(path, &manifest)?;
 

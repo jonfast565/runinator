@@ -38,7 +38,7 @@ impl ExecutionTaskResult {
 pub async fn execute_task(
     libraries: Arc<HashMap<String, Plugin>>,
     action: WorkflowAction,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
     parameters: Value,
     sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
@@ -267,7 +267,7 @@ fn action_results_type(action: &ActionMetadata) -> RuninatorType {
 
 fn build_provider_request(
     action: &WorkflowAction,
-    workflow_node_run_id: i64,
+    workflow_node_run_id: Uuid,
     parameters: Value,
 ) -> ProviderExecutionRequest {
     let base_dir = run_work_dir(Some(workflow_node_run_id));
@@ -290,7 +290,7 @@ fn build_provider_request(
     }
 }
 
-fn run_work_dir(run_id: Option<i64>) -> PathBuf {
+fn run_work_dir(run_id: Option<Uuid>) -> PathBuf {
     let suffix = run_id
         .map(|id| id.to_string())
         .unwrap_or_else(|| Uuid::new_v4().to_string());

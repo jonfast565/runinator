@@ -58,8 +58,8 @@ type DiffStatus = "added" | "changed" | "unchanged";
 interface WorkflowRow {
   name: string;
   status: DiffStatus;
-  version: number;
-  previousVersion: number;
+  version: string;
+  previousVersion: string;
 }
 interface TriggerRow {
   workflow: string;

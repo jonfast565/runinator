@@ -44,6 +44,7 @@
           <button type="button" class="rt-head" @click="onSelect(node)">
             <StatusBadge :status="node.status" />
             <span class="rt-node-id">{{ node.node_id }}</span>
+            <span v-if="executionOrdinal(node) > 1" class="rt-execution" :title="`Execution ${executionOrdinal(node)}`">{{ executionOrdinal(node) }}</span>
             <span v-if="node.attempt > 1" class="rt-attempt" title="Attempts">↻ {{ node.attempt }}</span>
             <span v-if="isActive(node)" class="rt-active">active</span>
             <span class="rt-spacer"></span>
@@ -104,9 +105,9 @@ const RUNNING_STATUSES = new Set(["running", "waiting", "queued", "retrying"]);
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
 
 const rootEl = ref<HTMLElement | null>(null);
-const expandedId = ref<number | null>(null);
-const logCache = ref<Record<number, string>>({});
-const logLoading = ref<Set<number>>(new Set());
+const expandedId = ref<string | null>(null);
+const logCache = ref<Record<string, string>>({});
+const logLoading = ref<Set<string>>(new Set());
 // ticks once a second while the run is in flight so active-node elapsed times count up.
 const now = ref(Date.now());
 let clockTimer = 0;
@@ -116,11 +117,40 @@ const runInFlight = computed(() => {
   return Boolean(status) && !["succeeded", "failed", "canceled", "timed_out"].includes(status ?? "");
 });
 
-// steps in execution order; node-run id is monotonic so it doubles as a stable ordering.
 const orderedNodes = computed(() => {
   const nodes = props.detail?.nodes ?? [];
-  return [...nodes].sort((left, right) => left.id - right.id);
+  return [...nodes].sort((left, right) => {
+    const leftCreated = Date.parse(left.created_at ?? "");
+    const rightCreated = Date.parse(right.created_at ?? "");
+    if (Number.isFinite(leftCreated) && Number.isFinite(rightCreated) && leftCreated !== rightCreated) {
+      return leftCreated - rightCreated;
+    }
+    if (left.attempt !== right.attempt) return left.attempt - right.attempt;
+    return left.node_id.localeCompare(right.node_id);
+  });
 });
+
+const executionOrdinals = computed(() => {
+  const totals = new Map<string, number>();
+  const ordinals = new Map<string, number>();
+  for (const node of orderedNodes.value) {
+    const executions = nodeExecutionCount(node);
+    if (executions <= 0) continue;
+    const next = (totals.get(node.node_id) ?? 0) + executions;
+    totals.set(node.node_id, next);
+    ordinals.set(node.id, next);
+  }
+  return ordinals;
+});
+
+function nodeExecutionCount(node: WorkflowNodeRun): number {
+  if (Number.isFinite(node.attempt) && node.attempt > 0) return Math.floor(node.attempt);
+  return node.status === "queued" ? 0 : 1;
+}
+
+function executionOrdinal(node: WorkflowNodeRun): number {
+  return executionOrdinals.value.get(node.id) ?? 0;
+}
 
 function matchesFilter(node: WorkflowNodeRun, active: TimelineFilter): boolean {
   if (active === "all") return true;
@@ -234,7 +264,7 @@ function logState(node: WorkflowNodeRun): string {
   return cached || "No logs for this step.";
 }
 
-async function loadLogs(nodeRunId: number) {
+async function loadLogs(nodeRunId: string) {
   if (logCache.value[nodeRunId] !== undefined || logLoading.value.has(nodeRunId)) return;
   logLoading.value.add(nodeRunId);
   try {
@@ -520,6 +550,21 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   padding: 0 7px;
   font-size: 11px;
   font-weight: 600;
+}
+.rt-execution {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b7c8dc;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 .rt-active {
   color: #1d4ed8;

@@ -15,8 +15,8 @@ import { useAppStore } from "./app";
 export const useArtifactsStore = defineStore("artifacts", () => {
   const app = useAppStore();
   const artifacts = ref<RunArtifact[]>([]);
-  const selectedArtifactId = ref<number>(0);
-  const uploadRunId = ref<number | null>(null);
+  const selectedArtifactId = ref<string | null>(null);
+  const uploadRunId = ref<string>("");
 
   const selectedArtifact = computed(() =>
     artifacts.value.find((artifact) => artifact.id === selectedArtifactId.value) ?? null
@@ -28,12 +28,12 @@ export const useArtifactsStore = defineStore("artifacts", () => {
 
   function clearArtifacts() {
     artifacts.value = [];
-    selectedArtifactId.value = 0;
+    selectedArtifactId.value = null;
   }
 
   async function promptUploadArtifact() {
     const result = await app.runOperation("Uploading artifact", async () => {
-      const runId = uploadRunId.value && uploadRunId.value > 0 ? uploadRunId.value : promptForRunId();
+      const runId = uploadRunId.value.trim() || promptForRunId();
       if (!runId) return null;
       if (isTauriRuntime()) return uploadArtifactFromPath({ run_id: runId });
       const file = await pickFileFromBrowser();
@@ -49,15 +49,15 @@ export const useArtifactsStore = defineStore("artifacts", () => {
     }
   }
 
-  function promptForRunId(): number | null {
+  function promptForRunId(): string | null {
     const value = window.prompt("Attach artifact to which run id?");
     if (!value) return null;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
+    const runId = value.trim();
+    if (!runId) {
       app.setError("Invalid run id");
       return null;
     }
-    return parsed;
+    return runId;
   }
 
   async function promptDownloadArtifact(artifact: RunArtifact) {

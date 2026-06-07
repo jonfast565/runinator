@@ -26,11 +26,12 @@ use runinator_models::{
     },
 };
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
+use uuid::Uuid;
 
 use crate::{
     backend::{RowsAffected, SqlBackend},
     common::{
-        is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_str,
+        is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_opt_uuid, json_str,
         next_execution_for_cron, status_list, trigger_parameters, trigger_state,
         workflow_result_event_type,
     },
@@ -53,14 +54,18 @@ where
     for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Vec<u8>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
     // decode bounds (operations read a couple of columns directly; mappers read the rest).
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Uuid: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> Option<String>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<Uuid>: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> Vec<u8>: Decode<'r, B::Db> + Type<B::Db>,
     // row indexing + executor plumbing.
     usize: ColumnIndex<<B::Db as Database>::Row>,
@@ -78,7 +83,7 @@ where
         status: RunStatus,
     ) -> Result<Vec<RunSummary>, SendableError> {
         let sql = self.render(&format!(
-            "SELECT id, status, parameters, output_json, message, {trigger}, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = ? ORDER BY id",
+            "SELECT id, status, parameters, output_json, message, {trigger}, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = ? ORDER BY created_at, id",
             trigger = queries::ident(self.dialect(), "trigger"),
         ));
         let rows = sqlx::query(&sql)
@@ -90,7 +95,7 @@ where
 
     async fn update_run_status(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         status: RunStatus,
         output_json: Option<Value>,
         message: Option<String>,
@@ -120,7 +125,7 @@ where
 
     async fn append_run_chunk(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         chunk: &NewRunChunk,
     ) -> Result<RunChunk, SendableError> {
         let sequence: i64 = sqlx::query(&self.render(
@@ -131,12 +136,14 @@ where
         .await?
         .get("next_sequence");
         let columns = "id, run_id, sequence, stream, content, created_at";
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO run_chunks (run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO run_chunks (id, run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(run_id)
             .bind(sequence)
             .bind(chunk.stream.as_str())
@@ -144,18 +151,20 @@ where
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
-            let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM run_chunks WHERE id = LAST_INSERT_ID()"
-            )))
+            let row = sqlx::query(
+                &self.render(&format!("SELECT {columns} FROM run_chunks WHERE id = ?")),
+            )
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_run_chunk(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO run_chunks (run_id, sequence, stream, content, created_at)
-             VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO run_chunks (id, run_id, sequence, stream, content, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
+        .bind(id)
         .bind(run_id)
         .bind(sequence)
         .bind(chunk.stream.as_str())
@@ -168,7 +177,7 @@ where
 
     async fn fetch_run_chunks(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         cursor: Option<i64>,
         limit: i64,
     ) -> Result<Vec<RunChunk>, SendableError> {
@@ -185,16 +194,18 @@ where
 
     async fn add_run_artifact(
         &self,
-        run_id: i64,
+        run_id: Uuid,
         artifact: &NewRunArtifact,
     ) -> Result<RunArtifact, SendableError> {
         let columns = "id, run_id, name, mime_type, size_bytes, uri, metadata, created_at";
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO run_artifacts (run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO run_artifacts (id, run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(run_id)
             .bind(artifact.name.as_str())
             .bind(artifact.mime_type.as_str())
@@ -204,18 +215,20 @@ where
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
-            let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM run_artifacts WHERE id = LAST_INSERT_ID()"
-            )))
+            let row = sqlx::query(
+                &self.render(&format!("SELECT {columns} FROM run_artifacts WHERE id = ?")),
+            )
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_run_artifact(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO run_artifacts (run_id, name, mime_type, size_bytes, uri, metadata, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO run_artifacts (id, run_id, name, mime_type, size_bytes, uri, metadata, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
+        .bind(id)
         .bind(run_id)
         .bind(artifact.name.as_str())
         .bind(artifact.mime_type.as_str())
@@ -228,9 +241,9 @@ where
         Ok(mappers::row_to_run_artifact(&row))
     }
 
-    async fn fetch_run_artifacts(&self, run_id: i64) -> Result<Vec<RunArtifact>, SendableError> {
+    async fn fetch_run_artifacts(&self, run_id: Uuid) -> Result<Vec<RunArtifact>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts WHERE run_id = ? ORDER BY id ASC",
+            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts WHERE run_id = ? ORDER BY created_at ASC, id ASC",
         ))
         .bind(run_id)
         .fetch_all(self.pool())
@@ -238,7 +251,10 @@ where
         Ok(rows.iter().map(mappers::row_to_run_artifact).collect())
     }
 
-    async fn fetch_artifact(&self, artifact_id: i64) -> Result<Option<RunArtifact>, SendableError> {
+    async fn fetch_artifact(
+        &self,
+        artifact_id: Uuid,
+    ) -> Result<Option<RunArtifact>, SendableError> {
         let row = sqlx::query(&self.render(
             "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts WHERE id = ?",
         ))
@@ -250,7 +266,7 @@ where
 
     async fn fetch_all_artifacts(&self) -> Result<Vec<RunArtifact>, SendableError> {
         let rows = sqlx::query(
-            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts ORDER BY id DESC",
+            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts ORDER BY created_at DESC, id DESC",
         )
         .fetch_all(self.pool())
         .await?;
@@ -262,38 +278,22 @@ where
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition, SendableError> {
         let now = Utc::now().timestamp();
-        let workflow_id = match workflow.id {
-            Some(id) => Some(id),
-            None => sqlx::query(
-                &self.render("SELECT id FROM workflows WHERE name = ? ORDER BY id LIMIT 1"),
-            )
-            .bind(workflow.name.as_str())
-            .fetch_optional(self.pool())
-            .await?
-            .map(|row| row.get::<i64, _>("id")),
-        };
-
-        // postgres cannot autoincrement an identity column from a bound NULL id, so insert fresh.
-        if workflow_id.is_none() && self.dialect() == SqlDialect::Postgres {
-            let row = sqlx::query(&self.render(
-                "INSERT INTO workflows (name, version, enabled, input_schema, definition, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 RETURNING id, name, version, enabled, input_schema, definition, created_at, updated_at",
-            ))
-            .bind(workflow.name.as_str())
-            .bind(workflow.version)
-            .bind(workflow.enabled)
-            .bind(serde_json::to_string(&workflow.input_type)?)
-            .bind(workflow.definition.to_string())
-            .bind(now)
-            .bind(now)
-            .fetch_one(self.pool())
-            .await?;
-            return Ok(mappers::row_to_workflow(&row));
-        }
+        // resolve an existing row by explicit id or by unique name, else mint a fresh uuid.
+        let existing_id =
+            match workflow.id {
+                Some(id) => Some(id),
+                None => sqlx::query(&self.render(
+                    "SELECT id FROM workflows WHERE name = ? ORDER BY created_at, id LIMIT 1",
+                ))
+                .bind(workflow.name.as_str())
+                .fetch_optional(self.pool())
+                .await?
+                .map(|row| row.get::<Uuid, _>("id")),
+            };
+        let workflow_id = existing_id.unwrap_or_else(Uuid::new_v4);
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
-        // row back on the same pinned connection (by id, or by LAST_INSERT_ID for a fresh insert).
+        // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
             let columns =
                 "id, name, version, enabled, input_schema, definition, created_at, updated_at";
@@ -316,7 +316,7 @@ where
             )))
             .bind(workflow_id)
             .bind(workflow.name.as_str())
-            .bind(workflow.version)
+            .bind(workflow.version.to_string())
             .bind(workflow.enabled)
             .bind(serde_json::to_string(&workflow.input_type)?)
             .bind(workflow.definition.to_string())
@@ -324,23 +324,11 @@ where
             .bind(now)
             .execute(&mut *conn)
             .await?;
-            let row = match workflow_id {
-                Some(existing) => {
-                    sqlx::query(
-                        &self.render(&format!("SELECT {columns} FROM workflows WHERE id = ?")),
-                    )
-                    .bind(existing)
+            let row =
+                sqlx::query(&self.render(&format!("SELECT {columns} FROM workflows WHERE id = ?")))
+                    .bind(workflow_id)
                     .fetch_one(&mut *conn)
-                    .await?
-                }
-                None => {
-                    sqlx::query(&self.render(&format!(
-                        "SELECT {columns} FROM workflows WHERE id = LAST_INSERT_ID()"
-                    )))
-                    .fetch_one(&mut *conn)
-                    .await?
-                }
-            };
+                    .await?;
             return Ok(mappers::row_to_workflow(&row));
         }
 
@@ -352,7 +340,60 @@ where
         ))
         .bind(workflow_id)
         .bind(workflow.name.as_str())
-        .bind(workflow.version)
+        .bind(workflow.version.to_string())
+        .bind(workflow.enabled)
+        .bind(serde_json::to_string(&workflow.input_type)?)
+        .bind(workflow.definition.to_string())
+        .bind(now)
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_workflow(&row))
+    }
+
+    async fn insert_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<WorkflowDefinition, SendableError> {
+        // always insert a brand-new row: unlike upsert_workflow this never resolves an existing id
+        // by name, so duplicating a workflow yields a sibling version sharing the same name.
+        let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
+        let columns =
+            "id, name, version, enabled, input_schema, definition, created_at, updated_at";
+
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(id)
+            .bind(workflow.name.as_str())
+            .bind(workflow.version.to_string())
+            .bind(workflow.enabled)
+            .bind(serde_json::to_string(&workflow.input_type)?)
+            .bind(workflow.definition.to_string())
+            .bind(now)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            let row =
+                sqlx::query(&self.render(&format!("SELECT {columns} FROM workflows WHERE id = ?")))
+                    .bind(id)
+                    .fetch_one(&mut *conn)
+                    .await?;
+            return Ok(mappers::row_to_workflow(&row));
+        }
+
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING {columns}",
+        )))
+        .bind(id)
+        .bind(workflow.name.as_str())
+        .bind(workflow.version.to_string())
         .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.input_type)?)
         .bind(workflow.definition.to_string())
@@ -372,7 +413,7 @@ where
 
     async fn fetch_workflow(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
         let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
             .bind(workflow_id)
@@ -385,14 +426,14 @@ where
         &self,
         name: String,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE name = ? ORDER BY id LIMIT 1"))
+        let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE name = ? ORDER BY created_at, id LIMIT 1"))
             .bind(name)
             .fetch_optional(self.pool())
             .await?;
         Ok(row.map(|row| mappers::row_to_workflow(&row)))
     }
 
-    async fn delete_workflow(&self, workflow_id: i64) -> Result<(), SendableError> {
+    async fn delete_workflow(&self, workflow_id: Uuid) -> Result<(), SendableError> {
         self.pool()
             .execute(
                 sqlx::query(&self.render("DELETE FROM workflows WHERE id = ?")).bind(workflow_id),
@@ -406,31 +447,10 @@ where
         trigger: &WorkflowTrigger,
     ) -> Result<WorkflowTrigger, SendableError> {
         let now = Utc::now().timestamp();
-
-        // postgres cannot autoincrement an identity column from a bound NULL id, so insert fresh.
-        if trigger.id.is_none() && self.dialect() == SqlDialect::Postgres {
-            let row = sqlx::query(&self.render(
-                "INSERT INTO workflow_triggers (workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 RETURNING id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at",
-            ))
-            .bind(trigger.workflow_id)
-            .bind(trigger.kind.as_str())
-            .bind(trigger.enabled)
-            .bind(trigger.configuration.to_string())
-            .bind(trigger.next_execution.map(|dt| dt.timestamp()))
-            .bind(trigger.blackout_start.map(|dt| dt.timestamp()))
-            .bind(trigger.blackout_end.map(|dt| dt.timestamp()))
-            .bind(trigger.metadata.to_string())
-            .bind(trigger.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
-            .bind(now)
-            .fetch_one(self.pool())
-            .await?;
-            return Ok(mappers::row_to_workflow_trigger(&row));
-        }
+        let trigger_id = trigger.id.unwrap_or_else(Uuid::new_v4);
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
-        // row back on the same pinned connection (by id, or by LAST_INSERT_ID for a fresh insert).
+        // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
             let columns = "id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
             let conflict = queries::on_conflict_update(
@@ -453,7 +473,7 @@ where
                 "INSERT INTO workflow_triggers (id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
-            .bind(trigger.id)
+            .bind(trigger_id)
             .bind(trigger.workflow_id)
             .bind(trigger.kind.as_str())
             .bind(trigger.enabled)
@@ -466,23 +486,12 @@ where
             .bind(now)
             .execute(&mut *conn)
             .await?;
-            let row = match trigger.id {
-                Some(existing) => {
-                    sqlx::query(&self.render(&format!(
-                        "SELECT {columns} FROM workflow_triggers WHERE id = ?"
-                    )))
-                    .bind(existing)
-                    .fetch_one(&mut *conn)
-                    .await?
-                }
-                None => {
-                    sqlx::query(&self.render(&format!(
-                        "SELECT {columns} FROM workflow_triggers WHERE id = LAST_INSERT_ID()"
-                    )))
-                    .fetch_one(&mut *conn)
-                    .await?
-                }
-            };
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_triggers WHERE id = ?"
+            )))
+            .bind(trigger_id)
+            .fetch_one(&mut *conn)
+            .await?;
             return Ok(mappers::row_to_workflow_trigger(&row));
         }
 
@@ -492,7 +501,7 @@ where
              ON CONFLICT(id) DO UPDATE SET workflow_id = excluded.workflow_id, kind = excluded.kind, enabled = excluded.enabled, configuration = excluded.configuration, next_execution = excluded.next_execution, blackout_start = excluded.blackout_start, blackout_end = excluded.blackout_end, metadata = excluded.metadata, updated_at = excluded.updated_at
              RETURNING id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at",
         ))
-        .bind(trigger.id)
+        .bind(trigger_id)
         .bind(trigger.workflow_id)
         .bind(trigger.kind.as_str())
         .bind(trigger.enabled)
@@ -510,9 +519,9 @@ where
 
     async fn fetch_workflow_triggers(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
     ) -> Result<Vec<WorkflowTrigger>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE workflow_id = ? ORDER BY id"))
+        let rows = sqlx::query(&self.render("SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE workflow_id = ? ORDER BY created_at, id"))
             .bind(workflow_id)
             .fetch_all(self.pool())
             .await?;
@@ -521,7 +530,7 @@ where
 
     async fn fetch_workflow_trigger(
         &self,
-        trigger_id: i64,
+        trigger_id: Uuid,
     ) -> Result<Option<WorkflowTrigger>, SendableError> {
         let row = sqlx::query(&self.render("SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE id = ?"))
             .bind(trigger_id)
@@ -530,7 +539,7 @@ where
         Ok(row.map(|row| mappers::row_to_workflow_trigger(&row)))
     }
 
-    async fn delete_workflow_trigger(&self, trigger_id: i64) -> Result<(), SendableError> {
+    async fn delete_workflow_trigger(&self, trigger_id: Uuid) -> Result<(), SendableError> {
         self.pool()
             .execute(
                 sqlx::query(&self.render("DELETE FROM workflow_triggers WHERE id = ?"))
@@ -557,7 +566,7 @@ where
 
     async fn update_workflow_trigger_next_execution(
         &self,
-        trigger_id: i64,
+        trigger_id: Uuid,
         next_execution: Option<DateTime<Utc>>,
     ) -> Result<(), SendableError> {
         self.pool()
@@ -594,8 +603,8 @@ where
         let firing_sql = self.render(&queries::insert_ignore(
             self.dialect(),
             "workflow_trigger_firings",
-            "trigger_id, fire_key, scheduler_id, created_at",
-            "?, ?, ?, ?",
+            "id, trigger_id, fire_key, scheduler_id, created_at",
+            "?, ?, ?, ?, ?",
             "trigger_id, fire_key",
             None,
         ));
@@ -642,6 +651,7 @@ where
                 .map(|dt| dt.timestamp().to_string())
                 .unwrap_or_else(|| "initial".into());
             let insert = sqlx::query(&firing_sql)
+                .bind(Uuid::now_v7())
                 .bind(trigger_id)
                 .bind(fire_key.as_str())
                 .bind(scheduler_id.as_str())
@@ -657,11 +667,12 @@ where
                 .fetch_one(&mut *tx)
                 .await?;
             let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
-            // the transaction pins a connection, so LAST_INSERT_ID is valid for the mysql read-back.
+            let new_run_id = Uuid::now_v7();
             let run_row = if self.dialect() == SqlDialect::MySql {
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)",
+                    "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)",
                 ))
+                .bind(new_run_id)
                 .bind(trigger.workflow_id)
                 .bind(serde_json::to_string(&workflow_snapshot)?)
                 .bind(WorkflowStatus::Queued.as_str())
@@ -675,16 +686,18 @@ where
                 .execute(&mut *tx)
                 .await?;
                 sqlx::query(&self.render(&format!(
-                    "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+                    "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
                 )))
+                .bind(new_run_id)
                 .fetch_one(&mut *tx)
                 .await?
             } else {
                 sqlx::query(&self.render(&format!(
-                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
-                     VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)
+                    "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
+                     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)
                      RETURNING {WORKFLOW_RUN_COLUMNS}",
                 )))
+                .bind(new_run_id)
                 .bind(trigger.workflow_id)
                 .bind(serde_json::to_string(&workflow_snapshot)?)
                 .bind(WorkflowStatus::Queued.as_str())
@@ -723,7 +736,7 @@ where
 
     async fn create_workflow_run(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
         workflow_snapshot: WorkflowDefinition,
         parameters: Value,
         state: Value,
@@ -731,12 +744,14 @@ where
         provenance: WorkflowRunProvenance,
     ) -> Result<WorkflowRun, SendableError> {
         let snapshot = serde_json::to_string(&workflow_snapshot)?;
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(workflow_id)
             .bind(snapshot)
             .bind(WorkflowStatus::Queued.as_str())
@@ -754,17 +769,19 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
             )))
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_workflow_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
-             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {WORKFLOW_RUN_COLUMNS}",
         )))
+        .bind(id)
         .bind(workflow_id)
         .bind(snapshot)
         .bind(WorkflowStatus::Queued.as_str())
@@ -786,7 +803,7 @@ where
 
     async fn fetch_workflow_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
     ) -> Result<Option<WorkflowRun>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
             "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
@@ -802,7 +819,7 @@ where
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
-            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE status = ? ORDER BY id"
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE status = ? ORDER BY created_at, id"
         )))
         .bind(status.as_str())
         .fetch_all(self.pool())
@@ -832,7 +849,7 @@ where
                          SELECT id FROM workflow_runs
                          WHERE status IN ({statuses})
                            AND (scheduler_claimed_until IS NULL OR scheduler_claimed_until <= ? OR scheduler_claimed_by = ?)
-                         ORDER BY id
+                         ORDER BY created_at, id
                          LIMIT ?
                      ) AS claimable
                  )",
@@ -846,7 +863,7 @@ where
                 .execute(self.pool())
                 .await?;
             let rows = sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE scheduler_claimed_by = ? AND scheduler_claimed_until = ? ORDER BY id",
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE scheduler_claimed_by = ? AND scheduler_claimed_until = ? ORDER BY created_at, id",
             )))
             .bind(scheduler_id.as_str())
             .bind(lease_until.timestamp())
@@ -861,7 +878,7 @@ where
                  SELECT id FROM workflow_runs
                  WHERE status IN ({statuses})
                    AND (scheduler_claimed_until IS NULL OR scheduler_claimed_until <= ? OR scheduler_claimed_by = ?)
-                 ORDER BY id
+                 ORDER BY created_at, id
                  LIMIT ?{skip}
              )
              RETURNING {WORKFLOW_RUN_COLUMNS}",
@@ -880,7 +897,7 @@ where
 
     async fn renew_workflow_run_claim(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         scheduler_id: String,
         lease_until: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
@@ -897,7 +914,7 @@ where
 
     async fn release_workflow_run_claim(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         scheduler_id: String,
     ) -> Result<(), SendableError> {
         self.pool()
@@ -914,7 +931,7 @@ where
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
         let rows = sqlx::query(&format!(
-            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY id DESC"
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY created_at DESC, id DESC"
         ))
         .fetch_all(self.pool())
         .await?;
@@ -923,9 +940,9 @@ where
 
     async fn fetch_workflow_runs_for_workflow(
         &self,
-        workflow_id: i64,
+        workflow_id: Uuid,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE workflow_id = ? ORDER BY id DESC")))
+        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE workflow_id = ? ORDER BY created_at DESC, id DESC")))
             .bind(workflow_id)
             .fetch_all(self.pool())
             .await?;
@@ -938,13 +955,13 @@ where
         open_only: bool,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         let rows = if open_only {
-            sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled') ORDER BY id DESC")))
+            sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled') ORDER BY created_at DESC, id DESC")))
                 .bind(name)
                 .fetch_all(self.pool())
                 .await?
         } else {
             sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? ORDER BY id DESC"
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? ORDER BY created_at DESC, id DESC"
             )))
             .bind(name)
             .fetch_all(self.pool())
@@ -955,7 +972,7 @@ where
 
     async fn set_workflow_run_name(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         name: Option<String>,
     ) -> Result<(), SendableError> {
         self.pool()
@@ -970,7 +987,7 @@ where
 
     async fn update_workflow_run_status(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         status: WorkflowStatus,
         active_node_id: Option<String>,
         state: Option<Value>,
@@ -999,17 +1016,19 @@ where
 
     async fn create_workflow_node_run(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
     ) -> Result<WorkflowNodeRun, SendableError> {
         let empty_state = Value::Object(Default::default()).to_string();
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(workflow_run_id)
             .bind(node_id)
             .bind(WorkflowStatus::Queued.as_str())
@@ -1020,17 +1039,19 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = LAST_INSERT_ID()"
+                "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = ?"
             )))
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_workflow_node_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {WORKFLOW_NODE_RUN_COLUMNS}",
         )))
+        .bind(id)
         .bind(workflow_run_id)
         .bind(node_id)
         .bind(WorkflowStatus::Queued.as_str())
@@ -1045,7 +1066,7 @@ where
 
     async fn update_workflow_node_run(
         &self,
-        node_run_id: i64,
+        node_run_id: Uuid,
         status: WorkflowStatus,
         attempt: Option<i64>,
         parameters: Option<Value>,
@@ -1082,9 +1103,9 @@ where
 
     async fn fetch_workflow_node_runs(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
     ) -> Result<Vec<WorkflowNodeRun>, SendableError> {
-        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY id")))
+        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY created_at, id")))
             .bind(workflow_run_id)
             .fetch_all(self.pool())
             .await?;
@@ -1093,7 +1114,7 @@ where
 
     async fn fetch_workflow_node_run(
         &self,
-        workflow_node_run_id: i64,
+        workflow_node_run_id: Uuid,
     ) -> Result<Option<WorkflowNodeRun>, SendableError> {
         let row = sqlx::query(&self.render(&format!(
             "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = ?"
@@ -1106,8 +1127,8 @@ where
 
     async fn claim_workflow_node_run_executor(
         &self,
-        node_run_id: i64,
-        replica_id: i64,
+        node_run_id: Uuid,
+        replica_id: Uuid,
         claimed_at: DateTime<Utc>,
     ) -> Result<(), SendableError> {
         self.pool()
@@ -1127,8 +1148,8 @@ where
 
     async fn release_workflow_node_run_executor(
         &self,
-        node_run_id: i64,
-        replica_id: i64,
+        node_run_id: Uuid,
+        replica_id: Uuid,
         released_at: DateTime<Utc>,
     ) -> Result<(), SendableError> {
         self.pool()
@@ -1148,7 +1169,7 @@ where
 
     async fn append_workflow_node_run_chunk(
         &self,
-        workflow_node_run_id: i64,
+        workflow_node_run_id: Uuid,
         chunk: &NewRunChunk,
     ) -> Result<WorkflowNodeRunChunk, SendableError> {
         let sequence: i64 = sqlx::query(&self.render("SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM workflow_node_chunks WHERE workflow_node_run_id = ?"))
@@ -1157,12 +1178,14 @@ where
             .await?
             .get("next_sequence");
         let columns = "id, workflow_node_run_id, sequence, stream, content, created_at";
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_node_chunks (id, workflow_node_run_id, sequence, stream, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(workflow_node_run_id)
             .bind(sequence)
             .bind(chunk.stream.as_str())
@@ -1171,17 +1194,19 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_node_chunks WHERE id = LAST_INSERT_ID()"
+                "SELECT {columns} FROM workflow_node_chunks WHERE id = ?"
             )))
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_workflow_node_run_chunk(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at)
-             VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO workflow_node_chunks (id, workflow_node_run_id, sequence, stream, content, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
+        .bind(id)
         .bind(workflow_node_run_id)
         .bind(sequence)
         .bind(chunk.stream.as_str())
@@ -1194,7 +1219,7 @@ where
 
     async fn fetch_workflow_node_run_chunks(
         &self,
-        workflow_node_run_id: i64,
+        workflow_node_run_id: Uuid,
         cursor: Option<i64>,
         limit: i64,
     ) -> Result<Vec<WorkflowNodeRunChunk>, SendableError> {
@@ -1214,17 +1239,19 @@ where
 
     async fn add_workflow_node_run_artifact(
         &self,
-        workflow_node_run_id: i64,
+        workflow_node_run_id: Uuid,
         artifact: &NewRunArtifact,
     ) -> Result<WorkflowNodeRunArtifact, SendableError> {
         let columns =
             "id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at";
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_node_artifacts (id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(workflow_node_run_id)
             .bind(artifact.name.as_str())
             .bind(artifact.mime_type.as_str())
@@ -1235,17 +1262,19 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_node_artifacts WHERE id = LAST_INSERT_ID()"
+                "SELECT {columns} FROM workflow_node_artifacts WHERE id = ?"
             )))
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_workflow_node_run_artifact(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflow_node_artifacts (id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
+        .bind(id)
         .bind(workflow_node_run_id)
         .bind(artifact.name.as_str())
         .bind(artifact.mime_type.as_str())
@@ -1260,10 +1289,10 @@ where
 
     async fn fetch_workflow_node_run_artifacts(
         &self,
-        workflow_node_run_id: i64,
+        workflow_node_run_id: Uuid,
     ) -> Result<Vec<WorkflowNodeRunArtifact>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_node_artifacts WHERE workflow_node_run_id = ? ORDER BY id ASC",
+            "SELECT id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_node_artifacts WHERE workflow_node_run_id = ? ORDER BY created_at ASC, id ASC",
         ))
         .bind(workflow_node_run_id)
         .fetch_all(self.pool())
@@ -1288,7 +1317,7 @@ where
             "event_id",
             None,
         )))
-        .bind(event.event_id.to_string())
+        .bind(event.event_id)
         .bind(event.workflow_run_id)
         .bind(event.workflow_node_run_id)
         .bind(event.node_id.clone())
@@ -1334,9 +1363,10 @@ where
                     .await?
                     .get("next_sequence");
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_node_chunks (workflow_node_run_id, sequence, stream, content, created_at)
-                     VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO workflow_node_chunks (id, workflow_node_run_id, sequence, stream, content, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?)",
                 ))
+                .bind(Uuid::now_v7())
                 .bind(event.workflow_node_run_id)
                 .bind(sequence)
                 .bind(chunk.stream.as_str())
@@ -1347,9 +1377,10 @@ where
             }
             WorkflowResultEventKind::Artifact { artifact } => {
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_node_artifacts (workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO workflow_node_artifacts (id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 ))
+                .bind(Uuid::now_v7())
                 .bind(event.workflow_node_run_id)
                 .bind(artifact.name.as_str())
                 .bind(artifact.mime_type.as_str())
@@ -1378,7 +1409,7 @@ where
             "event_id",
             None,
         )))
-        .bind(event.event_id.to_string())
+        .bind(event.event_id)
         .bind(event.workflow_run_id)
         .bind(event.workflow_node_run_id)
         .bind(event.node_id.clone())
@@ -1392,7 +1423,7 @@ where
 
     async fn fetch_orchestration_events(
         &self,
-        workflow_run_id: i64,
+        workflow_run_id: Uuid,
         limit: i64,
     ) -> Result<Vec<OrchestrationEvent>, SendableError> {
         let rows = sqlx::query(&self.render(
@@ -1426,7 +1457,7 @@ where
             "event_id",
             None,
         )))
-        .bind(event.event_id.to_string())
+        .bind(event.event_id)
         .bind(event.workflow_run_id)
         .bind(event.workflow_node_run_id)
         .bind(event.node_id.clone())
@@ -1441,6 +1472,7 @@ where
         }
 
         let now = Utc::now().timestamp();
+        let ready_id = Uuid::now_v7();
         let ready_columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
 
         // mysql has no RETURNING on INSERT IGNORE, so insert then read the row back on the same tx.
@@ -1448,12 +1480,13 @@ where
             let inserted = sqlx::query(&self.render(&queries::insert_ignore(
                 SqlDialect::MySql,
                 "workflow_ready_nodes",
-                "source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
-                "?, ?, ?, 'queued', ?, 0, ?, ?",
+                "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
+                "?, ?, ?, ?, 'queued', ?, 0, ?, ?",
                 "source_event_id, workflow_run_id, node_id",
                 None,
             )))
-            .bind(event.event_id.to_string())
+            .bind(ready_id)
+            .bind(event.event_id)
             .bind(event.workflow_run_id)
             .bind(node_id.as_str())
             .bind(ready_at.timestamp())
@@ -1468,7 +1501,7 @@ where
                     sqlx::query(&self.render(&format!(
                         "SELECT {ready_columns} FROM workflow_ready_nodes WHERE source_event_id = ? AND workflow_run_id = ? AND node_id = ?",
                     )))
-                    .bind(event.event_id.to_string())
+                    .bind(event.event_id)
                     .bind(event.workflow_run_id)
                     .bind(node_id.as_str())
                     .fetch_one(&mut *tx)
@@ -1479,12 +1512,13 @@ where
             sqlx::query(&self.render(&queries::insert_ignore(
                 self.dialect(),
                 "workflow_ready_nodes",
-                "source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
-                "?, ?, ?, 'queued', ?, 0, ?, ?",
+                "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
+                "?, ?, ?, ?, 'queued', ?, 0, ?, ?",
                 "source_event_id, workflow_run_id, node_id",
                 Some(ready_columns),
             )))
-            .bind(event.event_id.to_string())
+            .bind(ready_id)
+            .bind(event.event_id)
             .bind(event.workflow_run_id)
             .bind(node_id.as_str())
             .bind(ready_at.timestamp())
@@ -1571,7 +1605,7 @@ where
 
     async fn fetch_ready_node(
         &self,
-        ready_node_id: i64,
+        ready_node_id: Uuid,
     ) -> Result<Option<ReadyNodeRecord>, SendableError> {
         let row = sqlx::query(&self.render(
             "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at
@@ -1586,7 +1620,7 @@ where
 
     async fn complete_ready_node(
         &self,
-        ready_node_id: i64,
+        ready_node_id: Uuid,
         scheduler_id: String,
     ) -> Result<bool, SendableError> {
         let now = Utc::now().timestamp();
@@ -1626,7 +1660,7 @@ where
 
     async fn claim_ready_node(
         &self,
-        ready_node_id: i64,
+        ready_node_id: Uuid,
         scheduler_id: String,
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
@@ -1682,7 +1716,7 @@ where
 
     async fn release_ready_node(
         &self,
-        ready_node_id: i64,
+        ready_node_id: Uuid,
         scheduler_id: String,
     ) -> Result<bool, SendableError> {
         let now = Utc::now().timestamp();
@@ -1804,6 +1838,7 @@ where
                 .bind(request.runtime_id.as_str()),
             )
             .await?;
+        let replica_id = Uuid::now_v7();
         if self.dialect() == SqlDialect::MySql {
             let conflict = queries::on_conflict_update(
                 SqlDialect::MySql,
@@ -1823,9 +1858,10 @@ where
                 ],
             );
             sqlx::query(&self.render(&format!(
-                "INSERT INTO replicas (replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-                 VALUES (?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
+                "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+                 VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
             )))
+            .bind(replica_id)
             .bind(request.replica_type.as_str())
             .bind(request.instance_id.as_str())
             .bind(request.runtime_id.as_str())
@@ -1851,11 +1887,12 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO replicas (replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-             VALUES (?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+             VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
              ON CONFLICT(instance_id, runtime_id) DO UPDATE SET replica_type = excluded.replica_type, status = 'live', display_name = excluded.display_name, host = excluded.host, port = excluded.port, base_path = excluded.base_path, observed_ip = excluded.observed_ip, attributes = excluded.attributes, last_heartbeat_at = excluded.last_heartbeat_at, last_seen_at = excluded.last_seen_at, offline_at = NULL
              RETURNING {REPLICA_COLUMNS}",
         )))
+        .bind(replica_id)
         .bind(request.replica_type.as_str())
         .bind(request.instance_id)
         .bind(request.runtime_id)
@@ -1875,7 +1912,7 @@ where
 
     async fn heartbeat_replica(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         request: ReplicaHeartbeatRequest,
         observed_ip: Option<String>,
     ) -> Result<Option<ReplicaRecord>, SendableError> {
@@ -1910,7 +1947,7 @@ where
 
     async fn mark_replica_offline(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         runtime_id: String,
     ) -> Result<Option<ReplicaRecord>, SendableError> {
         let now = Utc::now().timestamp();
@@ -1983,7 +2020,7 @@ where
 
     async fn upsert_replica_provider_registration(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
         request: ReplicaProviderRegistrationRequest,
     ) -> Result<ReplicaProviderRegistration, SendableError> {
         let now = Utc::now().timestamp();
@@ -2034,7 +2071,7 @@ where
 
     async fn fetch_replica_provider_registrations(
         &self,
-        replica_id: i64,
+        replica_id: Uuid,
     ) -> Result<Vec<ReplicaProviderRegistration>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {REPLICA_PROVIDER_COLUMNS} FROM replica_provider_registrations WHERE replica_id = ? ORDER BY provider_name"
@@ -2053,16 +2090,18 @@ where
         record: Value,
     ) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
         let columns = "id, record_type, data, created_at, updated_at";
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO automation_records (record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO automation_records (id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(record_type)
-            .bind(json_opt_i64(&record, "workflow_run_id"))
-            .bind(json_opt_i64(&record, "external_item_id"))
+            .bind(json_opt_uuid(&record, "workflow_run_id"))
+            .bind(json_opt_uuid(&record, "external_item_id"))
             .bind(json_opt_str(&record, "node_id"))
             .bind(json_str(&record, "provider"))
             .bind(json_str(&record, "resource_type"))
@@ -2083,20 +2122,22 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM automation_records WHERE id = LAST_INSERT_ID()"
+                "SELECT {columns} FROM automation_records WHERE id = ?"
             )))
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_automation_record(&row));
         }
         let row = sqlx::query(&self.render(
-            "INSERT INTO automation_records (record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO automation_records (id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id, record_type, data, created_at, updated_at",
         ))
+        .bind(id)
         .bind(record_type)
-        .bind(json_opt_i64(&record, "workflow_run_id"))
-        .bind(json_opt_i64(&record, "external_item_id"))
+        .bind(json_opt_uuid(&record, "workflow_run_id"))
+        .bind(json_opt_uuid(&record, "external_item_id"))
         .bind(json_opt_str(&record, "node_id"))
         .bind(json_str(&record, "provider"))
         .bind(json_str(&record, "resource_type"))
@@ -2122,7 +2163,7 @@ where
     async fn update_automation_record(
         &self,
         record_type: String,
-        record_id: i64,
+        record_id: Uuid,
         record: Value,
     ) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
@@ -2131,8 +2172,8 @@ where
             sqlx::query(&self.render(
                 "UPDATE automation_records SET workflow_run_id = ?, external_item_id = ?, node_id = ?, provider = ?, resource_type = ?, external_id = ?, status = ?, title = ?, url = ?, body = ?, path = ?, prompt = ?, approval_type = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? AND record_type = ?",
             ))
-            .bind(json_opt_i64(&record, "workflow_run_id"))
-            .bind(json_opt_i64(&record, "external_item_id"))
+            .bind(json_opt_uuid(&record, "workflow_run_id"))
+            .bind(json_opt_uuid(&record, "external_item_id"))
             .bind(json_opt_str(&record, "node_id"))
             .bind(json_str(&record, "provider"))
             .bind(json_str(&record, "resource_type"))
@@ -2165,8 +2206,8 @@ where
         let row = sqlx::query(&self.render(
             "UPDATE automation_records SET workflow_run_id = ?, external_item_id = ?, node_id = ?, provider = ?, resource_type = ?, external_id = ?, status = ?, title = ?, url = ?, body = ?, path = ?, prompt = ?, approval_type = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? AND record_type = ? RETURNING id, record_type, data, created_at, updated_at",
         ))
-        .bind(json_opt_i64(&record, "workflow_run_id"))
-        .bind(json_opt_i64(&record, "external_item_id"))
+        .bind(json_opt_uuid(&record, "workflow_run_id"))
+        .bind(json_opt_uuid(&record, "external_item_id"))
         .bind(json_opt_str(&record, "node_id"))
         .bind(json_str(&record, "provider"))
         .bind(json_str(&record, "resource_type"))
@@ -2193,10 +2234,10 @@ where
     async fn fetch_automation_records(
         &self,
         record_type: String,
-        workflow_run_id: Option<i64>,
-        external_item_id: Option<i64>,
+        workflow_run_id: Option<Uuid>,
+        external_item_id: Option<Uuid>,
     ) -> Result<Vec<Value>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT id, record_type, data, created_at, updated_at FROM automation_records WHERE record_type = ? ORDER BY id DESC"))
+        let rows = sqlx::query(&self.render("SELECT id, record_type, data, created_at, updated_at FROM automation_records WHERE record_type = ? ORDER BY created_at DESC, id DESC"))
             .bind(record_type)
             .fetch_all(self.pool())
             .await?;
@@ -2205,9 +2246,11 @@ where
             .map(mappers::row_to_automation_record)
             .filter(|record| {
                 workflow_run_id.is_none_or(|id| {
-                    record.get("workflow_run_id").and_then(Value::as_i64) == Some(id)
+                    record.get("workflow_run_id").and_then(Value::as_str)
+                        == Some(id.to_string().as_str())
                 }) && external_item_id.is_none_or(|id| {
-                    record.get("external_item_id").and_then(Value::as_i64) == Some(id)
+                    record.get("external_item_id").and_then(Value::as_str)
+                        == Some(id.to_string().as_str())
                 })
             })
             .collect())
@@ -2216,7 +2259,7 @@ where
     async fn fetch_automation_record(
         &self,
         record_type: String,
-        record_id: i64,
+        record_id: Uuid,
     ) -> Result<Option<Value>, SendableError> {
         let row = sqlx::query(&self.render("SELECT id, record_type, data, created_at, updated_at FROM automation_records WHERE id = ? AND record_type = ?"))
             .bind(record_id)
@@ -2235,14 +2278,16 @@ where
         // `key` is reserved in mysql; quote it for every dialect via ident.
         let key_col = queries::ident(self.dialect(), "key");
         let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
 
         // first writer wins: on conflict keep the existing result rather than overwriting it.
         if self.dialect() == SqlDialect::MySql {
             sqlx::query(&self.render(&format!(
-                "INSERT INTO idempotency_keys (scope, {key_col}, result, created_at)
-                 VALUES (?, ?, ?, ?)
+                "INSERT INTO idempotency_keys (id, scope, {key_col}, result, created_at)
+                 VALUES (?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE result = result",
             )))
+            .bind(id)
             .bind(scope.as_str())
             .bind(key.as_str())
             .bind(result.to_string())
@@ -2260,11 +2305,12 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO idempotency_keys (scope, {key_col}, result, created_at)
-             VALUES (?, ?, ?, ?)
+            "INSERT INTO idempotency_keys (id, scope, {key_col}, result, created_at)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(scope, {key_col}) DO UPDATE SET result = idempotency_keys.result
              RETURNING id, scope, {key_col}, result, created_at",
         )))
+        .bind(id)
         .bind(scope)
         .bind(key)
         .bind(result.to_string())
@@ -2294,15 +2340,17 @@ where
         command: ActionCommand,
     ) -> Result<ActionDispatchRecord, SendableError> {
         let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
         let dispatch_columns = "id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until";
 
         // first writer wins: keep the existing command on conflict.
         if self.dialect() == SqlDialect::MySql {
             sqlx::query(&self.render(
-                "INSERT INTO workflow_action_dispatches (dedupe_key, command_json, attempts, created_at, updated_at)
-                 VALUES (?, ?, 0, ?, ?)
+                "INSERT INTO workflow_action_dispatches (id, dedupe_key, command_json, attempts, created_at, updated_at)
+                 VALUES (?, ?, ?, 0, ?, ?)
                  ON DUPLICATE KEY UPDATE command_json = command_json",
             ))
+            .bind(id)
             .bind(dedupe_key.as_str())
             .bind(serde_json::to_string(&command)?)
             .bind(now)
@@ -2319,11 +2367,12 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_action_dispatches (dedupe_key, command_json, attempts, created_at, updated_at)
-             VALUES (?, ?, 0, ?, ?)
+            "INSERT INTO workflow_action_dispatches (id, dedupe_key, command_json, attempts, created_at, updated_at)
+             VALUES (?, ?, ?, 0, ?, ?)
              ON CONFLICT(dedupe_key) DO UPDATE SET command_json = workflow_action_dispatches.command_json
              RETURNING {dispatch_columns}",
         )))
+        .bind(id)
         .bind(dedupe_key)
         .bind(serde_json::to_string(&command)?)
         .bind(now)
@@ -2418,7 +2467,7 @@ where
         rows.iter().map(mappers::row_to_action_dispatch).collect()
     }
 
-    async fn mark_action_dispatch_published(&self, dispatch_id: i64) -> Result<(), SendableError> {
+    async fn mark_action_dispatch_published(&self, dispatch_id: Uuid) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
             "UPDATE workflow_action_dispatches
@@ -2435,7 +2484,7 @@ where
 
     async fn mark_action_dispatch_failed(
         &self,
-        dispatch_id: i64,
+        dispatch_id: Uuid,
         error: String,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
@@ -2457,12 +2506,14 @@ where
         notification: &NewNotification,
     ) -> Result<Notification, SendableError> {
         let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
+        let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO notifications (workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
+            .bind(id)
             .bind(notification.workflow_run_id)
             .bind(notification.workflow_node_id.clone())
             .bind(notification.channel.as_str())
@@ -2474,18 +2525,20 @@ where
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
-            let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM notifications WHERE id = LAST_INSERT_ID()"
-            )))
+            let row = sqlx::query(
+                &self.render(&format!("SELECT {columns} FROM notifications WHERE id = ?")),
+            )
+            .bind(id)
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_notification(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO notifications (workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
+        .bind(id)
         .bind(notification.workflow_run_id)
         .bind(notification.workflow_node_id.clone())
         .bind(notification.channel.as_str())
@@ -2526,7 +2579,7 @@ where
 
     async fn mark_notification_read(
         &self,
-        notification_id: i64,
+        notification_id: Uuid,
     ) -> Result<Option<Notification>, SendableError> {
         let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
 

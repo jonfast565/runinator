@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS replicas (
-    replica_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    replica_id BINARY(16) PRIMARY KEY,
     replica_type TEXT NOT NULL,
     instance_id TEXT NOT NULL,
     runtime_id TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS replicas (
 );
 
 CREATE TABLE IF NOT EXISTS replica_provider_registrations (
-    replica_id BIGINT NOT NULL,
+    replica_id BINARY(16) NOT NULL,
     provider_name TEXT NOT NULL,
     provider_json TEXT NOT NULL,
     first_registered_at BIGINT NOT NULL,
@@ -30,14 +30,14 @@ CREATE TABLE IF NOT EXISTS replica_provider_registrations (
 
 ALTER TABLE workflow_runs ADD COLUMN trigger_source_kind TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_actor_type TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN trigger_actor_replica_id BIGINT NULL;
+ALTER TABLE workflow_runs ADD COLUMN trigger_actor_replica_id BINARY(16) NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_actor_display_name TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_host TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_ip TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_metadata TEXT NOT NULL DEFAULT '{}';
 
-ALTER TABLE workflow_node_runs ADD COLUMN current_executor_replica_id BIGINT NULL;
-ALTER TABLE workflow_node_runs ADD COLUMN last_executor_replica_id BIGINT NULL;
+ALTER TABLE workflow_node_runs ADD COLUMN current_executor_replica_id BINARY(16) NULL;
+ALTER TABLE workflow_node_runs ADD COLUMN last_executor_replica_id BINARY(16) NULL;
 ALTER TABLE workflow_node_runs ADD COLUMN executor_claimed_at BIGINT NULL;
 ALTER TABLE workflow_node_runs ADD COLUMN executor_released_at BIGINT NULL;
 

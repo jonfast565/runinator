@@ -1,5 +1,6 @@
 use super::support;
 use super::*;
+use uuid::Uuid;
 
 pub async fn upsert_catalog_item<T: DatabaseImpl>(
     db: &T,
@@ -34,8 +35,8 @@ pub async fn create_automation_record<T: DatabaseImpl>(
 pub async fn fetch_automation_records<T: DatabaseImpl>(
     db: &T,
     record_type: &str,
-    workflow_run_id: Option<i64>,
-    external_item_id: Option<i64>,
+    workflow_run_id: Option<Uuid>,
+    external_item_id: Option<Uuid>,
 ) -> Result<Vec<Value>, SendableError> {
     db.fetch_automation_records(record_type.into(), workflow_run_id, external_item_id)
         .await
@@ -60,7 +61,7 @@ pub async fn fetch_idempotency_key<T: DatabaseImpl>(
 
 pub async fn resolve_approval<T: DatabaseImpl>(
     db: &T,
-    approval_id: i64,
+    approval_id: Uuid,
     approved: bool,
     resolved_by: Option<String>,
     message: Option<String>,
@@ -94,14 +95,17 @@ pub async fn resolve_approval<T: DatabaseImpl>(
         .await?;
 
     if let (Some(workflow_run_id), Some(node_id)) = (
-        approval.get("workflow_run_id").and_then(Value::as_i64),
+        approval
+            .get("workflow_run_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| raw.parse::<Uuid>().ok()),
         approval.get("node_id").and_then(Value::as_str),
     ) {
         let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
         if let Some(node_run) = node_runs
             .iter()
             .filter(|run| run.node_id == node_id)
-            .max_by_key(|run| run.id)
+            .max_by_key(|run| run.created_at)
         {
             db.update_workflow_node_run(
                 node_run.id,
