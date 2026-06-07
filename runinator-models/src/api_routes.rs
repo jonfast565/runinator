@@ -31,6 +31,7 @@ pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";
 pub const API_IDEMPOTENCY_KEYS: &str = "/idempotency_keys";
 pub const API_CREDENTIALS: &str = "/credentials";
+pub const API_REPLICAS: &str = "/replicas";
 
 pub fn api_workflow(workflow_id: i64) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}")
@@ -120,6 +121,30 @@ pub fn api_workflow_node_run_artifacts(node_run_id: i64) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/artifacts")
 }
 
+pub fn api_workflow_node_run_claim(node_run_id: i64) -> String {
+    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/claim")
+}
+
+pub fn api_workflow_node_run_release(node_run_id: i64) -> String {
+    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/release")
+}
+
 pub fn api_approval_command(approval_id: i64, command: &str) -> String {
     format!("{API_APPROVALS}/{approval_id}/{command}")
+}
+
+pub fn api_replica(replica_id: i64) -> String {
+    format!("{API_REPLICAS}/{replica_id}")
+}
+
+pub fn api_replica_heartbeat(replica_id: i64) -> String {
+    format!("{API_REPLICAS}/{replica_id}/heartbeat")
+}
+
+pub fn api_replica_offline(replica_id: i64) -> String {
+    format!("{API_REPLICAS}/{replica_id}/offline")
+}
+
+pub fn api_replica_providers(replica_id: i64) -> String {
+    format!("{API_REPLICAS}/{replica_id}/providers")
 }

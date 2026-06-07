@@ -7,6 +7,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     parameters: Value,
     debug: bool,
     name: Option<String>,
+    provenance: runinator_models::replicas::WorkflowRunProvenance,
 ) -> Result<WorkflowRun, SendableError> {
     let workflow_snapshot = support::fetch_workflow_snapshot(db, workflow_id).await?;
     let state = if debug {
@@ -26,7 +27,14 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     };
     let trimmed = support::normalized_run_name(name);
     let run = db
-        .create_workflow_run(workflow_id, workflow_snapshot, parameters, state, trimmed)
+        .create_workflow_run(
+            workflow_id,
+            workflow_snapshot,
+            parameters,
+            state,
+            trimmed,
+            provenance,
+        )
         .await?;
     support::enqueue_start_ready_node(db, &run).await?;
     Ok(run)

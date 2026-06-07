@@ -4,6 +4,9 @@ use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
     notifications::Notification,
     providers::ProviderMetadata,
+    replicas::{
+        ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus,
+    },
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::SettingKind,
     web::TaskResponse,
@@ -57,6 +60,10 @@ pub enum ApiResponse {
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
     ProviderBundle(ProviderBundle),
+    Replica(ReplicaRecord),
+    ReplicaList(ReplicaListResponse),
+    ReplicaProviderRegistration(ReplicaProviderRegistration),
+    ReplicaProviderRegistrationList(Vec<ReplicaProviderRegistration>),
     SecretBundle(SecretBundle),
     PackImport(PackImportResult),
     JsonValue(Value),
@@ -180,6 +187,18 @@ pub struct WorkflowNodeRunStatusRequest {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WorkflowNodeRunExecutorClaimRequest {
+    pub replica_id: i64,
+    pub claimed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowNodeRunExecutorReleaseRequest {
+    pub replica_id: i64,
+    pub released_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WorkflowRunResponse {
     pub run: WorkflowRun,
@@ -222,6 +241,12 @@ pub struct CredentialQuery {
     pub name: Option<String>,
     #[serde(default)]
     pub kind: SettingKind,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplicaQuery {
+    pub replica_type: Option<runinator_models::replicas::ReplicaKind>,
+    pub status: Option<ReplicaStatus>,
 }
 
 #[derive(Debug, Deserialize)]

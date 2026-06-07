@@ -6,6 +6,7 @@ pub mod errors;
 pub mod notifications;
 pub mod orchestration;
 pub mod providers;
+pub mod replicas;
 pub mod runs;
 pub mod settings;
 pub mod types;

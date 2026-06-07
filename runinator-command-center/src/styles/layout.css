@@ -77,7 +77,7 @@
   height: 100vh;
   position: relative;
   overflow: hidden;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr;
 }
 
 .app-loader-overlay {

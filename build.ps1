@@ -9,8 +9,13 @@ param(
     [switch]$SkipBuild,
     [switch]$DeployKube,
 
+    [ValidateSet("sqlite", "postgres", "mysql", "mariadb")]
+    [string]$LocalDatabaseBackend = "sqlite",
+
     [ValidateNotNullOrEmpty()]
     [string]$LocalDatabasePath = (Join-Path -Path $HOME -ChildPath ".runinator/runinator.db"),
+
+    [string]$LocalDatabaseUrl = "",
 
     [ValidateNotNullOrEmpty()]
     [string]$LocalWorkflowsFile = "packs/sdlc/sdlc.wdlp",
@@ -236,6 +241,19 @@ function Convert-ToLinuxPath {
     }
 
     return $normalized
+}
+
+function Resolve-LocalDatabaseBackend {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Backend
+    )
+
+    if ($Backend -eq 'mariadb') {
+        return 'mysql'
+    }
+
+    return $Backend
 }
 
 function Join-HostSubPath {
@@ -574,7 +592,12 @@ function Write-LocalSupervisorConfig {
         [string]$ConfigPath,
 
         [Parameter(Mandatory)]
+        [string]$LocalDatabaseBackend,
+
+        [Parameter(Mandatory)]
         [string]$LocalDatabasePath,
+
+        [string]$LocalDatabaseUrl,
 
         [Parameter(Mandatory)]
         [string]$WorkflowsFile,
@@ -603,6 +626,24 @@ function Write-LocalSupervisorConfig {
         Write-Warning "Workflows file missing at $WorkflowsFile. runinatorctl will fail its one-shot pack import without it."
     }
 
+    $normalizedDatabaseBackend = Resolve-LocalDatabaseBackend -Backend $LocalDatabaseBackend
+    $webServiceArgs = @(
+        '--database', $normalizedDatabaseBackend,
+        '--announce-address', '127.0.0.1'
+    )
+    switch ($normalizedDatabaseBackend) {
+        'sqlite' {
+            $webServiceArgs += @('--sqlite-path', $LocalDatabasePath)
+        }
+        default {
+            if ([string]::IsNullOrWhiteSpace($LocalDatabaseUrl)) {
+                throw "-LocalDatabaseUrl is required when -LocalDatabaseBackend is '$LocalDatabaseBackend'."
+            }
+            $webServiceArgs += @('--database-url', $LocalDatabaseUrl)
+        }
+    }
+    $webServiceArgs += Get-GossipArguments -Port $gossipPorts.Web -AllTargets $allGossipTargets
+
     $commands = @(
         [ordered]@{
             name = 'Runinator Test Broker'
@@ -617,11 +658,7 @@ function Write-LocalSupervisorConfig {
             name = 'Runinator Web Service'
             command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-ws'))
             cwd = $WorkspacePath
-            args = @(
-                '--database', 'sqlite',
-                '--sqlite-path', $LocalDatabasePath,
-                '--announce-address', '127.0.0.1'
-            ) + (Get-GossipArguments -Port $gossipPorts.Web -AllTargets $allGossipTargets)
+            args = $webServiceArgs
             env = @{
                 RUST_LOG = 'info'
             }
@@ -690,7 +727,12 @@ function Start-LocalStack {
         [string]$ArtifactsDir,
 
         [Parameter(Mandatory)]
+        [string]$LocalDatabaseBackend,
+
+        [Parameter(Mandatory)]
         [string]$LocalDatabasePath,
+
+        [string]$LocalDatabaseUrl,
 
         [Parameter(Mandatory)]
         [string]$WorkflowsFile,
@@ -709,7 +751,9 @@ function Start-LocalStack {
         -WorkspacePath $WorkspacePath `
         -ArtifactsDir $ArtifactsDir `
         -ConfigPath $supervisorConfigPath `
+        -LocalDatabaseBackend $LocalDatabaseBackend `
         -LocalDatabasePath $LocalDatabasePath `
+        -LocalDatabaseUrl $LocalDatabaseUrl `
         -WorkflowsFile $WorkflowsFile `
         -GossipBasePort $GossipBasePort
 
@@ -1089,19 +1133,31 @@ try {
 
     switch ($Mode) {
         'Local' {
-            $dbPath = if ([System.IO.Path]::IsPathRooted($LocalDatabasePath)) {
-                $LocalDatabasePath
-            } else {
-                Join-Path -Path $workspacePath -ChildPath $LocalDatabasePath
-            }
+            $normalizedLocalDatabaseBackend = Resolve-LocalDatabaseBackend -Backend $LocalDatabaseBackend
+            $dbPath = $LocalDatabasePath
+            if ($normalizedLocalDatabaseBackend -eq 'sqlite') {
+                $dbPath = if ([System.IO.Path]::IsPathRooted($LocalDatabasePath)) {
+                    $LocalDatabasePath
+                } else {
+                    Join-Path -Path $workspacePath -ChildPath $LocalDatabasePath
+                }
 
-            $dbDirectory = Split-Path -Path $dbPath -Parent
-            if ($dbDirectory) {
-                Ensure-Directory -Path $dbDirectory
+                $dbDirectory = Split-Path -Path $dbPath -Parent
+                if ($dbDirectory) {
+                    Ensure-Directory -Path $dbDirectory
+                }
             }
 
             Write-Step 'Starting local Runinator stack'
-            Start-LocalStack -WorkspacePath $workspacePath -TargetDir $targetDir -ArtifactsDir $artifactsDir -LocalDatabasePath $dbPath -WorkflowsFile $workflowsFilePath -GossipBasePort $GossipBasePort
+            Start-LocalStack `
+                -WorkspacePath $workspacePath `
+                -TargetDir $targetDir `
+                -ArtifactsDir $artifactsDir `
+                -LocalDatabaseBackend $normalizedLocalDatabaseBackend `
+                -LocalDatabasePath $dbPath `
+                -LocalDatabaseUrl $LocalDatabaseUrl `
+                -WorkflowsFile $workflowsFilePath `
+                -GossipBasePort $GossipBasePort
         }
         'Kubernetes' {
             $imageMap = $null

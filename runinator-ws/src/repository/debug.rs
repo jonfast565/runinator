@@ -538,6 +538,15 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
                 source.parameters.clone(),
                 state,
                 source.name.clone(),
+                runinator_models::replicas::WorkflowRunProvenance {
+                    source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+                    actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                    actor_replica_id: None,
+                    actor_display_name: Some("replay".into()),
+                    request_host: None,
+                    request_ip: None,
+                    metadata: runinator_models::json!({ "source_run_id": source.id }),
+                },
             )
             .await?;
 
@@ -600,6 +609,15 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         source.parameters,
         state,
         source.name,
+        runinator_models::replicas::WorkflowRunProvenance {
+            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+            actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+            actor_replica_id: None,
+            actor_display_name: Some("replay".into()),
+            request_host: None,
+            request_ip: None,
+            metadata: runinator_models::json!({ "source_run_id": source.id }),
+        },
     )
     .await
 }

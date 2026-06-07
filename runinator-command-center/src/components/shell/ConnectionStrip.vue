@@ -4,7 +4,7 @@
       {{ app.serviceConnected ? "Connected" : "Waiting for service" }}
     </span>
     <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
-    <span v-if="!app.isRealtime" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
+    <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
     <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
       <span
         v-for="proc in supervisor.status.value?.processes ?? []"

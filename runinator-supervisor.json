@@ -14,8 +14,6 @@
       "name": "web-service",
       "command": "./target/debug/runinator-ws",
       "args": [
-        "--database",
-        "sqlite",
         "--port",
         "8080",
         "--gossip-bind",

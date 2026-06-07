@@ -10,6 +10,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::api_routes::{
     API_ARTIFACTS, API_PACKS_IMPORT, API_PROVIDERS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
     API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+    API_REPLICAS,
     API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
     API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_WDL_ANALYZE, API_WDL_COMPILE,
     API_WDL_COMPLETE, API_WDL_DECOMPILE, API_WDL_FORMAT, API_WDL_IMPORT, API_WORKFLOW_RUNS,
@@ -43,8 +44,10 @@ use crate::handlers::{
     },
     health::{health, ready},
     node_runs::{
-        add_workflow_node_run_artifact, append_workflow_node_run_chunk, create_workflow_node_run,
-        get_workflow_node_run_artifacts, get_workflow_node_run_chunks, update_workflow_node_run,
+        add_workflow_node_run_artifact, append_workflow_node_run_chunk,
+        claim_workflow_node_run_executor, create_workflow_node_run,
+        get_workflow_node_run_artifacts, get_workflow_node_run_chunks,
+        release_workflow_node_run_executor, update_workflow_node_run,
     },
     notifications::{
         create_notification, list_notifications, mark_all_notifications_read,
@@ -52,6 +55,10 @@ use crate::handlers::{
     },
     packs::import_pack,
     providers::{get_providers, import_provider_bundle, upsert_provider},
+    replicas::{
+        get_replica_providers, get_replicas, heartbeat_replica, mark_replica_offline,
+        register_replica, upsert_replica_provider,
+    },
     runs::{
         append_run_chunk, cancel_workflow_run, claim_ready_nodes,
         claim_workflow_runs_for_scheduler, create_workflow_run, create_workflow_trigger_run,
@@ -167,6 +174,28 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             API_WORKFLOW_RUNS,
             get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            API_REPLICAS,
+            get(get_replicas::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/register",
+            post(register_replica::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/heartbeat",
+            post(heartbeat_replica::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/offline",
+            post(mark_replica_offline::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/providers",
+            get(get_replica_providers::<T>)
+                .post(upsert_replica_provider::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
@@ -313,6 +342,14 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflow_runs/{id}/nodes",
             post(create_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/claim",
+            post(claim_workflow_node_run_executor::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/release",
+            post(release_workflow_node_run_executor::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_node_runs/{id}",

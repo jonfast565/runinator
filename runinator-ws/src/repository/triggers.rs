@@ -58,6 +58,8 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
     trigger_id: i64,
     parameters: Value,
     debug: bool,
+    actor_replica_id: Option<i64>,
+    actor_display_name: Option<String>,
 ) -> Result<WorkflowRun, SendableError> {
     let Some(trigger) = db.fetch_workflow_trigger(trigger_id).await? else {
         return Err(crate::errors::WORKFLOW_TRIGGER_NOT_FOUND.error(trigger_id));
@@ -81,6 +83,15 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
             parameters,
             state,
             None,
+            runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Manual),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::User),
+                actor_replica_id,
+                actor_display_name,
+                request_host: None,
+                request_ip: None,
+                metadata: trigger.metadata.clone(),
+            },
         )
         .await?;
     support::enqueue_start_ready_node(db, &run).await?;

@@ -40,6 +40,13 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
             finished_at: Some(chrono::Utc::now()),
             message: None,
             name: None,
+            trigger_source_kind: None,
+            trigger_actor_type: None,
+            trigger_actor_replica_id: None,
+            trigger_actor_display_name: None,
+            trigger_request_host: None,
+            trigger_request_ip: None,
+            trigger_metadata: Value::Null,
         },
         nodes: vec![],
     };
@@ -81,6 +88,7 @@ async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
         json!({}),
         false,
         Some("Ticket Work: ITP-123".into()),
+        Default::default(),
     )
     .await
     .unwrap();
@@ -90,6 +98,7 @@ async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
         json!({}),
         false,
         Some("Ticket Work: ITP-123".into()),
+        Default::default(),
     )
     .await
     .unwrap();
@@ -140,10 +149,16 @@ async fn ready_node_processing_reduces_start_to_action_dispatch() {
     }))
     .unwrap();
     let workflow = db.upsert_workflow(&workflow).await.unwrap();
-    let run =
-        crate::repository::create_workflow_run(&db, workflow.id.unwrap(), json!({}), false, None)
-            .await
-            .unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
     let ready = crate::repository::claim_ready_nodes(
         &db,
         "scheduler-a".into(),
@@ -672,7 +687,14 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
         .await
         .unwrap();
     let workflow_id = workflow.id.unwrap();
-    let run = crate::repository::create_workflow_run(db, workflow_id, json!({}), false, None)
+    let run = crate::repository::create_workflow_run(
+        db,
+        workflow_id,
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
         .await
         .unwrap();
     crate::repository::update_workflow_run_status(
@@ -1109,7 +1131,14 @@ async fn seed_run(db: &SqliteDb, name: &str, definition: Value) -> i64 {
     let mut workflow = workflow(None, name);
     workflow.definition = WorkflowGraph::from_value(definition).unwrap();
     let workflow = db.upsert_workflow(&workflow).await.unwrap();
-    crate::repository::create_workflow_run(db, workflow.id.unwrap(), json!({}), false, None)
+    crate::repository::create_workflow_run(
+        db,
+        workflow.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
         .await
         .unwrap()
         .id
@@ -1403,10 +1432,16 @@ async fn reducer_subflow_waits_for_child_and_child_terminal_wakes_parent() {
     }))
     .unwrap();
     let parent = db.upsert_workflow(&parent).await.unwrap();
-    let parent_run =
-        crate::repository::create_workflow_run(&db, parent.id.unwrap(), json!({}), false, None)
-            .await
-            .unwrap();
+    let parent_run = crate::repository::create_workflow_run(
+        &db,
+        parent.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
 
     // draining drives the parent to launch + the child to completion; the terminal child wakes the
     // parent's subflow node, which then transitions to its end.

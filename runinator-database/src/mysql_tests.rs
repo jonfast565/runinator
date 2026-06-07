@@ -138,7 +138,14 @@ async fn mariadb_full_lifecycle() {
 
     // workflow run + multi-row scheduler claim (derived-table UPDATE then select-back).
     let run = db
-        .create_workflow_run(id, after.clone(), Value::Null, Value::Null, None)
+        .create_workflow_run(
+            id,
+            after.clone(),
+            Value::Null,
+            Value::Null,
+            None,
+            Default::default(),
+        )
         .await
         .unwrap();
     let now = Utc::now();
@@ -277,6 +284,64 @@ async fn mariadb_full_lifecycle() {
     assert_eq!(
         upserted.get("item_type").and_then(Value::as_str),
         Some("t2")
+    );
+
+    // automation records: insert should read back via last_insert_id, and update should still
+    // read back the row even when mysql reports zero affected rows for a no-op update.
+    let automation = runinator_models::json!({
+        "provider": "github",
+        "resource_type": "pull_request",
+        "external_id": "42",
+        "status": "open",
+        "title": "Initial title",
+        "workflow_run_id": run.id,
+        "node_id": "task-1",
+        "metadata": { "source": "mysql-test" }
+    });
+    let created_record = db
+        .create_automation_record("review".into(), automation.clone())
+        .await
+        .unwrap();
+    let record_id = created_record
+        .get("id")
+        .and_then(Value::as_i64)
+        .expect("automation record insert assigns an id");
+    assert_eq!(
+        created_record.get("title").and_then(Value::as_str),
+        Some("Initial title")
+    );
+
+    let unchanged = db
+        .update_automation_record("review".into(), record_id, automation.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        unchanged.get("title").and_then(Value::as_str),
+        Some("Initial title"),
+        "no-op mysql update must still return the record"
+    );
+
+    let updated_record = runinator_models::json!({
+        "provider": "github",
+        "resource_type": "pull_request",
+        "external_id": "42",
+        "status": "resolved",
+        "title": "Updated title",
+        "workflow_run_id": run.id,
+        "node_id": "task-1",
+        "metadata": { "source": "mysql-test", "updated": true }
+    });
+    let changed = db
+        .update_automation_record("review".into(), record_id, updated_record)
+        .await
+        .unwrap();
+    assert_eq!(
+        changed.get("status").and_then(Value::as_str),
+        Some("resolved")
+    );
+    assert_eq!(
+        changed.get("title").and_then(Value::as_str),
+        Some("Updated title")
     );
 
     // legacy run row mapper reads the reserved-word `trigger` column.

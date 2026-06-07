@@ -5082,6 +5082,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "log",
  "reqwest",
  "runinator-comm",
  "runinator-models",
@@ -5089,7 +5090,9 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5413,6 +5416,7 @@ dependencies = [
  "clap",
  "log",
  "reqwest",
+ "runinator-api",
  "runinator-broker",
  "runinator-comm",
  "runinator-models",

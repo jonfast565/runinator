@@ -6,6 +6,7 @@ use std::ops::Deref;
 use crate::value::{Map, Value};
 
 use crate::types::RuninatorType;
+use crate::replicas::{TriggerActorType, TriggerSourceKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -736,6 +737,20 @@ pub struct WorkflowRun {
     pub message: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_source_kind: Option<TriggerSourceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_type: Option<TriggerActorType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_request_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_request_ip: Option<String>,
+    #[serde(default)]
+    pub trigger_metadata: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -753,6 +768,14 @@ pub struct WorkflowNodeRun {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_executor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_executor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_claimed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_released_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

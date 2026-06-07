@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use log::{error, info};
 use reqwest::Url;
+use runinator_api::{
+    AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_session,
+    spawn_replica_heartbeat,
+};
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
@@ -10,6 +14,7 @@ use runinator_broker::{
     tcp::client::TcpBroker,
 };
 use runinator_models::errors::SendableError;
+use runinator_models::replicas::ReplicaKind;
 use tokio::sync::Notify;
 
 use runinator_utilities::startup;
@@ -28,6 +33,37 @@ async fn main() -> Result<(), SendableError> {
 
     let broker = build_broker(&config).await?;
     let notify = Arc::new(Notify::new());
+    let api_client = AsyncApiClient::new(StaticLocator::new(config.api_base_url.clone()))
+        .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
+    let _heartbeat = match register_replica_session(
+        &api_client,
+        ReplicaServiceConfig {
+            replica_type: ReplicaKind::Waker,
+            instance_id: config.waker_id.clone(),
+            display_name: Some(config.waker_id.clone()),
+            host: None,
+            port: None,
+            base_path: None,
+            attributes: runinator_models::json!({
+                "broker_backend": config.broker_backend,
+                "broker_client_id": config.broker_client_id,
+                "consumer_group": config.waker_consumer_group,
+            }),
+            heartbeat_interval: std::time::Duration::from_secs(10),
+        },
+    )
+    .await
+    {
+        Ok(session) => Some(spawn_replica_heartbeat(
+            api_client.clone(),
+            session,
+            notify.clone(),
+        )),
+        Err(err) => {
+            error!("Failed to register waker replica: {}", err);
+            None
+        }
+    };
 
     let loop_notify = notify.clone();
     let loop_broker = broker.clone();

@@ -125,11 +125,11 @@ async fn main() -> Result<(), SendableError> {
         DatabaseKind::Mysql => {
             let url = database_url
                 .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "--database-url must be provided when --database=mysql",
-                    )
-                })
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "--database-url must be provided when --database=mysql or --database=mariadb",
+                        )
+                    })
                 .map_err(|err| -> SendableError { Box::new(err) })?;
 
             info!("Starting Runinator webservice with MySQL/MariaDB database");

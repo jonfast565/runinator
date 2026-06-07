@@ -19,6 +19,34 @@ pub async fn fetch_workflow_node_run<T: DatabaseImpl>(
     db.fetch_workflow_node_run(workflow_node_run_id).await
 }
 
+pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+    replica_id: i64,
+    claimed_at: DateTime<Utc>,
+) -> Result<TaskResponse, SendableError> {
+    db.claim_workflow_node_run_executor(workflow_node_run_id, replica_id, claimed_at)
+        .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow node run executor claimed".into(),
+    })
+}
+
+pub async fn release_workflow_node_run_executor<T: DatabaseImpl>(
+    db: &T,
+    workflow_node_run_id: i64,
+    replica_id: i64,
+    released_at: DateTime<Utc>,
+) -> Result<TaskResponse, SendableError> {
+    db.release_workflow_node_run_executor(workflow_node_run_id, replica_id, released_at)
+        .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow node run executor released".into(),
+    })
+}
+
 pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     db: &T,
     workflow_node_run_id: i64,

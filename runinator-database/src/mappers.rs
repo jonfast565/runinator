@@ -5,6 +5,10 @@ use runinator_models::{
     errors::SendableError,
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
+    replicas::{
+        ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
+        TriggerSourceKind,
+    },
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     types::RuninatorType,
@@ -195,6 +199,32 @@ macro_rules! workflow_run_from_row {
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
             name: $row.get("name"),
+            trigger_source_kind: $row
+                .try_get::<Option<String>, _>("trigger_source_kind")
+                .ok()
+                .flatten()
+                .as_deref()
+                .map(TriggerSourceKind::try_from)
+                .transpose()
+                .ok()
+                .flatten(),
+            trigger_actor_type: $row
+                .try_get::<Option<String>, _>("trigger_actor_type")
+                .ok()
+                .flatten()
+                .as_deref()
+                .map(TriggerActorType::try_from)
+                .transpose()
+                .ok()
+                .flatten(),
+            trigger_actor_replica_id: $row.try_get("trigger_actor_replica_id").ok().flatten(),
+            trigger_actor_display_name: $row.try_get("trigger_actor_display_name").ok().flatten(),
+            trigger_request_host: $row.try_get("trigger_request_host").ok().flatten(),
+            trigger_request_ip: $row.try_get("trigger_request_ip").ok().flatten(),
+            trigger_metadata: $row
+                .try_get::<String, _>("trigger_metadata")
+                .map(parse_json)
+                .unwrap_or(Value::Null),
         }
     }};
 }
@@ -225,6 +255,24 @@ macro_rules! workflow_node_run_from_row {
                 .get::<Option<i64>, _>("finished_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
+            current_executor_replica_id: $row
+                .try_get("current_executor_replica_id")
+                .ok()
+                .flatten(),
+            last_executor_replica_id: $row
+                .try_get("last_executor_replica_id")
+                .ok()
+                .flatten(),
+            executor_claimed_at: $row
+                .try_get::<Option<i64>, _>("executor_claimed_at")
+                .ok()
+                .flatten()
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            executor_released_at: $row
+                .try_get::<Option<i64>, _>("executor_released_at")
+                .ok()
+                .flatten()
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
         }
     }};
 }
@@ -425,6 +473,70 @@ macro_rules! ready_node_from_row {
 
 row_mapper!(row_to_ready_node(row) -> Result<ReadyNodeRecord, SendableError> {
     ready_node_from_row!(row)
+});
+
+macro_rules! replica_from_row {
+    ($row:expr) => {{
+        Ok(ReplicaRecord {
+            replica_id: $row.get("replica_id"),
+            replica_type: ReplicaKind::try_from($row.get::<String, _>("replica_type").as_str())
+                .unwrap_or(ReplicaKind::Worker),
+            instance_id: $row.get("instance_id"),
+            runtime_id: $row.get("runtime_id"),
+            status: ReplicaStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(ReplicaStatus::Offline),
+            display_name: $row.get("display_name"),
+            host: $row.get("host"),
+            port: $row
+                .get::<Option<i64>, _>("port")
+                .and_then(|value| u16::try_from(value).ok()),
+            base_path: $row.get("base_path"),
+            observed_ip: $row.get("observed_ip"),
+            attributes: parse_json($row.get::<String, _>("attributes")),
+            first_seen_at: DateTime::<Utc>::from_timestamp($row.get("first_seen_at"), 0)
+                .unwrap_or_else(Utc::now),
+            last_heartbeat_at: DateTime::<Utc>::from_timestamp($row.get("last_heartbeat_at"), 0)
+                .unwrap_or_else(Utc::now),
+            last_seen_at: DateTime::<Utc>::from_timestamp($row.get("last_seen_at"), 0)
+                .unwrap_or_else(Utc::now),
+            offline_at: $row
+                .get::<Option<i64>, _>("offline_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+        })
+    }};
+}
+
+row_mapper!(row_to_replica(row) -> Result<ReplicaRecord, SendableError> {
+    replica_from_row!(row)
+});
+
+macro_rules! replica_provider_registration_from_row {
+    ($row:expr) => {{
+        Ok(ReplicaProviderRegistration {
+            replica_id: $row.get("replica_id"),
+            provider_name: $row.get("provider_name"),
+            provider: serde_json::from_str(&$row.get::<String, _>("provider_json")).unwrap_or(
+                runinator_models::providers::ProviderMetadata {
+                    name: $row.get("provider_name"),
+                    actions: Vec::new(),
+                    metadata: Default::default(),
+                },
+            ),
+            first_registered_at: DateTime::<Utc>::from_timestamp(
+                $row.get("first_registered_at"),
+                0,
+            )
+            .unwrap_or_else(Utc::now),
+            last_registered_at: DateTime::<Utc>::from_timestamp($row.get("last_registered_at"), 0)
+                .unwrap_or_else(Utc::now),
+            last_heartbeat_at: DateTime::<Utc>::from_timestamp($row.get("last_heartbeat_at"), 0)
+                .unwrap_or_else(Utc::now),
+        })
+    }};
+}
+
+row_mapper!(row_to_replica_provider_registration(row) -> Result<ReplicaProviderRegistration, SendableError> {
+    replica_provider_registration_from_row!(row)
 });
 
 macro_rules! notification_from_row {

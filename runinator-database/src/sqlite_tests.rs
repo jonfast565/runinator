@@ -126,6 +126,7 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             None,
+            Default::default(),
         )
         .await
         .unwrap();
@@ -136,6 +137,7 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             None,
+            Default::default(),
         )
         .await
         .unwrap();
@@ -183,6 +185,7 @@ async fn workflow_runs_can_be_created_and_queried_by_open_name() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             Some("Ticket Work: ITP-123".into()),
+            Default::default(),
         )
         .await
         .unwrap();
@@ -193,6 +196,7 @@ async fn workflow_runs_can_be_created_and_queried_by_open_name() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             Some("Ticket Work: ITP-123".into()),
+            Default::default(),
         )
         .await
         .unwrap();
@@ -245,6 +249,7 @@ async fn scheduler_claims_open_workflow_runs_once_until_lease_expires() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             None,
+            Default::default(),
         )
         .await
         .unwrap();
@@ -541,6 +546,7 @@ async fn ready_nodes_are_claimed_once_until_lease_expires() {
             runinator_models::json!({}),
             runinator_models::json!({}),
             None,
+            Default::default(),
         )
         .await
         .unwrap();
@@ -695,6 +701,7 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
             runinator_models::json!({}),
             runinator_models::json!({}),
             None,
+            Default::default(),
         )
         .await
         .unwrap();

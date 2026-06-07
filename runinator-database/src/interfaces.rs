@@ -7,6 +7,11 @@ use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
+    replicas::{
+        ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
+        ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
+        ReplicaStatus, WorkflowRunProvenance,
+    },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     workflows::{
@@ -159,6 +164,7 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         parameters: Value,
         state: Value,
         name: Option<String>,
+        provenance: WorkflowRunProvenance,
     ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
 
     /// Fetch workflow runs filtered by status.
@@ -260,6 +266,22 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_run_id: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
+
+    /// Mark a node run as currently executing on a specific replica.
+    fn claim_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        claimed_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Clear the current executor and record the last executor for a node run.
+    fn release_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        released_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch a node execution record by its identifier.
     fn fetch_workflow_node_run(
@@ -385,6 +407,49 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         uri: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    /// Register or refresh a runtime replica.
+    fn register_replica(
+        &self,
+        request: ReplicaRegistrationRequest,
+        observed_ip: Option<String>,
+    ) -> impl Future<Output = Result<ReplicaRecord, SendableError>> + Send;
+
+    /// Refresh a replica heartbeat if the runtime id still matches.
+    fn heartbeat_replica(
+        &self,
+        replica_id: i64,
+        request: ReplicaHeartbeatRequest,
+        observed_ip: Option<String>,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Mark a replica offline if the runtime id still matches.
+    fn mark_replica_offline(
+        &self,
+        replica_id: i64,
+        runtime_id: String,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
+    fn fetch_replicas(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+        stale_before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<ReplicaRecord>, SendableError>> + Send;
+
+    /// Upsert a provider registration for a worker replica.
+    fn upsert_replica_provider_registration(
+        &self,
+        replica_id: i64,
+        request: ReplicaProviderRegistrationRequest,
+    ) -> impl Future<Output = Result<ReplicaProviderRegistration, SendableError>> + Send;
+
+    /// Fetch provider registrations for a replica.
+    fn fetch_replica_provider_registrations(
+        &self,
+        replica_id: i64,
+    ) -> impl Future<Output = Result<Vec<ReplicaProviderRegistration>, SendableError>> + Send;
 
     /// Create a new record in a generic orchestration table.
     fn create_automation_record(

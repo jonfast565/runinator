@@ -1,13 +1,16 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Extension, Json,
-    extract::{Path, Query},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, Query},
+    http::{HeaderMap, StatusCode},
 };
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::orchestration::{ReadyNodeClaimRequest, ReadyNodeProcessRequest};
+use runinator_models::replicas::{
+    TriggerActorType, TriggerSourceKind, WorkflowRunProvenance,
+};
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
 
@@ -29,6 +32,8 @@ pub(crate) struct ChunkQuery {
 pub(crate) async fn create_workflow_trigger_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    _headers: HeaderMap,
+    _connect: ConnectInfo<SocketAddr>,
     Path(trigger_id): Path<i64>,
     Json(request): Json<WorkflowTriggerRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -37,6 +42,8 @@ pub(crate) async fn create_workflow_trigger_run<T: DatabaseImpl>(
         trigger_id,
         request.parameters,
         request.debug,
+        None,
+        Some(request_actor_display_name()),
     )
     .await
     {
@@ -57,6 +64,8 @@ pub(crate) async fn create_workflow_trigger_run<T: DatabaseImpl>(
 pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    headers: HeaderMap,
+    ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Path(workflow_id): Path<i64>,
     Json(request): Json<WorkflowRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -66,6 +75,12 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
         request.parameters,
         request.debug,
         request.name,
+        request_provenance(
+            TriggerSourceKind::Api,
+            &headers,
+            connect,
+            runinator_models::json!({}),
+        ),
     )
     .await
     {
@@ -81,6 +96,37 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
         }
         Err(err) => api_error(err.to_string()),
     }
+}
+
+fn request_provenance(
+    source_kind: TriggerSourceKind,
+    headers: &HeaderMap,
+    connect: SocketAddr,
+    metadata: runinator_models::value::Value,
+) -> WorkflowRunProvenance {
+    WorkflowRunProvenance {
+        source_kind: Some(source_kind),
+        actor_type: Some(TriggerActorType::User),
+        actor_replica_id: None,
+        actor_display_name: Some(request_actor_display_name()),
+        request_host: headers
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        request_ip: headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(',').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| Some(connect.ip().to_string())),
+        metadata,
+    }
+}
+
+fn request_actor_display_name() -> String {
+    "api".into()
 }
 
 pub(crate) async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(

@@ -1,0 +1,265 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::{providers::ProviderMetadata, value::Value};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplicaKind {
+    Worker,
+    Waker,
+    Webservice,
+}
+
+impl ReplicaKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Worker => "worker",
+            Self::Waker => "waker",
+            Self::Webservice => "webservice",
+        }
+    }
+}
+
+impl TryFrom<&str> for ReplicaKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "worker" => Ok(Self::Worker),
+            "waker" => Ok(Self::Waker),
+            "webservice" => Ok(Self::Webservice),
+            other => Err(format!("Unknown replica kind '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplicaStatus {
+    Live,
+    Stale,
+    Offline,
+}
+
+impl ReplicaStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Stale => "stale",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+impl TryFrom<&str> for ReplicaStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "live" => Ok(Self::Live),
+            "stale" => Ok(Self::Stale),
+            "offline" => Ok(Self::Offline),
+            other => Err(format!("Unknown replica status '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaRegistrationRequest {
+    pub replica_type: ReplicaKind,
+    pub instance_id: String,
+    pub runtime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
+    #[serde(default)]
+    pub attributes: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaHeartbeatRequest {
+    pub runtime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
+    #[serde(default)]
+    pub attributes: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaOfflineRequest {
+    pub runtime_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaProviderRegistrationRequest {
+    pub runtime_id: String,
+    pub provider: ProviderMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaRecord {
+    pub replica_id: i64,
+    pub replica_type: ReplicaKind,
+    pub instance_id: String,
+    pub runtime_id: String,
+    pub status: ReplicaStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_ip: Option<String>,
+    #[serde(default)]
+    pub attributes: Value,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_heartbeat_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaProviderRegistration {
+    pub replica_id: i64,
+    pub provider_name: String,
+    pub provider: ProviderMetadata,
+    pub first_registered_at: DateTime<Utc>,
+    pub last_registered_at: DateTime<Utc>,
+    pub last_heartbeat_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaCounts {
+    pub workers: i64,
+    pub wakers: i64,
+    pub webservices: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaListResponse {
+    pub counts: ReplicaCounts,
+    pub replicas: Vec<ReplicaRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowRunProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<TriggerSourceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_type: Option<TriggerActorType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ip: Option<String>,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowNodeRunExecutor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_executor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_executor_replica_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_claimed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_released_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerSourceKind {
+    Manual,
+    Api,
+    Cron,
+    System,
+    WorkerControl,
+    Replay,
+    Debug,
+    Subflow,
+}
+
+impl TriggerSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Api => "api",
+            Self::Cron => "cron",
+            Self::System => "system",
+            Self::WorkerControl => "worker_control",
+            Self::Replay => "replay",
+            Self::Debug => "debug",
+            Self::Subflow => "subflow",
+        }
+    }
+}
+
+impl TryFrom<&str> for TriggerSourceKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "manual" => Ok(Self::Manual),
+            "api" => Ok(Self::Api),
+            "cron" => Ok(Self::Cron),
+            "system" => Ok(Self::System),
+            "worker_control" => Ok(Self::WorkerControl),
+            "replay" => Ok(Self::Replay),
+            "debug" => Ok(Self::Debug),
+            "subflow" => Ok(Self::Subflow),
+            other => Err(format!("Unknown trigger source kind '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerActorType {
+    User,
+    Replica,
+    System,
+}
+
+impl TriggerActorType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Replica => "replica",
+            Self::System => "system",
+        }
+    }
+}
+
+impl TryFrom<&str> for TriggerActorType {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "user" => Ok(Self::User),
+            "replica" => Ok(Self::Replica),
+            "system" => Ok(Self::System),
+            other => Err(format!("Unknown trigger actor type '{other}'")),
+        }
+    }
+}

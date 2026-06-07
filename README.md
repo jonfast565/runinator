@@ -17,6 +17,18 @@ The quickest path on macOS/Linux is:
 bash scripts/run-local.sh start
 ```
 
+That checked-in supervisor config defaults to SQLite, but the same local loop can
+target a server database without editing JSON:
+
+```bash
+RUNINATOR_DATABASE=mysql \
+RUNINATOR_DATABASE_URL='mysql://runinator:runinator@127.0.0.1:3306/runinator' \
+bash scripts/run-local.sh start
+```
+
+Use `RUNINATOR_DATABASE=postgres` with a `postgres://` or `postgresql://` URL to
+point the same loop at Postgres instead.
+
 That script runs `cargo build --workspace`, starts the supervisor in daemon mode, and prints process status. The web API listens at:
 
 ```text
@@ -92,8 +104,9 @@ small, broker-only timer/relay) sleeps until each ready node is due and then
 publishes a `drive` on the `ingress` channel that the web service consumes to
 advance the run. The waker holds no state and reaches the web service only over
 the broker, so multiple waker replicas can run active/active. SQLite remains
-intended for local development and single-process stacks; Postgres is intended
-for multi-replica deployments.
+the default for simple local development and single-process stacks. MariaDB and
+Postgres are also supported for local development when you want a server-backed
+database, and Postgres remains the intended path for multi-replica deployments.
 
 The local stack uses the built-in broker over raw TCP by default. The standalone
 broker can also serve the same broker contract over HTTP by setting
@@ -115,9 +128,9 @@ Worker-originated control requests travel to the web service over the broker
 `ingress` channel; the web service issues `cancel`/`pause`/`resume` to workers
 over the `control` channel. There is no direct worker-to-waker channel.
 
-Local runtime files are written under `~/.runinator/` by default. This includes
-the SQLite database at `~/.runinator/runinator.db` (which also holds config and
-secrets in the `settings` table, with each value encrypted at rest by
+Local runtime files are written under `~/.runinator/` by default. When using
+SQLite, this includes the database at `~/.runinator/runinator.db` (which also
+holds config and secrets in the `settings` table, with each value encrypted at rest by
 `RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
 supervisor state under `~/.runinator/supervisor/`.
 The local supervisor runs `runinatorctl workflows apply` against the pack at
@@ -150,6 +163,18 @@ PowerShell can build and run a local artifact layout:
 ```
 
 This publishes binaries under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state still goes under `~/.runinator/` by default. The default workflow import is `packs/sdlc/sdlc.wdlp`, and any referenced `.wdl` files are copied into `target/artifacts/workflows/` with the manifest. Stop it with `Ctrl+C`.
+
+To run that same local artifact flow against MariaDB, select the backend and
+pass a MySQL-compatible URL:
+
+```powershell
+./build.ps1 -Mode Local -Run `
+  -LocalDatabaseBackend mariadb `
+  -LocalDatabaseUrl 'mysql://runinator:runinator@127.0.0.1:3306/runinator'
+```
+
+`-LocalDatabaseBackend postgres` works the same way with a Postgres URL. SQLite
+continues to use `-LocalDatabasePath`.
 
 ## Workflow Import
 
@@ -264,6 +289,10 @@ migrator to run versioned SQL files from `runinator-database/migrations/`. The
 start. `deploy/k8s/base/db-migrate-job.yaml` is kept as an optional
 out-of-band ops manifest; it is not part of the default kustomize base because
 Kubernetes Job pod templates are immutable across image tag changes.
+
+For non-Kubernetes environments, `runinator-migration` also supports
+`--database mysql` / `--database mariadb` with a `mysql://...` connection string,
+in addition to the existing SQLite and Postgres modes.
 
 ### Quick start (local cluster)
 

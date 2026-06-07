@@ -269,7 +269,25 @@ pub(super) async fn create_subflow_run<T: DatabaseImpl>(
         "subflow_parent": { "run_id": parent_run_id, "node_id": parent_node_id }
     });
     let run = db
-        .create_workflow_run(workflow_id, snapshot, parameters, state, run_name)
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            parameters,
+            state,
+            run_name,
+            runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Subflow),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                actor_replica_id: None,
+                actor_display_name: Some("subflow".into()),
+                request_host: None,
+                request_ip: None,
+                metadata: runinator_models::json!({
+                    "parent_run_id": parent_run_id,
+                    "parent_node_id": parent_node_id,
+                }),
+            },
+        )
         .await?;
     if let Some(snapshot) = run.workflow_snapshot.as_ref() {
         let (start, _) = runinator_workflows::parse_nodes(snapshot)

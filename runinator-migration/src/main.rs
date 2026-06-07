@@ -19,14 +19,15 @@ enum Backend {
     about = "Apply Runinator database migrations and exit."
 )]
 struct Cli {
-    /// Backend to migrate.
-    #[arg(long, value_enum)]
+    /// Backend to migrate. Also reads RUNINATOR_DATABASE.
+    #[arg(long, env = "RUNINATOR_DATABASE", value_enum)]
     database: Backend,
 
     /// Connection string. For sqlite, a filesystem path (file:/path/to/runinator.db
-    /// or just /path/to/runinator.db). For postgres, a postgres:// URL.
-    /// Falls back to $DATABASE_URL when not set.
-    #[arg(long)]
+    /// or just /path/to/runinator.db). For postgres, a postgres:// URL. For
+    /// mysql/mariadb, a mysql:// URL. Also reads RUNINATOR_DATABASE_URL and
+    /// falls back to DATABASE_URL when not set.
+    #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     database_url: Option<String>,
 }
 

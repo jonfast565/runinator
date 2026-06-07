@@ -43,6 +43,9 @@ pub struct Config {
 
     #[arg(long, default_value = "runinator-waker")]
     pub broker_client_id: String,
+
+    #[arg(long, default_value = "http://127.0.0.1:8080/")]
+    pub api_base_url: String,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

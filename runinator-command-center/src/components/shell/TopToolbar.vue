@@ -10,7 +10,12 @@
     <div class="actions">
       <ConnectionStrip />
       <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
-      <button class="btn" :disabled="app.serviceBlocked" @click="$emit('refresh')">
+      <button
+        v-if="!app.isRealtime"
+        class="btn"
+        :disabled="app.serviceBlocked"
+        @click="$emit('refresh')"
+      >
         <Icon name="refresh" />
         <span>Refresh</span>
       </button>

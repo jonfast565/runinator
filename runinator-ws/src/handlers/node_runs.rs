@@ -10,7 +10,10 @@ use runinator_models::runs::{NewRunArtifact, NewRunChunk};
 
 use crate::events::{EventSender, emit_workflow_node_run, emit_workflow_run};
 use crate::handlers::runs::ChunkQuery;
-use crate::models::{ApiResponse, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest};
+use crate::models::{
+    ApiResponse, WorkflowNodeRunExecutorClaimRequest, WorkflowNodeRunExecutorReleaseRequest,
+    WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
+};
 use crate::repository;
 use crate::responses::api_error;
 
@@ -55,6 +58,50 @@ pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
         request.state,
         request.transition_reason,
         request.message,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(request): Json<WorkflowNodeRunExecutorClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::claim_workflow_node_run_executor(
+        db.as_ref(),
+        node_run_id,
+        request.replica_id,
+        request.claimed_at,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn release_workflow_node_run_executor<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<i64>,
+    Json(request): Json<WorkflowNodeRunExecutorReleaseRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::release_workflow_node_run_executor(
+        db.as_ref(),
+        node_run_id,
+        request.replica_id,
+        request.released_at,
     )
     .await
     {

@@ -15,19 +15,24 @@ pub(crate) enum DatabaseKind {
 #[command(author, version, about, long_about = None)]
 pub(crate) struct CliArgs {
     /// Webservice port to bind to, defaults to 8080
-    #[arg(long, default_value_t = 8080)]
+    #[arg(long, env = "RUNINATOR_PORT", default_value_t = 8080)]
     pub port: u16,
 
-    /// Database backend to use
-    #[arg(long, value_enum, default_value_t = DatabaseKind::Sqlite)]
+    /// Database backend to use. Also reads RUNINATOR_DATABASE.
+    #[arg(
+        long,
+        env = "RUNINATOR_DATABASE",
+        value_enum,
+        default_value_t = DatabaseKind::Sqlite
+    )]
     pub database: DatabaseKind,
 
-    /// Path to the SQLite database file (used when --database=sqlite)
-    #[arg(long)]
+    /// Path to the SQLite database file (used when --database=sqlite). Also reads RUNINATOR_SQLITE_PATH.
+    #[arg(long, env = "RUNINATOR_SQLITE_PATH")]
     pub sqlite_path: Option<PathBuf>,
 
-    /// Connection string for the database (required when --database=postgres)
-    #[arg(long)]
+    /// Connection string for Postgres/MySQL/MariaDB. Also reads RUNINATOR_DATABASE_URL.
+    #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     pub database_url: Option<String>,
 
     /// Address to bind the gossip socket for service discovery

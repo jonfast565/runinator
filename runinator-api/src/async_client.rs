@@ -6,12 +6,14 @@ use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
         api_approval_command, api_run, api_run_artifacts, api_run_chunks,
+        api_replica_heartbeat, api_replica_offline, api_replica_providers,
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_node_run,
-        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_run,
+        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
+        api_workflow_node_run_release, api_workflow_run,
         api_workflow_run_command, api_workflow_run_nodes, api_workflow_run_rename,
-        api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
+        api_workflow_run_replay, api_workflow_runs, api_workflow_trigger, API_REPLICAS,
         api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_CREDENTIALS,
         API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_RUNS,
         API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
@@ -24,6 +26,11 @@ use runinator_models::{
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
+    replicas::{
+        ReplicaHeartbeatRequest, ReplicaKind, ReplicaListResponse, ReplicaOfflineRequest,
+        ReplicaProviderRegistration, ReplicaProviderRegistrationRequest, ReplicaRecord,
+        ReplicaRegistrationRequest, ReplicaStatus,
+    },
     runs::{RunStatus, RunSummary},
     settings::{SettingKind, SettingSummary},
     web::TaskResponse,
@@ -75,6 +82,77 @@ where
         let response = self.client.post(url.clone()).json(provider).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ProviderMetadata>().await?)
+    }
+
+    pub async fn register_replica(
+        &self,
+        request: &ReplicaRegistrationRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&format!("{API_REPLICAS}/register")).await?;
+        let response = self.client.post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn heartbeat_replica(
+        &self,
+        replica_id: i64,
+        request: &ReplicaHeartbeatRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&api_replica_heartbeat(replica_id)).await?;
+        let response = self.client.post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn mark_replica_offline(
+        &self,
+        replica_id: i64,
+        request: &ReplicaOfflineRequest,
+    ) -> Result<ReplicaRecord> {
+        let url = self.build_url(&api_replica_offline(replica_id)).await?;
+        let response = self.client.post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaRecord>().await?)
+    }
+
+    pub async fn register_replica_provider(
+        &self,
+        replica_id: i64,
+        request: &ReplicaProviderRegistrationRequest,
+    ) -> Result<ReplicaProviderRegistration> {
+        let url = self.build_url(&api_replica_providers(replica_id)).await?;
+        let response = self.client.post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaProviderRegistration>().await?)
+    }
+
+    pub async fn fetch_replica_providers(
+        &self,
+        replica_id: i64,
+    ) -> Result<Vec<ReplicaProviderRegistration>> {
+        let url = self.build_url(&api_replica_providers(replica_id)).await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ReplicaProviderRegistration>>().await?)
+    }
+
+    pub async fn fetch_replicas(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+    ) -> Result<ReplicaListResponse> {
+        let mut url = self.build_url(API_REPLICAS).await?;
+        if let Some(replica_type) = replica_type {
+            url.query_pairs_mut()
+                .append_pair("replica_type", replica_type.as_str());
+        }
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status.as_str());
+        }
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaListResponse>().await?)
     }
 
     pub async fn fetch_run(&self, run_id: i64) -> Result<RunSummary> {
@@ -802,6 +880,42 @@ where
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
         let response = self.client.patch(url.clone()).json(payload).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn claim_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        claimed_at: DateTime<Utc>,
+    ) -> Result<TaskResponse> {
+        let url = self.build_url(&api_workflow_node_run_claim(node_run_id)).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({ "replica_id": replica_id, "claimed_at": claimed_at }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn release_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        released_at: DateTime<Utc>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&api_workflow_node_run_release(node_run_id))
+            .await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&json!({ "replica_id": replica_id, "released_at": released_at }))
+            .send()
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
     }

@@ -10,11 +10,16 @@ use std::{collections::HashMap, env, ffi::OsString, sync::Arc, time::Duration};
 
 use config::parse_config;
 use log::{error, info, warn};
-use runinator_api::{AsyncApiClient, StaticLocator};
+use chrono::Utc;
+use runinator_api::{
+    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator,
+    register_replica_provider, register_replica_session, spawn_replica_heartbeat,
+};
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;
 use runinator_comm::WireCodec;
 use runinator_models::errors::SendableError;
+use runinator_models::replicas::ReplicaKind;
 use runinator_models::workflow_state::TaskStatusOutput;
 use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{
@@ -51,13 +56,23 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config).await?;
     let api_client = build_api_client(&config)?;
-    publish_provider_metadata(&api_client).await;
-
     let shutdown = Arc::new(Notify::new());
+    let replica_session = match register_worker_replica(&api_client, &config).await {
+        Ok(session) => Some(session),
+        Err(err) => {
+            warn!("Failed to register worker replica: {}", err);
+            None
+        }
+    };
+    let _heartbeat = replica_session
+        .clone()
+        .map(|session| spawn_replica_heartbeat(api_client.clone(), session, shutdown.clone()));
+    publish_provider_metadata(&api_client, replica_session.as_ref()).await;
     let mut worker_task = {
         let broker = broker.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
+        let replica_id = replica_session.as_ref().map(ReplicaSession::replica_id);
         let consumer = config.broker_consumer_id.clone();
         let max_concurrent_actions = config.max_concurrent_actions;
         let shutdown_grace = Duration::from_secs(config.shutdown_grace_seconds);
@@ -68,6 +83,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
                 consumer,
                 libraries,
                 api_client,
+                replica_id,
                 max_concurrent_actions,
                 shutdown_grace,
                 shutdown,
@@ -174,14 +190,56 @@ fn build_api_client(
 
 // register the built-in providers with the web service on startup. best-effort: a failure here
 // is logged but does not stop the worker, which can still execute already-registered providers.
-async fn publish_provider_metadata(api_client: &AsyncApiClient<StaticLocator>) {
+async fn register_worker_replica(
+    api_client: &AsyncApiClient<StaticLocator>,
+    config: &config::Config,
+) -> Result<ReplicaSession, runinator_api::ApiError> {
+    register_replica_session(
+        api_client,
+        ReplicaServiceConfig {
+            replica_type: ReplicaKind::Worker,
+            instance_id: config.worker_id.to_string(),
+            display_name: Some(format!("worker-{}", config.worker_id)),
+            host: None,
+            port: None,
+            base_path: None,
+            attributes: runinator_models::json!({
+                "broker_backend": config.broker_backend,
+                "broker_client_id": config.broker_client_id,
+                "broker_consumer_id": config.broker_consumer_id,
+            }),
+            heartbeat_interval: Duration::from_secs(10),
+        },
+    )
+    .await
+}
+
+async fn publish_provider_metadata(
+    api_client: &AsyncApiClient<StaticLocator>,
+    replica_session: Option<&ReplicaSession>,
+) {
     let bundle = provider_repository::metadata_bundle();
     let count = bundle.providers.len();
     match api_client.import_provider_bundle(&bundle).await {
-        Ok(imported) => info!(
-            "Registered {} provider(s) with the web service",
-            imported.providers.len()
-        ),
+        Ok(imported) => {
+            info!(
+                "Registered {} provider(s) with the web service",
+                imported.providers.len()
+            );
+            if let Some(replica_session) = replica_session {
+                for provider in imported.providers {
+                    if let Err(err) =
+                        register_replica_provider(api_client, replica_session, provider).await
+                    {
+                        warn!(
+                            "Failed to register replica provider ownership for replica {}: {}",
+                            replica_session.replica_id(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
         Err(err) => warn!("Failed to register provider bundle ({count} provider(s)): {err}"),
     }
 }
@@ -192,6 +250,7 @@ async fn run_worker_loop(
     consumer_id: String,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
+    replica_id: Option<i64>,
     max_concurrent_actions: usize,
     shutdown_grace: Duration,
     shutdown: Arc<Notify>,
@@ -241,6 +300,7 @@ async fn run_worker_loop(
         let consumer_id = consumer_id.clone();
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
+        let replica_id = replica_id;
         let in_flight = Arc::clone(&in_flight);
         deliveries.spawn(async move {
             let _permit = permit;
@@ -249,6 +309,7 @@ async fn run_worker_loop(
                 &consumer_id,
                 libraries,
                 api_client,
+                replica_id,
                 maybe_delivery,
                 in_flight,
             )
@@ -377,6 +438,7 @@ async fn process_delivery(
     consumer_id: &str,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
+    replica_id: Option<i64>,
     delivery: runinator_broker::BrokerDelivery,
     in_flight: Arc<Mutex<HashMap<i64, CancellationToken>>>,
 ) -> Result<(), SendableError> {
@@ -403,6 +465,16 @@ async fn process_delivery(
         in_flight.lock().await.remove(&command.workflow_run_id);
         nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
         return Err(broker_error("publish_result", err));
+    }
+    if let Some(replica_id) = replica_id
+        && let Err(err) = api_client
+            .claim_workflow_node_run_executor(command.workflow_node_run_id, replica_id, Utc::now())
+            .await
+    {
+        warn!(
+            "Failed to claim executor replica {} for node run {}: {}",
+            replica_id, command.workflow_node_run_id, err
+        );
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
         Ok(parameters) => parameters,
@@ -435,6 +507,15 @@ async fn process_delivery(
                 .ack(consumer_id, delivery.delivery_id)
                 .await
                 .map_err(|err| broker_error("ack", err))?;
+            if let Some(replica_id) = replica_id {
+                let _ = api_client
+                    .release_workflow_node_run_executor(
+                        command.workflow_node_run_id,
+                        replica_id,
+                        Utc::now(),
+                    )
+                    .await;
+            }
             in_flight.lock().await.remove(&command.workflow_run_id);
             return Ok(());
         }
@@ -502,6 +583,15 @@ async fn process_delivery(
             nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
             return Err(broker_error("publish_result", err));
         }
+        if let Some(replica_id) = replica_id {
+            let _ = api_client
+                .release_workflow_node_run_executor(
+                    command.workflow_node_run_id,
+                    replica_id,
+                    Utc::now(),
+                )
+                .await;
+        }
     } else {
         sink.emit_log(format!(
             "Action {}.{} failed after {} ms: {}.",
@@ -536,6 +626,15 @@ async fn process_delivery(
             );
             nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
             return Err(broker_error("publish_result", err));
+        }
+        if let Some(replica_id) = replica_id {
+            let _ = api_client
+                .release_workflow_node_run_executor(
+                    command.workflow_node_run_id,
+                    replica_id,
+                    Utc::now(),
+                )
+                .await;
         }
         warn!(
             "Action {}.{} reported failure: {:?}",

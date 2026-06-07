@@ -13,6 +13,11 @@ use runinator_models::{
     errors::SendableError,
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
+    replicas::{
+        ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
+        ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
+        ReplicaStatus, WorkflowRunProvenance,
+    },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     workflows::{
@@ -33,6 +38,11 @@ use crate::{
     mappers,
     queries::{self, SqlDialect},
 };
+
+const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
+const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
+const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 
 impl<B> DatabaseImpl for B
 where
@@ -647,11 +657,10 @@ where
                 .fetch_one(&mut *tx)
                 .await?;
             let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
-            let run_columns = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name";
             // the transaction pins a connection, so LAST_INSERT_ID is valid for the mysql read-back.
             let run_row = if self.dialect() == SqlDialect::MySql {
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)",
+                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)",
                 ))
                 .bind(trigger.workflow_id)
                 .bind(serde_json::to_string(&workflow_snapshot)?)
@@ -659,18 +668,22 @@ where
                 .bind(trigger_parameters(&trigger).to_string())
                 .bind(trigger_state(&trigger).to_string())
                 .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id.as_str())
+                .bind(trigger.metadata.to_string())
                 .execute(&mut *tx)
                 .await?;
                 sqlx::query(&self.render(&format!(
-                    "SELECT {run_columns} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+                    "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
                 )))
                 .fetch_one(&mut *tx)
                 .await?
             } else {
                 sqlx::query(&self.render(&format!(
-                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
-                     VALUES (?, ?, ?, NULL, ?, ?, ?, NULL)
-                     RETURNING {run_columns}",
+                    "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
+                     VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)
+                     RETURNING {WORKFLOW_RUN_COLUMNS}",
                 )))
                 .bind(trigger.workflow_id)
                 .bind(serde_json::to_string(&workflow_snapshot)?)
@@ -678,6 +691,10 @@ where
                 .bind(trigger_parameters(&trigger).to_string())
                 .bind(trigger_state(&trigger).to_string())
                 .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id.as_str())
+                .bind(trigger.metadata.to_string())
                 .fetch_one(&mut *tx)
                 .await?
             };
@@ -711,14 +728,14 @@ where
         parameters: Value,
         state: Value,
         name: Option<String>,
+        provenance: WorkflowRunProvenance,
     ) -> Result<WorkflowRun, SendableError> {
-        let columns = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name";
         let snapshot = serde_json::to_string(&workflow_snapshot)?;
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(workflow_id)
             .bind(snapshot)
@@ -727,19 +744,26 @@ where
             .bind(state.to_string())
             .bind(created_at)
             .bind(name)
+            .bind(provenance.source_kind.map(|value| value.as_str().to_string()))
+            .bind(provenance.actor_type.map(|value| value.as_str().to_string()))
+            .bind(provenance.actor_replica_id)
+            .bind(provenance.actor_display_name)
+            .bind(provenance.request_host)
+            .bind(provenance.request_ip)
+            .bind(provenance.metadata.to_string())
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = LAST_INSERT_ID()"
             )))
             .fetch_one(&mut *conn)
             .await?;
             return Ok(mappers::row_to_workflow_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name)
-             VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
-             RETURNING {columns}",
+            "INSERT INTO workflow_runs (workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING {WORKFLOW_RUN_COLUMNS}",
         )))
         .bind(workflow_id)
         .bind(snapshot)
@@ -748,6 +772,13 @@ where
         .bind(state.to_string())
         .bind(created_at)
         .bind(name)
+        .bind(provenance.source_kind.map(|value| value.as_str().to_string()))
+        .bind(provenance.actor_type.map(|value| value.as_str().to_string()))
+        .bind(provenance.actor_replica_id)
+        .bind(provenance.actor_display_name)
+        .bind(provenance.request_host)
+        .bind(provenance.request_ip)
+        .bind(provenance.metadata.to_string())
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_workflow_run(&row))
@@ -757,7 +788,7 @@ where
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE id = ?"))
+        let row = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?")))
             .bind(workflow_run_id)
             .fetch_optional(self.pool())
             .await?;
@@ -768,7 +799,7 @@ where
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE status = ? ORDER BY id"))
+        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE status = ? ORDER BY id")))
             .bind(status.as_str())
             .fetch_all(self.pool())
             .await?;
@@ -787,8 +818,6 @@ where
             return Ok(Vec::new());
         }
         let statuses = status_list(&statuses);
-        let columns = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name";
-
         // mysql has no UPDATE ... RETURNING and forbids a subquery on the table being updated, so
         // claim with a derived-table subselect, then read the rows back by the lease just written.
         if self.dialect() == SqlDialect::MySql {
@@ -813,7 +842,7 @@ where
                 .execute(self.pool())
                 .await?;
             let rows = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_runs WHERE scheduler_claimed_by = ? AND scheduler_claimed_until = ? ORDER BY id",
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE scheduler_claimed_by = ? AND scheduler_claimed_until = ? ORDER BY id",
             )))
             .bind(scheduler_id.as_str())
             .bind(lease_until.timestamp())
@@ -831,7 +860,7 @@ where
                  ORDER BY id
                  LIMIT ?{skip}
              )
-             RETURNING {columns}",
+             RETURNING {WORKFLOW_RUN_COLUMNS}",
             skip = queries::skip_locked(self.dialect()),
         ));
         let rows = sqlx::query(&sql)
@@ -880,7 +909,7 @@ where
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs ORDER BY id DESC")
+        let rows = sqlx::query(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY id DESC"))
             .fetch_all(self.pool())
             .await?;
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
@@ -890,7 +919,7 @@ where
         &self,
         workflow_id: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE workflow_id = ? ORDER BY id DESC"))
+        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE workflow_id = ? ORDER BY id DESC")))
             .bind(workflow_id)
             .fetch_all(self.pool())
             .await?;
@@ -903,12 +932,12 @@ where
         open_only: bool,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         let rows = if open_only {
-            sqlx::query(&self.render("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE name = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled') ORDER BY id DESC"))
+            sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled') ORDER BY id DESC")))
                 .bind(name)
                 .fetch_all(self.pool())
                 .await?
         } else {
-            sqlx::query(&self.render("SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name FROM workflow_runs WHERE name = ? ORDER BY id DESC"))
+            sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? ORDER BY id DESC")))
                 .bind(name)
                 .fetch_all(self.pool())
                 .await?
@@ -966,7 +995,6 @@ where
         node_id: String,
         parameters: Value,
     ) -> Result<WorkflowNodeRun, SendableError> {
-        let columns = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message";
         let empty_state = Value::Object(Default::default()).to_string();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
@@ -984,7 +1012,7 @@ where
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_node_runs WHERE id = LAST_INSERT_ID()"
+                "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = LAST_INSERT_ID()"
             )))
             .fetch_one(&mut *conn)
             .await?;
@@ -993,7 +1021,7 @@ where
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO workflow_node_runs (workflow_run_id, node_id, status, attempt, parameters, state, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING {columns}",
+             RETURNING {WORKFLOW_NODE_RUN_COLUMNS}",
         )))
         .bind(workflow_run_id)
         .bind(node_id)
@@ -1048,7 +1076,7 @@ where
         &self,
         workflow_run_id: i64,
     ) -> Result<Vec<WorkflowNodeRun>, SendableError> {
-        let rows = sqlx::query(&self.render("SELECT id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY id"))
+        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY id")))
             .bind(workflow_run_id)
             .fetch_all(self.pool())
             .await?;
@@ -1059,11 +1087,53 @@ where
         &self,
         workflow_node_run_id: i64,
     ) -> Result<Option<WorkflowNodeRun>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message FROM workflow_node_runs WHERE id = ?"))
+        let row = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = ?")))
             .bind(workflow_node_run_id)
             .fetch_optional(self.pool())
             .await?;
         Ok(row.map(|row| mappers::row_to_workflow_node_run(&row)))
+    }
+
+    async fn claim_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        claimed_at: DateTime<Utc>,
+    ) -> Result<(), SendableError> {
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE workflow_node_runs
+                     SET current_executor_replica_id = ?, executor_claimed_at = ?, executor_released_at = NULL
+                     WHERE id = ?",
+                ))
+                .bind(replica_id)
+                .bind(claimed_at.timestamp())
+                .bind(node_run_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn release_workflow_node_run_executor(
+        &self,
+        node_run_id: i64,
+        replica_id: i64,
+        released_at: DateTime<Utc>,
+    ) -> Result<(), SendableError> {
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE workflow_node_runs
+                     SET last_executor_replica_id = ?, current_executor_replica_id = NULL, executor_released_at = ?
+                     WHERE id = ?",
+                ))
+                .bind(replica_id)
+                .bind(released_at.timestamp())
+                .bind(node_run_id),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn append_workflow_node_run_chunk(
@@ -1709,12 +1779,306 @@ where
         Ok(row.map(|row| mappers::row_to_catalog_item(&row)))
     }
 
+    async fn register_replica(
+        &self,
+        request: ReplicaRegistrationRequest,
+        observed_ip: Option<String>,
+    ) -> Result<ReplicaRecord, SendableError> {
+        let now = Utc::now().timestamp();
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE replicas SET status = 'stale' WHERE instance_id = ? AND runtime_id <> ? AND status = 'live'",
+                ))
+                .bind(request.instance_id.as_str())
+                .bind(request.runtime_id.as_str()),
+            )
+            .await?;
+        if self.dialect() == SqlDialect::MySql {
+            let conflict = queries::on_conflict_update(
+                SqlDialect::MySql,
+                "instance_id, runtime_id",
+                &[
+                    "replica_type",
+                    "status",
+                    "display_name",
+                    "host",
+                    "port",
+                    "base_path",
+                    "observed_ip",
+                    "attributes",
+                    "last_heartbeat_at",
+                    "last_seen_at",
+                    "offline_at",
+                ],
+            );
+            sqlx::query(&self.render(&format!(
+                "INSERT INTO replicas (replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+                 VALUES (?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
+            )))
+            .bind(request.replica_type.as_str())
+            .bind(request.instance_id.as_str())
+            .bind(request.runtime_id.as_str())
+            .bind(request.display_name.clone())
+            .bind(request.host.clone())
+            .bind(request.port.map(i64::from))
+            .bind(request.base_path.clone())
+            .bind(observed_ip.clone())
+            .bind(request.attributes.to_string())
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {REPLICA_COLUMNS} FROM replicas WHERE instance_id = ? AND runtime_id = ?",
+            )))
+            .bind(request.instance_id)
+            .bind(request.runtime_id)
+            .fetch_one(self.pool())
+            .await?;
+            return mappers::row_to_replica(&row);
+        }
+
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO replicas (replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+             VALUES (?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(instance_id, runtime_id) DO UPDATE SET replica_type = excluded.replica_type, status = 'live', display_name = excluded.display_name, host = excluded.host, port = excluded.port, base_path = excluded.base_path, observed_ip = excluded.observed_ip, attributes = excluded.attributes, last_heartbeat_at = excluded.last_heartbeat_at, last_seen_at = excluded.last_seen_at, offline_at = NULL
+             RETURNING {REPLICA_COLUMNS}",
+        )))
+        .bind(request.replica_type.as_str())
+        .bind(request.instance_id)
+        .bind(request.runtime_id)
+        .bind(request.display_name)
+        .bind(request.host)
+        .bind(request.port.map(i64::from))
+        .bind(request.base_path)
+        .bind(observed_ip)
+        .bind(request.attributes.to_string())
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        mappers::row_to_replica(&row)
+    }
+
+    async fn heartbeat_replica(
+        &self,
+        replica_id: i64,
+        request: ReplicaHeartbeatRequest,
+        observed_ip: Option<String>,
+    ) -> Result<Option<ReplicaRecord>, SendableError> {
+        let now = Utc::now().timestamp();
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE replicas SET status = 'live', display_name = COALESCE(?, display_name), host = COALESCE(?, host), port = COALESCE(?, port), base_path = COALESCE(?, base_path), observed_ip = COALESCE(?, observed_ip), attributes = COALESCE(?, attributes), last_heartbeat_at = ?, last_seen_at = ?, offline_at = NULL
+                     WHERE replica_id = ? AND runtime_id = ?",
+                ))
+                .bind(request.display_name.clone())
+                .bind(request.host.clone())
+                .bind(request.port.map(i64::from))
+                .bind(request.base_path.clone())
+                .bind(observed_ip.clone())
+                .bind(Some(request.attributes.to_string()))
+                .bind(now)
+                .bind(now)
+                .bind(replica_id)
+                .bind(request.runtime_id.as_str()),
+            )
+            .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_COLUMNS} FROM replicas WHERE replica_id = ? AND runtime_id = ?",
+        )))
+        .bind(replica_id)
+        .bind(request.runtime_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref().map(mappers::row_to_replica).transpose()
+    }
+
+    async fn mark_replica_offline(
+        &self,
+        replica_id: i64,
+        runtime_id: String,
+    ) -> Result<Option<ReplicaRecord>, SendableError> {
+        let now = Utc::now().timestamp();
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE replicas SET status = 'offline', offline_at = ?, last_seen_at = ? WHERE replica_id = ? AND runtime_id = ?",
+                ))
+                .bind(now)
+                .bind(now)
+                .bind(replica_id)
+                .bind(runtime_id.as_str()),
+            )
+            .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_COLUMNS} FROM replicas WHERE replica_id = ? AND runtime_id = ?",
+        )))
+        .bind(replica_id)
+        .bind(runtime_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref().map(mappers::row_to_replica).transpose()
+    }
+
+    async fn fetch_replicas(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+        stale_before: DateTime<Utc>,
+    ) -> Result<Vec<ReplicaRecord>, SendableError> {
+        let rows = if let Some(replica_type) = replica_type {
+            sqlx::query(&self.render(&format!(
+                "SELECT replica_id, replica_type, instance_id, runtime_id,
+                        CASE
+                            WHEN status = 'offline' THEN 'offline'
+                            WHEN last_heartbeat_at <= ? THEN 'stale'
+                            ELSE 'live'
+                        END AS status,
+                        display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                 FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"
+            )))
+            .bind(stale_before.timestamp())
+            .bind(replica_type.as_str())
+            .fetch_all(self.pool())
+            .await?
+        } else {
+            sqlx::query(&self.render(
+                "SELECT replica_id, replica_type, instance_id, runtime_id,
+                        CASE
+                            WHEN status = 'offline' THEN 'offline'
+                            WHEN last_heartbeat_at <= ? THEN 'stale'
+                            ELSE 'live'
+                        END AS status,
+                        display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                 FROM replicas ORDER BY replica_type, instance_id, replica_id",
+            ))
+            .bind(stale_before.timestamp())
+            .fetch_all(self.pool())
+            .await?
+        };
+        let mut replicas = rows
+            .iter()
+            .map(mappers::row_to_replica)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(status) = status {
+            replicas.retain(|replica| replica.status == status);
+        }
+        Ok(replicas)
+    }
+
+    async fn upsert_replica_provider_registration(
+        &self,
+        replica_id: i64,
+        request: ReplicaProviderRegistrationRequest,
+    ) -> Result<ReplicaProviderRegistration, SendableError> {
+        let now = Utc::now().timestamp();
+        let provider_json = serde_json::to_string(&request.provider)?;
+        if self.dialect() == SqlDialect::MySql {
+            let conflict = queries::on_conflict_update(
+                SqlDialect::MySql,
+                "replica_id, provider_name",
+                &["provider_json", "last_registered_at", "last_heartbeat_at"],
+            );
+            sqlx::query(&self.render(&format!(
+                "INSERT INTO replica_provider_registrations (replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at)
+                 VALUES (?, ?, ?, ?, ?, ?) {conflict}",
+            )))
+            .bind(replica_id)
+            .bind(request.provider.name.as_str())
+            .bind(provider_json)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {REPLICA_PROVIDER_COLUMNS} FROM replica_provider_registrations WHERE replica_id = ? AND provider_name = ?",
+            )))
+            .bind(replica_id)
+            .bind(request.provider.name.as_str())
+            .fetch_one(self.pool())
+            .await?;
+            return mappers::row_to_replica_provider_registration(&row);
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO replica_provider_registrations (replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(replica_id, provider_name) DO UPDATE SET provider_json = excluded.provider_json, last_registered_at = excluded.last_registered_at, last_heartbeat_at = excluded.last_heartbeat_at
+             RETURNING {REPLICA_PROVIDER_COLUMNS}",
+        )))
+        .bind(replica_id)
+        .bind(request.provider.name.as_str())
+        .bind(provider_json)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        mappers::row_to_replica_provider_registration(&row)
+    }
+
+    async fn fetch_replica_provider_registrations(
+        &self,
+        replica_id: i64,
+    ) -> Result<Vec<ReplicaProviderRegistration>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_PROVIDER_COLUMNS} FROM replica_provider_registrations WHERE replica_id = ? ORDER BY provider_name"
+        )))
+        .bind(replica_id)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(mappers::row_to_replica_provider_registration)
+            .collect()
+    }
+
     async fn create_automation_record(
         &self,
         record_type: String,
         record: Value,
     ) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
+        let columns = "id, record_type, data, created_at, updated_at";
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO automation_records (record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(record_type)
+            .bind(json_opt_i64(&record, "workflow_run_id"))
+            .bind(json_opt_i64(&record, "external_item_id"))
+            .bind(json_opt_str(&record, "node_id"))
+            .bind(json_str(&record, "provider"))
+            .bind(json_str(&record, "resource_type"))
+            .bind(json_str(&record, "external_id"))
+            .bind(json_str(&record, "status"))
+            .bind(json_opt_str(&record, "title"))
+            .bind(json_opt_str(&record, "url"))
+            .bind(json_opt_str(&record, "body"))
+            .bind(json_opt_str(&record, "path"))
+            .bind(json_opt_str(&record, "prompt"))
+            .bind(json_opt_str(&record, "approval_type"))
+            .bind(json_opt_str(&record, "resolved_by"))
+            .bind(json_opt_i64(&record, "resolved_at"))
+            .bind(json_metadata(&record))
+            .bind(record.to_string())
+            .bind(now)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM automation_records WHERE id = LAST_INSERT_ID()"
+            )))
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_automation_record(&row));
+        }
         let row = sqlx::query(&self.render(
             "INSERT INTO automation_records (record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1752,6 +2116,42 @@ where
         record: Value,
     ) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
+        let columns = "id, record_type, data, created_at, updated_at";
+        if self.dialect() == SqlDialect::MySql {
+            sqlx::query(&self.render(
+                "UPDATE automation_records SET workflow_run_id = ?, external_item_id = ?, node_id = ?, provider = ?, resource_type = ?, external_id = ?, status = ?, title = ?, url = ?, body = ?, path = ?, prompt = ?, approval_type = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? AND record_type = ?",
+            ))
+            .bind(json_opt_i64(&record, "workflow_run_id"))
+            .bind(json_opt_i64(&record, "external_item_id"))
+            .bind(json_opt_str(&record, "node_id"))
+            .bind(json_str(&record, "provider"))
+            .bind(json_str(&record, "resource_type"))
+            .bind(json_str(&record, "external_id"))
+            .bind(json_str(&record, "status"))
+            .bind(json_opt_str(&record, "title"))
+            .bind(json_opt_str(&record, "url"))
+            .bind(json_opt_str(&record, "body"))
+            .bind(json_opt_str(&record, "path"))
+            .bind(json_opt_str(&record, "prompt"))
+            .bind(json_opt_str(&record, "approval_type"))
+            .bind(json_opt_str(&record, "resolved_by"))
+            .bind(json_opt_i64(&record, "resolved_at"))
+            .bind(json_metadata(&record))
+            .bind(record.to_string())
+            .bind(now)
+            .bind(record_id)
+            .bind(record_type.as_str())
+            .execute(self.pool())
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM automation_records WHERE id = ? AND record_type = ?",
+            )))
+            .bind(record_id)
+            .bind(record_type)
+            .fetch_one(self.pool())
+            .await?;
+            return Ok(mappers::row_to_automation_record(&row));
+        }
         let row = sqlx::query(&self.render(
             "UPDATE automation_records SET workflow_run_id = ?, external_item_id = ?, node_id = ?, provider = ?, resource_type = ?, external_id = ?, status = ?, title = ?, url = ?, body = ?, path = ?, prompt = ?, approval_type = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? AND record_type = ? RETURNING id, record_type, data, created_at, updated_at",
         ))

@@ -15,6 +15,7 @@ runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-broker = { path = "../runinator-broker" }
+runinator-api = { path = "../runinator-api" }
 
 [features]
 kafka = ["runinator-broker/kafka"]
