@@ -10,18 +10,16 @@ use runinator_models::{
     value::Value,
     workflow_state::{
         ApprovalRecord, ApprovalState, ConfigSummary, EmitOutput, JoinOutput, LoopFrame,
-        LoopOutput, MapFrame, MapOutput, ParallelFrame, ParallelOutput, RaceFrame, RaceOutput,
-        SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame, WaitElapsedOutput,
-        WaitState, WorkflowContextHeader, WorkflowRunState,
+        LoopOutput, MapChild, MapChildState, MapFrame, MapOutput, ParallelFrame, ParallelOutput,
+        RaceFrame, RaceOutput, SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame,
+        WaitElapsedOutput, WaitState, WorkflowContextHeader, WorkflowRunState,
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowRun,
         WorkflowStatus, WorkflowSubflowType,
     },
 };
-use runinator_workflows::{
-    append_completed_map_item, branch_policy_name, join_satisfied, latest_status, race_winner,
-};
+use runinator_workflows::{branch_policy_name, join_satisfied, latest_status, race_winner};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +34,7 @@ mod basic;
 mod context;
 mod control_flow;
 mod engine;
+mod map;
 mod subflow;
 mod transitions;
 mod wait;

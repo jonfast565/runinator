@@ -3,6 +3,7 @@ use runinator_models::{
         API_WORKFLOWS_IMPORT, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     providers::ProviderMetadata,
+    replicas::ReplicaListResponse,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
     workflows::{
@@ -605,6 +606,13 @@ pub async fn fetch_providers(
     state: State<'_, CommandCenterState>,
 ) -> CommandResult<Vec<ProviderMetadata>> {
     get_json(&state, "providers").await
+}
+
+#[tauri::command]
+pub async fn fetch_replicas(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<ReplicaListResponse> {
+    get_json(&state, "replicas").await
 }
 
 #[tauri::command]

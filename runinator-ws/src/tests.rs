@@ -695,8 +695,8 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
         None,
         Default::default(),
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     crate::repository::update_workflow_run_status(
         db,
         run.id,
@@ -1139,9 +1139,9 @@ async fn seed_run(db: &SqliteDb, name: &str, definition: Value) -> i64 {
         None,
         Default::default(),
     )
-        .await
-        .unwrap()
-        .id
+    .await
+    .unwrap()
+    .id
 }
 
 #[tokio::test]
@@ -1306,12 +1306,139 @@ async fn reducer_maps_items_through_target_node() {
 
     let run = run_to_completion(&db, run_id).await;
     assert_eq!(run.status, WorkflowStatus::Succeeded);
+    // each item runs the body in its own child run; the map gathers their outputs in order.
+    let outputs = map_node_outputs(&db, run_id).await;
+    assert_eq!(outputs.len(), 2);
+    let _ = std::fs::remove_file(path);
+}
+
+/// fetch the ordered per-item outputs recorded on a run's `map` node.
+async fn map_node_outputs(db: &SqliteDb, run_id: i64) -> Vec<Value> {
     let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
-    let each_succeeded = nodes
+    nodes
         .iter()
-        .filter(|n| n.node_id == "each" && n.status == WorkflowStatus::Succeeded)
-        .count();
-    assert_eq!(each_succeeded, 2);
+        .filter(|n| n.node_id == "map" && n.status == WorkflowStatus::Succeeded)
+        .find_map(|n| n.output_json.as_ref())
+        .and_then(|output| output.get("outputs"))
+        .and_then(|outputs| outputs.as_array().cloned())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn reducer_maps_items_concurrently_in_order() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "map-concurrent-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+                {
+                    "id": "map",
+                    "kind": "map",
+                    "parameters": {
+                        "items": [10, 20, 30, 40, 50],
+                        "target": { "$node": "each" },
+                        "concurrency": 3
+                    },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                {
+                    "id": "each",
+                    "kind": "emit",
+                    "parameters": { "data": { "$ref": { "node": "map", "output": ["item"] } } },
+                    "transitions": { "on_success": { "$node": "map" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    // five items fanned out three-at-a-time still gather in item order.
+    let outputs = map_node_outputs(&db, run_id).await;
+    let items: Vec<i64> = outputs
+        .iter()
+        .filter_map(|output| output.get("data").and_then(Value::as_i64))
+        .collect();
+    assert_eq!(items, vec![10, 20, 30, 40, 50]);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn reducer_map_fails_fast_when_item_fails() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "map-fail-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+                {
+                    "id": "map",
+                    "kind": "map",
+                    "parameters": {
+                        "items": [1, 2, 3],
+                        "target": { "$node": "work" },
+                        "concurrency": 3
+                    },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                {
+                    "id": "work",
+                    "kind": "action",
+                    "action": { "provider": "console", "function": "run" },
+                    "transitions": { "on_success": { "$node": "map" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    // drive the fan-out, then fail the first item's action and succeed the rest.
+    let mut failed_one = false;
+    let mut run = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .0;
+    for _ in 0..64 {
+        drain_ready_nodes(&db).await;
+        run = crate::repository::fetch_workflow_run(&db, run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .0;
+        if run.status.is_terminal() {
+            break;
+        }
+        let dispatches = db.fetch_pending_action_dispatches(50).await.unwrap();
+        if dispatches.is_empty() {
+            break;
+        }
+        for dispatch in dispatches {
+            db.mark_action_dispatch_published(dispatch.id)
+                .await
+                .unwrap();
+            let status = if failed_one {
+                WorkflowStatus::Succeeded
+            } else {
+                failed_one = true;
+                WorkflowStatus::Failed
+            };
+            let event = WorkflowResultEvent::status(&dispatch.command, status, None, None);
+            crate::repository::apply_workflow_result_event(&db, &event)
+                .await
+                .unwrap();
+        }
+    }
+    // a single failed item fails the whole map (no on_failure routing here).
+    assert_eq!(run.status, WorkflowStatus::Failed);
     let _ = std::fs::remove_file(path);
 }
 

@@ -41,6 +41,7 @@ const secrets = useSecretsStore();
 function countFor(tab: AppTab): number | null {
   if (tab === "Runs") return workflows.recentWorkflowRuns.length;
   if (tab === "Workflows") return workflows.workflows.length;
+  if (tab === "Replicas") return app.replicas.length;
   if (tab === "Secrets") return secrets.secrets.length;
   // Counts for resource tabs are only accurate for the currently-selected endpoint.
   if (resources.selectedResourceEndpoint === resourceEndpointFor(tab)) return resources.resourceRecords.length;

@@ -20,6 +20,22 @@ describe("service connection state", () => {
 
     app.initialLoading = false;
     app.setServiceUrl("http://127.0.0.1:3000");
+    app.setReplicaState(
+      [
+        {
+          replica_id: 1,
+          replica_type: "worker",
+          instance_id: "worker-1",
+          runtime_id: "runtime",
+          status: "live",
+          attributes: {},
+          first_seen_at: "",
+          last_heartbeat_at: "",
+          last_seen_at: ""
+        }
+      ],
+      { workers: 1, wakers: 0, webservices: 0 }
+    );
     expect(app.serviceBlocked).toBe(false);
 
     app.setServiceUrl(null);
@@ -29,6 +45,8 @@ describe("service connection state", () => {
     expect(app.serviceConnected).toBe(false);
     expect(app.serviceBlocked).toBe(true);
     expect(app.loadingMessage).toBe("Waiting for Runinator service...");
+    expect(app.replicas).toEqual([]);
+    expect(app.replicaCounts).toEqual({ workers: 0, wakers: 0, webservices: 0 });
   });
 
   it("clears stale backend-backed store state on disconnect", () => {

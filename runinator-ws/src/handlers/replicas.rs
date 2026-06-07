@@ -21,13 +21,7 @@ pub(crate) async fn register_replica<T: DatabaseImpl>(
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Json(request): Json<ReplicaRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::register_replica(
-        db.as_ref(),
-        request,
-        observed_ip(&headers, connect),
-    )
-    .await
-    {
+    match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect)).await {
         Ok(replica) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
         Err(err) => api_error(err.to_string()),
     }
@@ -49,7 +43,9 @@ pub(crate) async fn heartbeat_replica<T: DatabaseImpl>(
     .await
     {
         Ok(Some(replica)) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
-        Ok(None) => not_found(format!("Replica {replica_id} not found or runtime mismatch")),
+        Ok(None) => not_found(format!(
+            "Replica {replica_id} not found or runtime mismatch"
+        )),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -61,7 +57,9 @@ pub(crate) async fn mark_replica_offline<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::mark_replica_offline(db.as_ref(), replica_id, request.runtime_id).await {
         Ok(Some(replica)) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
-        Ok(None) => not_found(format!("Replica {replica_id} not found or runtime mismatch")),
+        Ok(None) => not_found(format!(
+            "Replica {replica_id} not found or runtime mismatch"
+        )),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -81,8 +79,7 @@ pub(crate) async fn upsert_replica_provider<T: DatabaseImpl>(
     Path(replica_id): Path<i64>,
     Json(request): Json<ReplicaProviderRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await
-    {
+    match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await {
         Ok(registration) => (
             StatusCode::OK,
             Json(ApiResponse::ReplicaProviderRegistration(registration)),

@@ -20,17 +20,21 @@
           <Icon name="plus" />
           <span>New Node</span>
         </button>
-        <div v-if="openMenu === 'nodes'" class="toolbar-menu-panel" role="menu">
+        <div v-if="openMenu === 'nodes'" class="toolbar-menu-panel node-menu-panel" role="menu">
           <button
             v-for="kind in workflows.workflowNodeKinds"
             :key="kind"
             type="button"
             role="menuitem"
-            class="btn btn-ghost"
-            :title="`Add ${kind} node`"
+            class="btn btn-ghost node-menu-item"
+            :title="workflowNodeKindInfo[kind]?.description"
             @click="addNode(kind)"
           >
-            {{ kind }}
+            <Icon :name="workflowNodeKindInfo[kind]?.icon ?? 'box'" :size="14" class="node-menu-icon" />
+            <span class="node-menu-text">
+              <span class="node-menu-label">{{ kind }}</span>
+              <span class="node-menu-desc">{{ workflowNodeKindInfo[kind]?.description }}</span>
+            </span>
           </button>
         </div>
       </div>
@@ -114,6 +118,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
+import { workflowNodeKindInfo } from "../../utils/workflows";
 import Icon from "../shared/Icon.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 
@@ -211,6 +216,44 @@ onBeforeUnmount(() => {
 
 .toolbar-menu-panel button:hover:not(:disabled) {
   background: #f1f5f9;
+}
+
+.node-menu-panel {
+  min-width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.node-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.node-menu-icon {
+  margin-top: 2px;
+  color: #3498db;
+}
+
+.node-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.node-menu-label {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.node-menu-desc {
+  color: #64748b;
+  font-size: 10.5px;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 </style>

@@ -25,8 +25,7 @@ pub use parameters::{
 };
 pub use refs::expand_workflow_refs;
 pub use run_state::{
-    append_completed_map_item, branch_policy_name, join_satisfied, latest_node_run, latest_status,
-    race_winner,
+    branch_policy_name, join_satisfied, latest_node_run, latest_status, race_winner,
 };
 pub use types::{
     ApprovalParameters, BranchPolicy, EmitParameters, JoinParameters, LoopParameters,

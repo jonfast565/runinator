@@ -138,21 +138,53 @@ pub struct ParallelFrame {
     pub remaining: Vec<String>,
 }
 
-/// `state.map` iteration bookkeeping.
+/// `state.map` bookkeeping. the parent map node owns the fan-out cursor
+/// (`next_index`/`in_flight`/`results`/`done`); a child run carries only the `item`/`index`
+/// it is bound to so the body can resolve the map variable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapFrame {
     pub node_id: String,
     pub target: String,
     #[serde(default)]
     pub items: Vec<Value>,
-    #[serde(default)]
-    pub index: i64,
-    #[serde(default)]
-    pub outputs: Vec<Value>,
     #[serde(default = "default_concurrency")]
     pub concurrency: i64,
+    /// parent: next item index to dispatch into a child run.
+    #[serde(default)]
+    pub next_index: i64,
+    /// parent: child runs each executing one item.
+    #[serde(default)]
+    pub in_flight: Vec<MapChild>,
+    /// parent: per-item body output, positional; `Null` until that item completes.
+    #[serde(default)]
+    pub results: Vec<Value>,
+    /// parent: completed item count.
+    #[serde(default)]
+    pub done: i64,
+    /// child: the item bound to this child run (also exposed via the seeded map node-run output).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<Value>,
+    /// child: the item index bound to this child run.
+    #[serde(default)]
+    pub index: i64,
+}
+
+/// one in-flight map item: the child run executing it and its item index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapChild {
+    pub index: i64,
+    pub child_run_id: i64,
+}
+
+/// child-run marker stored under `state.map_child`: where the body re-enters the map (and must
+/// stop), which item is bound, and the captured body output once the child finishes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapChildState {
+    pub stop_node: String,
+    pub index: i64,
+    pub item: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
 }
 
 fn default_concurrency() -> i64 {

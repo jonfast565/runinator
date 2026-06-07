@@ -788,10 +788,12 @@ where
         &self,
         workflow_run_id: i64,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?")))
-            .bind(workflow_run_id)
-            .fetch_optional(self.pool())
-            .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+        )))
+        .bind(workflow_run_id)
+        .fetch_optional(self.pool())
+        .await?;
         Ok(row.map(|row| mappers::row_to_workflow_run(&row)))
     }
 
@@ -799,10 +801,12 @@ where
         &self,
         status: WorkflowStatus,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE status = ? ORDER BY id")))
-            .bind(status.as_str())
-            .fetch_all(self.pool())
-            .await?;
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE status = ? ORDER BY id"
+        )))
+        .bind(status.as_str())
+        .fetch_all(self.pool())
+        .await?;
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
     }
 
@@ -909,9 +913,11 @@ where
     }
 
     async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY id DESC"))
-            .fetch_all(self.pool())
-            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY id DESC"
+        ))
+        .fetch_all(self.pool())
+        .await?;
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
     }
 
@@ -937,10 +943,12 @@ where
                 .fetch_all(self.pool())
                 .await?
         } else {
-            sqlx::query(&self.render(&format!("SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? ORDER BY id DESC")))
-                .bind(name)
-                .fetch_all(self.pool())
-                .await?
+            sqlx::query(&self.render(&format!(
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE name = ? ORDER BY id DESC"
+            )))
+            .bind(name)
+            .fetch_all(self.pool())
+            .await?
         };
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
     }
@@ -1087,10 +1095,12 @@ where
         &self,
         workflow_node_run_id: i64,
     ) -> Result<Option<WorkflowNodeRun>, SendableError> {
-        let row = sqlx::query(&self.render(&format!("SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = ?")))
-            .bind(workflow_node_run_id)
-            .fetch_optional(self.pool())
-            .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE id = ?"
+        )))
+        .bind(workflow_node_run_id)
+        .fetch_optional(self.pool())
+        .await?;
         Ok(row.map(|row| mappers::row_to_workflow_node_run(&row)))
     }
 

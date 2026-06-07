@@ -43,6 +43,40 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
   "subflow"
 ];
 
+// icon name and a one-line description for every node kind, used by node chrome and the palette.
+export interface WorkflowNodeKindInfo {
+  icon: string;
+  description: string;
+}
+
+export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo> = {
+  start: { icon: "play", description: "Entry point where the workflow run begins." },
+  action: { icon: "bolt", description: "Runs a task through a provider action." },
+  wait: { icon: "clock", description: "Pauses the run for a fixed delay or until a time." },
+  condition: { icon: "branch", description: "Routes down a branch based on a boolean expression." },
+  switch: { icon: "switch", description: "Routes to one of several cases by matching a value." },
+  approval: { icon: "approve", description: "Halts until a human approves or rejects." },
+  loop: { icon: "loop", description: "Repeats its target node while a condition holds." },
+  parallel: { icon: "parallel", description: "Fans out into branches that run concurrently." },
+  join: { icon: "join", description: "Waits for upstream branches to finish before continuing." },
+  try: { icon: "shield", description: "Guards a body node and catches failures with a handler." },
+  map: { icon: "grid", description: "Runs its target once for each item in a collection." },
+  race: { icon: "race", description: "Runs branches concurrently; the first to finish wins." },
+  emit: { icon: "emit", description: "Publishes an event without interrupting the flow." },
+  subflow: { icon: "workflow", description: "Invokes another workflow as a nested step." },
+  config: { icon: "gear", description: "Sets configuration values for downstream nodes." },
+  end: { icon: "flag", description: "Terminal node that completes the run successfully." },
+  fail: { icon: "alert", description: "Terminal node that ends the run as failed." }
+};
+
+export function workflowNodeKindIcon(kind: string): string {
+  return workflowNodeKindInfo[kind as WorkflowNodeKind]?.icon ?? "box";
+}
+
+export function workflowNodeKindDescription(kind: string): string {
+  return workflowNodeKindInfo[kind as WorkflowNodeKind]?.description ?? "";
+}
+
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = ["next", "on_success", "on_failure", "on_timeout", "on_reject"];
 export const workflowConnectionHandles: WorkflowConnectionHandle[] = ["top", "right", "bottom", "left"];
 export const workflowEdgeStyles: WorkflowEdgeStyle[] = ["bezier", "straight", "square"];

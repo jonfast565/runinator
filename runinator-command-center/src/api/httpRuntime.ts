@@ -200,6 +200,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => ({ workflow: arg(args, "workflow") })
   },
   fetch_providers: { method: "GET", path: () => "providers" },
+  fetch_replicas: { method: "GET", path: () => "replicas" },
   fetch_credentials: { method: "GET", path: () => "credentials" },
   save_credential: {
     method: "POST",

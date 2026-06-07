@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
+import { fetchReplicas as fetchReplicasApi } from "../api/commandCenterApi";
+import type { ReplicaCounts, ReplicaRecord } from "../types/models";
 import type { AppTab, NavSection } from "../types/app";
 
 export const navSections: NavSection[] = [
@@ -9,7 +11,8 @@ export const navSections: NavSection[] = [
       { tab: "Dev", label: "Dev", icon: "debug" },
       { tab: "Workflows", label: "Workflows", icon: "workflow" },
       { tab: "Runs", label: "Runs", icon: "runs" },
-      { tab: "Providers", label: "Providers", icon: "box" }
+      { tab: "Providers", label: "Providers", icon: "box" },
+      { tab: "Replicas", label: "Replicas", icon: "list" }
     ]
   },
   {
@@ -73,6 +76,8 @@ export const useAppStore = defineStore("app", () => {
   const searchQuery = ref("");
   const lastRefreshAt = ref<Date | null>(null);
   const eventStreamState = ref<EventStreamState>("disconnected");
+  const replicaCounts = ref<ReplicaCounts>({ workers: 0, wakers: 0, webservices: 0 });
+  const replicas = ref<ReplicaRecord[]>([]);
   let statusTimer = 0;
 
   const normalizedSearch = computed(() => searchQuery.value.trim().toLowerCase());
@@ -90,15 +95,17 @@ export const useAppStore = defineStore("app", () => {
   const eventStreamLabel = computed(() => {
     switch (eventStreamState.value) {
       case "connected":
-        return "RT";
+        return "Live updates";
       case "connecting":
-        return "Connecting";
+        return "Opening stream";
       case "fallback":
-        return "Polling";
+        return "Refresh mode";
       default:
-        return "Offline";
+        return "Updates paused";
     }
   });
+  const liveReplicaCount = computed(() => replicas.value.filter((replica) => replica.status === "live").length);
+  const hasReplicaState = computed(() => replicas.value.length > 0);
 
   function setStatus(text: string) {
     statusText.value = text;
@@ -123,11 +130,40 @@ export const useAppStore = defineStore("app", () => {
     serviceUrl.value = url;
     backendReachable.value = Boolean(url);
     if (url) errorText.value = "";
-    if (!url) eventStreamState.value = "disconnected";
+    if (!url) {
+      eventStreamState.value = "disconnected";
+      clearReplicaState();
+    }
   }
 
   function setEventStreamState(state: EventStreamState) {
     eventStreamState.value = state;
+  }
+
+  function setReplicaState(nextReplicas: ReplicaRecord[], nextCounts?: ReplicaCounts | null) {
+    replicas.value = [...nextReplicas];
+    replicaCounts.value = nextCounts ?? {
+      workers: nextReplicas.filter((replica) => replica.replica_type === "worker" && replica.status === "live").length,
+      wakers: nextReplicas.filter((replica) => replica.replica_type === "waker" && replica.status === "live").length,
+      webservices: nextReplicas.filter((replica) => replica.replica_type === "webservice" && replica.status === "live").length
+    };
+  }
+
+  function clearReplicaState() {
+    replicas.value = [];
+    replicaCounts.value = { workers: 0, wakers: 0, webservices: 0 };
+  }
+
+  async function refreshReplicas() {
+    const response = await fetchReplicasApi();
+    const nextReplicas = [...(response.replicas ?? [])].sort((left, right) => {
+      const typeOrder = replicaKindOrder(left.replica_type) - replicaKindOrder(right.replica_type);
+      if (typeOrder !== 0) return typeOrder;
+      const statusOrder = replicaStatusOrder(left.status) - replicaStatusOrder(right.status);
+      if (statusOrder !== 0) return statusOrder;
+      return replicaLabel(left).localeCompare(replicaLabel(right));
+    });
+    setReplicaState(nextReplicas, response.counts);
   }
 
   async function runOperation<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -163,6 +199,8 @@ export const useAppStore = defineStore("app", () => {
     searchQuery,
     lastRefreshAt,
     eventStreamState,
+    replicaCounts,
+    replicas,
     normalizedSearch,
     lastRefreshText,
     statusLine,
@@ -172,12 +210,47 @@ export const useAppStore = defineStore("app", () => {
     loadingMessage,
     isRealtime,
     eventStreamLabel,
+    liveReplicaCount,
+    hasReplicaState,
     setStatus,
     setError,
     markBackendReachable,
     setServiceUrl,
     setEventStreamState,
+    setReplicaState,
+    clearReplicaState,
+    refreshReplicas,
     runOperation,
     dispose
   };
 });
+
+function replicaKindOrder(kind: string) {
+  switch (kind) {
+    case "webservice":
+      return 0;
+    case "worker":
+      return 1;
+    case "waker":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function replicaStatusOrder(status: string) {
+  switch (status) {
+    case "live":
+      return 0;
+    case "stale":
+      return 1;
+    case "offline":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function replicaLabel(replica: { display_name?: string | null; host?: string | null; instance_id: string }) {
+  return replica.display_name || replica.host || replica.instance_id;
+}

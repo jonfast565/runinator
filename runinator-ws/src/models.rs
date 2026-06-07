@@ -4,9 +4,7 @@ use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
     notifications::Notification,
     providers::ProviderMetadata,
-    replicas::{
-        ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus,
-    },
+    replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::SettingKind,
     web::TaskResponse,

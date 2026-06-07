@@ -1,21 +1,30 @@
 <template>
   <div class="connection-cluster">
-    <span class="connection-pill" :class="{ connected: app.serviceConnected, waiting: !app.serviceConnected }">
-      {{ app.serviceConnected ? "Connected" : "Waiting for service" }}
-    </span>
-    <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
-    <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
-    <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
-      <span
-        v-for="proc in supervisor.status.value?.processes ?? []"
-        :key="proc.name"
-        class="supervisor-pill"
-        :class="pillClass(proc.status, supervisor.status.value?.stale_seconds)"
-        :title="processTooltip(proc)"
-      >
-        {{ proc.name }}
+    <div class="connection-summary">
+      <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
+      <span class="connection-pill" :class="{ connected: app.serviceConnected, waiting: !app.serviceConnected }">
+        {{ app.serviceConnected ? "Service up" : "Service pending" }}
       </span>
-      <span v-if="staleHint" class="supervisor-stale">{{ staleHint }}</span>
+      <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
+      <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
+      <span v-if="app.hasReplicaState" class="replica-summary">
+        {{ app.liveReplicaCount }}/{{ app.replicas.length }} healthy ·
+        {{ app.replicaCounts.webservices }} ws ·
+        {{ app.replicaCounts.workers }} workers ·
+        {{ app.replicaCounts.wakers }} wakers
+      </span>
+      <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
+        <span
+          v-for="proc in supervisor.status.value?.processes ?? []"
+          :key="proc.name"
+          class="supervisor-pill"
+          :class="pillClass(proc.status, supervisor.status.value?.stale_seconds)"
+          :title="processTooltip(proc)"
+        >
+          {{ proc.name }}
+        </span>
+        <span v-if="staleHint" class="supervisor-stale">{{ staleHint }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -68,14 +77,47 @@ function formatUptime(seconds: number): string {
 <style scoped>
 .connection-cluster {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.connection-summary {
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .connection-cluster .service-url {
-  max-width: 180px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.replica-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.stream-state {
+  white-space: nowrap;
+}
+
+.stream-state.connected {
+  background: #dff5e7;
+  color: #1f6f49;
+}
+
+.stream-state.connecting,
+.stream-state.fallback {
+  background: #fff2cc;
+  color: #84620d;
+}
+
+.stream-state.disconnected {
+  background: #eef2f6;
+  color: #66717e;
 }
 .supervisor-pills {
   display: flex;

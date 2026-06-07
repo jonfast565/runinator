@@ -214,6 +214,59 @@
     <template v-else-if="name === 'breakpoint'">
       <circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" />
     </template>
+    <template v-else-if="name === 'bolt'">
+      <polygon points="13,2 4,13 11,13 10,22 20,9 12,9" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'clock'">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12,7 12,12 16,14" />
+    </template>
+    <template v-else-if="name === 'branch'">
+      <path d="M12 3l9 9-9 9-9-9z" />
+    </template>
+    <template v-else-if="name === 'switch'">
+      <path d="M4 7h6l4-3h6" />
+      <path d="M4 12h16" />
+      <path d="M4 17h6l4 3h6" />
+    </template>
+    <template v-else-if="name === 'loop'">
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <polyline points="21,3 21,8 16,8" />
+    </template>
+    <template v-else-if="name === 'parallel'">
+      <line x1="4" y1="12" x2="12" y2="12" />
+      <path d="M12 12l4-6h4" />
+      <path d="M12 12l4 6h4" />
+    </template>
+    <template v-else-if="name === 'join'">
+      <path d="M4 6h4l4 6" />
+      <path d="M4 18h4l4-6" />
+      <line x1="12" y1="12" x2="20" y2="12" />
+    </template>
+    <template v-else-if="name === 'shield'">
+      <path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6z" />
+      <polyline points="9,12 11,14 15,10" />
+    </template>
+    <template v-else-if="name === 'grid'">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </template>
+    <template v-else-if="name === 'race'">
+      <circle cx="12" cy="13" r="7" />
+      <line x1="12" y1="13" x2="12" y2="9" />
+      <line x1="12" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="3" x2="15" y2="3" />
+      <line x1="12" y1="3" x2="12" y2="6" />
+    </template>
+    <template v-else-if="name === 'emit'">
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+      <path d="M8 8a5.6 5.6 0 0 0 0 8" />
+      <path d="M16 8a5.6 5.6 0 0 1 0 8" />
+      <path d="M5.5 5.5a9 9 0 0 0 0 13" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </template>
     <template v-else>
       <rect x="4" y="4" width="16" height="16" />
     </template>
@@ -231,7 +284,9 @@ export type IconName =
   | "file" | "folder" | "bell" | "settings" | "refresh" | "debug" | "mail"
   | "approve" | "reject" | "arrow-up" | "arrow-down"
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
-  | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint";
+  | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
+  | "bolt" | "clock" | "branch" | "switch" | "loop" | "parallel" | "join"
+  | "shield" | "grid" | "race" | "emit";
 
 const props = withDefaults(
   defineProps<{ name: IconName | string; size?: number | string; strokeWidth?: number | string }>(),

@@ -130,7 +130,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let app = build_router(pool, bus, broker);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
-    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>());
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    );
     info!("Webserver started at {}:{}", addr.ip(), addr.port());
 
     tokio::select! {

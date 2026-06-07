@@ -1163,3 +1163,154 @@ fn typed_validation_accepts_explicit_coalesce_defaults() {
     validate_workflow_with_providers(&wf, &[provider])
         .expect("coalesce resolves to the fallback-compatible type");
 }
+
+#[test]
+fn accepts_concurrent_map_with_single_action_body() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "work" }, "concurrency": 2 },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            {
+                "id": "work",
+                "kind": "action",
+                "action": { "provider": "console", "function": "run" },
+                "transitions": { "on_success": { "$node": "map" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow(&wf).expect("single-action concurrent map body is isolatable");
+}
+
+#[test]
+fn accepts_concurrent_map_with_multi_node_body() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "b", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow(&wf).expect("multi-node isolatable concurrent map body validates");
+}
+
+#[test]
+fn rejects_concurrent_map_when_body_entered_from_outside() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "b", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "intruder", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::MapConcurrencyBodyNotIsolatable { .. })
+    ));
+}
+
+#[test]
+fn rejects_concurrent_map_when_body_output_read_outside() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
+                "transitions": { "on_success": { "$node": "combine" } }
+            },
+            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            {
+                "id": "combine",
+                "kind": "emit",
+                "parameters": { "data": { "$ref": { "node": "a", "output": ["data"] } } },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::MapConcurrencyBodyNotIsolatable { .. })
+    ));
+}
+
+#[test]
+fn rejects_concurrent_map_with_terminal_node_in_body() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "stop" } } },
+            { "id": "stop", "kind": "end" },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::MapConcurrencyBodyNotIsolatable { .. })
+    ));
+}
+
+#[test]
+fn serial_map_skips_isolation_guardrail() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "map" } } },
+            {
+                "id": "map",
+                "kind": "map",
+                "parameters": { "items": [1, 2], "target": { "$node": "a" } },
+                "transitions": { "on_success": { "$node": "combine" } }
+            },
+            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            {
+                "id": "combine",
+                "kind": "emit",
+                "parameters": { "data": { "$ref": { "node": "a", "output": ["data"] } } },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    // without concurrency the body need not be isolatable; the guardrail does not apply.
+    validate_workflow(&wf).expect("serial map is unaffected by the isolation guardrail");
+}

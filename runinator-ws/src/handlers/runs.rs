@@ -8,9 +8,7 @@ use axum::{
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::orchestration::{ReadyNodeClaimRequest, ReadyNodeProcessRequest};
-use runinator_models::replicas::{
-    TriggerActorType, TriggerSourceKind, WorkflowRunProvenance,
-};
+use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
 

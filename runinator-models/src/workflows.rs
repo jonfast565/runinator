@@ -5,8 +5,8 @@ use std::ops::Deref;
 
 use crate::value::{Map, Value};
 
-use crate::types::RuninatorType;
 use crate::replicas::{TriggerActorType, TriggerSourceKind};
+use crate::types::RuninatorType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {

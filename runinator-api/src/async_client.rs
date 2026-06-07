@@ -5,17 +5,16 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        api_approval_command, api_run, api_run_artifacts, api_run_chunks,
-        api_replica_heartbeat, api_replica_offline, api_replica_providers,
-        api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
-        api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
-        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_node_run,
-        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
-        api_workflow_node_run_release, api_workflow_run,
-        api_workflow_run_command, api_workflow_run_nodes, api_workflow_run_rename,
-        api_workflow_run_replay, api_workflow_runs, api_workflow_trigger, API_REPLICAS,
+        api_approval_command, api_replica_heartbeat, api_replica_offline, api_replica_providers,
+        api_run, api_run_artifacts, api_run_chunks, api_scheduler_action_dispatch_failed,
+        api_scheduler_action_dispatch_published, api_scheduler_ready_node_process,
+        api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
+        api_workflow, api_workflow_node_run, api_workflow_node_run_artifacts,
+        api_workflow_node_run_chunks, api_workflow_node_run_claim, api_workflow_node_run_release,
+        api_workflow_run, api_workflow_run_command, api_workflow_run_nodes,
+        api_workflow_run_rename, api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_CREDENTIALS,
-        API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_RUNS,
+        API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS,
         API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
         API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
         API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
@@ -890,7 +889,9 @@ where
         replica_id: i64,
         claimed_at: DateTime<Utc>,
     ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_workflow_node_run_claim(node_run_id)).await?;
+        let url = self
+            .build_url(&api_workflow_node_run_claim(node_run_id))
+            .await?;
         let response = self
             .client
             .post(url.clone())

@@ -2,15 +2,14 @@ use std::{sync::Arc, time::Duration};
 
 use log::warn;
 use runinator_models::replicas::{
-    ReplicaHeartbeatRequest, ReplicaKind, ReplicaOfflineRequest,
-    ReplicaProviderRegistration, ReplicaProviderRegistrationRequest, ReplicaRecord,
-    ReplicaRegistrationRequest,
+    ReplicaHeartbeatRequest, ReplicaKind, ReplicaOfflineRequest, ReplicaProviderRegistration,
+    ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
 };
 use runinator_models::value::Value;
 use tokio::{sync::Notify, task::JoinHandle};
 use uuid::Uuid;
 
-use crate::{AsyncApiClient, Result, locator::ServiceLocator};
+use crate::{locator::ServiceLocator, AsyncApiClient, Result};
 
 #[derive(Debug, Clone)]
 pub struct ReplicaServiceConfig {

@@ -255,14 +255,8 @@ macro_rules! workflow_node_run_from_row {
                 .get::<Option<i64>, _>("finished_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
-            current_executor_replica_id: $row
-                .try_get("current_executor_replica_id")
-                .ok()
-                .flatten(),
-            last_executor_replica_id: $row
-                .try_get("last_executor_replica_id")
-                .ok()
-                .flatten(),
+            current_executor_replica_id: $row.try_get("current_executor_replica_id").ok().flatten(),
+            last_executor_replica_id: $row.try_get("last_executor_replica_id").ok().flatten(),
             executor_claimed_at: $row
                 .try_get::<Option<i64>, _>("executor_claimed_at")
                 .ok()

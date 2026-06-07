@@ -4,8 +4,6 @@
 // and shared by both the scheduler node engine and the web-service reducer. typed manipulation of the
 // `state` blob itself lives next to the frame types in `runinator-models::workflow_state`.
 
-use runinator_models::value::Value;
-use runinator_models::workflow_state::MapFrame;
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowStatus};
 
 use crate::types::BranchPolicy;
@@ -64,27 +62,6 @@ pub fn race_winner(
             .find(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
             .cloned(),
     }
-}
-
-/// append the target's latest succeeded output into the map frame's `outputs` and advance `index`.
-pub fn append_completed_map_item(
-    mut frame: MapFrame,
-    target: &str,
-    node_runs: &[WorkflowNodeRun],
-) -> MapFrame {
-    let Some(latest) = latest_node_run(node_runs, target) else {
-        return frame;
-    };
-    if latest.status != WorkflowStatus::Succeeded {
-        return frame;
-    }
-    if (frame.outputs.len() as i64) <= frame.index {
-        frame
-            .outputs
-            .push(latest.output_json.clone().unwrap_or(Value::Null));
-        frame.index += 1;
-    }
-    frame
 }
 
 /// stable name for a branch policy, recorded in join output.

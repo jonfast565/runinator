@@ -4,9 +4,25 @@
     <span v-if="data.locked" class="lock-dot" title="Locked node"><Icon name="lock" :size="11" /></span>
     <span v-if="data.skipped" class="skip-dot" :class="{ shifted: data.locked }" title="Skipped node"><Icon name="skip" :size="11" /></span>
     <div class="node-topline">
-      <span class="node-kind">{{ data.kind }}</span>
+      <span class="node-kind">
+        <Icon :name="kindIcon" :size="12" class="node-kind-icon" />
+        <span>{{ data.kind }}</span>
+      </span>
       <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
+      <span
+        v-if="kindDescription"
+        class="node-info"
+        role="note"
+        :aria-label="`${data.kind} node: ${kindDescription}`"
+        @click.stop
+      >
+        <Icon name="info" :size="12" />
+        <span class="node-info-pop" role="tooltip">
+          <strong>{{ data.kind }}</strong>
+          {{ kindDescription }}
+        </span>
+      </span>
       <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
     </div>
     <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
@@ -69,6 +85,7 @@ import { useResourcesStore } from "../../stores/resources";
 import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { statusClassForNode } from "../../utils/status";
+import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
 import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import Icon from "../shared/Icon.vue";
 
@@ -105,6 +122,8 @@ const inlineId = ref(props.id);
 const inlineValue = ref(props.data.inlineEdit?.value ?? "");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
+const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
+const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
 
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
@@ -306,11 +325,71 @@ async function resolveApproval(action: ApprovalAction) {
 .node-topline {
   display: flex;
   width: 100%;
+  align-items: center;
   justify-content: space-between;
   gap: 6px;
   color: #66717e;
   font-size: 10px;
   text-transform: uppercase;
+}
+
+.node-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.node-kind-icon {
+  color: #3498db;
+}
+
+.node-info {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  color: #94a3b8;
+  cursor: help;
+  pointer-events: all;
+}
+
+.node-info:hover {
+  color: #3498db;
+}
+
+.node-info-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: -4px;
+  z-index: 20;
+  width: 180px;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.node-info-pop strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #17202a;
+  text-transform: capitalize;
+}
+
+.node-info:hover .node-info-pop,
+.node-info:focus-within .node-info-pop {
+  opacity: 1;
+  visibility: visible;
 }
 
 .node-id {

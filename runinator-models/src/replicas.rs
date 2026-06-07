@@ -198,6 +198,7 @@ pub enum TriggerSourceKind {
     Replay,
     Debug,
     Subflow,
+    Map,
 }
 
 impl TriggerSourceKind {
@@ -211,6 +212,7 @@ impl TriggerSourceKind {
             Self::Replay => "replay",
             Self::Debug => "debug",
             Self::Subflow => "subflow",
+            Self::Map => "map",
         }
     }
 }
@@ -228,6 +230,7 @@ impl TryFrom<&str> for TriggerSourceKind {
             "replay" => Ok(Self::Replay),
             "debug" => Ok(Self::Debug),
             "subflow" => Ok(Self::Subflow),
+            "map" => Ok(Self::Map),
             other => Err(format!("Unknown trigger source kind '{other}'")),
         }
     }

@@ -351,6 +351,39 @@ export interface ServiceStatus {
   service_url: string | null;
 }
 
+export type ReplicaKind = "worker" | "waker" | "webservice";
+
+export type ReplicaStatus = "live" | "stale" | "offline";
+
+export interface ReplicaRecord {
+  replica_id: number;
+  replica_type: ReplicaKind;
+  instance_id: string;
+  runtime_id: string;
+  status: ReplicaStatus;
+  display_name?: string | null;
+  host?: string | null;
+  port?: number | null;
+  base_path?: string | null;
+  observed_ip?: string | null;
+  attributes: JsonRecord;
+  first_seen_at: string;
+  last_heartbeat_at: string;
+  last_seen_at: string;
+  offline_at?: string | null;
+}
+
+export interface ReplicaCounts {
+  workers: number;
+  wakers: number;
+  webservices: number;
+}
+
+export interface ReplicaListResponse {
+  counts: ReplicaCounts;
+  replicas: ReplicaRecord[];
+}
+
 export interface DevPackFile {
   path: string;
   kind: string;

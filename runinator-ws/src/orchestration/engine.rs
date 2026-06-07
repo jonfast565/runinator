@@ -1,6 +1,6 @@
 use super::context::runtime_context;
 use super::*;
-use super::{action, approval, basic, context, control_flow, subflow, transitions, wait};
+use super::{action, approval, basic, context, control_flow, map, subflow, transitions, wait};
 
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
 
@@ -75,6 +75,17 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         .active_node_id
         .clone()
         .unwrap_or_else(|| start.clone());
+    // a map fan-out child stops when its body returns to the controlling map node, instead of
+    // re-entering the map and fanning out again. finalize the child so it wakes the parent.
+    if let Some(child) = workflow_run
+        .state
+        .get("map_child")
+        .and_then(|value| MapChildState::from_wire_value(value).ok())
+        && active_node_id == child.stop_node
+    {
+        map::finalize_map_child(db, &workflow_run, child, &node_runs).await?;
+        return Ok(ReadyNodeDisposition::Complete);
+    }
     let Some(node) = nodes.iter().find(|node| node.id == active_node_id) else {
         db.update_workflow_run_status(
             workflow_run.id,
@@ -289,8 +300,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 .await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Map => {
-            control_flow::process_map_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
+            map::process_map_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Race => {
             control_flow::process_race_node(db, &workflow_run, node, latest.as_ref(), &node_runs)

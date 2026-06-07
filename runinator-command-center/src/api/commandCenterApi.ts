@@ -9,6 +9,7 @@ import type {
   DevPackTextFile,
   Notification,
   ProviderMetadata,
+  ReplicaListResponse,
   RunArtifact,
   RunChunk,
   RunSummary,
@@ -376,6 +377,10 @@ export async function fetchResourceRecords(endpoint: string) {
 
 export async function fetchProviders() {
   return command<ProviderMetadata[]>("fetch_providers");
+}
+
+export async function fetchReplicas() {
+  return command<ReplicaListResponse>("fetch_replicas");
 }
 
 export async function fetchCredentials() {

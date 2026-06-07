@@ -37,7 +37,9 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
     status: Option<ReplicaStatus>,
 ) -> Result<ReplicaListResponse, SendableError> {
     let stale_before = Utc::now() - Duration::seconds(REPLICA_STALE_SECONDS);
-    let replicas = db.fetch_replicas(replica_type, status, stale_before).await?;
+    let replicas = db
+        .fetch_replicas(replica_type, status, stale_before)
+        .await?;
     let counts = runinator_models::replicas::ReplicaCounts {
         workers: replicas
             .iter()

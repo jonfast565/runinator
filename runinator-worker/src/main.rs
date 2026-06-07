@@ -8,12 +8,12 @@ mod secrets;
 
 use std::{collections::HashMap, env, ffi::OsString, sync::Arc, time::Duration};
 
+use chrono::Utc;
 use config::parse_config;
 use log::{error, info, warn};
-use chrono::Utc;
 use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator,
-    register_replica_provider, register_replica_session, spawn_replica_heartbeat,
+    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_provider,
+    register_replica_session, spawn_replica_heartbeat,
 };
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;

@@ -4,6 +4,7 @@
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
     <ProvidersView v-if="app.activeTab === 'Providers'" />
+    <ReplicasView v-if="app.activeTab === 'Replicas'" />
     <ApprovalsView v-if="app.activeTab === 'Approvals'" />
     <ArtifactsView v-if="app.activeTab === 'Artifacts'" />
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
@@ -33,6 +34,7 @@ import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
+import ReplicasView from "./views/ReplicasView.vue";
 import DevView from "./views/DevView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
 import ApprovalsView from "./views/ApprovalsView.vue";
@@ -57,6 +59,7 @@ useEventStream();
 
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
+let replicaRefreshTimer = 0;
 
 onMounted(async () => {
   unlistenUrl = await listenTauri<{ service_url?: string | null } | null>("service-url-changed", (event) => {
@@ -103,6 +106,10 @@ onMounted(async () => {
     app.initialLoading = false;
   }
   await refreshServiceStatus();
+  replicaRefreshTimer = window.setInterval(() => {
+    if (!app.serviceUrl) return;
+    void app.refreshReplicas().catch(() => {});
+  }, 15000);
 });
 
 watch(
@@ -110,6 +117,7 @@ watch(
   (tab) => {
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
+    if (tab === "Replicas") app.refreshReplicas().catch(() => {});
     if (tab === "Secrets") secrets.refreshSecrets();
     if (tab === "Artifacts") artifacts.refreshArtifacts();
     if (tab === "Notifications") notifications.refreshNotifications();
@@ -153,6 +161,7 @@ function clearBackendState() {
   notifications.clearNotifications();
   secrets.clearSecrets();
   providers.clearProviders();
+  app.clearReplicaState();
 }
 
 async function refreshBackendState(refreshProviders: boolean) {
@@ -162,6 +171,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     resources.refreshResources().catch(() => {}),
     notifications.refreshNotifications().catch(() => {}),
     secrets.refreshSecrets().catch(() => {}),
+    app.refreshReplicas().catch(() => {}),
     refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()
   ]);
 }
@@ -181,6 +191,7 @@ async function waitForConcreteServiceUrl(timeoutMs = 5000) {
 onBeforeUnmount(() => {
   unlistenUrl?.();
   unlistenError?.();
+  window.clearInterval(replicaRefreshTimer);
   app.dispose();
 });
 </script>

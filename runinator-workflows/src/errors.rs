@@ -59,6 +59,10 @@ pub enum WorkflowValidationError {
     TypeError(String),
     #[error("WORKFLOW022 - workflow type validation failed: {}", .0.message)]
     TypeDiagnostic(WorkflowTypeDiagnostic),
+    #[error(
+        "WORKFLOW023 - map node '{node}' with concurrency > 1 requires an isolatable body: {reason}"
+    )]
+    MapConcurrencyBodyNotIsolatable { node: String, reason: String },
 }
 
 // numbered error dictionary for the workflow validator.
@@ -169,6 +173,11 @@ pub const TYPE_DIAGNOSTIC: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.type_diagnostic",
     "Type validation failed",
 );
+pub const MAP_CONCURRENCY_BODY_NOT_ISOLATABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW023",
+    "workflow.map_concurrency_body_not_isolatable",
+    "Map node with concurrency > 1 requires an isolatable body",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
@@ -193,6 +202,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_SUBFLOW_ID,
     TYPE_ERROR,
     TYPE_DIAGNOSTIC,
+    MAP_CONCURRENCY_BODY_NOT_ISOLATABLE,
 ];
 
 impl EngineErrors for WorkflowValidationError {

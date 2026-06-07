@@ -9,7 +9,6 @@
     </div>
     <div class="actions">
       <ConnectionStrip />
-      <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
       <button
         v-if="!app.isRealtime"
         class="btn"
@@ -59,6 +58,8 @@ const activeSubtitle = computed(() => {
       return workflows.selectedWorkflowRunId ? `Run ${workflows.selectedWorkflowRunId}` : "Selected workflow runs";
     case "Workflows":
       return workflows.selectedWorkflow?.name ?? `${workflows.workflows.length} workflows`;
+    case "Replicas":
+      return `${app.liveReplicaCount}/${app.replicas.length} healthy across ${app.replicaCounts.webservices} ws, ${app.replicaCounts.workers} workers, ${app.replicaCounts.wakers} wakers`;
     case "Secrets":
       return `${secrets.secrets.length} secrets`;
     case "Artifacts":
@@ -70,26 +71,3 @@ const activeSubtitle = computed(() => {
   }
 });
 </script>
-
-<style scoped>
-.stream-state {
-  align-self: center;
-  white-space: nowrap;
-}
-
-.stream-state.connected {
-  background: #dff5e7;
-  color: #1f6f49;
-}
-
-.stream-state.connecting,
-.stream-state.fallback {
-  background: #fff2cc;
-  color: #84620d;
-}
-
-.stream-state.disconnected {
-  background: #eef2f6;
-  color: #66717e;
-}
-</style>
