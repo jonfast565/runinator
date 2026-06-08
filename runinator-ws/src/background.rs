@@ -22,6 +22,7 @@ const CLAIM_LIMIT: i64 = 100;
 const ACTION_DISPATCH_LEASE_SECONDS: i64 = 60;
 const MAX_INGRESS_ATTEMPTS: u32 = 3;
 const INGRESS_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+const REPLICA_REAP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
 /// (the durable backstop). the broker dedupes wakes already in flight.
@@ -43,6 +44,27 @@ pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
                 return;
             }
             _ = tokio::time::sleep(WAKE_PUBLISH_INTERVAL) => {}
+        }
+    }
+}
+
+/// periodically mark replicas offline once they have gone quiet past the inactivity window. the
+/// reducer-facing views derive stale state per fetch; this loop is the durable cleanup that retires
+/// replicas that never sent an offline notice (e.g. crashed or evicted pods).
+pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+    info!("Replica reaper started");
+    loop {
+        match repository::reap_inactive_replicas(db.as_ref()).await {
+            Ok(count) if count > 0 => info!("Reaped {} inactive replica(s) to offline", count),
+            Ok(_) => {}
+            Err(err) => error!("Replica reaper iteration failed: {}", err),
+        }
+        tokio::select! {
+            _ = shutdown.notified() => {
+                info!("Replica reaper shutting down");
+                return;
+            }
+            _ = tokio::time::sleep(REPLICA_REAP_INTERVAL) => {}
         }
     }
 }

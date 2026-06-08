@@ -17,6 +17,7 @@ pub struct Config {
     pub shutdown_grace_seconds: u64,
     pub api_base_url: String,
     pub worker_id: Uuid,
+    pub advertise_host: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -57,14 +58,21 @@ struct CliArgs {
 
     #[arg(long)]
     worker_id: Option<String>,
+
+    // stable address other components display for this worker; in k8s this is the headless-service
+    // dns name so it survives pod ip churn.
+    #[arg(long)]
+    advertise_host: Option<String>,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {
     let args = CliArgs::parse();
+    // a non-uuid identity (e.g. a stable k8s pod name) is folded into a deterministic uuid so the
+    // same pod keeps the same replica identity across restarts; a fresh uuid is minted only when no
+    // identity is supplied.
     let worker_id = match args.worker_id {
-        Some(ref value) if !value.is_empty() => {
-            Uuid::parse_str(value).map_err(|err| -> SendableError { Box::new(err) })?
-        }
+        Some(ref value) if !value.is_empty() => Uuid::parse_str(value)
+            .unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_DNS, value.as_bytes())),
         _ => Uuid::new_v4(),
     };
 
@@ -89,6 +97,9 @@ pub fn parse_config() -> Result<Config, SendableError> {
         shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
         api_base_url: args.api_base_url,
         worker_id,
+        advertise_host: args
+            .advertise_host
+            .filter(|value| !value.trim().is_empty()),
     })
 }
 

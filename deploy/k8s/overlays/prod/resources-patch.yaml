@@ -37,7 +37,7 @@ spec:
               memory: "512Mi"
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: runinator-worker
   namespace: runinator

@@ -6,6 +6,8 @@ use runinator_models::replicas::{
 use uuid::Uuid;
 
 const REPLICA_STALE_SECONDS: i64 = 30;
+// inactivity window after which a stale replica is reaped to offline.
+pub(crate) const REPLICA_REAP_SECONDS: i64 = 600;
 
 pub async fn register_replica<T: DatabaseImpl>(
     db: &T,
@@ -30,6 +32,11 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
     runtime_id: String,
 ) -> Result<Option<ReplicaRecord>, SendableError> {
     db.mark_replica_offline(replica_id, runtime_id).await
+}
+
+pub async fn reap_inactive_replicas<T: DatabaseImpl>(db: &T) -> Result<u64, SendableError> {
+    let cutoff = Utc::now() - Duration::seconds(REPLICA_REAP_SECONDS);
+    db.reap_inactive_replicas(cutoff).await
 }
 
 pub async fn fetch_replicas<T: DatabaseImpl>(

@@ -1,10 +1,28 @@
-apiVersion: apps/v1
-kind: Deployment
+# Workers run as a StatefulSet behind a headless Service so each pod keeps a stable ordinal identity
+# (runinator-worker-0, -1, ...) and DNS name across restarts/reschedules, rather than the random
+# hash + churning IP a Deployment hands out. The stable pod name feeds both the broker client id and
+# a deterministic worker id, so a restarted pod reclaims its prior replica identity instead of
+# leaving an orphan row (the ws replica reaper retires any that truly disappear on scale-down).
+apiVersion: v1
+kind: Service
 metadata:
   name: runinator-worker
   namespace: runinator
 spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: runinator-worker
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  serviceName: runinator-worker
   replicas: 2
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: runinator-worker
@@ -38,6 +56,10 @@ spec:
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
             - "--broker-client-id"
             - "runinator-worker-$(POD_NAME)"
+            - "--worker-id"
+            - "$(POD_NAME)"
+            - "--advertise-host"
+            - "$(POD_NAME).runinator-worker.$(POD_NAMESPACE).svc.cluster.local"
             - "--max-concurrent-actions"
             - "4"
             - "--api-base-url"
@@ -52,6 +74,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - name: plugins
               mountPath: /opt/runinator/plugins

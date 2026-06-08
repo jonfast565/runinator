@@ -1977,6 +1977,18 @@ where
         row.as_ref().map(mappers::row_to_replica).transpose()
     }
 
+    async fn reap_inactive_replicas(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(&self.render(
+            "UPDATE replicas SET status = 'offline', offline_at = ? WHERE last_heartbeat_at <= ? AND status <> 'offline'",
+        ))
+        .bind(now)
+        .bind(cutoff.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected())
+    }
+
     async fn fetch_replicas(
         &self,
         replica_type: Option<ReplicaKind>,

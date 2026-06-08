@@ -6,14 +6,17 @@
     { "include": "#comments" },
     { "include": "#annotations" },
     { "include": "#strings" },
+    { "include": "#type-declaration" },
     { "include": "#reference-roots" },
+    { "include": "#action-call" },
     { "include": "#declaration-keywords" },
     { "include": "#control-keywords" },
+    { "include": "#modifier-keywords" },
     { "include": "#operator-keywords" },
     { "include": "#constants" },
     { "include": "#transitions" },
-    { "include": "#action-call" },
     { "include": "#numbers" },
+    { "include": "#properties" },
     { "include": "#references" },
     { "include": "#operators" }
   ],
@@ -56,13 +59,25 @@
         }
       ]
     },
+    "type-declaration": {
+      "comment": "the name introduced by a `type Foo` / `type Ids = ...` declaration.",
+      "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.wdl" },
+        "2": { "name": "entity.name.type.wdl" }
+      }
+    },
     "declaration-keywords": {
       "name": "keyword.declaration.wdl",
-      "match": "\\b(workflow|input|trigger|cron|alias|start|let|spawn|call|subflow|secret|config)\\b"
+      "match": "\\b(workflow|input|trigger|cron|alias|start|let|type|set|secret|config)\\b"
     },
     "control-keywords": {
       "name": "keyword.control.wdl",
-      "match": "\\b(if|else|for|in|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|initial|emit|approve|set|fail|with|as|type|name|meta|detached|reuse|limit|concurrency|none)\\b"
+      "match": "\\b(if|else|for|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|emit|approve|fail|subflow|spawn|call|compute|return|goto)\\b"
+    },
+    "modifier-keywords": {
+      "name": "storage.modifier.wdl",
+      "match": "\\b(with|as|initial|limit|concurrency|detached|reuse|disabled|blackout|to|name|meta)\\b"
     },
     "operator-keywords": {
       "name": "keyword.operator.word.wdl",
@@ -72,6 +87,7 @@
       "patterns": [
         { "name": "constant.language.boolean.wdl", "match": "\\b(true|false)\\b" },
         { "name": "constant.language.null.wdl", "match": "\\bnull\\b" },
+        { "name": "constant.language.none.wdl", "match": "\\bnone\\b" },
         {
           "name": "support.function.builtin.wdl",
           "match": "\\b(string|json)\\b(?=\\s*\\()"
@@ -114,6 +130,11 @@
     "references": {
       "name": "variable.language.reference.wdl",
       "match": "\\b(input|config|secret|run|workflow|loop|state|item)\\b"
+    },
+    "properties": {
+      "comment": "a path member following a dot (input.foo.bar) — colored after reference-roots/action-call.",
+      "name": "variable.other.property.wdl",
+      "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*"
     },
     "operators": {
       "name": "keyword.operator.wdl",

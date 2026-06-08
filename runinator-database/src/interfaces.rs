@@ -439,6 +439,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         runtime_id: String,
     ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
 
+    /// Mark replicas offline that have not sent a heartbeat since the cutoff. returns the count
+    /// reaped so callers can log activity.
+    fn reap_inactive_replicas(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
     fn fetch_replicas(
         &self,

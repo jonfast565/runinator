@@ -201,7 +201,7 @@ async fn register_worker_replica(
             replica_type: ReplicaKind::Worker,
             instance_id: config.worker_id.to_string(),
             display_name: Some(format!("worker-{}", config.worker_id)),
-            host: None,
+            host: config.advertise_host.clone(),
             port: None,
             base_path: None,
             attributes: runinator_models::json!({

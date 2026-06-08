@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::background::{
     instance_id, run_action_dispatch_publisher, run_event_consumer, run_ingress_consumer,
-    run_trigger_loop, run_wake_publisher,
+    run_replica_reaper, run_trigger_loop, run_wake_publisher,
 };
 use crate::events::{AppEvent, EventBus};
 use crate::handlers::catalog::seed_builtin_catalog;
@@ -126,6 +126,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
             instance.clone(),
             notify.clone(),
         )),
+        tokio::spawn(run_replica_reaper(pool.clone(), notify.clone())),
     ];
     let app = build_router(pool, bus, broker);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
