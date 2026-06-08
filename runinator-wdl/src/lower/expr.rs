@@ -50,6 +50,22 @@ impl Lowerer {
             ExprKind::Coalesce(parts) => self.wrap_array("$coalesce", parts),
             ExprKind::ToString(inner) => self.wrap_unary("$to_string", inner),
             ExprKind::ToJson(inner) => self.wrap_unary("$to_json_string", inner),
+            ExprKind::Add(parts) => self.wrap_array("$add", parts),
+            ExprKind::Sub(parts) => self.wrap_array("$sub", parts),
+            ExprKind::Mul(parts) => self.wrap_array("$mul", parts),
+            ExprKind::Div(parts) => self.wrap_array("$div", parts),
+            ExprKind::Mod(parts) => self.wrap_array("$mod", parts),
+            ExprKind::Neg(inner) => self.wrap_unary("$neg", inner),
+            ExprKind::Call { name, args } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.lower_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut map = Map::new();
+                map.insert("$call".into(), Value::String(name.clone()));
+                map.insert("args".into(), Value::Array(args));
+                Ok(Value::Object(map))
+            }
             // spreads are expanded by desugaring before lowering; one reaching here is a bug.
             ExprKind::Spread(name) => {
                 Err(WdlError::lower(format!("unexpanded spread '...{name}'")))
@@ -100,6 +116,14 @@ impl Lowerer {
             _ => return Err(WdlError::lower("path must start with an identifier")),
         };
         let rest = &segs[1..];
+
+        // a compute-block local resolves to the `let` slot: the whole path (including the head
+        // name) becomes the lookup key list.
+        if self.compute_locals.contains(&head) {
+            let mut inner = Map::new();
+            inner.insert("let".into(), path_array(segs));
+            return Ok(single_key("$ref", Value::Object(inner)));
+        }
 
         // loop/map variables remap to the controlling node's `item` output.
         if let Some(binding) = self.scope.iter().rev().find(|b| b.name == head) {

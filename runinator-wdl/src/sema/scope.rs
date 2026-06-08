@@ -127,6 +127,9 @@ fn resolve_stmt(
                 resolve_expr(value, symbols, scope, diagnostics);
             }
         }
+        StmtKind::Compute(compute) => {
+            resolve_compute(compute, symbols, scope, span, diagnostics);
+        }
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = &subflow.run_name {
                 resolve_expr(run_name, symbols, scope, diagnostics);
@@ -271,6 +274,79 @@ fn resolve_target(
     }
 }
 
+/// resolve a `compute { }` block: thread block-scoped locals through `let`, reject duplicate
+/// locals, and enforce the purity rule that an effectful (`exec`) block may not use `goto`.
+fn resolve_compute(
+    compute: &crate::ast::ComputeStmt,
+    symbols: &Symbols,
+    scope: &mut Vec<String>,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let effectful = crate::purity::block_is_effectful(&compute.body);
+    let base = scope.len();
+    resolve_compute_block(&compute.body, symbols, scope, span, diagnostics, effectful);
+    scope.truncate(base);
+}
+
+fn resolve_compute_block(
+    body: &[crate::ast::ComputeLine],
+    symbols: &Symbols,
+    scope: &mut Vec<String>,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+    effectful: bool,
+) {
+    use crate::ast::ComputeLine;
+    // locals introduced at this block level, for duplicate detection.
+    let block_start = scope.len();
+    for line in body {
+        match line {
+            ComputeLine::Let { name, value, .. } => {
+                resolve_expr(value, symbols, scope, diagnostics);
+                if scope[block_start..].iter().any(|n| n == name) {
+                    diagnostics.push(Diagnostic::error(
+                        value.span,
+                        format!("compute local '{name}' is already defined"),
+                    ));
+                }
+                scope.push(name.clone());
+            }
+            ComputeLine::Return(value) | ComputeLine::Expr(value) => {
+                resolve_expr(value, symbols, scope, diagnostics);
+            }
+            ComputeLine::Goto(target) => {
+                if effectful {
+                    diagnostics.push(Diagnostic::error(
+                        span,
+                        "goto is not allowed in an effectful compute block (it dispatches to a worker)",
+                    ));
+                }
+                if let crate::ast::Target::Label(label) = target
+                    && !symbols.labels.contains(label)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        span,
+                        format!("compute goto references unknown label '{label}'"),
+                    ));
+                }
+            }
+            ComputeLine::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                resolve_cond(cond, symbols, scope, diagnostics);
+                let branch_start = scope.len();
+                resolve_compute_block(then_branch, symbols, scope, span, diagnostics, effectful);
+                scope.truncate(branch_start);
+                resolve_compute_block(else_branch, symbols, scope, span, diagnostics, effectful);
+                scope.truncate(branch_start);
+            }
+        }
+    }
+}
+
 fn resolve_cond(
     cond: &Cond,
     symbols: &Symbols,
@@ -323,8 +399,45 @@ fn resolve_expr(
                 resolve_expr(part, symbols, scope, diagnostics);
             }
         }
-        ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
+        ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             resolve_expr(inner, symbols, scope, diagnostics);
+        }
+        ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => {
+            for part in parts {
+                resolve_expr(part, symbols, scope, diagnostics);
+            }
+        }
+        ExprKind::Call { name, args } => {
+            // validate the call against the shared intrinsic vocabulary: unknown names (typos) and
+            // obvious arity mistakes are reported here rather than failing late at the worker.
+            if !runinator_workflows::is_known_intrinsic(name) {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!("unknown intrinsic '{name}'"),
+                ));
+            } else if let Some((min, max)) = runinator_workflows::intrinsic_arity(name)
+                && (args.len() < min || args.len() > max)
+            {
+                let expected = if min == max {
+                    format!("{min}")
+                } else {
+                    format!("{min}-{max}")
+                };
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!(
+                        "intrinsic '{name}' expects {expected} argument(s), got {}",
+                        args.len()
+                    ),
+                ));
+            }
+            for arg in args {
+                resolve_expr(arg, symbols, scope, diagnostics);
+            }
         }
         // spreads are expanded before sema runs; nothing to resolve.
         ExprKind::Spread(_) => {}
@@ -374,8 +487,22 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                 resolve_default_expr(part, diagnostics);
             }
         }
-        ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
+        ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             resolve_default_expr(inner, diagnostics);
+        }
+        ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => {
+            for part in parts {
+                resolve_default_expr(part, diagnostics);
+            }
+        }
+        ExprKind::Call { args, .. } => {
+            for arg in args {
+                resolve_default_expr(arg, diagnostics);
+            }
         }
         ExprKind::Spread(_) => {}
     }

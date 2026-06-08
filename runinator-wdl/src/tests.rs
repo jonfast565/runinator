@@ -1172,6 +1172,267 @@ fn warns_on_unreachable_after_fail() {
 }
 
 #[test]
+fn compute_pure_lowers_to_std_run() {
+    let src = r#"
+        workflow "Compute" v1 {
+            compute {
+                let total = prev.cart.subtotal + prev.cart.tax
+                if total <= 0 { goto fail }
+                return { total: total }
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["provider"], "std");
+    assert_eq!(node["action"]["function"], "run");
+    assert!(node["action"]["configuration"]["program"].is_array());
+    assert_round_trips(src);
+}
+
+#[test]
+fn compute_effectful_lowers_to_std_exec() {
+    let src = r#"
+        workflow "Fetch" v1 {
+            compute {
+                let resp = http_get(input.url)
+                return { status: resp.status }
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["function"], "exec");
+    assert_round_trips(src);
+}
+
+#[test]
+fn compute_rejects_goto_in_effectful_block() {
+    let src = r#"
+        workflow "Bad" v1 {
+            compute {
+                let resp = http_get(input.url)
+                if resp.status > 0 { goto fail }
+                return resp
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("goto"), "unexpected message: {message}");
+}
+
+#[test]
+fn compute_rejects_unknown_intrinsic() {
+    let src = r#"
+        workflow "Typo" v1 {
+            compute { return addd(1, 2) }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("unknown intrinsic"), "got: {message}");
+}
+
+#[test]
+fn compute_rejects_bad_arity() {
+    let src = r#"
+        workflow "Arity" v1 {
+            compute { return add(1) }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("argument"), "got: {message}");
+}
+
+#[test]
+fn compute_rejects_let_type_mismatch() {
+    let src = r#"
+        workflow "Mismatch" v1 {
+            compute { let x: integer = "hello" return x }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("integer"), "got: {message}");
+}
+
+#[test]
+fn compute_rejects_bad_argument_type() {
+    let src = r#"
+        workflow "BadArg" v1 {
+            compute { return add("a", 1) }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("argument"), "got: {message}");
+}
+
+#[test]
+fn compute_accepts_well_typed_program() {
+    // a correctly typed program with annotations and a call result flows cleanly.
+    let src = r#"
+        workflow "Typed" v1 {
+            input { a: integer, b: integer }
+            compute {
+                let sum: number = add(input.a, input.b)
+                return sum
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn compute_secret_reference_forces_exec() {
+    let src = r#"
+        workflow "Sec" v1 {
+            compute { return secret.api.key }
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap();
+    // a secret reference can only resolve at the worker, so the block must be exec.
+    assert_eq!(node["action"]["function"], "exec");
+}
+
+#[test]
+fn compute_condition_allows_arithmetic_and_calls() {
+    // arithmetic in a pure condition, and a call (which makes the block exec).
+    let pure_src = r#"
+        workflow "PureCond" v1 {
+            compute {
+                let total = input.a + input.b
+                if total * 2 > 100 { goto fail }
+                return total
+            }
+        }
+    "#;
+    assert_round_trips(pure_src);
+
+    let call_src = r#"
+        workflow "CallCond" v1 {
+            compute {
+                if len(input.items) > 0 {
+                    return http_get(input.url)
+                }
+                return null
+            }
+        }
+    "#;
+    let definition = compile(call_src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap();
+    assert_eq!(node["action"]["function"], "exec");
+    assert_round_trips(call_src);
+}
+
+#[test]
+fn compute_arithmetic_round_trips() {
+    // arithmetic and library calls work both as let/return values and inside object/array literals.
+    let src = r#"
+        workflow "Math" v1 {
+            compute {
+                let x = (input.a + input.b) * 2 - input.c
+                return { x: x, y: add(x, 1), zs: [x, x * 2] }
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_named_type_decls() {
+    let src = r#"
+        workflow "Typed" v1 {
+            input {
+                cart: Cart
+            }
+            type Cart { subtotal: number, tax: number }
+            type Ids = integer[]
+            console.run(command: "go")
+        }
+    "#;
+    assert_round_trips(src);
+    let wdl = decompile(&compile(src)).expect("decompile");
+    assert!(wdl.contains("type Cart {"), "struct decl missing:\n{wdl}");
+    assert!(
+        wdl.contains("type Ids = integer[]"),
+        "alias decl missing:\n{wdl}"
+    );
+    // the input field references the declared name, not the expanded struct shape.
+    assert!(
+        wdl.contains("cart: Cart"),
+        "named input ref missing:\n{wdl}"
+    );
+}
+
+#[test]
+fn named_type_preserved_on_let_annotation() {
+    let src = r#"
+        workflow "Typed" v1 {
+            type Cart { subtotal: number, tax: number }
+            let probe: Cart = console.run(command: "probe")
+            console.run(command: "after")
+        }
+    "#;
+    assert_round_trips(src);
+    let wdl = decompile(&compile(src)).expect("decompile");
+    // the let annotation keeps the declared name rather than expanding the struct.
+    assert!(
+        wdl.contains("let probe: Cart"),
+        "named let ref missing:\n{wdl}"
+    );
+}
+
+#[test]
+fn named_type_resolves_in_input() {
+    let src = r#"
+        workflow "Typed" v1 {
+            input { cart: Cart }
+            type Cart { subtotal: number, tax: number }
+            console.run(command: "go")
+        }
+    "#;
+    let definition = compile(src);
+    // the input `cart` field resolves to the declared closed struct, not Any.
+    let cart = definition.input_type.field("cart").expect("cart field");
+    assert!(matches!(cart, RuninatorType::Struct { .. }));
+}
+
+#[test]
+fn rejects_cyclic_type_decls() {
+    let src = r#"
+        workflow "Cycle" v1 {
+            type A = B
+            type B = A
+            console.run(command: "go")
+        }
+    "#;
+    assert!(compile_str(src, &CompileOptions::default()).is_err());
+}
+
+#[test]
 fn round_trips_let_type_annotation() {
     let src = r#"
         workflow "Typed" v1 {

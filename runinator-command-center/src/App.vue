@@ -1,6 +1,11 @@
 <template>
   <AppShell>
-    <DevView v-if="app.activeTab === 'Dev'" />
+    <DevView v-if="app.activeTab === 'Dev' && isDesktop" />
+    <section v-else-if="app.activeTab === 'Dev'" class="pane">
+      <div class="dev-unavailable">
+        The Dev environment is only available in the desktop client. It is disabled in the hosted web app.
+      </div>
+    </section>
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
     <ProvidersView v-if="app.activeTab === 'Providers'" />
@@ -49,6 +54,7 @@ import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 
 const app = useAppStore();
+const isDesktop = isTauriRuntime();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const artifacts = useArtifactsStore();
@@ -195,3 +201,10 @@ onBeforeUnmount(() => {
   app.dispose();
 });
 </script>
+
+<style scoped>
+.dev-unavailable {
+  color: var(--text-muted);
+  padding: 14px 0;
+}
+</style>

@@ -2,10 +2,12 @@ use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
 
+use crate::compute::IntrinsicLibrary;
 use crate::errors::WorkflowValidationError;
 use crate::keys::{
-    EXPR_COALESCE, EXPR_CONCAT, EXPR_LITERAL, EXPR_NODE, EXPR_REF, EXPR_TO_JSON_STRING,
-    EXPR_TO_STRING, EXPR_VALUE, REF_CONFIG, REF_INPUT, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS,
+    EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_LITERAL, EXPR_MOD,
+    EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB, EXPR_TO_JSON_STRING, EXPR_TO_STRING,
+    EXPR_VALUE, REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS,
     REF_WORKFLOW,
 };
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
@@ -14,8 +16,18 @@ pub fn resolve_value_refs(
     value: &Value,
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
+    resolve_value_refs_with(value, context, None)
+}
+
+/// resolve refs/arithmetic and (when a library is supplied) `$call` intrinsics against `context`.
+/// passing `None` for `lib` forbids `$call` (the library-free path used outside compute blocks).
+pub(crate) fn resolve_value_refs_with(
+    value: &Value,
+    context: &Value,
+    lib: Option<&dyn IntrinsicLibrary>,
+) -> Result<Value, WorkflowValidationError> {
     let expression = parse_expression(value)?;
-    evaluate_expression(&expression, context)
+    evaluate_expression_with(&expression, context, lib)
 }
 
 /// fill omitted top-level input fields from their declared defaults, mutating the `input` slot of
@@ -76,6 +88,29 @@ pub(crate) fn parse_expression(
         Value::Object(map) if map.contains_key(EXPR_VALUE) => {
             Err(WorkflowValidationError::InvalidValueRef(value.to_string()))
         }
+        Value::Object(map) if map.contains_key(EXPR_CALL) => {
+            let name = map
+                .get(EXPR_CALL)
+                .and_then(Value::as_str)
+                .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+            let allowed = map.keys().all(|key| key == EXPR_CALL || key == EXPR_ARGS);
+            if !allowed {
+                return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
+            }
+            let args = match map.get(EXPR_ARGS) {
+                None => Vec::new(),
+                Some(items) => items
+                    .as_array()
+                    .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?
+                    .iter()
+                    .map(parse_expression)
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
+            Ok(WorkflowExpression::Call {
+                name: name.to_string(),
+                args,
+            })
+        }
         Value::Object(map)
             if map.contains_key(EXPR_REF)
                 || map.contains_key(EXPR_CONCAT)
@@ -83,6 +118,12 @@ pub(crate) fn parse_expression(
                 || map.contains_key(EXPR_LITERAL)
                 || map.contains_key(EXPR_TO_STRING)
                 || map.contains_key(EXPR_TO_JSON_STRING)
+                || map.contains_key(EXPR_ADD)
+                || map.contains_key(EXPR_SUB)
+                || map.contains_key(EXPR_MUL)
+                || map.contains_key(EXPR_DIV)
+                || map.contains_key(EXPR_MOD)
+                || map.contains_key(EXPR_NEG)
                 || map.contains_key(EXPR_NODE) =>
         {
             if map.len() != 1 {
@@ -90,6 +131,33 @@ pub(crate) fn parse_expression(
             }
             if let Some(reference) = map.get(EXPR_REF) {
                 return Ok(WorkflowExpression::Ref(parse_value_ref(reference)?));
+            }
+            for (key, ctor) in [
+                (EXPR_ADD, WorkflowExpression::Add as fn(_) -> _),
+                (EXPR_SUB, WorkflowExpression::Sub),
+                (EXPR_MUL, WorkflowExpression::Mul),
+                (EXPR_DIV, WorkflowExpression::Div),
+                (EXPR_MOD, WorkflowExpression::Mod),
+            ] {
+                if let Some(items) = map.get(key) {
+                    let items = items
+                        .as_array()
+                        .filter(|items| !items.is_empty())
+                        .ok_or_else(|| {
+                            WorkflowValidationError::InvalidValueRef(value.to_string())
+                        })?;
+                    return Ok(ctor(
+                        items
+                            .iter()
+                            .map(parse_expression)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ));
+                }
+            }
+            if let Some(operand) = map.get(EXPR_NEG) {
+                return Ok(WorkflowExpression::Neg(Box::new(parse_expression(
+                    operand,
+                )?)));
             }
             if let Some(items) = map.get(EXPR_CONCAT) {
                 let items = items
@@ -187,25 +255,61 @@ pub(crate) fn evaluate_static_expression(
             EXPR_TO_JSON_STRING.into(),
             evaluate_static_expression(*nested)?,
         )]))),
+        WorkflowExpression::Add(items) => static_arith(EXPR_ADD, items),
+        WorkflowExpression::Sub(items) => static_arith(EXPR_SUB, items),
+        WorkflowExpression::Mul(items) => static_arith(EXPR_MUL, items),
+        WorkflowExpression::Div(items) => static_arith(EXPR_DIV, items),
+        WorkflowExpression::Mod(items) => static_arith(EXPR_MOD, items),
+        WorkflowExpression::Neg(nested) => Ok(Value::Object(Map::from_iter([(
+            EXPR_NEG.into(),
+            evaluate_static_expression(*nested)?,
+        )]))),
+        WorkflowExpression::Call { name, args } => Ok(Value::Object(Map::from_iter([
+            (EXPR_CALL.into(), Value::String(name)),
+            (
+                EXPR_ARGS.into(),
+                Value::Array(
+                    args.into_iter()
+                        .map(evaluate_static_expression)
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            ),
+        ]))),
     }
 }
 
-pub(crate) fn evaluate_expression(
+fn static_arith(
+    key: &str,
+    items: Vec<WorkflowExpression>,
+) -> Result<Value, WorkflowValidationError> {
+    Ok(Value::Object(Map::from_iter([(
+        key.into(),
+        Value::Array(
+            items
+                .into_iter()
+                .map(evaluate_static_expression)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+    )])))
+}
+
+pub(crate) fn evaluate_expression_with(
     expression: &WorkflowExpression,
     context: &Value,
+    lib: Option<&dyn IntrinsicLibrary>,
 ) -> Result<Value, WorkflowValidationError> {
     match expression {
         WorkflowExpression::Literal(value) => match value {
             Value::Object(map) => {
                 let mut resolved = Map::new();
                 for (key, nested) in map {
-                    resolved.insert(key.clone(), resolve_value_refs(nested, context)?);
+                    resolved.insert(key.clone(), resolve_value_refs_with(nested, context, lib)?);
                 }
                 Ok(Value::Object(resolved))
             }
             Value::Array(items) => items
                 .iter()
-                .map(|item| resolve_value_refs(item, context))
+                .map(|item| resolve_value_refs_with(item, context, lib))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
             _ => Ok(value.clone()),
@@ -214,7 +318,7 @@ pub(crate) fn evaluate_expression(
         WorkflowExpression::Concat(items) => {
             let mut rendered = String::new();
             for item in items {
-                let Value::String(value) = evaluate_expression(item, context)? else {
+                let Value::String(value) = evaluate_expression_with(item, context, lib)? else {
                     return Err(WorkflowValidationError::InvalidValueRef(
                         "$concat items must resolve to strings".into(),
                     ));
@@ -225,25 +329,27 @@ pub(crate) fn evaluate_expression(
         }
         WorkflowExpression::Coalesce(items) => {
             for item in items {
-                let value = evaluate_expression(item, context)?;
+                let value = evaluate_expression_with(item, context, lib)?;
                 if !value.is_null() {
                     return Ok(value);
                 }
             }
             Ok(Value::Null)
         }
-        WorkflowExpression::ToString(nested) => match evaluate_expression(nested, context)? {
-            Value::String(value) => Ok(Value::String(value)),
-            Value::Bool(value) => Ok(Value::String(value.to_string())),
-            Value::Number(value) => Ok(Value::String(value.to_string())),
-            Value::Null | Value::Array(_) | Value::Object(_) => {
-                Err(WorkflowValidationError::InvalidValueRef(
-                    "$to_string requires a string, boolean, or number".into(),
-                ))
+        WorkflowExpression::ToString(nested) => {
+            match evaluate_expression_with(nested, context, lib)? {
+                Value::String(value) => Ok(Value::String(value)),
+                Value::Bool(value) => Ok(Value::String(value.to_string())),
+                Value::Number(value) => Ok(Value::String(value.to_string())),
+                Value::Null | Value::Array(_) | Value::Object(_) => {
+                    Err(WorkflowValidationError::InvalidValueRef(
+                        "$to_string requires a string, boolean, or number".into(),
+                    ))
+                }
             }
-        },
+        }
         WorkflowExpression::ToJsonString(nested) => {
-            let value = evaluate_expression(nested, context)?;
+            let value = evaluate_expression_with(nested, context, lib)?;
             if !matches!(value, Value::Array(_) | Value::Object(_)) {
                 return Err(WorkflowValidationError::InvalidValueRef(
                     "$to_json_string requires an array or object".into(),
@@ -253,6 +359,134 @@ pub(crate) fn evaluate_expression(
                 .map(Value::String)
                 .map_err(|err| WorkflowValidationError::InvalidValueRef(err.to_string()))
         }
+        WorkflowExpression::Add(items) => fold_arith(
+            items,
+            context,
+            lib,
+            "+",
+            |a, b| Ok(a.wrapping_add(b)),
+            |a, b| a + b,
+        ),
+        WorkflowExpression::Sub(items) => fold_arith(
+            items,
+            context,
+            lib,
+            "-",
+            |a, b| Ok(a.wrapping_sub(b)),
+            |a, b| a - b,
+        ),
+        WorkflowExpression::Mul(items) => fold_arith(
+            items,
+            context,
+            lib,
+            "*",
+            |a, b| Ok(a.wrapping_mul(b)),
+            |a, b| a * b,
+        ),
+        WorkflowExpression::Div(items) => fold_arith(
+            items,
+            context,
+            lib,
+            "/",
+            |a, b| {
+                a.checked_div(b).ok_or_else(|| {
+                    WorkflowValidationError::InvalidValueRef("division by zero".into())
+                })
+            },
+            |a, b| a / b,
+        ),
+        WorkflowExpression::Mod(items) => fold_arith(
+            items,
+            context,
+            lib,
+            "%",
+            |a, b| {
+                a.checked_rem(b).ok_or_else(|| {
+                    WorkflowValidationError::InvalidValueRef("modulo by zero".into())
+                })
+            },
+            |a, b| a % b,
+        ),
+        WorkflowExpression::Neg(nested) => {
+            match as_number(&evaluate_expression_with(nested, context, lib)?)? {
+                Num::Int(value) => Ok(Value::from(value.wrapping_neg())),
+                Num::Float(value) => Ok(float_value(-value)?),
+            }
+        }
+        WorkflowExpression::Call { name, args } => {
+            let lib = lib.ok_or_else(|| {
+                WorkflowValidationError::InvalidValueRef(format!(
+                    "call to '{name}' is not allowed in this context"
+                ))
+            })?;
+            let args = args
+                .iter()
+                .map(|arg| evaluate_expression_with(arg, context, Some(lib)))
+                .collect::<Result<Vec<_>, _>>()?;
+            lib.call(name, &args)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Num {
+    Int(i64),
+    Float(f64),
+}
+
+fn as_number(value: &Value) -> Result<Num, WorkflowValidationError> {
+    if let Some(int) = value.as_i64() {
+        return Ok(Num::Int(int));
+    }
+    if let Some(float) = value.as_f64() {
+        return Ok(Num::Float(float));
+    }
+    Err(WorkflowValidationError::InvalidValueRef(format!(
+        "arithmetic requires numbers, got {value}"
+    )))
+}
+
+fn float_value(value: f64) -> Result<Value, WorkflowValidationError> {
+    if value.is_finite() {
+        return Ok(Value::from(value));
+    }
+    Err(WorkflowValidationError::InvalidValueRef(
+        "arithmetic produced a non-finite number".into(),
+    ))
+}
+
+// fold operands left-to-right, staying in integer space while every operand is an integer and
+// promoting to float as soon as any operand is a float.
+fn fold_arith(
+    items: &[WorkflowExpression],
+    context: &Value,
+    lib: Option<&dyn IntrinsicLibrary>,
+    op: &str,
+    int_op: impl Fn(i64, i64) -> Result<i64, WorkflowValidationError>,
+    float_op: impl Fn(f64, f64) -> f64,
+) -> Result<Value, WorkflowValidationError> {
+    let mut iter = items.iter();
+    let first = iter.next().ok_or_else(|| {
+        WorkflowValidationError::InvalidValueRef(format!("'{op}' requires at least one operand"))
+    })?;
+    let mut acc = as_number(&evaluate_expression_with(first, context, lib)?)?;
+    for item in iter {
+        let next = as_number(&evaluate_expression_with(item, context, lib)?)?;
+        acc = match (acc, next) {
+            (Num::Int(a), Num::Int(b)) => Num::Int(int_op(a, b)?),
+            (a, b) => Num::Float(float_op(num_as_f64(a), num_as_f64(b))),
+        };
+    }
+    match acc {
+        Num::Int(value) => Ok(Value::from(value)),
+        Num::Float(value) => float_value(value),
+    }
+}
+
+fn num_as_f64(value: Num) -> f64 {
+    match value {
+        Num::Int(value) => value as f64,
+        Num::Float(value) => value,
     }
 }
 
@@ -286,6 +520,12 @@ pub(crate) fn parse_value_ref(value: &Value) -> Result<WorkflowValueRef, Workflo
     if let Some(path) = object.get(REF_CONFIG) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Config,
+            path: parse_path(path)?,
+        });
+    }
+    if let Some(path) = object.get(REF_LOCAL) {
+        return Ok(WorkflowValueRef {
+            source: WorkflowRefSource::Local,
             path: parse_path(path)?,
         });
     }
@@ -333,6 +573,7 @@ pub(crate) fn resolve_value_ref(
         WorkflowRefSource::Prev => context.get(REF_PREV),
         WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
         WorkflowRefSource::Config => context.get(REF_CONFIG),
+        WorkflowRefSource::Local => context.get(REF_LOCAL),
         WorkflowRefSource::NodeOutput(node) => context
             .get(REF_STEPS)
             .and_then(|steps| steps.get(node.as_str()))
@@ -376,6 +617,7 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
         WorkflowRefSource::Prev => runinator_models::json!({ (REF_PREV): path }),
         WorkflowRefSource::Workflow => runinator_models::json!({ (REF_WORKFLOW): path }),
         WorkflowRefSource::Config => runinator_models::json!({ (REF_CONFIG): path }),
+        WorkflowRefSource::Local => runinator_models::json!({ (REF_LOCAL): path }),
         WorkflowRefSource::NodeOutput(node) => {
             runinator_models::json!({ (REF_NODE): node.as_str(), (REF_OUTPUT): path })
         }

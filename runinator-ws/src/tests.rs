@@ -192,6 +192,193 @@ async fn ready_node_processing_reduces_start_to_action_dispatch() {
 }
 
 #[tokio::test]
+async fn pure_compute_node_reruns_in_loop_body() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "loop-compute");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "each" } } },
+            {
+                "id": "each",
+                "kind": "loop",
+                "parameters": { "items": { "$ref": { "input": ["xs"] } } },
+                "max_iterations": 10,
+                "transitions": {
+                    "next": { "$node": "double" },
+                    "on_success": { "$node": "done" }
+                }
+            },
+            {
+                "id": "double",
+                "kind": "action",
+                "action": {
+                    "provider": "std",
+                    "function": "run",
+                    "configuration": {
+                        "program": [
+                            { "$return": { "$mul": [{ "$ref": { "node": "each", "output": ["item"] } }, 2] } }
+                        ]
+                    }
+                },
+                "transitions": { "on_success": { "$node": "each" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({ "xs": [1, 2, 3] }),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    drain_ready_nodes(&db).await;
+
+    let (updated, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.status, WorkflowStatus::Succeeded);
+    // the compute body ran once per item, re-creating a fresh node run each iteration.
+    let runs = nodes
+        .iter()
+        .filter(|node| node.node_id == "double" && node.status == WorkflowStatus::Succeeded)
+        .count();
+    assert_eq!(runs, 3, "compute body should run once per loop item");
+    // and never dispatched to a worker.
+    assert!(
+        db.fetch_pending_action_dispatches(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn pure_compute_node_reduces_in_process_without_dispatch() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "pure-compute");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "calc" } } },
+            {
+                "id": "calc",
+                "kind": "action",
+                "action": {
+                    "provider": "std",
+                    "function": "run",
+                    "configuration": {
+                        "program": [
+                            { "$let": "total", "value": { "$add": [{ "$ref": { "input": ["a"] } }, 3] } },
+                            { "$return": { "total": { "$ref": { "let": ["total"] } } } }
+                        ]
+                    }
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({ "a": 4 }),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    drain_ready_nodes(&db).await;
+
+    let (updated, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    // the pure compute node reduced in-process and the run reached the end node.
+    assert_eq!(updated.status, WorkflowStatus::Succeeded);
+    let calc = nodes.iter().find(|node| node.node_id == "calc").unwrap();
+    assert_eq!(calc.status, WorkflowStatus::Succeeded);
+    assert_eq!(calc.output_json, Some(json!({ "total": 7 })));
+    // no worker dispatch was enqueued for the pure node.
+    assert!(
+        db.fetch_pending_action_dispatches(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn compute_goto_sets_active_node() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "compute-goto");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "gate" } } },
+            {
+                "id": "gate",
+                "kind": "action",
+                "action": {
+                    "provider": "std",
+                    "function": "run",
+                    "configuration": {
+                        "program": [
+                            { "$if": { "value": { "$ref": { "input": ["x"] } }, "less_than": 0 },
+                              "then": [ { "$goto": "fail" } ],
+                              "else": [] },
+                            { "$return": "ok" }
+                        ]
+                    }
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "fail", "kind": "fail" },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({ "x": -1 }),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    drain_ready_nodes(&db).await;
+
+    let (updated, _) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    // goto fail routed the run to the fail node, ending the run as failed.
+    assert_eq!(updated.status, WorkflowStatus::Failed);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn action_failure_schedules_retry_with_backoff() {
     let (db, path) = test_db().await;
     let mut workflow = workflow(None, "action-retry");

@@ -25,6 +25,8 @@ export interface NavItem {
   label: string;
   icon: string;
   endpoint?: string;
+  // only available in the tauri desktop client; hidden in the hosted web app.
+  desktopOnly?: boolean;
 }
 
 export interface NavSection {

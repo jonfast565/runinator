@@ -133,6 +133,11 @@ pub const REPLAY_CONTROL_FLOW: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.replay.control_flow",
     "Cannot replay through a control-flow ancestor",
 );
+pub const COMPUTE_NODE_FAILED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI142",
+    "workflow.compute.node_failed",
+    "In-process compute node failed to evaluate",
+);
 
 // broker wiring.
 pub const BROKER_WORKFLOW_RESULTS: ErrorDescriptor = ErrorDescriptor::new(
@@ -176,6 +181,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     WORKFLOW_RUN_SNAPSHOT_MISSING,
     WORKFLOW_TRIGGER_NOT_FOUND,
     ACTION_CONFIG_MISSING,
+    COMPUTE_NODE_FAILED,
     READY_NODE_NOT_FOUND,
     READY_NODE_NOT_CLAIMED,
     SUBFLOW_RUN_MISSING,

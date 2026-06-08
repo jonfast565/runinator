@@ -30,6 +30,10 @@ pub struct ActionMetadata {
     pub parameters: Vec<ParameterMetadata>,
     #[serde(default)]
     pub results: Vec<ResultMetadata>,
+    /// whether this library function is pure (reducer-evaluable in-process) or effectful
+    /// (worker-only). defaults to false so existing providers stay effectful.
+    #[serde(default)]
+    pub pure: bool,
 }
 
 impl ActionMetadata {
@@ -39,6 +43,7 @@ impl ActionMetadata {
             description: Some(description.into()),
             parameters: Vec::new(),
             results: Vec::new(),
+            pure: false,
         }
     }
 
@@ -49,6 +54,12 @@ impl ActionMetadata {
 
     pub fn with_results(mut self, results: Vec<ResultMetadata>) -> Self {
         self.results = results;
+        self
+    }
+
+    /// mark this function as pure (reducer-evaluable in-process).
+    pub fn pure(mut self) -> Self {
+        self.pure = true;
         self
     }
 

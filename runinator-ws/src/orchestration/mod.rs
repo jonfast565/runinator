@@ -31,6 +31,7 @@ pub(crate) enum ReadyNodeDisposition {
 mod action;
 mod approval;
 mod basic;
+mod compute;
 mod context;
 mod control_flow;
 mod engine;

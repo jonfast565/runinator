@@ -577,6 +577,13 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
             .first()
             .and_then(|item| infer_expr_type(item, context)),
         ExprKind::ToJson(_) => Some(RuninatorType::String),
+        ExprKind::Add(_)
+        | ExprKind::Sub(_)
+        | ExprKind::Mul(_)
+        | ExprKind::Div(_)
+        | ExprKind::Mod(_)
+        | ExprKind::Neg(_) => Some(RuninatorType::Number),
+        ExprKind::Call { .. } => Some(RuninatorType::Any),
         ExprKind::Path(segs) => infer_path_type(segs, context),
         // a spread carries no value type of its own; it is resolved by desugaring.
         ExprKind::Spread(_) => None,

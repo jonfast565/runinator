@@ -12,6 +12,7 @@ use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
 use runinator_provider_slack::SlackProvider;
 use runinator_provider_sql::SqlProvider;
+use runinator_provider_std::StdProvider;
 
 type StaticProvider = Box<dyn Provider + Send + Sync>;
 
@@ -27,6 +28,7 @@ fn get_providers() -> Vec<StaticProvider> {
         Box::new(AiCommandProvider {}) as StaticProvider,
         Box::new(ApprovalProvider {}) as StaticProvider,
         Box::new(EmailProvider {}) as StaticProvider,
+        Box::new(StdProvider {}) as StaticProvider,
     ]
 }
 

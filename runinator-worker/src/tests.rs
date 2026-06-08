@@ -144,6 +144,80 @@ async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata(
     assert!(result.execution_result.is_none());
 }
 
+#[tokio::test]
+async fn worker_accepts_std_exec_program_with_context() {
+    // the std `exec` action receives `{ program, context }` from the web service. its metadata must
+    // declare both keys so the worker's closed-struct parameter validation accepts the context the
+    // interpreter needs (regression: it once rejected `std.exec.context` as "not allowed").
+    let action = WorkflowAction {
+        provider: "std".into(),
+        function: "exec".into(),
+        timeout_seconds: 60,
+        configuration: runinator_models::workflows::WorkflowObject::default(),
+        mcp_enabled: false,
+        tags: Vec::new(),
+    };
+    let parameters = json!({
+        "program": [ { "$return": { "ok": true } } ],
+        "context": { "input": { "x": 1 } }
+    });
+
+    let result = crate::executor::execute_task(
+        std::sync::Arc::new(std::collections::HashMap::new()),
+        action,
+        Uuid::new_v4(),
+        parameters,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatus::Succeeded);
+    assert_eq!(
+        result.execution_result.and_then(|r| r.output_json),
+        Some(json!({ "ok": true }))
+    );
+}
+
+#[tokio::test]
+async fn worker_rejects_undeclared_std_exec_parameter() {
+    // a key the `exec` action does not declare is still rejected, proving the context key above
+    // passes because it is declared, not because validation is disabled for std.
+    let action = WorkflowAction {
+        provider: "std".into(),
+        function: "exec".into(),
+        timeout_seconds: 60,
+        configuration: runinator_models::workflows::WorkflowObject::default(),
+        mcp_enabled: false,
+        tags: Vec::new(),
+    };
+    let parameters = json!({
+        "program": [ { "$return": true } ],
+        "context": {},
+        "bogus": 1
+    });
+
+    let result = crate::executor::execute_task(
+        std::sync::Arc::new(std::collections::HashMap::new()),
+        action,
+        Uuid::new_v4(),
+        parameters,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(
+        result
+            .task_result
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("is not allowed")
+    );
+}
+
 #[test]
 fn worker_validates_provider_output_fields_when_present() {
     let action_metadata =

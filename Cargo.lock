@@ -5479,6 +5479,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-provider-std"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "log",
+ "reqwest",
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-workflows",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-supervisor"
 version = "0.1.0"
 dependencies = [
@@ -5562,6 +5577,7 @@ dependencies = [
  "runinator-provider-jira",
  "runinator-provider-slack",
  "runinator-provider-sql",
+ "runinator-provider-std",
  "runinator-utilities",
  "serde",
  "serde_json",

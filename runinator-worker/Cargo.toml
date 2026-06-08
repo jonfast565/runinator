@@ -30,6 +30,7 @@ runinator-provider-ai = { path = "../runinator-provider-ai" }
 runinator-provider-approval = { path = "../runinator-provider-approval" }
 runinator-provider-console = { path = "../runinator-provider-console" }
 runinator-provider-email = { path = "../runinator-provider-email" }
+runinator-provider-std = { path = "../runinator-provider-std" }
 
 [features]
 kafka = ["runinator-broker/kafka"]

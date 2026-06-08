@@ -23,7 +23,17 @@ pub struct Workflow {
     pub start: Option<Target>,
     /// header `trigger cron "..."` declarations scheduling runs of this workflow.
     pub triggers: Vec<TriggerDecl>,
+    /// header `type <Name> ...` declarations: reusable named types.
+    pub type_decls: Vec<TypeDecl>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// a header `type <Name> { ... }` (struct shorthand) or `type <Name> = <type>` (alias) declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeDecl {
+    pub name: String,
+    pub ty: TypeExpr,
     pub span: Span,
 }
 
@@ -73,6 +83,7 @@ pub struct Annotations {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Action(ActionStmt),
+    Compute(ComputeStmt),
     Subflow(SubflowStmt),
     Wait(WaitStmt),
     Emit(EmitStmt),
@@ -140,6 +151,31 @@ pub struct ActionStmt {
     /// is `ExprKind::Spread`; desugaring expands it in place before sema and lowering.
     pub args: Vec<(String, Expr)>,
     pub modifiers: Modifiers,
+}
+
+/// an imperative `compute { ... }` block. lowers to a `std.run`/`std.exec` action node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComputeStmt {
+    pub body: Vec<ComputeLine>,
+    pub modifiers: Modifiers,
+}
+
+/// a single line in a compute block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComputeLine {
+    Let {
+        name: String,
+        ty: Option<TypeExpr>,
+        value: Expr,
+    },
+    Return(Expr),
+    Goto(Target),
+    If {
+        cond: Cond,
+        then_branch: Vec<ComputeLine>,
+        else_branch: Vec<ComputeLine>,
+    },
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -297,6 +333,18 @@ pub enum ExprKind {
     /// a `...alias` spread placeholder, only valid as an argument or object entry value. expanded
     /// away by desugaring; never reaches sema or lowering. the carried name is the alias.
     Spread(String),
+    // compute-tier arithmetic; only produced inside `compute { }` blocks.
+    Add(Vec<Expr>),
+    Sub(Vec<Expr>),
+    Mul(Vec<Expr>),
+    Div(Vec<Expr>),
+    Mod(Vec<Expr>),
+    Neg(Box<Expr>),
+    /// a library call `name(args...)`, e.g. `add(a, b)` or `http_get(url)`.
+    Call {
+        name: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

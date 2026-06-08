@@ -5,7 +5,7 @@
       <span>Command Center</span>
     </div>
     <nav class="nav-list">
-      <template v-for="section in navSections" :key="section.label">
+      <template v-for="section in sections" :key="section.label">
         <div class="nav-section-label">{{ section.label }}</div>
         <button
           v-for="item in section.items"
@@ -27,13 +27,14 @@
 
 <script setup lang="ts">
 import Icon from "../shared/Icon.vue";
-import { navSections, useAppStore } from "../../stores/app";
+import { navSections, visibleNavSections, useAppStore } from "../../stores/app";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { AppTab } from "../../types/app";
 
 const app = useAppStore();
+const sections = visibleNavSections();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();

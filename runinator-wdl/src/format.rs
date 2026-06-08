@@ -44,6 +44,20 @@ impl Formatter {
         {
             self.out.push('\n');
         }
+        // preserve named `type <Name>` declarations.
+        for decl in &workflow.type_decls {
+            let rendered = format_type(&decl.ty);
+            if matches!(decl.ty, TypeExpr::Struct { .. }) {
+                self.line(&format!("type {} {rendered}", decl.name));
+            } else {
+                self.line(&format!("type {} = {rendered}", decl.name));
+            }
+        }
+        if !workflow.type_decls.is_empty()
+            && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
+        }
         // preserve header `alias` declarations; they are surface sugar and never reach the graph.
         for alias in &workflow.aliases {
             self.alias_decl(alias);
@@ -197,6 +211,7 @@ impl Formatter {
     fn stmt_kind(&mut self, kind: &StmtKind) -> String {
         match kind {
             StmtKind::Action(action) => self.action(action),
+            StmtKind::Compute(compute) => self.compute(compute),
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Emit(emit) => self.emit(emit),
@@ -214,6 +229,73 @@ impl Formatter {
             StmtKind::Try(try_stmt) => self.try_stmt(try_stmt),
             StmtKind::Race(race) => self.race(race),
             StmtKind::Map(map) => self.map(map),
+        }
+    }
+
+    fn compute(&mut self, compute: &ComputeStmt) -> String {
+        let mut out = String::from("compute {\n");
+        self.indent += 1;
+        self.compute_lines(&mut out, &compute.body);
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        // render trailing modifiers (e.g. `.timeout(30s)`) like an action call.
+        if let Some(seconds) = compute.modifiers.timeout_seconds {
+            self.push_modifier(&mut out, &format!(".timeout({seconds}s)"));
+        }
+        if let Some(retry) = compute.modifiers.retry {
+            self.push_modifier(&mut out, &format!(".retry({retry})"));
+        }
+        out
+    }
+
+    fn compute_lines(&mut self, out: &mut String, body: &[ComputeLine]) {
+        for line in body {
+            match line {
+                ComputeLine::Let { name, ty, value } => {
+                    let ty = ty
+                        .as_ref()
+                        .map(|ty| format!(": {}", format_type(ty)))
+                        .unwrap_or_default();
+                    self.push_indent(out);
+                    out.push_str(&format!("let {name}{ty} = {}\n", format_expr(value)));
+                }
+                ComputeLine::Return(value) => {
+                    self.push_indent(out);
+                    out.push_str(&format!("return {}\n", format_expr(value)));
+                }
+                ComputeLine::Goto(target) => {
+                    self.push_indent(out);
+                    out.push_str(&format!("goto {}\n", format_target(target)));
+                }
+                ComputeLine::Expr(value) => {
+                    self.push_indent(out);
+                    out.push_str(&format!("{}\n", format_expr(value)));
+                }
+                ComputeLine::If {
+                    cond,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.push_indent(out);
+                    out.push_str(&format!("if {} {{\n", format_cond(cond)));
+                    self.indent += 1;
+                    self.compute_lines(out, then_branch);
+                    self.indent -= 1;
+                    if else_branch.is_empty() {
+                        self.push_indent(out);
+                        out.push_str("}\n");
+                    } else {
+                        self.push_indent(out);
+                        out.push_str("} else {\n");
+                        self.indent += 1;
+                        self.compute_lines(out, else_branch);
+                        self.indent -= 1;
+                        self.push_indent(out);
+                        out.push_str("}\n");
+                    }
+                }
+            }
         }
     }
 
@@ -551,9 +633,22 @@ fn format_expr_multiline(expr: &Expr, indent_level: usize) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ExprPrec {
     Lowest,
+    // compute arithmetic tiers, looser than coalesce/concat (which sit inside `cprimary`).
+    Sum,
+    Product,
+    Unary,
     Coalesce,
     Concat,
     Primary,
+}
+
+// render a left-associative binary arithmetic chain, rendering each operand at the operator level.
+fn format_binary(parts: &[Expr], sep: &str, prec: ExprPrec) -> String {
+    parts
+        .iter()
+        .map(|part| format_expr_at(part, prec))
+        .collect::<Vec<_>>()
+        .join(sep)
 }
 
 fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
@@ -588,6 +683,28 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
         ExprKind::ToString(inner) => (ExprPrec::Primary, format!("string({})", format_expr(inner))),
         ExprKind::ToJson(inner) => (ExprPrec::Primary, format!("json({})", format_expr(inner))),
         ExprKind::Spread(name) => (ExprPrec::Primary, format!("...{name}")),
+        ExprKind::Add(parts) => (ExprPrec::Sum, format_binary(parts, " + ", ExprPrec::Sum)),
+        ExprKind::Sub(parts) => (ExprPrec::Sum, format_binary(parts, " - ", ExprPrec::Sum)),
+        ExprKind::Mul(parts) => (
+            ExprPrec::Product,
+            format_binary(parts, " * ", ExprPrec::Product),
+        ),
+        ExprKind::Div(parts) => (
+            ExprPrec::Product,
+            format_binary(parts, " / ", ExprPrec::Product),
+        ),
+        ExprKind::Mod(parts) => (
+            ExprPrec::Product,
+            format_binary(parts, " % ", ExprPrec::Product),
+        ),
+        ExprKind::Neg(inner) => (
+            ExprPrec::Unary,
+            format!("-{}", format_expr_at(inner, ExprPrec::Unary)),
+        ),
+        ExprKind::Call { name, args } => {
+            let args = args.iter().map(format_expr).collect::<Vec<_>>().join(", ");
+            (ExprPrec::Primary, format!("{name}({args})"))
+        }
     };
 
     if prec < parent {
@@ -773,7 +890,9 @@ fn format_path(segs: &[PathSeg]) -> String {
     out
 }
 
-fn format_type(ty: &TypeExpr) -> String {
+/// render a `TypeExpr` as wdl type syntax, preserving any declared type names. shared with lowering
+/// so use-site type annotations can be recorded in a name-preserving form for decompile.
+pub(crate) fn format_type(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Named(name) => name.clone(),
         TypeExpr::Array(inner) => format!("{}[]", format_type(inner)),
@@ -796,7 +915,7 @@ fn format_type(ty: &TypeExpr) -> String {
     }
 }
 
-fn format_type_field(field: &TypeField) -> String {
+pub(crate) fn format_type_field(field: &TypeField) -> String {
     let optional = if field.optional { "?" } else { "" };
     format!(
         "{}{}: {}",

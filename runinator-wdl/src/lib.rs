@@ -14,6 +14,7 @@ pub mod errors;
 mod format;
 pub(crate) mod lower;
 mod parser;
+mod purity;
 mod secrets;
 pub mod sema;
 

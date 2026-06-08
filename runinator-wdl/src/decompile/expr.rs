@@ -23,6 +23,20 @@ impl Decompiler<'_> {
                 Ok(format!("[{}]", parts.join(", ")))
             }
             Value::Object(map) => {
+                // a library call carries two keys ($call + args), so handle it before the
+                // single-key forms.
+                if let Some(name) = map.get("$call").and_then(Value::as_str) {
+                    let args = map
+                        .get("args")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let rendered = args
+                        .iter()
+                        .map(|arg| self.expr(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(format!("{name}({})", rendered.join(", ")));
+                }
                 if map.len() == 1 {
                     if let Some(reference) = map.get("$ref") {
                         return self.reference(reference);
@@ -38,6 +52,20 @@ impl Decompiler<'_> {
                     }
                     if let Some(inner) = map.get("$to_json_string") {
                         return Ok(format!("json({})", self.expr(inner)?));
+                    }
+                    if let Some(inner) = map.get("$neg") {
+                        return Ok(format!("-{}", self.arith_operand(inner, ARITH_UNARY)?));
+                    }
+                    for (key, op, prec) in [
+                        ("$add", " + ", ARITH_SUM),
+                        ("$sub", " - ", ARITH_SUM),
+                        ("$mul", " * ", ARITH_PRODUCT),
+                        ("$div", " / ", ARITH_PRODUCT),
+                        ("$mod", " % ", ARITH_PRODUCT),
+                    ] {
+                        if let Some(items) = map.get(key).and_then(Value::as_array) {
+                            return self.arith(items, op, prec);
+                        }
                     }
                 }
                 // plain object literal.
@@ -98,6 +126,32 @@ impl Decompiler<'_> {
         Ok(parts.join(sep))
     }
 
+    // render a left-associative arithmetic chain at `prec`, parenthesizing the right operand when
+    // it binds equally or more loosely (preserving the lowered left-nested structure on re-parse).
+    fn arith(&self, items: &[Value], sep: &str, prec: u8) -> Result<String, WdlError> {
+        let mut out = String::new();
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                out.push_str(sep);
+            }
+            // the left operand keeps same-precedence chains flat; later operands need parens when
+            // they are not strictly tighter.
+            let threshold = if index == 0 { prec } else { prec + 1 };
+            out.push_str(&self.arith_operand(item, threshold)?);
+        }
+        Ok(out)
+    }
+
+    // render an operand, wrapping it in parentheses when its top-level arithmetic precedence is
+    // below `min_prec`.
+    fn arith_operand(&self, value: &Value, min_prec: u8) -> Result<String, WdlError> {
+        let text = self.expr(value)?;
+        if arith_prec(value) < min_prec {
+            return Ok(format!("({text})"));
+        }
+        Ok(text)
+    }
+
     fn reference(&self, reference: &Value) -> Result<String, WdlError> {
         let object = reference
             .as_object()
@@ -113,6 +167,16 @@ impl Decompiler<'_> {
         }
         if let Some(path) = object.get("config") {
             return Ok(self.dotted("config", path));
+        }
+        // a compute local: the path array's first element is the local name, the rest are fields.
+        if let Some(path) = object.get("let").and_then(Value::as_array) {
+            let mut segs = path.iter();
+            let head = segs
+                .next()
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("invalid let ref".into()))?;
+            let rest: Vec<Value> = segs.cloned().collect();
+            return Ok(self.append_path(head, &rest));
         }
         if let (Some(node), Some(output)) = (object.get("node"), object.get("output")) {
             let node_id = node
@@ -196,6 +260,29 @@ impl Decompiler<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(parts.join(sep))
     }
+}
+
+// arithmetic precedence tiers, ascending tightness, for decompile parenthesization.
+const ARITH_SUM: u8 = 1;
+const ARITH_PRODUCT: u8 = 2;
+const ARITH_UNARY: u8 = 3;
+const ARITH_ATOM: u8 = 4;
+
+/// the top-level arithmetic precedence of a lowered expression value.
+fn arith_prec(value: &Value) -> u8 {
+    let Some(map) = value.as_object() else {
+        return ARITH_ATOM;
+    };
+    if map.contains_key("$add") || map.contains_key("$sub") {
+        return ARITH_SUM;
+    }
+    if map.contains_key("$mul") || map.contains_key("$div") || map.contains_key("$mod") {
+        return ARITH_PRODUCT;
+    }
+    if map.contains_key("$neg") {
+        return ARITH_UNARY;
+    }
+    ARITH_ATOM
 }
 
 const CMP_OPS: [(&str, &str); 10] = [

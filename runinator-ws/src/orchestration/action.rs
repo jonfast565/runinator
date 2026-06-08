@@ -81,6 +81,19 @@ async fn build_node_parameters<T: DatabaseImpl>(
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
+    // an effectful `std.exec` program is interpreted by the worker, not resolved here: ship the
+    // program verbatim alongside the full runtime context so the worker's interpreter can resolve
+    // refs/calls (with the effectful library) against it.
+    if action.provider == "std" {
+        let context = runtime_context(db, workflow_run, node_runs).await;
+        let program = action
+            .configuration
+            .as_value()
+            .get("program")
+            .cloned()
+            .unwrap_or(Value::Null);
+        return Ok(runinator_models::json!({ "program": program, "context": context }));
+    }
     let base = merge_parameters(&action.configuration, &node.parameters);
     let context = runtime_context(db, workflow_run, node_runs).await;
     runinator_workflows::resolve_value_refs(&base, &context)

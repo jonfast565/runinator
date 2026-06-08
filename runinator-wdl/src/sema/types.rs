@@ -8,24 +8,30 @@ use runinator_models::types::RuninatorType;
 
 use crate::ast::*;
 use crate::errors::Span;
-use crate::lower::types::lower_type;
+use crate::lower::types::{NamedTypes, lower_type_with, resolve_named_types};
 
 use super::Diagnostic;
 
-/// the typing environment: the workflow input type plus active loop/map variable types.
+/// the typing environment: the workflow input type, declared named types, and active loop/map and
+/// compute-local variable types.
 struct Env {
     input: RuninatorType,
+    named: NamedTypes,
     scope: Vec<(String, RuninatorType)>,
 }
 
 pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
+    // resolve declared type names (ignoring cycle/duplicate errors, which scope/lowering report) so
+    // input and annotation types referencing them type-check against the resolved shape.
+    let named = resolve_named_types(&workflow.type_decls).unwrap_or_default();
     let input = workflow
         .input
         .as_ref()
-        .and_then(|type_expr| lower_type(type_expr).ok())
+        .and_then(|type_expr| lower_type_with(type_expr, &named).ok())
         .unwrap_or(RuninatorType::Any);
     let mut env = Env {
         input,
+        named,
         scope: Vec::new(),
     };
     check_block(&workflow.body, &mut env, diagnostics);
@@ -43,6 +49,11 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
             for (_, value) in &action.args {
                 check_expr(value, env, diagnostics);
             }
+        }
+        StmtKind::Compute(compute) => {
+            let base = env.scope.len();
+            check_compute_block(&compute.body, env, diagnostics);
+            env.scope.truncate(base);
         }
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = &subflow.run_name {
@@ -220,7 +231,35 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(part, env, diagnostics);
             }
         }
-        ExprKind::ToJson(inner) => check_expr(inner, env, diagnostics),
+        ExprKind::ToJson(inner) | ExprKind::Neg(inner) => check_expr(inner, env, diagnostics),
+        ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => {
+            for part in parts {
+                check_expr(part, env, diagnostics);
+            }
+        }
+        ExprKind::Call { name, args } => {
+            // check each argument against the intrinsic's declared parameter type, skipping opaque
+            // (`any`) types on either side to avoid false positives on prev/node references.
+            if let Some(sig) = runinator_workflows::intrinsic_signature(name) {
+                for (param, arg) in sig.parameters.iter().zip(args.iter()) {
+                    let arg_ty = infer_expr(arg, env, diagnostics);
+                    check_assignable(
+                        &arg_ty,
+                        &param.ty,
+                        &format!("intrinsic '{name}' argument '{}'", param.name),
+                        arg.span,
+                        diagnostics,
+                    );
+                }
+            }
+            for arg in args {
+                check_expr(arg, env, diagnostics);
+            }
+        }
         // paths drive field-access diagnostics through inference.
         ExprKind::Path(_) => {
             let _ = infer_expr(expr, env, diagnostics);
@@ -228,6 +267,79 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
         // spreads are expanded before sema runs; nothing to check.
         ExprKind::Spread(_) => {}
         ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
+    }
+}
+
+/// type-check a compute block: thread typed locals through `let` (so later lines see them), check
+/// each `let x: T` value against its annotation, and recurse into nested `if` branches with block
+/// scoping.
+fn check_compute_block(
+    body: &[crate::ast::ComputeLine],
+    env: &mut Env,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::ComputeLine;
+    for line in body {
+        match line {
+            ComputeLine::Let { name, ty, value } => {
+                check_expr(value, env, diagnostics);
+                let value_ty = infer_expr(value, env, diagnostics);
+                let declared = ty
+                    .as_ref()
+                    .map(|t| lower_type_with(t, &env.named).unwrap_or(RuninatorType::Any));
+                if let Some(declared) = &declared {
+                    check_assignable(
+                        &value_ty,
+                        declared,
+                        &format!("compute local '{name}'"),
+                        value.span,
+                        diagnostics,
+                    );
+                }
+                // a later reference to the local sees its declared type, or the inferred one.
+                let local_ty = declared.unwrap_or(value_ty);
+                env.scope.push((name.clone(), local_ty));
+            }
+            ComputeLine::Return(value) | ComputeLine::Expr(value) => {
+                check_expr(value, env, diagnostics)
+            }
+            ComputeLine::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let base = env.scope.len();
+                check_compute_block(then_branch, env, diagnostics);
+                env.scope.truncate(base);
+                check_compute_block(else_branch, env, diagnostics);
+                env.scope.truncate(base);
+            }
+            ComputeLine::Goto(_) => {}
+        }
+    }
+}
+
+/// report a type error when `actual` cannot be assigned to `expected`. opaque (`any`) types on
+/// either side are accepted so author-time-unknown values (prev/node references) stay permissive.
+fn check_assignable(
+    actual: &RuninatorType,
+    expected: &RuninatorType,
+    label: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if matches!(actual, RuninatorType::Any) || matches!(expected, RuninatorType::Any) {
+        return;
+    }
+    if actual.validate_assignable_to(expected).is_err() {
+        diagnostics.push(Diagnostic::error(
+            span,
+            format!(
+                "{label} expects {}, got {}",
+                expected.describe(),
+                actual.describe()
+            ),
+        ));
     }
 }
 
@@ -260,6 +372,17 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
                 .map(|(key, value)| (key.clone(), infer_expr(value, env, diagnostics))),
         ),
         ExprKind::Path(segs) => infer_path(segs, env, expr.span, diagnostics),
+        // arithmetic yields a number; intrinsic call results are author-time opaque.
+        ExprKind::Add(_)
+        | ExprKind::Sub(_)
+        | ExprKind::Mul(_)
+        | ExprKind::Div(_)
+        | ExprKind::Mod(_)
+        | ExprKind::Neg(_) => RuninatorType::Number,
+        // a call's result type comes from the intrinsic signature (its first declared result).
+        ExprKind::Call { name, .. } => runinator_workflows::intrinsic_signature(name)
+            .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
+            .unwrap_or(RuninatorType::Any),
         // spreads are expanded before sema runs; treat as untyped if one is reached.
         ExprKind::Spread(_) => RuninatorType::Any,
     }

@@ -3,6 +3,7 @@
 // the output is a WorkflowDefinition whose `definition` is `{ start, nodes: [...] }`.
 
 mod blocks;
+mod compute;
 mod expr;
 mod spreads;
 pub(crate) mod types;
@@ -41,6 +42,10 @@ struct Lowerer {
     // per-node `...alias` spread recipes (node id -> recipe segments), kept for graph metadata so
     // decompile can resugar the spreads. empty for spread-free workflows.
     spreads: Map,
+    // in-scope compute-block local names, so a bare local path lowers to a `let` ref.
+    compute_locals: HashSet<String>,
+    // resolved `type <Name>` declarations, consulted when lowering named type references.
+    named_types: std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
 }
 
 pub fn lower_document(
@@ -52,6 +57,8 @@ pub fn lower_document(
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
+    // resolve named `type <Name>` declarations so they can be referenced by input/let types.
+    lowerer.resolve_type_decls(&workflow.type_decls)?;
     let end_id = lowerer.end_id.clone();
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
 
@@ -96,6 +103,36 @@ pub fn lower_document(
             types_map.insert(id.clone(), value.clone());
         }
         wdl.insert("types".into(), Value::Object(types_map));
+    }
+    // named `type <Name>` declarations, recorded as name-preserving surface strings so a
+    // declaration that references another declared type keeps that name on decompile.
+    if !workflow.type_decls.is_empty() {
+        let mut decls = Map::new();
+        for decl in &workflow.type_decls {
+            // validate the declaration resolves before recording its surface form.
+            lowerer.lower_named_type(&decl.ty)?;
+            decls.insert(
+                decl.name.clone(),
+                Value::String(crate::format::format_type(&decl.ty)),
+            );
+        }
+        wdl.insert("type_decls".into(), Value::Object(decls));
+    }
+    // surface-form overrides for top-level input fields whose type references a declared name, so
+    // `input { cart: Cart }` decompiles back to the name instead of the expanded struct shape.
+    if let Some(TypeExpr::Struct { fields, .. }) = &workflow.input {
+        let mut overrides = Map::new();
+        for field in fields {
+            if type_expr_uses_declared_name(&field.ty, &lowerer.named_types) {
+                overrides.insert(
+                    field.name.clone(),
+                    Value::String(crate::format::format_type(&field.ty)),
+                );
+            }
+        }
+        if !overrides.is_empty() {
+            wdl.insert("input_types".into(), Value::Object(overrides));
+        }
     }
     if !alias_meta.is_empty() {
         wdl.insert("aliases".into(), Value::Array(alias_meta));
@@ -152,6 +189,8 @@ impl Lowerer {
             declared_types: Vec::new(),
             aliases: AliasTable::new(),
             spreads: Map::new(),
+            compute_locals: HashSet::new(),
+            named_types: std::collections::BTreeMap::new(),
         }
     }
 
@@ -163,11 +202,11 @@ impl Lowerer {
     ) -> Result<runinator_models::types::RuninatorType, WdlError> {
         use runinator_models::types::{RuninatorField, RuninatorType};
         let TypeExpr::Struct { fields, additional } = type_expr else {
-            return types::lower_type(type_expr);
+            return types::lower_type_with(type_expr, &self.named_types);
         };
         let mut mapped = std::collections::BTreeMap::new();
         for field in fields {
-            let ty = types::lower_type(&field.ty)?;
+            let ty = types::lower_type_with(&field.ty, &self.named_types)?;
             let mut runinator_field = if field.optional {
                 RuninatorField::optional(ty)
             } else {
@@ -180,13 +219,27 @@ impl Lowerer {
         }
         let additional = additional
             .as_ref()
-            .map(|ty| types::lower_type(ty))
+            .map(|ty| types::lower_type_with(ty, &self.named_types))
             .transpose()?
             .map(Box::new);
         Ok(RuninatorType::Struct {
             fields: mapped,
             additional,
         })
+    }
+
+    /// resolve `type <Name>` declarations into RuninatorType, rejecting cycles and duplicates.
+    fn resolve_type_decls(&mut self, decls: &[TypeDecl]) -> Result<(), WdlError> {
+        self.named_types = types::resolve_named_types(decls)?;
+        Ok(())
+    }
+
+    /// lower a declared type body using the resolved name table.
+    fn lower_named_type(
+        &self,
+        type_expr: &TypeExpr,
+    ) -> Result<runinator_models::types::RuninatorType, WdlError> {
+        types::lower_type_with(type_expr, &self.named_types)
     }
 
     /// lower header `trigger cron "..."` declarations into runtime trigger specs
@@ -233,11 +286,12 @@ impl Lowerer {
         let Some(type_expr) = &stmt.label_type else {
             return Ok(());
         };
-        let ty = types::lower_type(type_expr)?;
-        let value = serde_json::to_value(&ty)
-            .map(Value::from)
-            .map_err(|err| WdlError::lower(err.to_string()))?;
-        self.declared_types.push((id.to_string(), value));
+        // validate the annotation resolves, but record its name-preserving surface form so a
+        // declared `type` reference (e.g. `let x: Cart`) decompiles back to the name, not its shape.
+        types::lower_type_with(type_expr, &self.named_types)?;
+        let rendered = crate::format::format_type(type_expr);
+        self.declared_types
+            .push((id.to_string(), Value::String(rendered)));
         Ok(())
     }
 
@@ -273,6 +327,7 @@ impl Lowerer {
         }
         let prefix = match &stmt.kind {
             StmtKind::Action(_) => "action",
+            StmtKind::Compute(_) => "compute",
             StmtKind::Subflow(_) => "subflow",
             StmtKind::Wait(_) => "wait",
             StmtKind::Emit(_) => "emit",
@@ -294,6 +349,7 @@ impl Lowerer {
     fn lower_stmt(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), WdlError> {
         match &stmt.kind {
             StmtKind::Action(action) => self.lower_action(action, stmt, id, next),
+            StmtKind::Compute(compute) => self.lower_compute(compute, stmt, id, next),
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Emit(emit) => self.lower_emit(emit, stmt, id, next),
@@ -687,6 +743,28 @@ fn node_ref(id: &str) -> Value {
     let mut map = Map::new();
     map.insert("$node".into(), Value::String(id.to_string()));
     Value::Object(map)
+}
+
+/// whether a type expression references any declared (`type <Name>`) type, anywhere in its shape.
+fn type_expr_uses_declared_name(
+    ty: &TypeExpr,
+    named: &std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
+) -> bool {
+    match ty {
+        TypeExpr::Named(name) => named.contains_key(name),
+        TypeExpr::Array(inner) | TypeExpr::Map(inner) => type_expr_uses_declared_name(inner, named),
+        TypeExpr::Union(variants) => variants
+            .iter()
+            .any(|variant| type_expr_uses_declared_name(variant, named)),
+        TypeExpr::Struct { fields, additional } => {
+            fields
+                .iter()
+                .any(|field| type_expr_uses_declared_name(&field.ty, named))
+                || additional
+                    .as_ref()
+                    .is_some_and(|a| type_expr_uses_declared_name(a, named))
+        }
+    }
 }
 
 fn transitions_next(target: &str) -> Value {

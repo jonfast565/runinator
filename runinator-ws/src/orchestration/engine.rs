@@ -1,6 +1,8 @@
 use super::context::runtime_context;
 use super::*;
-use super::{action, approval, basic, context, control_flow, map, subflow, transitions, wait};
+use super::{
+    action, approval, basic, compute, context, control_flow, map, subflow, transitions, wait,
+};
 use uuid::Uuid;
 
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
@@ -121,8 +123,14 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
             .await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Action => {
-            action::process_action_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
+            // pure `std.run` compute nodes reduce in-process; everything else dispatches to a
+            // worker through the action outbox.
+            if compute::is_inprocess_compute(node) {
+                compute::process_compute_node(db, &workflow_run, node, &node_runs, &nodes).await?;
+            } else {
+                action::process_action_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
+                    .await?;
+            }
             return Ok(ReadyNodeDisposition::Complete);
         }
         runinator_models::workflows::WorkflowNodeKind::Wait => {
@@ -435,5 +443,8 @@ async fn active_node_awaits_worker<T: DatabaseImpl>(
     Ok(nodes
         .iter()
         .find(|node| node.id == active_node_id)
-        .is_some_and(|node| node.kind == WorkflowNodeKind::Action))
+        .is_some_and(|node| {
+            // a pure `std.run` compute node reduces in-process, so it never parks awaiting a worker.
+            node.kind == WorkflowNodeKind::Action && !compute::is_inprocess_compute(node)
+        }))
 }

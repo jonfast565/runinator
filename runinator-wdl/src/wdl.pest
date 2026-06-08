@@ -15,7 +15,12 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ trigger_decl* ~ alias_decl* ~ start_decl? ~ stmt* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ trigger_decl* ~ alias_decl* ~ type_decl* ~ start_decl? ~ stmt* ~ "}" }
+
+// named type declarations, reusable for input/let typing. a struct shorthand (`type Cart { ... }`)
+// or an alias (`type Ids = int[]`). render-only surface: declared names resolve to RuninatorType
+// during lowering and the declarations ride in metadata so decompile can re-emit them.
+type_decl = { "type" ~ type_named ~ ( type_struct | ("=" ~ type_expr) ) }
 version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 
 // header trigger declarations. a `trigger cron "<expr>"` schedules runs of this workflow on the
@@ -86,8 +91,54 @@ stmt_body = {
   | config_stmt
   | fail_stmt
   | subflow_stmt
+  | compute_stmt
   | action_stmt
 }
+
+// an imperative compute block. lowers to an action node invoking the `std` standard library:
+// `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
+// dispatched to the worker) when any called function has side effects.
+compute_stmt  = { "compute" ~ compute_block ~ modifier* }
+compute_block = { "{" ~ compute_line* ~ "}" }
+compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
+compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ cexpr }
+compute_return = { "return" ~ cexpr }
+compute_goto  = { "goto" ~ target }
+compute_if    = { "if" ~ ccond ~ compute_block ~ ("else" ~ compute_block)? }
+compute_expr_stmt = { cexpr }
+
+// a compute-tier condition: identical to `cond` but its comparison operands are `cexpr`, so
+// arithmetic and library calls may appear in compute conditions.
+ccond         = { ccond_or }
+ccond_or      = { ccond_and ~ ("||" ~ ccond_and)* }
+ccond_and     = { ccond_unary ~ ("&&" ~ ccond_unary)* }
+ccond_unary   = { cnot_cond | ccond_primary }
+cnot_cond     = { "!" ~ ccond_unary }
+ccond_primary = { cparen_cond | ccond_exists | ccond_cmp }
+cparen_cond   = { "(" ~ ccond ~ ")" }
+ccond_exists  = { "exists" ~ cexpr }
+ccond_cmp     = { cexpr ~ cmp_op ~ cexpr }
+
+// the compute expression tier layers arithmetic and library calls above the declarative `expr`
+// rule, which it falls through to for paths/literals/`++`/`??`/`string()`/`json()`.
+cexpr    = { csum }
+csum     = { cterm ~ (add_op ~ cterm)* }
+cterm    = { cunary ~ (mul_op ~ cunary)* }
+cunary   = { cneg | cprimary }
+cneg     = { "-" ~ cunary }
+add_op   = { "+" | "-" }
+mul_op   = { "*" | "/" | "%" }
+// object/array literals in compute use compute-tier values so arithmetic and calls work inside
+// them; everything else falls through to the declarative `expr` rule.
+cprimary = { cparen | cbuiltin | cobject | carray | expr }
+cparen   = { "(" ~ cexpr ~ ")" }
+// `string`/`json` stay the `expr` coercion calls; every other `name(...)` is a library call.
+cbuiltin = { !(func_name ~ "(") ~ call_ident ~ "(" ~ (cexpr ~ ("," ~ cexpr)*)? ~ ")" }
+call_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+cobject       = { "{" ~ (cobject_entry ~ ("," ~ cobject_entry)*)? ~ ","? ~ "}" }
+cobject_entry = { cobject_pair | object_shorthand }
+cobject_pair  = { (ident | string) ~ ":" ~ cexpr }
+carray        = { "[" ~ (cexpr ~ ("," ~ cexpr)*)? ~ ","? ~ "]" }
 
 // provider/function names may contain internal hyphens (e.g. `ai-command`); this token is
 // confined to the call position, where `-` is never an operator.

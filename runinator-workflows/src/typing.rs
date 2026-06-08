@@ -405,6 +405,46 @@ fn infer_expression_type(
                 )))
             }
         }
+        // arithmetic resolves to a numeric type; require every operand to be numeric.
+        WorkflowExpression::Add(items)
+        | WorkflowExpression::Sub(items)
+        | WorkflowExpression::Mul(items)
+        | WorkflowExpression::Div(items)
+        | WorkflowExpression::Mod(items) => {
+            let mut all_integer = true;
+            for item in items {
+                let ty = infer_expression_type(item, context)?;
+                match ty {
+                    WorkflowType::Integer => {}
+                    WorkflowType::Number | WorkflowType::Any => all_integer = false,
+                    other => {
+                        return Err(WorkflowValidationError::TypeError(format!(
+                            "arithmetic operand must be numeric, got {}",
+                            other.describe()
+                        )));
+                    }
+                }
+            }
+            Ok(if all_integer {
+                WorkflowType::Integer
+            } else {
+                WorkflowType::Number
+            })
+        }
+        WorkflowExpression::Neg(nested) => {
+            let ty = infer_expression_type(nested, context)?;
+            match ty {
+                WorkflowType::Integer => Ok(WorkflowType::Integer),
+                WorkflowType::Number | WorkflowType::Any => Ok(WorkflowType::Number),
+                other => Err(WorkflowValidationError::TypeError(format!(
+                    "arithmetic operand must be numeric, got {}",
+                    other.describe()
+                ))),
+            }
+        }
+        // intrinsic return types are checked by WDL sema against provider signatures; the
+        // declarative type pass treats a call result as unknown.
+        WorkflowExpression::Call { .. } => Ok(WorkflowType::Any),
     }
 }
 
@@ -455,6 +495,8 @@ fn resolve_ref_type(
         // config is typed from the stored settings schema (`{ scope: { name: type } }`); an
         // open struct keeps not-yet-configured keys permissive (`any`) instead of erroring.
         WorkflowRefSource::Config => &context.config,
+        // compute locals are typed by WDL sema, not the declarative type pass.
+        WorkflowRefSource::Local => &WorkflowType::Any,
         WorkflowRefSource::NodeOutput(node) => {
             context.node_outputs.get(node.as_str()).ok_or_else(|| {
                 WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())

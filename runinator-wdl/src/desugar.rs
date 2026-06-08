@@ -61,10 +61,33 @@ fn expand_block(block: &mut Block, aliases: &AliasTable) -> Result<(), WdlError>
     Ok(())
 }
 
+// expand spreads inside a compute block's expressions, recursing into nested `if` branches.
+fn expand_compute_block(body: &mut [ComputeLine], aliases: &AliasTable) -> Result<(), WdlError> {
+    for line in body.iter_mut() {
+        match line {
+            ComputeLine::Let { value, .. }
+            | ComputeLine::Return(value)
+            | ComputeLine::Expr(value) => expand_expr(value, aliases)?,
+            ComputeLine::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                expand_cond(cond, aliases)?;
+                expand_compute_block(then_branch, aliases)?;
+                expand_compute_block(else_branch, aliases)?;
+            }
+            ComputeLine::Goto(_) => {}
+        }
+    }
+    Ok(())
+}
+
 // expand spreads in a statement's expressions and recurse into control-flow bodies.
 fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
     match &mut stmt.kind {
         StmtKind::Action(action) => expand_entries(&mut action.args, aliases)?,
+        StmtKind::Compute(compute) => expand_compute_block(&mut compute.body, aliases)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = subflow.run_name.as_mut() {
                 expand_expr(run_name, aliases)?;
@@ -188,7 +211,23 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_expr(part, aliases)?;
             }
         }
-        ExprKind::ToString(inner) | ExprKind::ToJson(inner) => expand_expr(inner, aliases)?,
+        ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
+            expand_expr(inner, aliases)?
+        }
+        ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => {
+            for part in parts.iter_mut() {
+                expand_expr(part, aliases)?;
+            }
+        }
+        ExprKind::Call { args, .. } => {
+            for arg in args.iter_mut() {
+                expand_expr(arg, aliases)?;
+            }
+        }
         ExprKind::Str(parts) => {
             for part in parts.iter_mut() {
                 if let StrPart::Expr(part) = part {

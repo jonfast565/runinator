@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { fetchReplicas as fetchReplicasApi } from "../api/commandCenterApi";
+import { isTauriRuntime } from "../api/tauriRuntime";
 import type { ReplicaCounts, ReplicaRecord } from "../types/models";
 import type { AppTab, NavSection } from "../types/app";
 
@@ -8,7 +9,7 @@ export const navSections: NavSection[] = [
   {
     label: "Workspace",
     items: [
-      { tab: "Dev", label: "Dev", icon: "debug" },
+      { tab: "Dev", label: "Dev", icon: "debug", desktopOnly: true },
       { tab: "Workflows", label: "Workflows", icon: "workflow" },
       { tab: "Runs", label: "Runs", icon: "runs" },
       { tab: "Providers", label: "Providers", icon: "box" },
@@ -43,6 +44,14 @@ export const navSections: NavSection[] = [
 ];
 
 export const tabs: AppTab[] = navSections.flatMap((section) => section.items.map((item) => item.tab));
+
+// nav sections with desktop-only items dropped when running in the hosted web app.
+export function visibleNavSections(): NavSection[] {
+  if (isTauriRuntime()) return navSections;
+  return navSections
+    .map((section) => ({ ...section, items: section.items.filter((item) => !item.desktopOnly) }))
+    .filter((section) => section.items.length > 0);
+}
 
 const navItemByTab = new Map(
   navSections.flatMap((section) => section.items.map((item) => [item.tab, item] as const))

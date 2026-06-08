@@ -32,8 +32,11 @@ pub(super) struct Decompiler<'a> {
     // surface every implicit construct (ids, edges, defaults) instead of the terse form.
     explicit: bool,
     loop_vars: Vec<(String, String)>,
-    // declared `let <id>: <type>` annotations recovered from graph metadata.
-    declared_types: HashMap<String, RuninatorType>,
+    // declared `let <id>: <type>` annotations recovered from graph metadata, kept as rendered wdl
+    // type text so declared type-name references survive the round trip.
+    declared_types: HashMap<String, String>,
+    // surface-form overrides for top-level input fields that reference a declared type name.
+    input_types: HashMap<String, String>,
     // header alias declarations recovered from graph metadata, in declaration order.
     alias_decls: Vec<(String, Vec<Value>)>,
     // per-node `...alias` spread recipes (node id -> recipe segments) recovered from metadata.
@@ -71,6 +74,7 @@ pub fn decompile_definition(
     }
 
     let declared_types = read_declared_types(&graph.metadata);
+    let input_types = read_input_types(&graph.metadata);
     let alias_decls = read_alias_decls(&graph.metadata);
     let spreads = read_spreads(&graph.metadata);
 
@@ -81,6 +85,7 @@ pub fn decompile_definition(
         explicit: options.explicit,
         loop_vars: Vec::new(),
         declared_types,
+        input_types,
         alias_decls,
         spreads,
         visited: HashSet::new(),
@@ -98,6 +103,7 @@ pub fn decompile_definition(
     decompiler.indent += 1;
     decompiler.emit_input(&definition.input_type)?;
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
+    decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
 
     let start = graph
@@ -132,19 +138,66 @@ pub fn decompile_definition(
     Ok(decompiler.out)
 }
 
-/// recover declared `let` types from the graph metadata sidecar at `/wdl/types`.
-fn read_declared_types(metadata: &Value) -> HashMap<String, RuninatorType> {
+/// recover declared `let` types from the graph metadata sidecar at `/wdl/types` as rendered wdl
+/// type text. newer graphs store the surface string directly; older graphs stored a native
+/// `RuninatorType` schema, which is rendered back for compatibility.
+fn read_declared_types(metadata: &Value) -> HashMap<String, String> {
     let mut types = HashMap::new();
     let Some(entries) = metadata.pointer("/wdl/types").and_then(Value::as_object) else {
         return types;
     };
     for (id, value) in entries {
+        if let Some(text) = value.as_str() {
+            types.insert(id.clone(), text.to_string());
+            continue;
+        }
         let json = serde_json::Value::from(value.clone());
         if let Ok(ty) = serde_json::from_value::<RuninatorType>(json) {
-            types.insert(id.clone(), ty);
+            types.insert(id.clone(), expr::render_type(&ty));
         }
     }
     types
+}
+
+/// recover named `type <Name>` declarations from the metadata sidecar at `/wdl/type_decls` as
+/// rendered surface strings, preserving declaration order. older graphs stored a native schema,
+/// which is rendered back for compatibility.
+fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
+    let Some(entries) = metadata
+        .pointer("/wdl/type_decls")
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|(name, value)| {
+            if let Some(text) = value.as_str() {
+                return Some((name.clone(), text.to_string()));
+            }
+            let json = serde_json::Value::from(value.clone());
+            serde_json::from_value::<RuninatorType>(json)
+                .ok()
+                .map(|ty| (name.clone(), expr::render_type(&ty)))
+        })
+        .collect()
+}
+
+/// recover surface-form overrides for top-level input fields at `/wdl/input_types`.
+fn read_input_types(metadata: &Value) -> HashMap<String, String> {
+    let mut overrides = HashMap::new();
+    let Some(entries) = metadata
+        .pointer("/wdl/input_types")
+        .and_then(Value::as_object)
+    else {
+        return overrides;
+    };
+    for (name, value) in entries {
+        if let Some(text) = value.as_str() {
+            overrides.insert(name.clone(), text.to_string());
+        }
+    }
+    overrides
 }
 
 /// recover header `trigger` specs from runtime metadata at `/triggers`.
@@ -213,7 +266,13 @@ impl<'a> Decompiler<'a> {
         self.line("input {");
         self.indent += 1;
         for (name, field) in fields {
-            let rendered = expr::render_type(&field.ty);
+            // prefer a recorded surface form (which preserves a declared type name) over the
+            // expanded structural rendering.
+            let rendered = self
+                .input_types
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| expr::render_type(&field.ty));
             // a default implies optionality, so it replaces the `?` marker rather than adding to it.
             if let Some(default) = &field.default {
                 let default_text = self.expr(default)?;
@@ -261,6 +320,23 @@ impl<'a> Decompiler<'a> {
                 text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
             }
             self.line(&text);
+        }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit recovered `type <Name> ...` declarations from rendered surface strings. a struct (which
+    /// renders starting with `{`) uses the brace shorthand; anything else uses the `= <type>` form.
+    fn emit_type_decls(&mut self, decls: &[(String, String)]) -> Result<(), WdlError> {
+        if decls.is_empty() {
+            return Ok(());
+        }
+        for (name, rendered) in decls {
+            if rendered.starts_with('{') {
+                self.line(&format!("type {name} {rendered}"));
+            } else {
+                self.line(&format!("type {name} = {rendered}"));
+            }
         }
         self.out.push('\n');
         Ok(())
@@ -498,11 +574,11 @@ impl<'a> Decompiler<'a> {
         let (text, lets_binding) = self.statement_text(node)?;
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
-                Some(ty) => format!(
+                Some(rendered) => format!(
                     "{}let {}: {} = ",
                     self.annotation_prefix(node, false),
                     node.id,
-                    expr::render_type(ty)
+                    rendered
                 ),
                 None => format!("{}let {} = ", self.annotation_prefix(node, false), node.id),
             }
@@ -576,7 +652,13 @@ impl<'a> Decompiler<'a> {
     /// returns the statement text and whether it should be prefixed with `let <id> =`.
     fn statement_text(&self, node: &WorkflowNode) -> Result<(String, bool), WdlError> {
         match &node.kind {
-            WorkflowNodeKind::Action => Ok((self.action_text(node)?, true)),
+            WorkflowNodeKind::Action => {
+                // a std provider node carrying a `program` is a compute block, not a plain call.
+                if let Some(program) = compute_program(node) {
+                    return Ok((self.compute_text(node, program)?, true));
+                }
+                Ok((self.action_text(node)?, true))
+            }
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
             WorkflowNodeKind::Emit => Ok((self.emit_text(node)?, false)),
@@ -584,6 +666,74 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Config => Ok((self.config_text(node)?, false)),
             other => Err(WdlError::Decompile(format!("unexpected leaf {other:?}"))),
         }
+    }
+
+    // render a compute block. inner lines carry their absolute indentation so the caller's
+    // `self.line` (which only indents the first line) yields correctly nested output, and the
+    // trailing success arrow appends cleanly after the closing brace.
+    fn compute_text(&self, node: &WorkflowNode, program: &[Value]) -> Result<String, WdlError> {
+        let base = self.indent;
+        let mut out = String::from("compute {\n");
+        self.render_compute_lines(&mut out, program, base + 1)?;
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        if let Some(action) = &node.action {
+            if self.explicit || action.timeout_seconds != 60 {
+                out.push_str(&format!(".timeout({}s)", action.timeout_seconds));
+            }
+            if self.explicit || node.retry.max_attempts > 1 {
+                out.push_str(&format!(".retry({})", node.retry.max_attempts));
+            }
+        }
+        Ok(out)
+    }
+
+    fn render_compute_lines(
+        &self,
+        out: &mut String,
+        program: &[Value],
+        indent: usize,
+    ) -> Result<(), WdlError> {
+        let pad = "    ".repeat(indent);
+        for statement in program {
+            let object = statement
+                .as_object()
+                .ok_or_else(|| WdlError::Decompile("compute statement must be an object".into()))?;
+            if let Some(name) = object.get("$let").and_then(Value::as_str) {
+                let value = object
+                    .get("value")
+                    .ok_or_else(|| WdlError::Decompile("compute let missing value".into()))?;
+                out.push_str(&format!("{pad}let {name} = {}\n", self.expr(value)?));
+            } else if let Some(value) = object.get("$return") {
+                out.push_str(&format!("{pad}return {}\n", self.expr(value)?));
+            } else if let Some(target) = object.get("$goto").and_then(Value::as_str) {
+                out.push_str(&format!("{pad}goto {}\n", self.target_label(target)));
+            } else if let Some(condition) = object.get("$if") {
+                out.push_str(&format!("{pad}if {} {{\n", self.cond(condition)?));
+                let then_branch = object
+                    .get("then")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                self.render_compute_lines(out, &then_branch, indent + 1)?;
+                let else_branch = object
+                    .get("else")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if else_branch.is_empty() {
+                    out.push_str(&format!("{pad}}}\n"));
+                } else {
+                    out.push_str(&format!("{pad}}} else {{\n"));
+                    self.render_compute_lines(out, &else_branch, indent + 1)?;
+                    out.push_str(&format!("{pad}}}\n"));
+                }
+            } else {
+                // a bare expression statement (e.g. a side-effecting call).
+                out.push_str(&format!("{pad}{}\n", self.expr(statement)?));
+            }
+        }
+        Ok(())
     }
 
     fn action_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -1247,6 +1397,20 @@ fn node_ref_ids(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// the compute program of a `std` provider action node, if present.
+fn compute_program(node: &WorkflowNode) -> Option<&[Value]> {
+    let action = node.action.as_ref()?;
+    if action.provider != "std" {
+        return None;
+    }
+    action
+        .configuration
+        .as_value()
+        .get("program")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
 }
 
 /// read a single `{ "$node": id }` reference into a node id.

@@ -64,6 +64,14 @@ pub enum WorkflowValidationError {
         "WORKFLOW023 - map node '{node}' with concurrency > 1 requires an isolatable body: {reason}"
     )]
     MapConcurrencyBodyNotIsolatable { node: String, reason: String },
+    #[error("WORKFLOW024 - compute program is invalid: {0}")]
+    InvalidComputeProgram(String),
+    #[error("WORKFLOW025 - unknown intrinsic '{0}'")]
+    UnknownIntrinsic(String),
+    #[error("WORKFLOW026 - intrinsic '{name}' failed: {message}")]
+    IntrinsicError { name: String, message: String },
+    #[error("WORKFLOW027 - compute goto target '{0}' is invalid")]
+    InvalidGotoTarget(String),
 }
 
 // numbered error dictionary for the workflow validator.
@@ -179,6 +187,26 @@ pub const MAP_CONCURRENCY_BODY_NOT_ISOLATABLE: ErrorDescriptor = ErrorDescriptor
     "workflow.map_concurrency_body_not_isolatable",
     "Map node with concurrency > 1 requires an isolatable body",
 );
+pub const INVALID_COMPUTE_PROGRAM: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW024",
+    "workflow.invalid_compute_program",
+    "Compute program is invalid",
+);
+pub const UNKNOWN_INTRINSIC: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW025",
+    "workflow.unknown_intrinsic",
+    "Unknown intrinsic",
+);
+pub const INTRINSIC_ERROR: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW026",
+    "workflow.intrinsic_error",
+    "Intrinsic failed",
+);
+pub const INVALID_GOTO_TARGET: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW027",
+    "workflow.invalid_goto_target",
+    "Compute goto target is invalid",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
@@ -204,6 +232,10 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     TYPE_ERROR,
     TYPE_DIAGNOSTIC,
     MAP_CONCURRENCY_BODY_NOT_ISOLATABLE,
+    INVALID_COMPUTE_PROGRAM,
+    UNKNOWN_INTRINSIC,
+    INTRINSIC_ERROR,
+    INVALID_GOTO_TARGET,
 ];
 
 impl EngineErrors for WorkflowValidationError {

@@ -25,6 +25,7 @@ members = [
     "runinator-provider-jira",
     "runinator-provider-slack",
     "runinator-provider-sql",
+    "runinator-provider-std",
     "runinator-plugin-console",
     "runinator-utilities",
     "runinator-broker",

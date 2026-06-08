@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use runinator_models::value::{Map, Value};
 
+mod compute;
 mod conditions;
 mod errors;
 mod expressions;
@@ -14,7 +15,12 @@ mod types;
 mod typing;
 mod validation;
 
-pub use conditions::{evaluate_condition, next_transition};
+pub use compute::{
+    ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, IntrinsicLibrary,
+    PureIntrinsics, call_pure, effectful_signatures, intrinsic_arity, intrinsic_signature,
+    is_known_intrinsic, parse_program, run_program,
+};
+pub use conditions::{evaluate_condition, evaluate_condition_with, next_transition};
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::{apply_input_defaults, resolve_value_refs};
 pub use normalize::{normalize_definition, normalize_workflow};
@@ -48,5 +54,7 @@ pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> 
     })
 }
 
+#[cfg(test)]
+mod compute_tests;
 #[cfg(test)]
 mod tests;

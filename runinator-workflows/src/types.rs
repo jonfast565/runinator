@@ -32,6 +32,8 @@ pub enum WorkflowRefSource {
     Prev,
     Workflow,
     Config,
+    // a compute-block local introduced by `let`, resolved from the `let` slot of the context.
+    Local,
     NodeOutput(WorkflowNodeRef),
 }
 
@@ -49,6 +51,18 @@ pub enum WorkflowExpression {
     Coalesce(Vec<WorkflowExpression>),
     ToString(Box<WorkflowExpression>),
     ToJsonString(Box<WorkflowExpression>),
+    // arithmetic ops fold their operands left-to-right; require at least one operand.
+    Add(Vec<WorkflowExpression>),
+    Sub(Vec<WorkflowExpression>),
+    Mul(Vec<WorkflowExpression>),
+    Div(Vec<WorkflowExpression>),
+    Mod(Vec<WorkflowExpression>),
+    Neg(Box<WorkflowExpression>),
+    // a call into the intrinsic library, resolved by name at evaluation time.
+    Call {
+        name: String,
+        args: Vec<WorkflowExpression>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
