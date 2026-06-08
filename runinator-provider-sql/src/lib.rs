@@ -23,7 +23,7 @@ pub struct SqlProvider;
 
 impl Provider for SqlProvider {
     fn name(&self) -> String {
-        "SQL".to_string()
+        "sql".to_string()
     }
 
     fn metadata(&self) -> ProviderMetadata {

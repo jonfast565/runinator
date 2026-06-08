@@ -10,7 +10,7 @@ pub mod ast;
 pub mod completion;
 mod decompile;
 mod desugar;
-mod errors;
+pub mod errors;
 mod format;
 pub(crate) mod lower;
 mod parser;

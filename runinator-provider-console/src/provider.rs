@@ -17,7 +17,7 @@ pub struct ConsoleProvider;
 
 impl Provider for ConsoleProvider {
     fn name(&self) -> String {
-        "Console".to_string()
+        "console".to_string()
     }
 
     fn metadata(&self) -> ProviderMetadata {

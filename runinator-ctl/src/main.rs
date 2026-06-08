@@ -2,7 +2,6 @@ mod banner;
 mod cli;
 mod commands;
 mod output;
-mod pack;
 mod params;
 
 use clap::Parser;

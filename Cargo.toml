@@ -4,6 +4,8 @@ resolver = "2"
 members = [
     "runinator-command-center/src-tauri",
     "runinator-models",
+    "runinator-pack",
+    "runinator-lsp",
     "runinator-database",
     "runinator-migration",
     "runinator-waker",

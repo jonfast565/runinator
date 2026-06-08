@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# typescript build output
+out/
+dist/
+*.tsbuildinfo
+
+# packaged extension
+*.vsix
+
+# vscode extension test runner
+.vscode-test/
+
+# logs
+npm-debug.log*
+yarn-error.log*

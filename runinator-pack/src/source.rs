@@ -7,7 +7,10 @@ use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
 
-use crate::commands::{Result, err};
+use crate::errors::{PackError, Result};
+
+#[cfg(test)]
+mod tests;
 
 // the source file's last-modified time, used to stamp compiled artifacts so re-applying an edited
 // pack overwrites the stored copy (newer mtime wins) while an unedited file is skipped.
@@ -17,9 +20,6 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
         .ok()
         .map(DateTime::<Utc>::from)
 }
-
-#[cfg(test)]
-mod tests;
 
 // returns true when the path is a wdl pack source (a directory, a .wdl, or a .wdlp manifest)
 // rather than a raw workflow/bundle json file.
@@ -80,7 +80,7 @@ fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
     let data = fs::read_to_string(path)?;
     let mut bundle: SecretBundle = match path.extension().and_then(|ext| ext.to_str()) {
         Some("wdls") => runinator_wdl::parse_secrets_str(&data).map_err(|e| {
-            err(format!(
+            PackError::compile(format!(
                 "failed to parse {}:\n{}",
                 path.display(),
                 e.render(&data)
@@ -138,26 +138,29 @@ pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
                 triggers: Vec::new(),
             })
         }
-        _ => Err(err(format!("unsupported pack source: {}", path.display()))),
+        _ => Err(PackError::source(format!(
+            "unsupported pack source: {}",
+            path.display()
+        ))),
     }
 }
 
 // format and compile one .wdl source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
-fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
+pub fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
     };
     let formatted = runinator_wdl::format_str(data).map_err(|e| {
-        err(format!(
+        PackError::compile(format!(
             "failed to format {} before import:\n{}",
             path.display(),
             e.render(data)
         ))
     })?;
     let mut definition = runinator_wdl::compile_str(&formatted, &options).map_err(|e| {
-        err(format!(
+        PackError::compile(format!(
             "failed to compile {}:\n{}",
             path.display(),
             e.render(&formatted)
@@ -172,7 +175,10 @@ fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<Workf
 fn load_wdl_directory(dir: &Path) -> Result<WorkflowBundle> {
     let wdl_paths = wdl_directory_paths(dir)?;
     if wdl_paths.is_empty() {
-        return Err(err(format!("no .wdl files found in {}", dir.display())));
+        return Err(PackError::source(format!(
+            "no .wdl files found in {}",
+            dir.display()
+        )));
     }
 
     let mut workflows = Vec::with_capacity(wdl_paths.len());
@@ -247,7 +253,7 @@ fn wdl_pack_manifest_paths_from_value(path: &Path, manifest: &Value) -> Result<V
     let entries = manifest
         .get("workflows")
         .and_then(Value::as_array)
-        .ok_or_else(|| err("wdl pack manifest missing 'workflows' array"))?;
+        .ok_or_else(|| PackError::source("wdl pack manifest missing 'workflows' array"))?;
 
     let mut paths = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -255,7 +261,9 @@ fn wdl_pack_manifest_paths_from_value(path: &Path, manifest: &Value) -> Result<V
             .as_str()
             .or_else(|| entry.get("path").and_then(Value::as_str))
             .ok_or_else(|| {
-                err("each manifest workflow entry must be a path string or have a 'path'")
+                PackError::source(
+                    "each manifest workflow entry must be a path string or have a 'path'",
+                )
             })?;
         paths.push(base_dir.join(rel));
     }

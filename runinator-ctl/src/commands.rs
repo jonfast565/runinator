@@ -19,12 +19,14 @@ use runinator_models::{
 };
 use tokio::time;
 
+use runinator_pack::source as pack;
+
 use crate::{
     cli::{
         ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, SettingsCommands,
         TriggerCommands, WdlCommands, WorkflowCommands,
     },
-    output, pack, params,
+    output, params,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;

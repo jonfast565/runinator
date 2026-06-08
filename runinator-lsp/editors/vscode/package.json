@@ -1,0 +1,84 @@
+{
+  "name": "runinator-wdl",
+  "displayName": "Runinator WDL",
+  "description": "Diagnostics, completion, hover, formatting, and apply-on-save for Runinator WDL workflows.",
+  "version": "0.1.0",
+  "publisher": "runinator",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:wdl"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "wdl",
+        "aliases": [
+          "Runinator WDL",
+          "wdl"
+        ],
+        "extensions": [
+          ".wdl",
+          ".wdlp",
+          ".wdls"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "wdl",
+        "scopeName": "source.wdl",
+        "path": "./syntaxes/wdl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "wdl",
+        "path": "./snippets/wdl.json"
+      }
+    ],
+    "configuration": {
+      "title": "Runinator WDL",
+      "properties": {
+        "runinator.serverPath": {
+          "type": "string",
+          "default": "runinator-lsp",
+          "description": "Path to the runinator-lsp server binary."
+        },
+        "runinator.apiBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080/",
+          "description": "Web service base URL used to fetch provider/setting metadata for completion (RUNINATOR_API_BASE_URL)."
+        },
+        "runinator.autoApply": {
+          "type": "boolean",
+          "default": false,
+          "description": "On save, compile the workflow pack and import it into the configured service (overwrite)."
+        },
+        "runinator.serviceUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Web service base URL that apply-on-save imports into. Defaults to runinator.apiBaseUrl when empty."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.4.0"
+  }
+}

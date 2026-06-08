@@ -1,0 +1,67 @@
+{
+  "Workflow": {
+    "prefix": "workflow",
+    "body": ["workflow \"${1:Name}\" v${2:1} {", "\t$0", "}"],
+    "description": "Workflow scaffold"
+  },
+  "Input block": {
+    "prefix": "input",
+    "body": ["input {", "\t${1:name}: ${2:string}", "}"],
+    "description": "Workflow input block"
+  },
+  "Task (let action)": {
+    "prefix": "task",
+    "body": ["let ${1:result} = ${2:console}.${3:run}(${4:command}: ${5:\"echo hi\"})", "\t-> ${6:done}"],
+    "description": "Task: a provider action bound to a let, with a transition"
+  },
+  "Action call": {
+    "prefix": "action",
+    "body": ["${1:provider}.${2:action}(${3:param}: ${4:value})"],
+    "description": "Provider action call"
+  },
+  "If / else": {
+    "prefix": "if",
+    "body": ["if ${1:condition} {", "\t$0", "} else {", "\t", "}"],
+    "description": "Conditional block"
+  },
+  "For loop": {
+    "prefix": "for",
+    "body": ["for ${1:item} in ${2:input.items} {", "\t$0", "}"],
+    "description": "For-each loop"
+  },
+  "Map (fan-out)": {
+    "prefix": "map",
+    "body": ["map ${1:item} in ${2:input.items} concurrency ${3:none} {", "\t$0", "}"],
+    "description": "Map fan-out over items"
+  },
+  "Parallel / join": {
+    "prefix": "parallel",
+    "body": ["parallel {", "\tbranch {", "\t\t$1", "\t}", "\tbranch {", "\t\t$2", "\t}", "} join ${3|all,any,first_success|}"],
+    "description": "Parallel branches with a join policy"
+  },
+  "Try / catch / finally": {
+    "prefix": "try",
+    "body": ["try {", "\t$1", "} catch {", "\t$2", "} finally {", "\t$3", "}"],
+    "description": "Try / catch / finally"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": ["match ${1:expr} {", "\t${2:value} -> ${3:done}", "\telse -> ${4:fail}", "}"],
+    "description": "Match statement"
+  },
+  "Wait": {
+    "prefix": "wait",
+    "body": ["wait ${1:30s}"],
+    "description": "Wait for a duration"
+  },
+  "Approval gate": {
+    "prefix": "approve",
+    "body": ["approve ${1:\"Approve this step?\"} type ${2:\"manual\"}"],
+    "description": "Approval gate"
+  },
+  "Cron trigger": {
+    "prefix": "trigger",
+    "body": ["trigger cron \"${1:0 9 * * *}\""],
+    "description": "Header cron trigger"
+  }
+}

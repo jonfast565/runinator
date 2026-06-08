@@ -1,0 +1,17 @@
+[package]
+name = "runinator-lsp"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "runinator-lsp"
+path = "src/main.rs"
+
+[dependencies]
+runinator-api = { path = "../runinator-api" }
+runinator-models = { path = "../runinator-models" }
+runinator-pack = { path = "../runinator-pack" }
+runinator-wdl = { path = "../runinator-wdl" }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time"] }
+tower-lsp = "0.20"

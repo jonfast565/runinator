@@ -209,6 +209,16 @@ contains one WDL workflow that runs a single built-in console action and is wire
 into `bash scripts/run-local.sh smoke-sync` for an import-and-run check against
 an already running local stack.
 
+### Editor integration (language server)
+
+`runinator-lsp` is an editor-agnostic Language Server for `.wdl` files: live diagnostics,
+provider/action completion (from live service metadata), hover, formatting, and an optional
+apply-on-save that imports the pack into a running web service — the editor-native counterpart of
+`runinatorctl workflows dev`. Build it with `cargo build -p runinator-lsp --release` and point your
+editor at the binary. See [`runinator-lsp/README.md`](runinator-lsp/README.md) for the VS Code
+extension and Neovim/Zed setup. The pack compile-to-bundle logic shared by the CLI and the server
+lives in the `runinator-pack` crate.
+
 Workflow syntax now includes richer declarative control-flow nodes:
 
 - `switch` routes by ordered cases and an optional default target.

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Runinator WDL",
+  "scopeName": "source.wdl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#annotations" },
+    { "include": "#strings" },
+    { "include": "#reference-roots" },
+    { "include": "#declaration-keywords" },
+    { "include": "#control-keywords" },
+    { "include": "#operator-keywords" },
+    { "include": "#constants" },
+    { "include": "#transitions" },
+    { "include": "#action-call" },
+    { "include": "#numbers" },
+    { "include": "#references" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.wdl", "match": "//.*$" },
+        { "name": "comment.block.wdl", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "annotations": {
+      "name": "entity.name.tag.annotation.wdl",
+      "match": "@(id|skip|lock|timeout)\\b"
+    },
+    "strings": {
+      "name": "string.quoted.double.wdl",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.wdl", "match": "\\\\." },
+        {
+          "name": "meta.interpolation.wdl",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.interpolation.begin.wdl" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.section.interpolation.end.wdl" }
+          },
+          "patterns": [
+            { "include": "#action-call" },
+            { "include": "#constants" },
+            { "include": "#numbers" },
+            { "include": "#reference-roots" },
+            { "include": "#references" },
+            { "include": "#operators" },
+            { "include": "#strings" }
+          ]
+        }
+      ]
+    },
+    "declaration-keywords": {
+      "name": "keyword.declaration.wdl",
+      "match": "\\b(workflow|input|trigger|cron|alias|start|let|spawn|call|subflow|secret|config)\\b"
+    },
+    "control-keywords": {
+      "name": "keyword.control.wdl",
+      "match": "\\b(if|else|for|in|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|initial|emit|approve|set|fail|with|as|type|name|meta|detached|reuse|limit|concurrency|none)\\b"
+    },
+    "operator-keywords": {
+      "name": "keyword.operator.word.wdl",
+      "match": "\\b(exists|contains|in|starts_with|ends_with)\\b"
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.wdl", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.null.wdl", "match": "\\bnull\\b" },
+        {
+          "name": "support.function.builtin.wdl",
+          "match": "\\b(string|json)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "transitions": {
+      "patterns": [
+        {
+          "name": "keyword.control.flow.outcome.wdl",
+          "match": "\\b(ok|next|fail|timeout|reject)\\b(?=\\s*->)"
+        },
+        { "name": "constant.language.target.wdl", "match": "\\b(done)\\b" },
+        { "name": "keyword.operator.arrow.wdl", "match": "->" },
+        {
+          "name": "support.constant.policy.wdl",
+          "match": "\\b(all|any|first_success)\\b"
+        }
+      ]
+    },
+    "action-call": {
+      "match": "([A-Za-z_][A-Za-z0-9_-]*)\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_-]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "support.class.provider.wdl" },
+        "2": { "name": "punctuation.accessor.wdl" },
+        "3": { "name": "entity.name.function.action.wdl" }
+      }
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.duration.wdl", "match": "\\b\\d+(s|m|h|d)\\b" },
+        { "name": "constant.numeric.wdl", "match": "-?\\b\\d+(\\.\\d+)?\\b" }
+      ]
+    },
+    "reference-roots": {
+      "comment": "a reference root immediately followed by a dot (input.x, config.flag) — distinct from the input/config block and decl keywords.",
+      "name": "variable.language.reference.wdl",
+      "match": "\\b(input|config|secret|run|workflow|loop)\\b(?=\\s*\\.)"
+    },
+    "references": {
+      "name": "variable.language.reference.wdl",
+      "match": "\\b(input|config|secret|run|workflow|loop|state|item)\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.wdl",
+      "match": "(\\|\\||&&|==|!=|>=|<=|>|<|\\?\\?|\\+\\+|!|=)"
+    }
+  }
+}

@@ -5,15 +5,12 @@ use super::{load_pack_settings, load_workflow_bundle};
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("runinator-ctl should live under the workspace root")
+        .expect("runinator-pack should live under the workspace root")
 }
 
 #[test]
 fn loads_hello_world_smoke_pack_manifest() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("runinator-ctl should live under the workspace root");
-    let manifest = repo_root
+    let manifest = repo_root()
         .join("packs")
         .join("hello-world")
         .join("hello-world.wdlp");

@@ -19,7 +19,7 @@ pub struct AwsProvider;
 
 impl Provider for AwsProvider {
     fn name(&self) -> String {
-        "AWS".to_string()
+        "aws".to_string()
     }
 
     fn metadata(&self) -> ProviderMetadata {

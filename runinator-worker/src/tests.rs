@@ -116,7 +116,7 @@ async fn output_sink_publishes_result_events_to_broker() {
 #[tokio::test]
 async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata() {
     let mut command = action_command();
-    command.action.provider = "Console".into();
+    command.action.provider = "console".into();
     command.action.function = "run".into();
     command.parameters = json!({ "command": 1 });
 
@@ -138,7 +138,7 @@ async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata(
             .as_deref()
             .unwrap_or_default()
             .contains(
-                "resolved action configuration 'Console.run.command' expected string, got integer"
+                "resolved action configuration 'console.run.command' expected string, got integer"
             )
     );
     assert!(result.execution_result.is_none());
@@ -152,7 +152,7 @@ fn worker_validates_provider_output_fields_when_present() {
             RuninatorType::Integer,
         )]);
     let action = WorkflowAction {
-        provider: "Console".into(),
+        provider: "console".into(),
         function: "run".into(),
         timeout_seconds: 60,
         configuration: runinator_models::workflows::WorkflowObject::default(),
@@ -168,7 +168,7 @@ fn worker_validates_provider_output_fields_when_present() {
 
     let err = crate::executor::validate_execution_result(&action_metadata, &action, &result)
         .expect_err("typed result field is validated");
-    assert!(err.contains("provider output 'Console.run.exit_code' expected integer, got string"));
+    assert!(err.contains("provider output 'console.run.exit_code' expected integer, got string"));
 }
 
 fn action_command() -> ActionCommand {
