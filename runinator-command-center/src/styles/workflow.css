@@ -155,7 +155,7 @@
 
 .workflow-context-menu {
   position: fixed;
-  z-index: 20;
+  z-index: 40;
   display: grid;
   min-width: 130px;
   padding: 4px;

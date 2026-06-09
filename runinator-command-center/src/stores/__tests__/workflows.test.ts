@@ -217,6 +217,65 @@ describe("workflow run detail state", () => {
     expect(workflows.ensureWorkflowNodes().find((node) => node.id === "start")?.kind).toBe("start");
   });
 
+  it("creates new graph nodes without wiring them immediately", async () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "standalone node"));
+    workflows.workflowJson = JSON.stringify(workflows.workflowDraft.definition);
+
+    await workflows.addWorkflowNode("approval");
+
+    const created = workflows.ensureWorkflowNodes().find((node) => node.kind === "approval" && node.id.startsWith("approval"));
+    expect(created).toMatchObject({
+      kind: "approval",
+      parameters: { approval_type: "generic", prompt: "Approval required" },
+      transitions: {}
+    });
+    expect(workflows.graphEdges.some((edge) => edge.target === created?.id)).toBe(false);
+    expect(workflows.selectedStepId).toBe(created?.id);
+  });
+
+  it("treats the connected-node action as a standalone node creation", async () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "standalone node"));
+    workflows.workflowJson = JSON.stringify(workflows.workflowDraft.definition);
+    workflows.selectedStepId = "start";
+
+    await workflows.addConnectedWorkflowNode("emit");
+
+    const created = workflows.ensureWorkflowNodes().find((node) => node.kind === "emit" && node.id.startsWith("emit"));
+    expect(created).toMatchObject({
+      kind: "emit",
+      parameters: { event_type: "workflow.event", data: {} },
+      transitions: {}
+    });
+    expect(workflows.graphEdges.some((edge) => edge.target === created?.id)).toBe(false);
+    expect(workflows.selectedStepId).toBe(created?.id);
+  });
+
+  it("duplicates nodes without carrying their outgoing connections", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "duplicate node"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "task-1",
+      kind: "action",
+      action: { provider: "console", function: "run", timeout_seconds: 300, configuration: {} },
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.populateStepEditor("task-1");
+
+    workflows.duplicateSelectedStep();
+
+    const copy = workflows.ensureWorkflowNodes().find((node) => node.id.endsWith("_copy"));
+    expect(copy).toMatchObject({
+      kind: "action",
+      action: { provider: "console", function: "run" },
+      transitions: {}
+    });
+    expect(workflows.graphEdges.some((edge) => edge.source === "task-1_copy")).toBe(false);
+    expect(workflows.selectedStepId).toBe(copy?.id);
+  });
+
   it("allows non-protected nodes to be locked", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "locked nodes"));

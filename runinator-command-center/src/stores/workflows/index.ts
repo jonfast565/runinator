@@ -88,7 +88,6 @@ import {
   newWorkflowTriggerDraft,
   nextNodePosition,
   nodeRefArray,
-  normalizeNewNodeTargets,
   switchCaseEditor,
   validateJsonValueType,
   type BranchPolicyName,
@@ -842,43 +841,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   async function addWorkflowNode(kind: WorkflowNodeKind) {
-    if (!syncWorkflowJson()) return;
     const nodes = ensureWorkflowNodes();
     const newNode = createWorkflowNode(kind, nodes);
-    const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
-    if (endNode?.id) normalizeNewNodeTargets(newNode, endNode.id);
+    stripNewNodeConnections(newNode);
     const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
     if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
     else nodes.push(newNode);
-    const startNode = nodes.find((node: JsonRecord) => node.kind === "start");
-    if (startNode) {
-      startNode.transitions = startNode.transitions ?? {};
-      if (!startNode.transitions.next || nodeRefId(startNode.transitions.next) === endNode?.id) startNode.transitions.next = nodeRef(newNode.id);
-    }
     setGraphNodePosition(newNode.id, nextNodePosition(nodes.length));
-    syncWorkflowDraftToJson();
+    workflowDraft.definition.concurrency = workflowConcurrency.value;
+    workflowJson.value = pretty(workflowDraft.definition);
+    isDirty.value = true;
     populateStepEditor(newNode.id);
     openStepEditor(newNode.id, true);
   }
 
   async function addConnectedWorkflowNode(kind: WorkflowNodeKind = "action") {
-    if (!selectedStepId.value) return addWorkflowNode(kind);
-    if (!syncWorkflowJson()) return;
-    const nodes = ensureWorkflowNodes();
-    const sourceId = selectedStepId.value;
-    const sourceNode = nodes.find((node: JsonRecord) => String(node.id) === sourceId);
-    if (!sourceNode) return;
-    const newNode = createWorkflowNode(kind, nodes);
-    const endNode = nodes.find((node: JsonRecord) => node.kind === "end");
-    if (endNode?.id) normalizeNewNodeTargets(newNode, endNode.id);
-    const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
-    if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
-    else nodes.push(newNode);
-    setGraphNodePosition(newNode.id, nextNodePosition(nodes.length));
-    const option = workflowEdgeOptions(sourceId)[0];
-    if (option) applyWorkflowEdgeEditorDraft(workflowDraft.definition, null, { ...defaultEdgeEditorDraft(), source: sourceId, target: newNode.id, optionId: option.id });
-    syncWorkflowDraftToJson();
-    populateStepEditor(newNode.id);
+    return addWorkflowNode(kind);
   }
 
   function removeWorkflowStep() {
@@ -1559,6 +1537,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return workflowDraft.definition.nodes;
   }
 
+  function stripNewNodeConnections(node: JsonRecord) {
+    const transitions = node.transitions && typeof node.transitions === "object" && !Array.isArray(node.transitions) ? node.transitions : {};
+    for (const key of directTransitionKeys) {
+      delete transitions[key];
+    }
+    delete transitions.branches;
+    node.transitions = transitions;
+
+    const parameters = node.parameters && typeof node.parameters === "object" && !Array.isArray(node.parameters) ? node.parameters : {};
+    delete parameters.target;
+    delete parameters.default;
+    delete parameters.body;
+    delete parameters.catch;
+    delete parameters.finally;
+    if (Array.isArray(parameters.cases)) parameters.cases = [];
+    if (Array.isArray(parameters.branches)) parameters.branches = [];
+    if (Array.isArray(parameters.wait_for)) parameters.wait_for = [];
+    node.parameters = parameters;
+  }
+
   function moveWorkflowSelection(delta: number) {
     const list = filteredWorkflows.value;
     if (list.length === 0) return;
@@ -1777,6 +1775,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (!source) return;
     const copy = cloneJson(source);
     copy.id = uniqueWorkflowNodeId(nodes, `${source.id}_copy`);
+    stripNewNodeConnections(copy);
     nodes.push(copy);
     setGraphNodePosition(copy.id, nextNodePosition(nodes.length));
     syncWorkflowDraftToJson();

@@ -72,7 +72,7 @@
         <button @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
         <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Delete</button>
-        <button @click="workflows.addConnectedWorkflowNode('action')">Add connected node</button>
+        <button @click="workflows.addConnectedWorkflowNode('action')">Add node</button>
         <button @click="workflows.autoArrangeWorkflowNodes()">Auto arrange from here</button>
         <span v-if="workflows.selectedNodeIssues.length" class="workflow-command-issues">{{ workflows.selectedNodeIssues[0].message }}</span>
       </template>
@@ -81,6 +81,8 @@
       v-if="contextMenu"
       class="workflow-context-menu"
       :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      @pointerdown.stop
+      @mousedown.stop
       @click.stop
       @contextmenu.prevent
     >
@@ -92,6 +94,8 @@
       v-if="pendingConnect"
       class="workflow-edge-popover"
       :style="{ left: `${pendingConnect.x}px`, top: `${pendingConnect.y}px` }"
+      @pointerdown.stop
+      @mousedown.stop
       @click.stop
       @contextmenu.prevent
     >
@@ -105,6 +109,8 @@
       v-if="edgeEditor"
       class="workflow-edge-popover workflow-edge-editor"
       :style="{ left: `${edgeEditor.x}px`, top: `${edgeEditor.y}px` }"
+      @pointerdown.stop
+      @mousedown.stop
       @submit.prevent="applyEdgeEditor"
       @click.stop
       @contextmenu.prevent
@@ -303,6 +309,7 @@ function openNodeMenu(event: any) {
   const node = event?.node;
   if (!mouse || !node?.id) return;
   mouse.preventDefault();
+  mouse.stopPropagation();
   contextMenu.value = {
     kind: "node",
     id: node.id,
@@ -317,6 +324,7 @@ function openEdgeMenu(event: any) {
   const edge = event?.edge;
   if (!mouse || !edge?.id) return;
   mouse.preventDefault();
+  mouse.stopPropagation();
   contextMenu.value = { kind: "edge", id: edge.id, x: mouse.clientX, y: mouse.clientY };
 }
 
@@ -325,6 +333,7 @@ function openEdgeEditorFromEvent(event: any) {
   const edge = event?.edge;
   if (!edge?.id) return;
   mouse?.preventDefault();
+  mouse?.stopPropagation();
   workflows.selectGraphEdge(edge.id);
   openEdgeEditorForEdge(edge.id, mouse ? { x: mouse.clientX, y: mouse.clientY } : undefined);
 }

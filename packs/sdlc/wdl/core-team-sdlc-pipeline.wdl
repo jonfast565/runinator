@@ -1,4 +1,6 @@
 workflow "Core Team SDLC Pipeline" v1 {
+    trigger cron "0 * * * *"
+
     // shared settings come from config.* (eager, non-secret); tokens come from secret.* (late, at the worker).
     let find_tickets = jira.search(base_url: config.jira.base_url, email: config.jira.email, jql: config.jira.jql, token: secret.jira.token)
 

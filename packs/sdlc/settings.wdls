@@ -27,9 +27,8 @@ config slack.channel = "<<insert here>>"
 config git.repo = "<<insert here>>"
 config git.remote = "<<insert here>>"
 
-// ci poll cadence in seconds; max_polls is unused by the workflow and keeps its default.
+// ci poll cadence in seconds for ticket work.
 config ci_poll.interval_seconds = 0
-config ci_poll.max_polls = 30
 
 // claude code agent configuration.
 config claude.binary = "<<insert here>>"

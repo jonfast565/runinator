@@ -82,7 +82,7 @@ workflow "Ticket Work" v1 {
         transition_id: config.transitions.in_review
     ).timeout(30s)
 
-    // poll CI on the configured interval until the checks settle, capped at 30 polls.
+    // poll ci on the configured interval until the checks settle, capped at 30 polls.
     until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
         wait config.ci_poll.interval_seconds
         let poll_checks = github.checks_summary(

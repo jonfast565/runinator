@@ -74,3 +74,6 @@ until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 
 cap; it compiles to a re-entry bound on the loop header, the same runtime mechanism a
 hand-authored back-edge uses. `wait` accepts an expression (here the configured poll interval),
 not just a literal duration.
+
+`Core Team SDLC Pipeline` now declares a cron trigger in its WDL header, so the driver can be
+materialized as a scheduled workflow instead of being run manually after import.
