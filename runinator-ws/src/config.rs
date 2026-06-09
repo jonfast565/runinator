@@ -86,4 +86,9 @@ pub(crate) struct CliArgs {
     /// Kafka/RabbitMQ client id used by direct broker backends
     #[arg(long, default_value = "runinator-ws")]
     pub broker_client_id: String,
+
+    /// Stable address advertised to the replica list; in k8s this is the pod's headless-service DNS
+    /// name so it stays resolvable across IP churn.
+    #[arg(long, default_value = "")]
+    pub advertise_host: String,
 }

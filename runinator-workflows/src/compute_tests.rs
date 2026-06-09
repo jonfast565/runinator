@@ -26,8 +26,16 @@ fn division_by_zero_errors() {
 }
 
 #[test]
-fn call_is_rejected_without_library() {
+fn pure_call_folds_eagerly() {
+    // the eager reducer path carries the pure standard library, so a pure `$call` folds in place.
     let value = json!({ "$call": "add", "args": [1, 2] });
+    assert_eq!(resolve_value_refs(&value, &Value::Null).unwrap(), json!(3));
+}
+
+#[test]
+fn effectful_call_is_rejected_eagerly() {
+    // an effectful intrinsic is not in the pure library, so the eager path errors.
+    let value = json!({ "$call": "http_get", "args": ["http://example.test"] });
     assert!(resolve_value_refs(&value, &Value::Null).is_err());
 }
 
@@ -125,6 +133,260 @@ fn signatures_cover_every_name() {
     for name in PureIntrinsics::names() {
         assert!(names.contains(name), "missing signature for {name}");
     }
+}
+
+#[test]
+fn every_name_has_arity() {
+    for name in PureIntrinsics::names() {
+        assert!(
+            crate::compute::intrinsic_arity(name).is_some(),
+            "missing arity for {name}"
+        );
+    }
+}
+
+#[test]
+fn string_intrinsics() {
+    assert_eq!(
+        PureIntrinsics.call_for_test("split", &[json!("a,b,c"), json!(",")]),
+        json!(["a", "b", "c"])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("join", &[json!(["a", "b", "c"]), json!("-")]),
+        json!("a-b-c")
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("replace", &[json!("a.b.a"), json!("a"), json!("x")]),
+        json!("x.b.x")
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("substring", &[json!("hello"), json!(1), json!(3)]),
+        json!("el")
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("trim", &[json!("  hi  ")]),
+        json!("hi")
+    );
+}
+
+#[test]
+fn collection_intrinsics() {
+    assert_eq!(
+        PureIntrinsics.call_for_test("sort", &[json!([3, 1, 2])]),
+        json!([1, 2, 3])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("unique", &[json!([1, 1, 2, 1, 3])]),
+        json!([1, 2, 3])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("flatten", &[json!([[1, 2], [3], 4])]),
+        json!([1, 2, 3, 4])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("sum", &[json!([1, 2, 3])]),
+        json!(6)
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("range", &[json!(0), json!(3)]),
+        json!([0, 1, 2])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("at", &[json!([10, 20, 30]), json!(-1)]),
+        json!(30)
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("contains", &[json!([1, 2, 3]), json!(2)]),
+        json!(true)
+    );
+}
+
+#[test]
+fn object_intrinsics() {
+    assert_eq!(
+        PureIntrinsics.call_for_test("merge", &[json!({ "a": 1 }), json!({ "b": 2, "a": 9 })]),
+        json!({ "a": 9, "b": 2 })
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test(
+            "pick",
+            &[json!({ "a": 1, "b": 2, "c": 3 }), json!(["a", "c"])]
+        ),
+        json!({ "a": 1, "c": 3 })
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("omit", &[json!({ "a": 1, "b": 2 }), json!(["a"])]),
+        json!({ "b": 2 })
+    );
+    let entries = PureIntrinsics.call_for_test("entries", &[json!({ "a": 1 })]);
+    assert_eq!(entries, json!([{ "key": "a", "value": 1 }]));
+    assert_eq!(
+        PureIntrinsics.call_for_test("from_entries", &[entries]),
+        json!({ "a": 1 })
+    );
+}
+
+#[test]
+fn encoding_and_logic_intrinsics() {
+    assert_eq!(
+        PureIntrinsics.call_for_test("parse_json", &[json!("{\"a\":1}")]),
+        json!({ "a": 1 })
+    );
+    let encoded = PureIntrinsics.call_for_test("base64_encode", &[json!("hi")]);
+    assert_eq!(
+        PureIntrinsics.call_for_test("base64_decode", &[encoded]),
+        json!("hi")
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("gt", &[json!(5), json!(3)]),
+        json!(true)
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("default", &[Value::Null, json!("fallback")]),
+        json!("fallback")
+    );
+}
+
+#[test]
+fn date_intrinsics() {
+    let shifted = PureIntrinsics.call_for_test(
+        "add_duration",
+        &[json!("2026-01-01T00:00:00+00:00"), json!(3600)],
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("date_diff", &[shifted, json!("2026-01-01T00:00:00+00:00")]),
+        json!(3600)
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("format_date", &[json!(0), json!("%Y-%m-%d")]),
+        json!("1970-01-01")
+    );
+}
+
+#[test]
+fn regex_intrinsics() {
+    assert_eq!(
+        PureIntrinsics.call_for_test("regex_match", &[json!("abc123"), json!("[0-9]+")]),
+        json!(true)
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test("regex_extract", &[json!("a1b2c3"), json!("[0-9]")]),
+        json!(["1", "2", "3"])
+    );
+    assert_eq!(
+        PureIntrinsics.call_for_test(
+            "regex_replace",
+            &[json!("a1b2"), json!("[0-9]"), json!("#")]
+        ),
+        json!("a#b#")
+    );
+}
+
+#[test]
+fn lambda_map_doubles_elements() {
+    let program = parse_program(&json!([
+        { "$return": { "$call": "map", "args": [
+            { "$ref": { "input": ["xs"] } },
+            { "$lambda": { "params": ["x"], "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 2] } } }
+        ] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(
+        &program,
+        &json!({ "input": { "xs": [1, 2, 3] } }),
+        &PureIntrinsics,
+    )
+    .unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!([2, 4, 6])));
+}
+
+#[test]
+fn lambda_filter_keeps_matches() {
+    let program = parse_program(&json!([
+        { "$return": { "$call": "filter", "args": [
+            { "$ref": { "input": ["xs"] } },
+            { "$lambda": { "params": ["x"], "body": { "$call": "gt", "args": [{ "$ref": { "let": ["x"] } }, 1] } } }
+        ] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(
+        &program,
+        &json!({ "input": { "xs": [0, 1, 2, 3] } }),
+        &PureIntrinsics,
+    )
+    .unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!([2, 3])));
+}
+
+#[test]
+fn lambda_reduce_sums() {
+    let program = parse_program(&json!([
+        { "$return": { "$call": "reduce", "args": [
+            { "$ref": { "input": ["xs"] } },
+            0,
+            { "$lambda": { "params": ["acc", "x"], "body": { "$add": [
+                { "$ref": { "let": ["acc"] } }, { "$ref": { "let": ["x"] } }
+            ] } } }
+        ] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(
+        &program,
+        &json!({ "input": { "xs": [1, 2, 3, 4] } }),
+        &PureIntrinsics,
+    )
+    .unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!(10)));
+}
+
+#[test]
+fn lambda_sort_by_key() {
+    let program = parse_program(&json!([
+        { "$return": { "$call": "sort_by", "args": [
+            { "$ref": { "input": ["xs"] } },
+            { "$lambda": { "params": ["u"], "body": { "$ref": { "let": ["u", "age"] } } } }
+        ] } }
+    ]))
+    .unwrap();
+    let context = json!({ "input": { "xs": [{ "age": 30 }, { "age": 10 }, { "age": 20 }] } });
+    let outcome = run_program(&program, &context, &PureIntrinsics).unwrap();
+    assert_eq!(
+        outcome,
+        ComputeOutcome::Return(json!([{ "age": 10 }, { "age": 20 }, { "age": 30 }]))
+    );
+}
+
+#[test]
+fn lambda_outside_higher_order_is_rejected() {
+    let value = json!({ "$lambda": { "params": ["x"], "body": { "$ref": { "let": ["x"] } } } });
+    assert!(resolve_value_refs(&value, &Value::Null).is_err());
+}
+
+#[test]
+fn pure_resolver_evaluates_compute_tier() {
+    use crate::expressions::resolve_value_refs_pure;
+    // a pure `$call` resolves through both the default eager path and the explicit pure path.
+    let call = json!({ "$call": "upper", "args": ["hi"] });
+    assert_eq!(
+        resolve_value_refs(&call, &Value::Null).unwrap(),
+        json!("HI")
+    );
+    assert_eq!(
+        resolve_value_refs_pure(&call, &Value::Null).unwrap(),
+        json!("HI")
+    );
+    // a higher-order map with a lambda resolves against the context.
+    let mapped = json!({ "$call": "map", "args": [
+        { "$ref": { "input": ["xs"] } },
+        { "$lambda": { "params": ["x"], "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 10] } } }
+    ] });
+    assert_eq!(
+        resolve_value_refs_pure(&mapped, &json!({ "input": { "xs": [1, 2] } })).unwrap(),
+        json!([10, 20])
+    );
+    // effectful intrinsics are not available in a preview and error.
+    let effectful = json!({ "$call": "http_get", "args": ["http://example.test"] });
+    assert!(resolve_value_refs_pure(&effectful, &Value::Null).is_err());
 }
 
 // small test helper to invoke an intrinsic and unwrap.

@@ -16,6 +16,7 @@ pub const API_WDL_COMPILE: &str = "/wdl/compile";
 pub const API_WDL_ANALYZE: &str = "/wdl/analyze";
 pub const API_WDL_FORMAT: &str = "/wdl/format";
 pub const API_WDL_DECOMPILE: &str = "/wdl/decompile";
+pub const API_WDL_EVALUATE: &str = "/wdl/evaluate";
 pub const API_WDL_IMPORT: &str = "/wdl/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =

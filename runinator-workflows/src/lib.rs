@@ -16,13 +16,13 @@ mod typing;
 mod validation;
 
 pub use compute::{
-    ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, IntrinsicLibrary,
-    PureIntrinsics, call_pure, effectful_signatures, intrinsic_arity, intrinsic_signature,
-    is_known_intrinsic, parse_program, run_program,
+    ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES,
+    IntrinsicLibrary, PureIntrinsics, call_pure, effectful_signatures, intrinsic_arity,
+    intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program, run_program,
 };
 pub use conditions::{evaluate_condition, evaluate_condition_with, next_transition};
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
-pub use expressions::{apply_input_defaults, resolve_value_refs};
+pub use expressions::{apply_input_defaults, resolve_value_refs, resolve_value_refs_pure};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_switch, parse_approval_parameters, parse_emit_parameters, parse_join_parameters,

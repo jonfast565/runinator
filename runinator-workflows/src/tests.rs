@@ -289,6 +289,19 @@ fn evaluates_richer_conditions() {
 }
 
 #[test]
+fn evaluates_truthy_value_conditions() {
+    let context = runinator_models::json!({});
+
+    let truthy = runinator_models::json!({ "value": { "$add": [1, 1] } });
+    let falsy = runinator_models::json!({ "value": { "$sub": [1, 1] } });
+    let boolean = runinator_models::json!({ "value": true });
+
+    assert!(evaluate_condition(&truthy, &context).unwrap());
+    assert!(!evaluate_condition(&falsy, &context).unwrap());
+    assert!(evaluate_condition(&boolean, &context).unwrap());
+}
+
+#[test]
 fn validates_node_transitions() {
     let wf = workflow(runinator_models::json!({
         "start": "start",

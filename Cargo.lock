@@ -5202,6 +5202,7 @@ dependencies = [
  "runinator-models",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-workflows",
  "serde",
  "serde_json",
  "socket2 0.6.3",
@@ -5589,6 +5590,9 @@ dependencies = [
 name = "runinator-workflows"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "regex",
  "runinator-models",
  "serde",
  "serde_json",

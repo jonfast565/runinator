@@ -36,6 +36,11 @@ pub(crate) const EXPR_NEG: &str = "$neg";
 pub(crate) const EXPR_CALL: &str = "$call";
 pub(crate) const EXPR_ARGS: &str = "args";
 
+// a lambda passed to a higher-order intrinsic: { "$lambda": { "params": ["x"], "body": <expr> } }.
+pub(crate) const EXPR_LAMBDA: &str = "$lambda";
+pub(crate) const LAMBDA_PARAMS: &str = "params";
+pub(crate) const LAMBDA_BODY: &str = "body";
+
 // compute program statements.
 pub(crate) const STMT_LET: &str = "$let";
 pub(crate) const STMT_RETURN: &str = "$return";

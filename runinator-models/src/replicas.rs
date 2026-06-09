@@ -79,6 +79,8 @@ pub struct ReplicaRegistrationRequest {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     #[serde(default)]
     pub attributes: Value,
 }
@@ -126,6 +128,8 @@ pub struct ReplicaRecord {
     pub base_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     #[serde(default)]
     pub attributes: Value,
     pub first_seen_at: DateTime<Utc>,

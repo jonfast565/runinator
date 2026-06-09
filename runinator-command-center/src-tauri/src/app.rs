@@ -21,6 +21,7 @@ pub fn run() {
             crate::commands::analyze_wdl,
             crate::commands::complete_wdl,
             crate::commands::format_wdl,
+            crate::commands::evaluate_expression,
             crate::commands::decompile_to_wdl,
             crate::pack_dev::inspect_dev_pack,
             crate::pack_dev::read_dev_pack_file,

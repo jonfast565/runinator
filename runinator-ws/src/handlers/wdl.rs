@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
+use runinator_models::{
+    value::Value,
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
+};
 use runinator_wdl::{CompileOptions, Severity, WdlError};
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +39,13 @@ pub(crate) struct DecompileWdlRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct EvaluateExpressionRequest {
+    pub expression: Value,
+    #[serde(default)]
+    pub context: Value,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct ImportWdlRequest {
     pub source: String,
     #[serde(default)]
@@ -44,6 +54,8 @@ pub(crate) struct ImportWdlRequest {
     pub workflow_id: Option<Uuid>,
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
+    #[serde(default)]
+    pub ui: Option<Value>,
 }
 
 /// a wdl diagnostic flattened for the editor linter: byte offsets plus 1-based line/column.
@@ -83,6 +95,11 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
         Err(err) => return bad_request(err.to_string()),
     };
     workflow.id = request.workflow_id;
+    if let Some(ui) = request.ui
+        && ui.is_object()
+    {
+        workflow.definition.extra.insert("ui".to_string(), ui);
+    }
     let bundle = WorkflowBundle {
         workflows: vec![workflow],
         triggers: request.triggers,
@@ -138,6 +155,18 @@ pub(crate) async fn decompile_to_wdl(
     Json(request): Json<DecompileWdlRequest>,
 ) -> Result<Json<String>, (StatusCode, String)> {
     runinator_wdl::decompile(&request.workflow)
+        .map(Json)
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+}
+
+/// resolve a lowered expression against a sample context for the editor's preview. mirrors the
+/// desktop `evaluate_expression` command so the web client has the same behavior. evaluates the pure
+/// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
+/// side effects.
+pub(crate) async fn evaluate_expression(
+    Json(request): Json<EvaluateExpressionRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    runinator_workflows::resolve_value_refs_pure(&request.expression, &request.context)
         .map(Json)
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
 }

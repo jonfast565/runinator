@@ -13,6 +13,7 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 runinator-models = { path = "../../runinator-models" }
 runinator-utilities = { path = "../../runinator-utilities" }
 runinator-wdl = { path = "../../runinator-wdl" }
+runinator-workflows = { path = "../../runinator-workflows" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 socket2 = "0.6"

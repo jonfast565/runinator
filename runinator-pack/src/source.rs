@@ -39,6 +39,7 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
 
     if path.is_dir() {
         files.extend(wdl_directory_paths(path)?);
+        extend_wdl_includes(&mut files);
         if let Some(settings_path) = pack_settings_path(path)? {
             files.push(settings_path);
         }
@@ -51,17 +52,39 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
         Some("wdlp") => {
             files.push(path.to_path_buf());
             files.extend(wdl_pack_manifest_paths(path)?);
+            extend_wdl_includes(&mut files);
             if let Some(settings_path) = pack_settings_path(path)? {
                 files.push(settings_path);
             }
         }
-        Some("wdl") => files.push(path.to_path_buf()),
+        Some("wdl") => {
+            files.push(path.to_path_buf());
+            extend_wdl_includes(&mut files);
+        }
         _ => files.push(path.to_path_buf()),
     }
 
     files.sort();
     files.dedup();
     Ok(files)
+}
+
+fn extend_wdl_includes(files: &mut Vec<PathBuf>) {
+    let wdl_files = files
+        .iter()
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wdl"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for path in wdl_files {
+        let Ok(data) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let source_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let Ok(included) = runinator_wdl::included_file_paths(&data, source_dir) else {
+            continue;
+        };
+        files.extend(included);
+    }
 }
 
 // load a settings bundle that ships alongside a pack source: a `.wdlp` manifest's optional
@@ -151,6 +174,7 @@ pub fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<W
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
+        source_dir: path.parent().map(Path::to_path_buf),
     };
     let formatted = runinator_wdl::format_str(data).map_err(|e| {
         PackError::compile(format!(

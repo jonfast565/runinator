@@ -41,9 +41,10 @@ async fn main() -> Result<(), SendableError> {
             replica_type: ReplicaKind::Waker,
             instance_id: config.waker_id.clone(),
             display_name: Some(config.waker_id.clone()),
-            host: None,
+            host: advertise_host(&config.advertise_host),
             port: None,
             base_path: None,
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
             attributes: runinator_models::json!({
                 "broker_backend": config.broker_backend,
                 "broker_client_id": config.broker_client_id,
@@ -83,6 +84,12 @@ async fn main() -> Result<(), SendableError> {
 
     info!("Waker shutdown complete.");
     Ok(())
+}
+
+// treat a blank advertise host as unset so the replica list omits it rather than storing "".
+fn advertise_host(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {

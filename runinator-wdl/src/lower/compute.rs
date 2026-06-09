@@ -22,8 +22,8 @@ impl Lowerer {
     ) -> Result<(), WdlError> {
         self.record_declared_type(id, stmt)?;
         // collect every local name so bare local paths lower to `let` refs.
-        let previous_locals = std::mem::take(&mut self.compute_locals);
-        collect_locals(&compute.body, &mut self.compute_locals);
+        let previous_locals = self.compute_locals.replace(HashSet::new());
+        collect_locals(&compute.body, &mut self.compute_locals.borrow_mut());
 
         let program = self.lower_program(&compute.body)?;
         let function = if block_is_effectful(&compute.body) {
@@ -54,7 +54,7 @@ impl Lowerer {
         self.apply_annotations(&mut fields, stmt);
         self.push(super::node(id, "action", fields));
 
-        self.compute_locals = previous_locals;
+        self.compute_locals.replace(previous_locals);
         Ok(())
     }
 
@@ -104,22 +104,93 @@ impl Lowerer {
     }
 }
 
-/// collect every `let` name declared anywhere in the block (including nested `if` branches).
+/// collect every `let` name and lambda parameter declared anywhere in the block (including nested
+/// `if` branches), so bare references to them lower to `let` refs.
 fn collect_locals(body: &[ComputeLine], out: &mut HashSet<String>) {
     for line in body {
         match line {
-            ComputeLine::Let { name, .. } => {
+            ComputeLine::Let { name, value, .. } => {
                 out.insert(name.clone());
+                collect_locals_expr(value, out);
             }
+            ComputeLine::Return(expr) | ComputeLine::Expr(expr) => collect_locals_expr(expr, out),
             ComputeLine::If {
+                cond,
                 then_branch,
                 else_branch,
-                ..
             } => {
+                collect_locals_cond(cond, out);
                 collect_locals(then_branch, out);
                 collect_locals(else_branch, out);
             }
-            _ => {}
+            ComputeLine::Goto(_) => {}
+        }
+    }
+}
+
+/// gather lambda parameter names from an expression tree.
+fn collect_locals_expr(expr: &Expr, out: &mut HashSet<String>) {
+    match &expr.kind {
+        ExprKind::Lambda { params, body } => {
+            for param in params {
+                out.insert(param.clone());
+            }
+            collect_locals_expr(body, out);
+        }
+        ExprKind::Call { args, .. } => {
+            for arg in args {
+                collect_locals_expr(arg, out);
+            }
+        }
+        ExprKind::Array(items) => {
+            for item in items {
+                collect_locals_expr(item, out);
+            }
+        }
+        ExprKind::Object(entries) => {
+            for (_, value) in entries {
+                collect_locals_expr(value, out);
+            }
+        }
+        ExprKind::Concat(parts)
+        | ExprKind::Coalesce(parts)
+        | ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => {
+            for part in parts {
+                collect_locals_expr(part, out);
+            }
+        }
+        ExprKind::Neg(inner) | ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
+            collect_locals_expr(inner, out);
+        }
+        ExprKind::Str(parts) => {
+            for part in parts {
+                if let StrPart::Expr(inner) = part {
+                    collect_locals_expr(inner, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// gather lambda parameter names from a compute-tier condition.
+fn collect_locals_cond(cond: &Cond, out: &mut HashSet<String>) {
+    match &cond.kind {
+        CondKind::All(parts) | CondKind::Any(parts) => {
+            for part in parts {
+                collect_locals_cond(part, out);
+            }
+        }
+        CondKind::Not(inner) => collect_locals_cond(inner, out),
+        CondKind::Expr(expr) => collect_locals_expr(expr, out),
+        CondKind::Exists(expr) => collect_locals_expr(expr, out),
+        CondKind::Cmp { left, right, .. } => {
+            collect_locals_expr(left, out);
+            collect_locals_expr(right, out);
         }
     }
 }

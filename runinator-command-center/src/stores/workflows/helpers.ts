@@ -19,6 +19,7 @@ export function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
     target: "",
     optionId: "",
     edgeStyle: "square",
+    labelAnchor: 50,
     label: "",
     whenJson: pretty({ value: valueRef("input", ["value"]), equals: true }),
     matchKind: "equals",

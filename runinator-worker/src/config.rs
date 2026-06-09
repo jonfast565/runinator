@@ -97,9 +97,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
         api_base_url: args.api_base_url,
         worker_id,
-        advertise_host: args
-            .advertise_host
-            .filter(|value| !value.trim().is_empty()),
+        advertise_host: args.advertise_host.filter(|value| !value.trim().is_empty()),
     })
 }
 

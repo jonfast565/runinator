@@ -346,6 +346,7 @@ import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import { buildSampleContext } from "../../utils/workflow-references";
 import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
@@ -377,7 +378,9 @@ const expressionContext = computed(() => ({
   workflowInputType: workflows.workflowDraft.input_type ?? null,
   nodes: workflows.workflowDraft.definition?.nodes ?? [],
   currentNodeId: workflows.selectedStepId,
-  providers: providersStore.providers
+  providers: providersStore.providers,
+  // a loaded run's data lets the editor preview resolved values against real outputs.
+  sampleContext: buildSampleContext(workflows.workflowRunDetail)
 }));
 
 const availableSubflows = computed(() => {

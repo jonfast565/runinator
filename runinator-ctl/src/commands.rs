@@ -457,10 +457,13 @@ fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
 }
 
 fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
-    let options = runinator_wdl::CompileOptions::default();
     match command {
         WdlCommands::Compile { file, output } => {
             let source = fs::read_to_string(file)?;
+            let options = runinator_wdl::CompileOptions {
+                source_dir: file.parent().map(Path::to_path_buf),
+                ..runinator_wdl::CompileOptions::default()
+            };
             let definition = runinator_wdl::compile_str(&source, &options)
                 .map_err(|e| err(e.render(&source)))?;
             if json_output {
@@ -547,6 +550,10 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
                 )));
             }
             // no errors: run the full compile (validator included) for the summary line.
+            let options = runinator_wdl::CompileOptions {
+                source_dir: file.parent().map(Path::to_path_buf),
+                ..runinator_wdl::CompileOptions::default()
+            };
             let definition = runinator_wdl::compile_str(&source, &options)
                 .map_err(|e| err(e.render(&source)))?;
             println!("{} v{} ok", definition.name, definition.version);

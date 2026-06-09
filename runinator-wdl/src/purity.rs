@@ -29,6 +29,7 @@ pub(crate) fn cond_is_effectful(cond: &Cond) -> bool {
     match &cond.kind {
         CondKind::All(parts) | CondKind::Any(parts) => parts.iter().any(cond_is_effectful),
         CondKind::Not(inner) => cond_is_effectful(inner),
+        CondKind::Expr(expr) => expr_is_effectful(expr),
         CondKind::Cmp { left, right, .. } => expr_is_effectful(left) || expr_is_effectful(right),
         CondKind::Exists(expr) => expr_is_effectful(expr),
     }
@@ -38,9 +39,13 @@ pub(crate) fn cond_is_effectful(cond: &Cond) -> bool {
 pub(crate) fn expr_is_effectful(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Call { name, args } => {
-            !runinator_workflows::PureIntrinsics::contains(name)
-                || args.iter().any(expr_is_effectful)
+            // higher-order intrinsics are structurally pure: a call is pure when its collection and
+            // lambda body are pure, so they do not by themselves force a block to the worker.
+            let structurally_pure = runinator_workflows::PureIntrinsics::contains(name)
+                || runinator_workflows::is_higher_order(name);
+            !structurally_pure || args.iter().any(expr_is_effectful)
         }
+        ExprKind::Lambda { body, .. } => expr_is_effectful(body),
         // a secret reference forces the block to the worker, where secrets resolve.
         ExprKind::Path(segs) => {
             matches!(segs.first(), Some(PathSeg::Key(head)) if head == "secret")

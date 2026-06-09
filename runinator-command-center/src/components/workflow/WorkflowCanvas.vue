@@ -128,6 +128,13 @@
           <option v-for="option in edgeStyleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
+      <label class="workflow-edge-anchor-field">
+        Label anchor
+        <div class="workflow-edge-anchor-control">
+          <input v-model.number="edgeEditor.labelAnchor" type="range" min="0" max="100" step="5" />
+          <span>{{ Math.round(edgeEditor.labelAnchor) }}%</span>
+        </div>
+      </label>
       <label v-if="edgeEditorCanEditLabel">
         Label
         <input v-model="edgeEditor.label" placeholder="Uses default label when empty" />

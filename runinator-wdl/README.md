@@ -77,8 +77,52 @@ deploy()
 | `try { } catch { } finally { }` | try |
 
 **Expressions**: `input.x`, `prev.x`, `run.x`, `<binding>.x` (dotted refs); `"a ${x}"`
-or `a ++ b` (`$concat`); `a ?? b` (`$coalesce`); `string(x)` / `json(x)`; object/array
-literals.
+or `a ++ b` (`$concat`); `a ?? b` (`$coalesce`); `string(x)` / `json(x)`; arithmetic
+(`+ - * / %`); standard-library calls (`upper(x)`, `len(xs)`, …) and higher-order calls with
+lambdas (`map(xs, x => x.id)`, `filter`, `reduce`); object/array literals.
+
+**Access chaining**: any value-producing expression can be followed by `.key` / `.0` (dot) or
+`[expr]` (bracket) access — `http_get(url).body`, `split(s, ",")[0]`, `(a ?? b).field`,
+`items[input.idx]`. On a plain reference this just extends the path (`input.items[0].name` is one
+`$ref`); on a call result, parenthesized expression, or object/array literal it lowers to the `at`
+intrinsic (missing key → null, mirroring path access). A `[expr]` key may be dynamic.
+
+**Method chaining (fluent / UFCS)**: a value can be followed by `.method(args)`, which desugars to a
+function call with the receiver as the first argument — `recv.f(a)` ≡ `f(recv, a)`. Since every
+standard-library intrinsic takes its subject first, pipelines read left-to-right:
+
+```
+input.xs.filter(x => gt(x, 1)).map(x => mul(x, 2))   // == map(filter(input.xs, …), …)
+split(input.csv, ",").join("-")                       // == join(split(input.csv, ","), "-")
+input.name.upper()                                    // == upper(input.name)
+http_get(url).body.host                               // access + method chained
+```
+
+A bare `.field` (no parentheses) stays a field/path access even when it shares a name with a
+function (`input.map.value` is a path), so the two never collide. Method calls decompile to the
+canonical `f(recv, …)` function-call form.
+
+One expression grammar serves every position — action arguments, conditions, `${…}`
+interpolation, and `compute` lines — so a call or lambda is legal anywhere an expression is.
+**Purity, not the grammar, decides where work runs:** a pure expression folds eagerly in the
+reducer, while an *effectful* call (`http_get`, `http_post`, `now`, `uuid`, `env`) is a semantic
+error outside a `compute` block, since it must dispatch to a worker. A `compute { }` block is the
+only place effectful calls and multi-statement programs (`let` / `return` / `goto` / `if`) live;
+it lowers to `std.run` when pure and `std.exec` when effectful.
+
+**Source text includes**: `file("scripts/job.py")` reads a UTF-8 text file at compile time,
+relative to the `.wdl` file's directory, and lowers to a normal string value. Paths must be
+relative and cannot contain `..`, so pack compilation stays deterministic and local to the source
+tree. For embedded source, use a fenced inline block:
+
+````
+let run = console.run(command: inline("python", ```
+print("hello")
+```))
+````
+
+Both forms are author-time conveniences; the runtime receives the compiled string value and does
+not read files.
 
 **Conditions**: `== != > >= < <=`, `contains`, `in`, `starts_with`, `ends_with`,
 `exists x`, `&&`, `||`, `!`.

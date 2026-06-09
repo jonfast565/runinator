@@ -179,6 +179,7 @@ fn check_cond(cond: &Cond, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
         CondKind::Not(inner) => check_cond(inner, env, diagnostics),
+        CondKind::Expr(expr) => check_expr(expr, env, diagnostics),
         CondKind::Exists(expr) => check_expr(expr, env, diagnostics),
         CondKind::Cmp { left, op, right } => {
             let left_ty = infer_expr(left, env, diagnostics);
@@ -260,13 +261,21 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(arg, env, diagnostics);
             }
         }
+        // a lambda body is checked permissively; its params type as `Any` (unknown reference heads
+        // stay opaque), so no spurious diagnostics arise from the bound names.
+        ExprKind::Lambda { body, .. } => check_expr(body, env, diagnostics),
         // paths drive field-access diagnostics through inference.
         ExprKind::Path(_) => {
             let _ = infer_expr(expr, env, diagnostics);
         }
         // spreads are expanded before sema runs; nothing to check.
         ExprKind::Spread(_) => {}
-        ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
+        ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::FileInclude { .. }
+        | ExprKind::InlineCode { .. } => {}
     }
 }
 
@@ -350,6 +359,8 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ExprKind::Int(_) => RuninatorType::Integer,
         ExprKind::Float(_) => RuninatorType::Number,
         ExprKind::Str(_) => RuninatorType::String,
+        ExprKind::FileInclude { .. } => RuninatorType::String,
+        ExprKind::InlineCode { .. } => RuninatorType::String,
         ExprKind::Concat(_) => RuninatorType::String,
         ExprKind::ToString(_) => RuninatorType::String,
         ExprKind::ToJson(_) => RuninatorType::String,
@@ -383,6 +394,8 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ExprKind::Call { name, .. } => runinator_workflows::intrinsic_signature(name)
             .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
             .unwrap_or(RuninatorType::Any),
+        // a lambda carries no value type of its own.
+        ExprKind::Lambda { .. } => RuninatorType::Any,
         // spreads are expanded before sema runs; treat as untyped if one is reached.
         ExprKind::Spread(_) => RuninatorType::Any,
     }

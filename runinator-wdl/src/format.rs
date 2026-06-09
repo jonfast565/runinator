@@ -658,6 +658,10 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
         ExprKind::Int(value) => (ExprPrec::Primary, value.to_string()),
         ExprKind::Float(value) => (ExprPrec::Primary, value.to_string()),
         ExprKind::Str(parts) => (ExprPrec::Primary, format_string_parts(parts)),
+        ExprKind::FileInclude { path } => (ExprPrec::Primary, format!("file({})", quote(path))),
+        ExprKind::InlineCode { language, content } => {
+            (ExprPrec::Primary, format_inline_code(language, content))
+        }
         ExprKind::Path(segs) => (ExprPrec::Primary, format_path(segs)),
         ExprKind::Array(items) => {
             let items = items.iter().map(format_expr).collect::<Vec<_>>().join(", ");
@@ -702,8 +706,24 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
             format!("-{}", format_expr_at(inner, ExprPrec::Unary)),
         ),
         ExprKind::Call { name, args } => {
-            let args = args.iter().map(format_expr).collect::<Vec<_>>().join(", ");
-            (ExprPrec::Primary, format!("{name}({args})"))
+            // re-sugar `at(base, key)` into `base.key` / `base[index]` access syntax.
+            let rendered = (name == "at" && args.len() == 2)
+                .then(|| format_access(&args[0], &args[1]))
+                .flatten()
+                .unwrap_or_else(|| {
+                    let args = args.iter().map(format_expr).collect::<Vec<_>>().join(", ");
+                    format!("{name}({args})")
+                });
+            (ExprPrec::Primary, rendered)
+        }
+        ExprKind::Lambda { params, body } => {
+            // a single param renders bare (`x => …`); zero or many parenthesize.
+            let head = if params.len() == 1 {
+                params[0].clone()
+            } else {
+                format!("({})", params.join(", "))
+            };
+            (ExprPrec::Lowest, format!("{head} => {}", format_expr(body)))
         }
     };
 
@@ -802,8 +822,13 @@ fn format_cond_at(cond: &Cond, parent: CondPrec) -> String {
         }
         CondKind::Not(inner) => (
             CondPrec::Unary,
-            format!("!{}", format_cond_at(inner, CondPrec::Unary)),
+            if matches!(&inner.as_ref().kind, CondKind::Expr(_)) {
+                format!("!({})", format_cond_at(inner, CondPrec::Lowest))
+            } else {
+                format!("!{}", format_cond_at(inner, CondPrec::Unary))
+            },
         ),
+        CondKind::Expr(expr) => (CondPrec::Primary, format_expr(expr)),
         CondKind::Cmp { left, op, right } => (
             CondPrec::Primary,
             format!(
@@ -874,6 +899,64 @@ fn format_string_parts(parts: &[StrPart]) -> String {
     }
     out.push('"');
     out
+}
+
+fn format_inline_code(language: &str, content: &str) -> String {
+    if content.contains("```") {
+        return quote(content);
+    }
+    let mut out = format!("inline({}, ```\n", quote(language));
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("```)");
+    out
+}
+
+// re-sugar an `at(base, key)` call into access syntax, or None to keep the call form. a static key
+// on a path base is left as a call: `path.key` would fold back into the path, changing the ast.
+fn format_access(base: &Expr, key: &Expr) -> Option<String> {
+    let base_is_path = matches!(&base.kind, ExprKind::Path(_));
+    let static_key = foldable_access_key(key);
+    if base_is_path && static_key.is_some() {
+        return None;
+    }
+    let base_text = format_expr_at(base, ExprPrec::Primary);
+    if let ExprKind::Int(index) = &key.kind {
+        return Some(format!("{base_text}[{index}]"));
+    }
+    if let ExprKind::Str(parts) = &key.kind
+        && let Some(text) = literal_string(parts)
+    {
+        if is_ident(&text) {
+            return Some(format!("{base_text}.{text}"));
+        }
+        return Some(format!("{base_text}[{}]", quote(&text)));
+    }
+    // a dynamic key (a ref/call/arithmetic expression) renders as a bracketed expression.
+    Some(format!("{base_text}[{}]", format_expr(key)))
+}
+
+// the static path segment a key would fold into a path base: a non-negative int or a literal string.
+fn foldable_access_key(key: &Expr) -> Option<()> {
+    match &key.kind {
+        ExprKind::Int(index) if *index >= 0 => Some(()),
+        ExprKind::Str(parts) if literal_string(parts).is_some() => Some(()),
+        _ => None,
+    }
+}
+
+// the text of a string with no interpolation, or None when any part is an embedded expression.
+fn literal_string(parts: &[StrPart]) -> Option<String> {
+    let mut text = String::new();
+    for part in parts {
+        match part {
+            StrPart::Lit(lit) => text.push_str(lit),
+            StrPart::Expr(_) => return None,
+        }
+    }
+    Some(text)
 }
 
 fn format_path(segs: &[PathSeg]) -> String {

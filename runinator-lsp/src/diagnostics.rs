@@ -19,6 +19,7 @@ pub fn compute(text: &str, check_lowering: bool) -> Vec<Diagnostic> {
                 let options = CompileOptions {
                     enabled: true,
                     default_version: SemVer::default(),
+                    source_dir: None,
                 };
                 if let Err(err) = compile_str_with_diagnostics(text, &options) {
                     out.push(from_error(text, &err));

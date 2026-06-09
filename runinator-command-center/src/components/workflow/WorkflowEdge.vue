@@ -105,10 +105,10 @@ const labelDimensions = computed(() => ({
 }));
 
 const labelPosition = computed(() => {
-  const [, labelX, labelY] = pathParams.value;
-  if (dragging.value && dragOffset.value) return { x: labelX + dragOffset.value.x, y: labelY + dragOffset.value.y };
-  if (manualOffset.value) return { x: labelX + manualOffset.value.x, y: labelY + manualOffset.value.y };
-  return avoidNodes(labelX, labelY);
+  const anchor = anchorPoint.value;
+  if (dragging.value && dragOffset.value) return { x: anchor.x + dragOffset.value.x, y: anchor.y + dragOffset.value.y };
+  if (manualOffset.value) return { x: anchor.x + manualOffset.value.x, y: anchor.y + manualOffset.value.y };
+  return avoidNodes(anchor.x, anchor.y);
 });
 
 const labelStyle = computed<CSSProperties>(() => ({
@@ -118,7 +118,11 @@ const labelStyle = computed<CSSProperties>(() => ({
 
 // the natural label anchor on the path; the leader line points back here.
 const anchorPoint = computed(() => {
+  const anchor = props.data?.labelAnchor?.position;
   const [, labelX, labelY] = pathParams.value;
+  if (typeof anchor === "number" && Number.isFinite(anchor) && Math.abs(anchor - 0.5) > 0.001) {
+    return pointOnPath(path.value, anchor);
+  }
   return { x: labelX, y: labelY };
 });
 
@@ -180,13 +184,34 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function pointOnPath(pathData: string, position: number): { x: number; y: number } {
+  const clamped = clamp(position, 0, 1);
+  if (typeof document !== "undefined") {
+    try {
+      const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      pathElement.setAttribute("d", pathData);
+      const total = pathElement.getTotalLength();
+      if (Number.isFinite(total) && total > 0) {
+        const point = pathElement.getPointAtLength(total * clamped);
+        return { x: point.x, y: point.y };
+      }
+    } catch {
+      // fall back to a straight interpolation if the browser cannot measure the path.
+    }
+  }
+  return {
+    x: props.sourceX + (props.targetX - props.sourceX) * clamped,
+    y: props.sourceY + (props.targetY - props.sourceY) * clamped
+  };
+}
+
 function onPointerDown(event: PointerEvent) {
   if (!interactive || event.button !== 0) return;
   event.stopPropagation();
-  const [, labelX, labelY] = pathParams.value;
+  const anchor = anchorPoint.value;
   const current = labelPosition.value;
   dragStartPointer = { x: event.clientX, y: event.clientY };
-  dragStartOffset = { x: current.x - labelX, y: current.y - labelY };
+  dragStartOffset = { x: current.x - anchor.x, y: current.y - anchor.y };
   dragOffset.value = { ...dragStartOffset };
   dragMoved = false;
   dragging.value = true;

@@ -484,6 +484,7 @@ macro_rules! replica_from_row {
                 .and_then(|value| u16::try_from(value).ok()),
             base_path: $row.get("base_path"),
             observed_ip: $row.get("observed_ip"),
+            version: $row.get("version"),
             attributes: parse_json($row.get::<String, _>("attributes")),
             first_seen_at: DateTime::<Utc>::from_timestamp($row.get("first_seen_at"), 0)
                 .unwrap_or_else(Utc::now),

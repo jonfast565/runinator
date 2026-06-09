@@ -20,6 +20,15 @@ const ROOTS: [&str; 5] = ["input", "prev", "run", "config", "secret"];
 /// so `prev` and step outputs are not yet available; only start-time sources are allowed.
 const DEFAULT_ROOTS: [&str; 4] = ["input", "config", "run", "secret"];
 
+/// where an expression sits: a declarative position is evaluated eagerly by the reducer (so it may
+/// only call pure intrinsics), while a compute position runs in `std.run`/`std.exec` and may call
+/// effectful intrinsics. purity — not the grammar — decides which calls are legal where.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExprCtx {
+    Declarative,
+    Compute,
+}
+
 /// the declared-label table shared with later passes.
 pub(super) struct Symbols {
     pub labels: HashSet<String>,
@@ -120,11 +129,12 @@ fn resolve_stmt(
     let span = stmt.span;
     resolve_transitions(&stmt.transitions, symbols, span, diagnostics);
 
+    let ctx = ExprCtx::Declarative;
     match &stmt.kind {
         StmtKind::Action(action) => {
             resolve_reentry(&action.modifiers, symbols, span, diagnostics);
             for (_, value) in &action.args {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Compute(compute) => {
@@ -132,40 +142,40 @@ fn resolve_stmt(
         }
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = &subflow.run_name {
-                resolve_expr(run_name, symbols, scope, diagnostics);
+                resolve_expr(run_name, symbols, scope, ctx, diagnostics);
             }
             for (_, value) in &subflow.params {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Wait(_) => {}
         StmtKind::Emit(emit) => {
             if let Some(data) = &emit.data {
-                resolve_expr(data, symbols, scope, diagnostics);
+                resolve_expr(data, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Approval(approval) => {
-            resolve_expr(&approval.prompt, symbols, scope, diagnostics);
+            resolve_expr(&approval.prompt, symbols, scope, ctx, diagnostics);
             for (_, value) in &approval.metadata {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Config(config) => {
             if let Some(name) = &config.name {
-                resolve_expr(name, symbols, scope, diagnostics);
+                resolve_expr(name, symbols, scope, ctx, diagnostics);
             }
             if let Some(metadata) = &config.metadata {
-                resolve_expr(metadata, symbols, scope, diagnostics);
+                resolve_expr(metadata, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Fail(message) => {
             if let Some(message) = message {
-                resolve_expr(message, symbols, scope, diagnostics);
+                resolve_expr(message, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::If(if_stmt) => {
             for (cond, body) in &if_stmt.arms {
-                resolve_cond(cond, symbols, scope, diagnostics);
+                resolve_cond(cond, symbols, scope, ctx, diagnostics);
                 resolve_block(body, symbols, scope, diagnostics);
             }
             if let Some(else_block) = &if_stmt.else_block {
@@ -173,29 +183,29 @@ fn resolve_stmt(
             }
         }
         StmtKind::For(for_stmt) => {
-            resolve_expr(&for_stmt.items, symbols, scope, diagnostics);
+            resolve_expr(&for_stmt.items, symbols, scope, ctx, diagnostics);
             scope.push(for_stmt.var.clone());
             resolve_block(&for_stmt.body, symbols, scope, diagnostics);
             scope.pop();
         }
         StmtKind::While(while_stmt) => {
-            resolve_cond(&while_stmt.cond, symbols, scope, diagnostics);
+            resolve_cond(&while_stmt.cond, symbols, scope, ctx, diagnostics);
             resolve_block(&while_stmt.body, symbols, scope, diagnostics);
         }
         StmtKind::Map(map_stmt) => {
-            resolve_expr(&map_stmt.items, symbols, scope, diagnostics);
+            resolve_expr(&map_stmt.items, symbols, scope, ctx, diagnostics);
             scope.push(map_stmt.var.clone());
             resolve_block(&map_stmt.body, symbols, scope, diagnostics);
             scope.pop();
         }
         StmtKind::Match(match_stmt) => {
-            resolve_expr(&match_stmt.subject, symbols, scope, diagnostics);
+            resolve_expr(&match_stmt.subject, symbols, scope, ctx, diagnostics);
             for arm in &match_stmt.arms {
                 if let Some(equals) = &arm.equals {
-                    resolve_expr(equals, symbols, scope, diagnostics);
+                    resolve_expr(equals, symbols, scope, ctx, diagnostics);
                 }
                 if let Some(when) = &arm.when {
-                    resolve_cond(when, symbols, scope, diagnostics);
+                    resolve_cond(when, symbols, scope, ctx, diagnostics);
                 }
                 resolve_block(&arm.body, symbols, scope, diagnostics);
             }
@@ -303,7 +313,7 @@ fn resolve_compute_block(
     for line in body {
         match line {
             ComputeLine::Let { name, value, .. } => {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ExprCtx::Compute, diagnostics);
                 if scope[block_start..].iter().any(|n| n == name) {
                     diagnostics.push(Diagnostic::error(
                         value.span,
@@ -313,7 +323,7 @@ fn resolve_compute_block(
                 scope.push(name.clone());
             }
             ComputeLine::Return(value) | ComputeLine::Expr(value) => {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ExprCtx::Compute, diagnostics);
             }
             ComputeLine::Goto(target) => {
                 if effectful {
@@ -336,7 +346,7 @@ fn resolve_compute_block(
                 then_branch,
                 else_branch,
             } => {
-                resolve_cond(cond, symbols, scope, diagnostics);
+                resolve_cond(cond, symbols, scope, ExprCtx::Compute, diagnostics);
                 let branch_start = scope.len();
                 resolve_compute_block(then_branch, symbols, scope, span, diagnostics, effectful);
                 scope.truncate(branch_start);
@@ -351,20 +361,22 @@ fn resolve_cond(
     cond: &Cond,
     symbols: &Symbols,
     scope: &[String],
+    ctx: ExprCtx,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match &cond.kind {
         CondKind::All(parts) | CondKind::Any(parts) => {
             for part in parts {
-                resolve_cond(part, symbols, scope, diagnostics);
+                resolve_cond(part, symbols, scope, ctx, diagnostics);
             }
         }
-        CondKind::Not(inner) => resolve_cond(inner, symbols, scope, diagnostics),
+        CondKind::Not(inner) => resolve_cond(inner, symbols, scope, ctx, diagnostics),
+        CondKind::Expr(expr) => resolve_expr(expr, symbols, scope, ctx, diagnostics),
         CondKind::Cmp { left, right, .. } => {
-            resolve_expr(left, symbols, scope, diagnostics);
-            resolve_expr(right, symbols, scope, diagnostics);
+            resolve_expr(left, symbols, scope, ctx, diagnostics);
+            resolve_expr(right, symbols, scope, ctx, diagnostics);
         }
-        CondKind::Exists(expr) => resolve_expr(expr, symbols, scope, diagnostics),
+        CondKind::Exists(expr) => resolve_expr(expr, symbols, scope, ctx, diagnostics),
     }
 }
 
@@ -372,35 +384,41 @@ fn resolve_expr(
     expr: &Expr,
     symbols: &Symbols,
     scope: &[String],
+    ctx: ExprCtx,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match &expr.kind {
-        ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
+        ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::FileInclude { .. }
+        | ExprKind::InlineCode { .. } => {}
         ExprKind::Str(parts) => {
             for part in parts {
                 if let StrPart::Expr(inner) = part {
-                    resolve_expr(inner, symbols, scope, diagnostics);
+                    resolve_expr(inner, symbols, scope, ctx, diagnostics);
                 }
             }
         }
         ExprKind::Path(segs) => resolve_path(segs, symbols, scope, expr.span, diagnostics),
         ExprKind::Array(items) => {
             for item in items {
-                resolve_expr(item, symbols, scope, diagnostics);
+                resolve_expr(item, symbols, scope, ctx, diagnostics);
             }
         }
         ExprKind::Object(entries) => {
             for (_, value) in entries {
-                resolve_expr(value, symbols, scope, diagnostics);
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
             }
         }
         ExprKind::Concat(parts) | ExprKind::Coalesce(parts) => {
             for part in parts {
-                resolve_expr(part, symbols, scope, diagnostics);
+                resolve_expr(part, symbols, scope, ctx, diagnostics);
             }
         }
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
-            resolve_expr(inner, symbols, scope, diagnostics);
+            resolve_expr(inner, symbols, scope, ctx, diagnostics);
         }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
@@ -408,7 +426,7 @@ fn resolve_expr(
         | ExprKind::Div(parts)
         | ExprKind::Mod(parts) => {
             for part in parts {
-                resolve_expr(part, symbols, scope, diagnostics);
+                resolve_expr(part, symbols, scope, ctx, diagnostics);
             }
         }
         ExprKind::Call { name, args } => {
@@ -434,10 +452,25 @@ fn resolve_expr(
                         args.len()
                     ),
                 ));
+            } else if ctx == ExprCtx::Declarative
+                && runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str())
+            {
+                // a declarative position is folded eagerly in the reducer, which cannot run side
+                // effects; an effectful call must live in a `compute` block (it dispatches to a worker).
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!("effectful intrinsic '{name}' must be inside a compute block"),
+                ));
             }
             for arg in args {
-                resolve_expr(arg, symbols, scope, diagnostics);
+                resolve_expr(arg, symbols, scope, ctx, diagnostics);
             }
+        }
+        // a lambda introduces its params as references available only inside its body.
+        ExprKind::Lambda { params, body } => {
+            let mut inner = scope.to_vec();
+            inner.extend(params.iter().cloned());
+            resolve_expr(body, symbols, &inner, ctx, diagnostics);
         }
         // spreads are expanded before sema runs; nothing to resolve.
         ExprKind::Spread(_) => {}
@@ -447,7 +480,12 @@ fn resolve_expr(
 /// validate an input-field default expression: only `DEFAULT_ROOTS` may head a reference.
 fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
     match &expr.kind {
-        ExprKind::Null | ExprKind::Bool(_) | ExprKind::Int(_) | ExprKind::Float(_) => {}
+        ExprKind::Null
+        | ExprKind::Bool(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::FileInclude { .. }
+        | ExprKind::InlineCode { .. } => {}
         ExprKind::Str(parts) => {
             for part in parts {
                 if let StrPart::Expr(inner) = part {
@@ -499,11 +537,23 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                 resolve_default_expr(part, diagnostics);
             }
         }
-        ExprKind::Call { args, .. } => {
+        ExprKind::Call { name, args } => {
+            // defaults are evaluated eagerly at workflow start, so an effectful call is not allowed.
+            if runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str()) {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!("effectful intrinsic '{name}' is not allowed in an input default"),
+                ));
+            }
             for arg in args {
                 resolve_default_expr(arg, diagnostics);
             }
         }
+        // a lambda is a compute-only form; the default grammar (`= expr`) never produces one.
+        ExprKind::Lambda { .. } => diagnostics.push(Diagnostic::error(
+            expr.span,
+            "a lambda is not allowed in an input default",
+        )),
         ExprKind::Spread(_) => {}
     }
 }

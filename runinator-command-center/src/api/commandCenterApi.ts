@@ -33,6 +33,7 @@ export interface WorkflowWdlSaveRequest {
   enabled: boolean;
   workflow_id?: string | null;
   triggers?: WorkflowTrigger[];
+  ui?: JsonRecord | null;
 }
 
 function command<T>(name: string, args?: Record<string, unknown>) {
@@ -118,6 +119,10 @@ export async function formatWdl(source: string) {
 
 export async function decompileToWdl(workflow: WorkflowDefinition) {
   return command<string>("decompile_to_wdl", { workflow });
+}
+
+export async function evaluateExpression(expression: unknown, context: unknown) {
+  return command<unknown>("evaluate_expression", { expression, context });
 }
 
 function requireTauriDevPack() {

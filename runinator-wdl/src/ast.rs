@@ -318,6 +318,15 @@ pub enum ExprKind {
     Float(f64),
     /// a string literal, possibly with `${...}` interpolations.
     Str(Vec<StrPart>),
+    /// a compile-time text include, resolved relative to the source file's directory.
+    FileInclude {
+        path: String,
+    },
+    /// a fenced source block that lowers to its literal text.
+    InlineCode {
+        language: String,
+        content: String,
+    },
     /// a dotted reference: `input.a.b`, `prev.x`, `run.id`, `<binding>.field`.
     Path(Vec<PathSeg>),
     Array(Vec<Expr>),
@@ -344,6 +353,12 @@ pub enum ExprKind {
     Call {
         name: String,
         args: Vec<Expr>,
+    },
+    /// an anonymous function `params => body`, only valid inside `compute { }` as the argument to a
+    /// higher-order library call (`map`, `filter`, `reduce`, ...).
+    Lambda {
+        params: Vec<String>,
+        body: Box<Expr>,
     },
 }
 
@@ -379,6 +394,7 @@ pub enum CondKind {
     All(Vec<Cond>),
     Any(Vec<Cond>),
     Not(Box<Cond>),
+    Expr(Expr),
     Cmp { left: Expr, op: CmpOp, right: Expr },
     Exists(Expr),
 }

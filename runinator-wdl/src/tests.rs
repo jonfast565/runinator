@@ -8,6 +8,7 @@ use runinator_models::providers::{
     RuninatorType,
 };
 use runinator_models::value::Value;
+use std::{fs, time::SystemTime};
 
 /// compile and return the `Semantic` error's span and message, failing otherwise.
 fn expect_semantic(src: &str) -> (crate::Span, String) {
@@ -19,6 +20,40 @@ fn expect_semantic(src: &str) -> (crate::Span, String) {
 
 fn compile(src: &str) -> runinator_models::workflows::WorkflowDefinition {
     compile_str(src, &CompileOptions::default()).expect("compile")
+}
+
+fn action_config_value<'a>(
+    definition: &'a runinator_models::workflows::WorkflowDefinition,
+    key: &str,
+) -> &'a Value {
+    definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .and_then(|node| node.action.as_ref())
+        .and_then(|action| action.configuration.get(key))
+        .unwrap_or_else(|| panic!("missing action configuration key '{key}'"))
+}
+
+#[test]
+fn lists_included_file_paths() {
+    let src = r#"
+        workflow "Includes" v1 {
+            alias shared = { script: file("scripts/shared.py") }
+            let go = console.run(command: file("scripts/job.py"), ...shared)
+        }
+    "#;
+    let mut paths =
+        crate::included_file_paths(src, std::path::Path::new("/pack")).expect("include paths");
+    paths.sort();
+    assert_eq!(
+        paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        vec!["/pack/scripts/job.py", "/pack/scripts/shared.py"]
+    );
 }
 
 fn completion_labels(src: &str, marker: &str) -> Vec<String> {
@@ -686,6 +721,88 @@ fn lowers_config_and_secret_references() {
 }
 
 #[test]
+fn lowers_inline_code_to_string_argument() {
+    let src = r#"
+        workflow "InlineCode" v1 {
+            let go = console.run(command: inline("python", ```
+print("hello")
+```))
+        }
+    "#;
+    let definition = compile(src);
+    assert_eq!(
+        action_config_value(&definition, "command").as_str(),
+        Some("print(\"hello\")\n")
+    );
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("inline(\"python\", ```"), "{formatted}");
+    assert!(formatted.contains("print(\"hello\")"), "{formatted}");
+}
+
+#[test]
+fn lowers_file_include_relative_to_source_dir() {
+    let mut dir = std::env::temp_dir();
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    dir.push(format!("runinator-wdl-include-{unique}"));
+    fs::create_dir_all(dir.join("scripts")).expect("mkdir");
+    fs::write(dir.join("scripts/job.py"), "print('from file')\n").expect("write include");
+
+    let src = r#"
+        workflow "FileInclude" v1 {
+            let go = console.run(command: file("scripts/job.py"))
+        }
+    "#;
+    let options = CompileOptions {
+        source_dir: Some(dir.clone()),
+        ..CompileOptions::default()
+    };
+    let definition = compile_str(src, &options).expect("compile with include");
+    assert_eq!(
+        action_config_value(&definition, "command").as_str(),
+        Some("print('from file')\n")
+    );
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn file_include_requires_source_dir() {
+    let src = r#"
+        workflow "FileInclude" v1 {
+            let go = console.run(command: file("scripts/job.py"))
+        }
+    "#;
+    match compile_str(src, &CompileOptions::default()) {
+        Err(WdlError::Semantic { message, .. }) => {
+            assert!(message.contains("source directory"), "{message}");
+        }
+        other => panic!("expected source directory error, got {other:?}"),
+    }
+}
+
+#[test]
+fn file_include_cannot_escape_source_dir() {
+    let src = r#"
+        workflow "FileInclude" v1 {
+            let go = console.run(command: file("../job.py"))
+        }
+    "#;
+    let options = CompileOptions {
+        source_dir: Some(std::env::temp_dir()),
+        ..CompileOptions::default()
+    };
+    match compile_str(src, &options) {
+        Err(WdlError::Semantic { message, .. }) => {
+            assert!(message.contains("relative"), "{message}");
+        }
+        other => panic!("expected unsafe path error, got {other:?}"),
+    }
+}
+
+#[test]
 fn secret_reference_requires_scope_and_name() {
     let src = r#"
         workflow "BadSecret" v1 {
@@ -822,6 +939,52 @@ fn round_trips_conditionals() {
         }
     "#;
     assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_truthy_conditions() {
+    let src = r#"
+        workflow "TruthyConditions" v1 {
+            if true {
+                console.run(command: "yes")
+            } else {
+                console.run(command: "no")
+            }
+            while 1 + 1 limit 1 {
+                console.run(command: "loop")
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn round_trips_truthy_compute_conditions() {
+    let bool_src = r#"
+        workflow "TruthyComputeConditions" v1 {
+            compute {
+                if true {
+                    return 1
+                } else {
+                    return 0
+                }
+            }
+        }
+    "#;
+    assert_round_trips(bool_src);
+
+    let expr_src = r#"
+        workflow "TruthyComputeExprConditions" v1 {
+            compute {
+                if 1 + 1 {
+                    return 1
+                } else {
+                    return 0
+                }
+            }
+        }
+    "#;
+    assert_round_trips(expr_src);
 }
 
 #[test]
@@ -1197,6 +1360,47 @@ fn compute_pure_lowers_to_std_run() {
 }
 
 #[test]
+fn compute_lambda_map_lowers_and_round_trips() {
+    let src = r#"
+        workflow "Map" v1 {
+            compute {
+                let names = map(input.users, u => u.name)
+                return { names: names }
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    // a higher-order call with a pure body stays pure (`std.run`).
+    assert_eq!(node["action"]["function"], "run");
+    let program = node["action"]["configuration"]["program"].to_string();
+    assert!(program.contains("$lambda"), "program: {program}");
+    assert!(program.contains("\"map\""), "program: {program}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn compute_lambda_filter_reduce_round_trip() {
+    // filter/reduce drive predicates and folds through expression-level intrinsics (gt/add).
+    let src = r#"
+        workflow "Pipe" v1 {
+            compute {
+                let big = filter(input.xs, x => gt(x, 1))
+                let total = reduce(big, 0, (acc, x) => add(acc, x))
+                return { total: total }
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
 fn compute_effectful_lowers_to_std_exec() {
     let src = r#"
         workflow "Fetch" v1 {
@@ -1359,6 +1563,357 @@ fn compute_arithmetic_round_trips() {
         }
     "#;
     assert_round_trips(src);
+}
+
+#[test]
+fn declarative_pure_call_lowers_and_round_trips() {
+    // a pure library call now works directly in a declarative action argument (no compute block);
+    // it lowers to a `$call` and folds eagerly in the reducer.
+    let src = r#"
+        workflow "Inline" v1 {
+            slack.send_message(text: upper(input.name), count: len(input.items))
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("action node");
+    let params = node["action"]["configuration"].to_string();
+    assert!(params.contains("\"$call\""), "params: {params}");
+    assert!(params.contains("\"upper\""), "params: {params}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn declarative_higher_order_call_round_trips() {
+    // a higher-order call with a lambda is valid in a declarative argument and round-trips.
+    let src = r#"
+        workflow "Inline" v1 {
+            slack.send_message(ids: map(input.users, u => u.id))
+        }
+    "#;
+    let value = serde_json::to_value(&compile(src).definition).unwrap();
+    let params = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(params.contains("\"$lambda\""), "params: {params}");
+    // the lambda body's `u.id` must resolve to the lambda-local slot, not a node-output ref.
+    assert!(
+        params.contains("\"let\""),
+        "lambda body not local: {params}"
+    );
+    assert!(
+        !params.contains("\"node\""),
+        "lambda body leaked node ref: {params}"
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn declarative_interpolation_allows_calls() {
+    // string interpolation shares the one expression grammar, so a call works inside `${...}`.
+    let src = r#"
+        workflow "Inline" v1 {
+            slack.send_message(text: "hello ${upper(input.name)}")
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(params.contains("\"upper\""), "params: {params}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn postfix_access_on_call_lowers_to_at_and_round_trips() {
+    // `.key` / `[i]` chaining on a call result lowers to the `at` intrinsic and decompiles back to
+    // access syntax (not `at(...)`).
+    let src = r#"
+        workflow "Chain" v1 {
+            slack.send_message(text: upper(split(input.csv, ",")[0]))
+        }
+    "#;
+    let value = serde_json::to_value(&compile(src).definition).unwrap();
+    let params = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(params.contains("\"at\""), "params: {params}");
+    let wdl = decompile(&compile(src)).expect("decompile");
+    assert!(wdl.contains("[0]"), "decompiled: {wdl}");
+    assert!(!wdl.contains("at("), "decompiled leaked at(): {wdl}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn method_call_desugars_receiver_first() {
+    // `recv.method(args)` lowers to `method(recv, args...)`.
+    let src = r#"
+        workflow "Fluent" v1 {
+            slack.send_message(text: input.name.upper())
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]["text"]
+        .clone();
+    assert_eq!(
+        params,
+        serde_json::json!({ "$call": "upper", "args": [{ "$ref": { "input": ["name"] } }] })
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn fluent_chain_reads_left_to_right_and_round_trips() {
+    // a multi-stage fluent pipeline nests into receiver-first calls.
+    let src = r#"
+        workflow "Fluent" v1 {
+            slack.send_message(ids: input.xs.filter(x => gt(x, 1)).map(x => mul(x, 2)))
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]["ids"]
+        .clone();
+    // outermost call is `map`; its first arg is the `filter` call over the input ref.
+    assert_eq!(params["$call"], "map");
+    assert_eq!(params["args"][0]["$call"], "filter");
+    assert_eq!(
+        params["args"][0]["args"][0],
+        serde_json::json!({ "$ref": { "input": ["xs"] } })
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn method_call_on_call_result_chains() {
+    // `a(..).b(..)` — a method call whose receiver is itself a call result.
+    let src = r#"
+        workflow "Fluent" v1 {
+            slack.send_message(text: split(input.csv, ",").join("-"))
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]["text"]
+        .clone();
+    assert_eq!(params["$call"], "join");
+    assert_eq!(params["args"][0]["$call"], "split");
+    assert_round_trips(src);
+}
+
+#[test]
+fn method_call_effectful_receiver_in_compute() {
+    // a fluent effectful pipeline lives in a compute block (dispatches to a worker).
+    let src = r#"
+        workflow "Fetch" v1 {
+            compute {
+                let host = http_get(input.url).body.host
+                return { host: host }
+            }
+        }
+    "#;
+    let node = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .cloned()
+        .unwrap();
+    assert_eq!(node["action"]["function"], "exec");
+    assert_round_trips(src);
+}
+
+#[test]
+fn method_call_effectful_outside_compute_is_rejected() {
+    // `url.http_get()` is the effectful `http_get(url)` — rejected in a declarative position.
+    let src = r#"
+        workflow "Bad" v1 {
+            slack.send_message(text: input.url.http_get())
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("effectful"), "got: {message}");
+}
+
+#[test]
+fn path_field_named_like_method_still_works() {
+    // a plain `.field` (no parens) named like a function stays a path field, not a call.
+    let src = r#"
+        workflow "Fluent" v1 {
+            slack.send_message(text: input.map.value)
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]["text"]
+        .clone();
+    assert_eq!(
+        params,
+        serde_json::json!({ "$ref": { "input": ["map", "value"] } })
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn postfix_access_on_path_folds_into_ref() {
+    // chaining static keys onto a path stays a single `$ref`, not an `at` call.
+    let src = r#"
+        workflow "Chain" v1 {
+            slack.send_message(id: input.items[0].name)
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(
+        params.contains("[\"items\",0,\"name\"]"),
+        "expected folded ref path: {params}"
+    );
+    assert!(!params.contains("\"$call\""), "should not use at: {params}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn dynamic_index_lowers_to_at() {
+    // a non-literal `[expr]` key never folds into a path; it indexes via `at`.
+    let src = r#"
+        workflow "Chain" v1 {
+            slack.send_message(v: input.items[input.idx])
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(params.contains("\"$call\":\"at\""), "params: {params}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn effectful_postfix_access_in_compute_lowers_to_exec() {
+    // `http_get(url).body` is effectful (the call is), so the compute block dispatches to a worker.
+    let src = r#"
+        workflow "Fetch" v1 {
+            compute {
+                let body = http_get(input.url).body
+                return { body: body }
+            }
+        }
+    "#;
+    let value = serde_json::to_value(&compile(src).definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap();
+    assert_eq!(node["action"]["function"], "exec");
+    assert!(
+        node["action"]["configuration"]
+            .to_string()
+            .contains("\"at\"")
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn explicit_at_with_literal_key_is_preserved() {
+    // an explicit `at(ref, literal)` must NOT be re-sugared to `ref.key` — that would fold into the
+    // path on recompile and change the graph. it stays an `at` call through a round trip.
+    let src = r#"
+        workflow "At" v1 {
+            slack.send_message(v: at(input.items, 0))
+        }
+    "#;
+    let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .unwrap()["action"]["configuration"]
+        .to_string();
+    assert!(params.contains("\"$call\":\"at\""), "params: {params}");
+    let wdl = decompile(&compile(src)).expect("decompile");
+    assert!(wdl.contains("at("), "explicit at not preserved: {wdl}");
+    assert_round_trips(src);
+}
+
+#[test]
+fn effectful_postfix_access_outside_compute_is_rejected() {
+    // the effectful call inside an access chain is still rejected in a declarative position.
+    let src = r#"
+        workflow "Bad" v1 {
+            slack.send_message(text: http_get(input.url))
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("effectful"), "got: {message}");
+}
+
+#[test]
+fn declarative_effectful_call_is_rejected() {
+    // an effectful intrinsic outside a compute block is a semantic error (purity, not grammar,
+    // is the gate): the reducer cannot run side effects in an eager argument.
+    let src = r#"
+        workflow "Inline" v1 {
+            slack.send_message(at: now())
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(
+        message.contains("effectful") && message.contains("compute block"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn declarative_effectful_call_in_condition_is_rejected() {
+    // the same rule applies to declarative conditions.
+    let src = r#"
+        workflow "Inline" v1 {
+            if now() == input.deadline {
+                slack.send_message(text: "ok")
+            }
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("effectful"), "got: {message}");
 }
 
 #[test]

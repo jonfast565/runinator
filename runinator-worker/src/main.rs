@@ -204,6 +204,7 @@ async fn register_worker_replica(
             host: config.advertise_host.clone(),
             port: None,
             base_path: None,
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
             attributes: runinator_models::json!({
                 "broker_backend": config.broker_backend,
                 "broker_client_id": config.broker_client_id,

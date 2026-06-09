@@ -10,11 +10,14 @@ use crate::keys::{
     COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
 };
 
+/// evaluate a condition in the eager reducer path: operands fold with the pure standard library, so
+/// pure `$call` intrinsics work in declarative conditions. effectful intrinsics are not available
+/// (the wdl front end rejects them outside compute blocks).
 pub fn evaluate_condition(
     condition: &Value,
     context: &Value,
 ) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(condition, context, None)
+    evaluate_condition_inner(condition, context, Some(&crate::compute::PureIntrinsics))
 }
 
 /// evaluate a condition whose operands may include `$call` intrinsics, resolved through `lib`.
@@ -114,9 +117,35 @@ fn evaluate_condition_inner(
     if let Some(expected) = object.get(COND_EXISTS) {
         return Ok(expected.as_bool().unwrap_or(true) != left.is_null());
     }
+    if object.len() == 1 && object.contains_key(COND_VALUE) {
+        return Ok(is_truthy(&left));
+    }
     Err(WorkflowValidationError::InvalidCondition(
         "expected equals, not_equals, contains, in, starts_with, ends_with, greater_than, greater_than_or_equal, less_than, less_than_or_equal, exists, all, any, or not".into(),
     ))
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_i64().map_or_else(
+            || {
+                value.as_u64().map_or_else(
+                    || {
+                        value
+                            .as_f64()
+                            .is_some_and(|number| number != 0.0 && !number.is_nan())
+                    },
+                    |number| number != 0,
+                )
+            },
+            |number| number != 0,
+        ),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
 }
 
 fn contains_value(left: &Value, expected: &Value) -> Result<bool, WorkflowValidationError> {

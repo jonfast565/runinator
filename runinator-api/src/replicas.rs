@@ -19,6 +19,7 @@ pub struct ReplicaServiceConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_path: Option<String>,
+    pub version: Option<String>,
     pub attributes: Value,
     pub heartbeat_interval: Duration,
 }
@@ -41,6 +42,11 @@ impl ReplicaServiceConfig {
 
     pub fn with_base_path(mut self, base_path: impl Into<String>) -> Self {
         self.base_path = Some(base_path.into());
+        self
+    }
+
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
         self
     }
 
@@ -97,6 +103,7 @@ where
             host: config.host.clone(),
             port: config.port,
             base_path: config.base_path.clone(),
+            version: config.version.clone(),
             attributes: config.attributes.clone(),
         })
         .await?;

@@ -369,6 +369,23 @@
   font-size: 12px;
 }
 
+.workflow-edge-anchor-control {
+  display: grid;
+  grid-template-columns: 1fr 42px;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-edge-anchor-control input {
+  width: 100%;
+}
+
+.workflow-edge-anchor-control span {
+  color: #17202a;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .workflow-edge-editor-actions {
   display: flex;
   flex-wrap: wrap;

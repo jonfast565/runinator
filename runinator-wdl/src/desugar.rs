@@ -188,6 +188,7 @@ fn expand_cond(cond: &mut Cond, aliases: &AliasTable) -> Result<(), WdlError> {
             }
         }
         CondKind::Not(inner) => expand_cond(inner, aliases)?,
+        CondKind::Expr(expr) => expand_expr(expr, aliases)?,
         CondKind::Cmp { left, right, .. } => {
             expand_expr(left, aliases)?;
             expand_expr(right, aliases)?;
@@ -228,6 +229,7 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_expr(arg, aliases)?;
             }
         }
+        ExprKind::Lambda { body, .. } => expand_expr(body, aliases)?,
         ExprKind::Str(parts) => {
             for part in parts.iter_mut() {
                 if let StrPart::Expr(part) = part {
@@ -248,6 +250,8 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
         | ExprKind::Bool(_)
         | ExprKind::Int(_)
         | ExprKind::Float(_)
+        | ExprKind::FileInclude { .. }
+        | ExprKind::InlineCode { .. }
         | ExprKind::Path(_) => {}
     }
     Ok(())

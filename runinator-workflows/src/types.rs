@@ -63,6 +63,12 @@ pub enum WorkflowExpression {
         name: String,
         args: Vec<WorkflowExpression>,
     },
+    // an anonymous function passed to a higher-order intrinsic (map/filter/reduce/...). its body is
+    // evaluated per element with the params bound into the `let` slot; it has no standalone value.
+    Lambda {
+        params: Vec<String>,
+        body: Box<WorkflowExpression>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

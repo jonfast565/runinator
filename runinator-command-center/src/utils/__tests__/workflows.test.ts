@@ -15,6 +15,7 @@ import {
   removeEditableEdge,
   setConditionBranch,
   setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelAnchor,
   setWorkflowEdgeLabelOffset,
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
@@ -161,6 +162,24 @@ describe("workflow graph utils", () => {
     setWorkflowEdgeLabelOffset(draft.definition, edge, null);
     edge = buildGraphEdges(draft)[0];
     expect(edge.data.labelOffset).toBeUndefined();
+  });
+
+  it("persists and clears manual edge label anchors", () => {
+    const draft: WorkflowDefinition = JSON.parse(JSON.stringify(workflow));
+    setWorkflowEdgeHandles(draft.definition, "a", "next", "right", "left", "bezier");
+    let edge = buildGraphEdges(draft)[0];
+    setWorkflowEdgeLabelAnchor(draft.definition, edge, { position: 0.25 });
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data).toMatchObject({ labelAnchor: { position: 0.25 }, edgeStyle: "bezier", sourceHandle: "right" });
+    const edgeDraft = workflowEdgeEditorDraft(draft, edge)!;
+    expect(edgeDraft.labelAnchor).toBe(25);
+    edgeDraft.labelAnchor = 75;
+    expect(applyWorkflowEdgeEditorDraft(draft.definition, edge, edgeDraft)).toEqual({ ok: true, semanticKey: "next" });
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data).toMatchObject({ labelAnchor: { position: 0.75 } });
+    setWorkflowEdgeLabelAnchor(draft.definition, edge, null);
+    edge = buildGraphEdges(draft)[0];
+    expect(edge.data.labelAnchor).toBeUndefined();
   });
 
   it("generates semantic handles for rich workflow nodes", () => {
@@ -611,7 +630,10 @@ describe("workflow graph utils", () => {
         { id: "approve", kind: "approval", parameters: { prompt: "Old prompt" }, transitions: { next: { "$node": "end" } } },
         { id: "end", kind: "end" }
       ],
-      ui: { layout: { nodes: { approve: { x: 20, y: 40 } } } }
+      ui: {
+        layout: { nodes: { approve: { x: 20, y: 40 } } },
+        edge_handles: { "approve:next": { sourceHandle: "right", targetHandle: "left", labelAnchor: { position: 0.25 } } }
+      }
     };
 
     expect(applyWorkflowInlineNodeEdit(definition, "approve", "review", "Review Step")).toEqual({ ok: true, nodeId: "review" });
@@ -622,6 +644,8 @@ describe("workflow graph utils", () => {
     expect(definition.nodes[1]).toMatchObject({ id: "review", name: "Review Step", parameters: { prompt: "Old prompt" } });
     expect(definition.nodes[0].transitions.next).toEqual({ "$node": "review" });
     expect(definition.ui.layout.nodes.review).toEqual({ x: 20, y: 40 });
+    expect(definition.ui.edge_handles["review:next"]).toEqual({ sourceHandle: "right", targetHandle: "left", labelAnchor: { position: 0.25 } });
+    expect(definition.ui.edge_handles["approve:next"]).toBeUndefined();
   });
 
   it("edits condition branches", () => {

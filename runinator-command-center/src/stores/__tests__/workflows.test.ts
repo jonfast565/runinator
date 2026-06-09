@@ -73,6 +73,10 @@ describe("workflow run detail state", () => {
   it("saves workflow edits as wdl and reloads workflow triggers", async () => {
     const workflows = useWorkflowsStore();
     const draft = workflowDefinition(WORKFLOW_ID, "bundle draft");
+    draft.definition.ui = {
+      layout: { nodes: { start: { x: 0, y: 0 }, end: { x: 270, y: 0 } } },
+      edge_handles: { "start:next": { edgeStyle: "square", labelAnchor: { position: 0.25 } } }
+    };
     Object.assign(workflows.workflowDraft, draft);
     workflows.workflowJson = JSON.stringify(draft.definition);
     workflows.workflowTriggers = [workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "0 * * * *")];
@@ -90,6 +94,7 @@ describe("workflow run detail state", () => {
       source: "workflow bundle_draft { start -> end }",
       enabled: true,
       workflow_id: WORKFLOW_ID,
+      ui: draft.definition.ui,
       triggers: [expect.objectContaining({ id: TRIGGER_ID, workflow_id: WORKFLOW_ID, configuration: { cron: "0 * * * *", parameters: {} } })]
     });
     expect(workflows.workflowDraft.name).toBe("bundle saved");

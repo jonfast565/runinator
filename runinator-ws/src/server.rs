@@ -25,11 +25,20 @@ use crate::handlers::catalog::seed_builtin_catalog;
 use crate::result_consumer::run_result_consumer;
 use crate::router::build_router;
 
+/// what this web service replica advertises to the replica list at registration and on every
+/// heartbeat. host is its stable dns name; attributes carry the broker/database backend it runs on.
+#[derive(Debug, Clone, Default)]
+pub struct ReplicaAdvertisement {
+    pub host: Option<String>,
+    pub attributes: runinator_models::value::Value,
+}
+
 pub async fn run_webserver<T: DatabaseImpl>(
     pool: Arc<T>,
     notify: Arc<Notify>,
     port: u16,
     broker: Arc<dyn Broker>,
+    advertisement: ReplicaAdvertisement,
 ) -> Result<(), SendableError> {
     initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
@@ -43,10 +52,11 @@ pub async fn run_webserver<T: DatabaseImpl>(
             instance_id: instance.clone(),
             runtime_id: runtime_id.clone(),
             display_name: Some(instance.clone()),
-            host: None,
+            host: advertisement.host.clone(),
             port: Some(port),
             base_path: Some("/".into()),
-            attributes: runinator_models::json!({}),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            attributes: advertisement.attributes.clone(),
         },
         None,
     )
@@ -55,6 +65,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let heartbeat_notify = notify.clone();
     let heartbeat_runtime_id = runtime_id.clone();
     let heartbeat_instance = instance.clone();
+    let heartbeat_host = advertisement.host.clone();
+    let heartbeat_attributes = advertisement.attributes.clone();
     let heartbeat = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
         loop {
@@ -74,10 +86,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
                         ReplicaHeartbeatRequest {
                             runtime_id: heartbeat_runtime_id.clone(),
                             display_name: Some(heartbeat_instance.clone()),
-                            host: None,
+                            host: heartbeat_host.clone(),
                             port: Some(port),
                             base_path: Some("/".into()),
-                            attributes: runinator_models::json!({}),
+                            attributes: heartbeat_attributes.clone(),
                         },
                         None,
                     ).await;

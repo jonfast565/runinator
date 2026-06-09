@@ -59,7 +59,7 @@ spec:
             - "--worker-id"
             - "$(POD_NAME)"
             - "--advertise-host"
-            - "$(POD_NAME).runinator-worker.$(POD_NAMESPACE).svc.cluster.local"
+            - "$(POD_NAME).runinator-worker.runinator.svc.cluster.local"
             - "--max-concurrent-actions"
             - "4"
             - "--api-base-url"
@@ -74,10 +74,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
           volumeMounts:
             - name: plugins
               mountPath: /opt/runinator/plugins

@@ -223,6 +223,7 @@ impl McpServer {
                 let options = runinator_wdl::CompileOptions {
                     enabled: true,
                     default_version: runinator_models::semver::SemVer::default(),
+                    source_dir: None,
                 };
                 let mut workflows = Vec::with_capacity(sources.len());
                 for source in &sources {

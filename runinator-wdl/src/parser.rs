@@ -475,21 +475,21 @@ fn parse_compute_line(pair: Pair<Rule>) -> Result<ComputeLine, WdlError> {
                 match part.as_rule() {
                     Rule::ident => name = part.as_str().to_string(),
                     Rule::type_expr => ty = Some(parse_type_expr(part)?),
-                    Rule::cexpr => value = Some(parse_cexpr(part)?),
+                    Rule::expr => value = Some(parse_expr(part)?),
                     _ => {}
                 }
             }
             let value = value.ok_or_else(|| WdlError::lower("compute let missing value"))?;
             Ok(ComputeLine::Let { name, ty, value })
         }
-        Rule::compute_return => Ok(ComputeLine::Return(parse_cexpr(first_inner(inner)?)?)),
+        Rule::compute_return => Ok(ComputeLine::Return(parse_expr(first_inner(inner)?)?)),
         Rule::compute_goto => Ok(ComputeLine::Goto(parse_target(first_inner(inner)?)?)),
         Rule::compute_if => {
             let mut cond = None;
             let mut blocks = Vec::new();
             for part in inner.into_inner() {
                 match part.as_rule() {
-                    Rule::ccond => cond = Some(parse_ccond(part)?),
+                    Rule::cond => cond = Some(parse_cond(part)?),
                     Rule::compute_block => blocks.push(parse_compute_block(part)?),
                     _ => {}
                 }
@@ -504,247 +504,64 @@ fn parse_compute_line(pair: Pair<Rule>) -> Result<ComputeLine, WdlError> {
                 else_branch,
             })
         }
-        Rule::compute_expr_stmt => Ok(ComputeLine::Expr(parse_cexpr(first_inner(inner)?)?)),
+        Rule::compute_expr_stmt => Ok(ComputeLine::Expr(parse_expr(first_inner(inner)?)?)),
         other => Err(WdlError::lower(format!(
             "unexpected compute line {other:?}"
         ))),
     }
 }
 
-// the compute arithmetic tier. each binary level folds left into pairwise Add/Sub/Mul/Div/Mod nodes.
-fn parse_cexpr(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    // cexpr -> csum
-    parse_csum(first_inner(pair)?)
-}
-
-fn parse_csum(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+// a lambda `params => body`; params are bare identifiers (`x` or `(a, b)`), body is any expr.
+fn parse_lambda(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let span = span_of(&pair);
-    let mut acc = None;
-    let mut op = None;
+    let mut params = Vec::new();
+    let mut body = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::cterm => {
-                let term = parse_cterm(inner)?;
-                acc = Some(match (acc.take(), op.take()) {
-                    (None, _) => term,
-                    (Some(left), Some("+")) => Expr::new(ExprKind::Add(vec![left, term]), span),
-                    (Some(left), _) => Expr::new(ExprKind::Sub(vec![left, term]), span),
-                });
+            Rule::lambda_params => {
+                params = inner
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::ident)
+                    .map(|p| p.as_str().to_string())
+                    .collect();
             }
-            Rule::add_op => op = Some(if inner.as_str() == "+" { "+" } else { "-" }),
+            Rule::expr => body = Some(parse_expr(inner)?),
             _ => {}
         }
     }
-    acc.ok_or_else(|| WdlError::lower("empty arithmetic sum"))
-}
-
-fn parse_cterm(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    let span = span_of(&pair);
-    let mut acc = None;
-    let mut op = None;
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::cunary => {
-                let term = parse_cunary(inner)?;
-                acc = Some(match (acc.take(), op.take()) {
-                    (None, _) => term,
-                    (Some(left), Some("*")) => Expr::new(ExprKind::Mul(vec![left, term]), span),
-                    (Some(left), Some("/")) => Expr::new(ExprKind::Div(vec![left, term]), span),
-                    (Some(left), _) => Expr::new(ExprKind::Mod(vec![left, term]), span),
-                });
-            }
-            Rule::mul_op => {
-                op = Some(match inner.as_str() {
-                    "*" => "*",
-                    "/" => "/",
-                    _ => "%",
-                })
-            }
-            _ => {}
-        }
-    }
-    acc.ok_or_else(|| WdlError::lower("empty arithmetic term"))
-}
-
-fn parse_cunary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::cneg => {
-            let span = span_of(&inner);
-            let operand = parse_cunary(first_inner(inner)?)?;
-            Ok(Expr::new(ExprKind::Neg(Box::new(operand)), span))
-        }
-        Rule::cprimary => parse_cprimary(inner),
-        other => Err(WdlError::lower(format!("unexpected cunary {other:?}"))),
-    }
-}
-
-fn parse_cprimary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::cparen => parse_cexpr(first_inner(inner)?),
-        Rule::cbuiltin => parse_cbuiltin(inner),
-        Rule::cobject => parse_cobject(inner),
-        Rule::carray => parse_carray(inner),
-        Rule::expr => parse_expr(inner),
-        other => Err(WdlError::lower(format!("unexpected cprimary {other:?}"))),
-    }
-}
-
-fn parse_cobject(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    let span = span_of(&pair);
-    let mut entries = Vec::new();
-    for entry in pair
-        .into_inner()
-        .filter(|p| p.as_rule() == Rule::cobject_entry)
-    {
-        let inner = first_inner(entry)?;
-        match inner.as_rule() {
-            Rule::cobject_pair => {
-                let mut key = String::new();
-                let mut value = None;
-                for part in inner.into_inner() {
-                    match part.as_rule() {
-                        Rule::ident => key = part.as_str().to_string(),
-                        Rule::string => key = plain_string(part)?,
-                        Rule::cexpr => value = Some(parse_cexpr(part)?),
-                        _ => {}
-                    }
-                }
-                entries.push((
-                    key,
-                    value.ok_or_else(|| WdlError::lower("compute object value"))?,
-                ));
-            }
-            Rule::object_shorthand => {
-                let ident = first_inner(inner)?;
-                let span = span_of(&ident);
-                let name = ident.as_str().to_string();
-                entries.push((
-                    name.clone(),
-                    Expr::new(ExprKind::Path(vec![PathSeg::Key(name)]), span),
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(Expr::new(ExprKind::Object(entries), span))
-}
-
-fn parse_carray(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    let span = span_of(&pair);
-    let items = pair
-        .into_inner()
-        .filter(|p| p.as_rule() == Rule::cexpr)
-        .map(parse_cexpr)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Expr::new(ExprKind::Array(items), span))
-}
-
-// the compute-tier condition family mirrors parse_cond but parses `cexpr` operands so arithmetic
-// and library calls are allowed inside compute conditions. it builds the same Cond/CondKind ast.
-fn parse_ccond(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    parse_ccond_or(first_inner(pair)?)
-}
-
-fn parse_ccond_or(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    let span = span_of(&pair);
-    let mut parts = pair
-        .into_inner()
-        .filter(|p| p.as_rule() == Rule::ccond_and)
-        .map(parse_ccond_and)
-        .collect::<Result<Vec<_>, _>>()?;
-    if parts.len() == 1 {
-        return Ok(parts.remove(0));
-    }
-    Ok(Cond::new(CondKind::Any(parts), span))
-}
-
-fn parse_ccond_and(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    let span = span_of(&pair);
-    let mut parts = pair
-        .into_inner()
-        .filter(|p| p.as_rule() == Rule::ccond_unary)
-        .map(parse_ccond_unary)
-        .collect::<Result<Vec<_>, _>>()?;
-    if parts.len() == 1 {
-        return Ok(parts.remove(0));
-    }
-    Ok(Cond::new(CondKind::All(parts), span))
-}
-
-fn parse_ccond_unary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    let span = span_of(&pair);
-    let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::cnot_cond => {
-            let nested = first_inner(inner)?;
-            Ok(Cond::new(
-                CondKind::Not(Box::new(parse_ccond_unary(nested)?)),
-                span,
-            ))
-        }
-        Rule::ccond_primary => parse_ccond_primary(inner),
-        other => Err(WdlError::lower(format!("unexpected ccond unary {other:?}"))),
-    }
-}
-
-fn parse_ccond_primary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    let span = span_of(&pair);
-    let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::cparen_cond => parse_ccond(first_inner(inner)?),
-        Rule::ccond_exists => Ok(Cond::new(
-            CondKind::Exists(parse_cexpr(first_inner(inner)?)?),
-            span,
-        )),
-        Rule::ccond_cmp => parse_ccond_cmp(inner),
-        other => Err(WdlError::lower(format!(
-            "unexpected ccond primary {other:?}"
-        ))),
-    }
-}
-
-fn parse_ccond_cmp(pair: Pair<Rule>) -> Result<Cond, WdlError> {
-    let span = span_of(&pair);
-    let mut left = None;
-    let mut op = None;
-    let mut right = None;
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::cexpr => {
-                if left.is_none() {
-                    left = Some(parse_cexpr(inner)?);
-                } else {
-                    right = Some(parse_cexpr(inner)?);
-                }
-            }
-            Rule::cmp_op => op = Some(parse_cmp_op(inner.as_str(), span_of(&inner))?),
-            _ => {}
-        }
-    }
-    Ok(Cond::new(
-        CondKind::Cmp {
-            left: left.ok_or_else(|| WdlError::lower("comparison missing left"))?,
-            op: op.ok_or_else(|| WdlError::lower("comparison missing operator"))?,
-            right: right.ok_or_else(|| WdlError::lower("comparison missing right"))?,
+    let body = body.ok_or_else(|| WdlError::lower("lambda missing body"))?;
+    Ok(Expr::new(
+        ExprKind::Lambda {
+            params,
+            body: Box::new(body),
         },
         span,
     ))
 }
 
-fn parse_cbuiltin(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+// a library call `name(args...)`. `string`/`json` are excluded by the grammar; they stay coercions.
+fn parse_lib_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let span = span_of(&pair);
     let mut name = String::new();
     let mut args = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::call_ident => name = inner.as_str().to_string(),
-            Rule::cexpr => args.push(parse_cexpr(inner)?),
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::expr => args.push(parse_expr(inner)?),
             _ => {}
         }
     }
     Ok(Expr::new(ExprKind::Call { name, args }, span))
+}
+
+fn parse_condition_expr(expr: Expr, span: Span) -> Result<Expr, WdlError> {
+    if matches!(expr.kind, ExprKind::Lambda { .. }) {
+        return Err(WdlError::syntax(
+            span,
+            "condition expressions cannot be lambdas",
+        ));
+    }
+    Ok(expr)
 }
 
 // argument entries in source order; a `...alias` spread becomes an entry with an `ExprKind::Spread`
@@ -1307,10 +1124,17 @@ fn parse_cond_primary(pair: Pair<Rule>) -> Result<Cond, WdlError> {
     match inner.as_rule() {
         Rule::paren_cond => parse_cond(first_inner(inner)?),
         Rule::cond_exists => Ok(Cond::new(
-            CondKind::Exists(parse_expr(first_inner(inner)?)?),
+            CondKind::Exists(parse_condition_expr(
+                parse_expr(first_inner(inner)?)?,
+                span,
+            )?),
             span,
         )),
         Rule::cond_cmp => parse_cond_cmp(inner),
+        Rule::expr => Ok(Cond::new(
+            CondKind::Expr(parse_condition_expr(parse_expr(inner)?, span)?),
+            span,
+        )),
         other => Err(WdlError::lower(format!(
             "unexpected cond primary {other:?}"
         ))),
@@ -1326,9 +1150,9 @@ fn parse_cond_cmp(pair: Pair<Rule>) -> Result<Cond, WdlError> {
         match inner.as_rule() {
             Rule::expr => {
                 if left.is_none() {
-                    left = Some(parse_expr(inner)?);
+                    left = Some(parse_condition_expr(parse_expr(inner)?, span)?);
                 } else {
-                    right = Some(parse_expr(inner)?);
+                    right = Some(parse_condition_expr(parse_expr(inner)?, span)?);
                 }
             }
             Rule::cmp_op => op = Some(parse_cmp_op(inner.as_str(), span_of(&inner))?),
@@ -1369,8 +1193,12 @@ fn parse_cmp_op(text: &str, span: Span) -> Result<CmpOp, WdlError> {
 // expressions ---------------------------------------------------------------
 
 fn parse_expr(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    // expr -> coalesce_expr
-    parse_coalesce(first_inner(pair)?)
+    // expr -> lambda | coalesce_expr
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::lambda => parse_lambda(inner),
+        _ => parse_coalesce(inner),
+    }
 }
 
 fn parse_coalesce(pair: Pair<Rule>) -> Result<Expr, WdlError> {
@@ -1390,8 +1218,8 @@ fn parse_concat(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let span = span_of(&pair);
     let mut parts = pair
         .into_inner()
-        .filter(|p| p.as_rule() == Rule::primary)
-        .map(parse_primary)
+        .filter(|p| p.as_rule() == Rule::sum_expr)
+        .map(parse_sum)
         .collect::<Result<Vec<_>, _>>()?;
     if parts.len() == 1 {
         return Ok(parts.remove(0));
@@ -1399,12 +1227,168 @@ fn parse_concat(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     Ok(Expr::new(ExprKind::Concat(parts), span))
 }
 
+fn parse_sum(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let mut acc = None;
+    let mut op = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::term_expr => {
+                let term = parse_term(inner)?;
+                acc = Some(match (acc.take(), op.take()) {
+                    (None, _) => term,
+                    (Some(left), Some("+")) => Expr::new(ExprKind::Add(vec![left, term]), span),
+                    (Some(left), _) => Expr::new(ExprKind::Sub(vec![left, term]), span),
+                });
+            }
+            Rule::add_op => op = Some(if inner.as_str() == "+" { "+" } else { "-" }),
+            _ => {}
+        }
+    }
+    acc.ok_or_else(|| WdlError::lower("empty arithmetic sum"))
+}
+
+fn parse_term(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let mut acc = None;
+    let mut op = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::unary_expr => {
+                let factor = parse_unary(inner)?;
+                acc = Some(match (acc.take(), op.take()) {
+                    (None, _) => factor,
+                    (Some(left), Some("*")) => Expr::new(ExprKind::Mul(vec![left, factor]), span),
+                    (Some(left), Some("/")) => Expr::new(ExprKind::Div(vec![left, factor]), span),
+                    (Some(left), _) => Expr::new(ExprKind::Mod(vec![left, factor]), span),
+                });
+            }
+            Rule::mul_op => {
+                op = Some(match inner.as_str() {
+                    "*" => "*",
+                    "/" => "/",
+                    _ => "%",
+                })
+            }
+            _ => {}
+        }
+    }
+    acc.ok_or_else(|| WdlError::lower("empty arithmetic term"))
+}
+
+fn parse_unary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::neg_expr => {
+            let span = span_of(&inner);
+            let operand = parse_unary(first_inner(inner)?)?;
+            Ok(Expr::new(ExprKind::Neg(Box::new(operand)), span))
+        }
+        Rule::postfix_expr => parse_postfix(inner),
+        other => Err(WdlError::lower(format!("unexpected unary {other:?}"))),
+    }
+}
+
+// a primary plus a chain of accesses: `.method(args)` (ufcs call), `.key` / `[expr]` (field/index).
+fn parse_postfix(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let mut inner = pair.into_inner();
+    let primary = inner
+        .next()
+        .ok_or_else(|| WdlError::lower("postfix primary"))?;
+    let mut expr = parse_primary(primary)?;
+    for access in inner.filter(|p| p.as_rule() == Rule::access) {
+        expr = apply_access(expr, access)?;
+    }
+    Ok(expr)
+}
+
+// apply one access to the running expression. the access form is told apart by its first child:
+// an `ident` is a method call, a `path_seg` is a `.key`, and an `expr` is an `[index]`.
+fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&access);
+    let mut parts = access.into_inner();
+    let first = parts
+        .next()
+        .ok_or_else(|| WdlError::lower("empty access"))?;
+    match first.as_rule() {
+        // `recv.method(args)` desugars to `method(recv, args...)` — the receiver is the first arg.
+        Rule::ident => {
+            let name = first.as_str().to_string();
+            let mut args = vec![base];
+            for arg in parts.filter(|p| p.as_rule() == Rule::expr) {
+                args.push(parse_expr(arg)?);
+            }
+            Ok(Expr::new(ExprKind::Call { name, args }, span))
+        }
+        Rule::path_seg => Ok(index_access(base, path_seg_key(first)?, span)),
+        Rule::expr => Ok(index_access(base, parse_expr(first)?, span)),
+        other => Err(WdlError::lower(format!("unexpected access {other:?}"))),
+    }
+}
+
+// the key of a `.key` field access: an identifier is a string key, an integer is an index.
+fn path_seg_key(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let seg = first_inner(pair)?;
+    match seg.as_rule() {
+        Rule::ident => Ok(Expr::new(
+            ExprKind::Str(vec![StrPart::Lit(seg.as_str().to_string())]),
+            span,
+        )),
+        Rule::integer => Ok(Expr::new(
+            ExprKind::Int(parse_i64(seg.as_str(), span_of(&seg))?),
+            span,
+        )),
+        other => Err(WdlError::lower(format!("unexpected access seg {other:?}"))),
+    }
+}
+
+// fold a static key into a path base (so `foo.bar[0]` stays one `$ref`); otherwise index the
+// running value with the `at` intrinsic, which mirrors `$ref` path access (missing -> null).
+fn index_access(base: Expr, key: Expr, span: Span) -> Expr {
+    if let ExprKind::Path(segs) = &base.kind
+        && let Some(seg) = static_path_seg(&key)
+    {
+        let mut segs = segs.clone();
+        segs.push(seg);
+        return Expr::new(ExprKind::Path(segs), span);
+    }
+    Expr::new(
+        ExprKind::Call {
+            name: "at".to_string(),
+            args: vec![base, key],
+        },
+        span,
+    )
+}
+
+// a key that can extend a path: a non-negative integer index or a non-interpolated string literal.
+fn static_path_seg(key: &Expr) -> Option<PathSeg> {
+    match &key.kind {
+        ExprKind::Int(index) if *index >= 0 => Some(PathSeg::Index(*index as usize)),
+        ExprKind::Str(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                match part {
+                    StrPart::Lit(lit) => text.push_str(lit),
+                    StrPart::Expr(_) => return None,
+                }
+            }
+            Some(PathSeg::Key(text))
+        }
+        _ => None,
+    }
+}
+
 fn parse_primary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let inner = first_inner(pair)?;
     let span = span_of(&inner);
     let kind = match inner.as_rule() {
         Rule::paren_expr => return parse_expr(first_inner(inner)?),
+        Rule::file_call => return parse_file_call(inner),
+        Rule::inline_call => return parse_inline_call(inner),
         Rule::func_call => return parse_func_call(inner),
+        Rule::lib_call => return parse_lib_call(inner),
         Rule::object => return parse_object(inner),
         Rule::array => return parse_array(inner),
         Rule::duration => ExprKind::Int(parse_duration(inner.as_str(), span)?),
@@ -1416,6 +1400,32 @@ fn parse_primary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
         other => return Err(WdlError::lower(format!("unexpected primary {other:?}"))),
     };
     Ok(Expr::new(kind, span))
+}
+
+fn parse_file_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let path = plain_string(first_inner(pair)?)?;
+    Ok(Expr::new(ExprKind::FileInclude { path }, span))
+}
+
+fn parse_inline_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let mut language = None;
+    let mut content = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => language = Some(plain_string(inner)?),
+            Rule::raw_block => content = Some(raw_block_content(inner.as_str())),
+            _ => {}
+        }
+    }
+    Ok(Expr::new(
+        ExprKind::InlineCode {
+            language: language.unwrap_or_default(),
+            content: content.unwrap_or_default(),
+        },
+        span,
+    ))
 }
 
 fn parse_func_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
@@ -1623,6 +1633,22 @@ fn decode_escape(text: &str) -> String {
         Some('r') => "\r".to_string(),
         Some(other) => other.to_string(),
         None => String::new(),
+    }
+}
+
+fn raw_block_content(text: &str) -> String {
+    let Some(content) = text
+        .strip_prefix("```")
+        .and_then(|text| text.strip_suffix("```"))
+    else {
+        return text.to_string();
+    };
+    if let Some(stripped) = content.strip_prefix("\r\n") {
+        stripped.to_string()
+    } else if let Some(stripped) = content.strip_prefix('\n') {
+        stripped.to_string()
+    } else {
+        content.to_string()
     }
 }
 

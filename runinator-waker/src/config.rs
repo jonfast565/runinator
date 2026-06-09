@@ -46,6 +46,11 @@ pub struct Config {
 
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     pub api_base_url: String,
+
+    /// stable address advertised to the replica list; in k8s this is the pod's headless-service dns
+    /// name so it stays resolvable across ip churn.
+    #[arg(long, default_value = "")]
+    pub advertise_host: String,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

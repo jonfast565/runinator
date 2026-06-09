@@ -97,48 +97,20 @@ stmt_body = {
 
 // an imperative compute block. lowers to an action node invoking the `std` standard library:
 // `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
-// dispatched to the worker) when any called function has side effects.
+// dispatched to the worker) when any called function has side effects. compute lines reuse the one
+// expression/condition grammar; the only compute-specific surface is `let`/`return`/`goto`/`if`.
 compute_stmt  = { "compute" ~ compute_block ~ modifier* }
 compute_block = { "{" ~ compute_line* ~ "}" }
 compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
-compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ cexpr }
-compute_return = { "return" ~ cexpr }
+compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
+compute_return = { "return" ~ expr }
 compute_goto  = { "goto" ~ target }
-compute_if    = { "if" ~ ccond ~ compute_block ~ ("else" ~ compute_block)? }
-compute_expr_stmt = { cexpr }
+compute_if    = { "if" ~ cond ~ compute_block ~ ("else" ~ compute_block)? }
+compute_expr_stmt = { expr }
 
-// a compute-tier condition: identical to `cond` but its comparison operands are `cexpr`, so
-// arithmetic and library calls may appear in compute conditions.
-ccond         = { ccond_or }
-ccond_or      = { ccond_and ~ ("||" ~ ccond_and)* }
-ccond_and     = { ccond_unary ~ ("&&" ~ ccond_unary)* }
-ccond_unary   = { cnot_cond | ccond_primary }
-cnot_cond     = { "!" ~ ccond_unary }
-ccond_primary = { cparen_cond | ccond_exists | ccond_cmp }
-cparen_cond   = { "(" ~ ccond ~ ")" }
-ccond_exists  = { "exists" ~ cexpr }
-ccond_cmp     = { cexpr ~ cmp_op ~ cexpr }
-
-// the compute expression tier layers arithmetic and library calls above the declarative `expr`
-// rule, which it falls through to for paths/literals/`++`/`??`/`string()`/`json()`.
-cexpr    = { csum }
-csum     = { cterm ~ (add_op ~ cterm)* }
-cterm    = { cunary ~ (mul_op ~ cunary)* }
-cunary   = { cneg | cprimary }
-cneg     = { "-" ~ cunary }
+// arithmetic operators, shared by the sum/term expression levels below.
 add_op   = { "+" | "-" }
 mul_op   = { "*" | "/" | "%" }
-// object/array literals in compute use compute-tier values so arithmetic and calls work inside
-// them; everything else falls through to the declarative `expr` rule.
-cprimary = { cparen | cbuiltin | cobject | carray | expr }
-cparen   = { "(" ~ cexpr ~ ")" }
-// `string`/`json` stay the `expr` coercion calls; every other `name(...)` is a library call.
-cbuiltin = { !(func_name ~ "(") ~ call_ident ~ "(" ~ (cexpr ~ ("," ~ cexpr)*)? ~ ")" }
-call_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
-cobject       = { "{" ~ (cobject_entry ~ ("," ~ cobject_entry)*)? ~ ","? ~ "}" }
-cobject_entry = { cobject_pair | object_shorthand }
-cobject_pair  = { (ident | string) ~ ":" ~ cexpr }
-carray        = { "[" ~ (cexpr ~ ("," ~ cexpr)*)? ~ ","? ~ "]" }
 
 // provider/function names may contain internal hyphens (e.g. `ai-command`); this token is
 // confined to the call position, where `-` is never an operator.
@@ -235,7 +207,7 @@ cond_or      = { cond_and ~ ("||" ~ cond_and)* }
 cond_and     = { cond_unary ~ ("&&" ~ cond_unary)* }
 cond_unary   = { not_cond | cond_primary }
 not_cond     = { "!" ~ cond_unary }
-cond_primary = { paren_cond | cond_exists | cond_cmp }
+cond_primary = { paren_cond | cond_exists | cond_cmp | expr }
 paren_cond   = { "(" ~ cond ~ ")" }
 cond_exists  = { "exists" ~ expr }
 cond_cmp     = { expr ~ cmp_op ~ expr }
@@ -245,14 +217,39 @@ cmp_op       = {
 }
 
 // expressions --------------------------------------------------------------
+//
+// one expression grammar serves every position (action args, conditions, compute lines, string
+// interpolation). arithmetic, library calls (`name(...)`), and lambdas all live here; purity
+// analysis — not the grammar — decides whether an expression folds eagerly in the reducer or must
+// sit inside a `compute` block. an effectful call outside compute is a semantic error.
 
-expr          = { coalesce_expr }
+// a lambda (`x => expr` or `(a, b) => expr`) binds loosest and is passed to higher-order library
+// calls like `map`/`filter`/`reduce`. it is tried first and backtracks when no `=>` follows.
+expr          = { lambda | coalesce_expr }
+lambda        = { lambda_params ~ "=>" ~ expr }
+lambda_params = { ("(" ~ (ident ~ ("," ~ ident)*)? ~ ")") | ident }
 coalesce_expr = { concat_expr ~ ("??" ~ concat_expr)* }
-concat_expr   = { primary ~ ("++" ~ primary)* }
+concat_expr   = { sum_expr ~ ("++" ~ sum_expr)* }
+sum_expr      = { term_expr ~ (add_op ~ term_expr)* }
+term_expr     = { unary_expr ~ (mul_op ~ unary_expr)* }
+unary_expr    = { neg_expr | postfix_expr }
+neg_expr      = { "-" ~ unary_expr }
+
+// a primary followed by zero or more accesses, binding tighter than any operator. three forms:
+//   - `.method(args)` — fluent/ufcs method call: `recv.f(a)` desugars to `f(recv, a)`, so a chain
+//     like `xs.filter(p).map(g)` reads left-to-right (every stdlib intrinsic takes its subject first).
+//   - `.key` — field access. on a path it folds into the path (one `$ref`); on any other value it
+//     lowers to the `at` intrinsic.
+//   - `[expr]` — index access (same fold/`at` rule). the key may be dynamic (`items[input.i]`).
+postfix_expr  = { primary ~ access* }
+access        = { ("." ~ ident ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") }
 
 primary = {
     paren_expr
+  | file_call
+  | inline_call
   | func_call
+  | lib_call
   | object
   | array
   | duration
@@ -264,10 +261,16 @@ primary = {
 }
 
 paren_expr = { "(" ~ expr ~ ")" }
+file_call  = { "file" ~ "(" ~ string ~ ")" }
+inline_call = { "inline" ~ "(" ~ string ~ "," ~ raw_block ~ ")" }
+// `string`/`json` are the coercion calls; every other `name(...)` is a library call.
 func_call  = { func_name ~ "(" ~ expr ~ ")" }
 func_name  = { "string" | "json" }
+lib_call   = { !(func_name ~ "(") ~ ident ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
-path     = ${ ident ~ ("." ~ path_seg)* }
+// a dotted reference path. a segment that is an identifier immediately followed by `(` is NOT
+// consumed here — it is a fluent method call (`recv.f(...)`) handled by `access`, not a path field.
+path     = ${ ident ~ ("." ~ !(ident ~ "(") ~ path_seg)* }
 path_seg = { ident | integer }
 
 object        = { "{" ~ (object_entry ~ ("," ~ object_entry)*)? ~ ","? ~ "}" }
@@ -294,3 +297,4 @@ str_part      = { interpolation | escape | str_text }
 interpolation = !{ "${" ~ expr ~ "}" }
 escape        = @{ "\\" ~ ANY }
 str_text      = @{ (!("\"" | "\\" | "${") ~ ANY)+ }
+raw_block     = ${ "```" ~ (!"```" ~ ANY)* ~ "```" }

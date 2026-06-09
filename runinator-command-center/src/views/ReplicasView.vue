@@ -80,6 +80,10 @@
               <div class="mono">{{ selectedReplica.instance_id }}</div>
             </div>
             <div class="replicas-field">
+              <label>Version</label>
+              <div class="mono">{{ selectedReplica.version || "-" }}</div>
+            </div>
+            <div class="replicas-field">
               <label>First Seen</label>
               <div>{{ formatDate(selectedReplica.first_seen_at) }}</div>
             </div>

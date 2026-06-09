@@ -12,8 +12,8 @@ use runinator_models::api_routes::{
     API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
     API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
     API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
-    API_WDL_ANALYZE, API_WDL_COMPILE, API_WDL_COMPLETE, API_WDL_DECOMPILE, API_WDL_FORMAT,
-    API_WDL_IMPORT, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, API_WORKFLOWS,
+    API_WDL_ANALYZE, API_WDL_COMPILE, API_WDL_COMPLETE, API_WDL_DECOMPILE, API_WDL_EVALUATE,
+    API_WDL_FORMAT, API_WDL_IMPORT, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, API_WORKFLOWS,
     API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -72,7 +72,10 @@ use crate::handlers::{
         get_workflow_trigger, get_workflow_triggers, update_workflow_trigger,
         upsert_workflow_trigger,
     },
-    wdl::{analyze_wdl, compile_wdl, complete_wdl, decompile_to_wdl, format_wdl, import_wdl},
+    wdl::{
+        analyze_wdl, compile_wdl, complete_wdl, decompile_to_wdl, evaluate_expression, format_wdl,
+        import_wdl,
+    },
     webhook::webhook_wake,
     workflows::{
         delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
@@ -118,6 +121,7 @@ pub fn build_router<T: DatabaseImpl>(
         .route(API_WDL_ANALYZE, post(analyze_wdl))
         .route(API_WDL_FORMAT, post(format_wdl))
         .route(API_WDL_DECOMPILE, post(decompile_to_wdl))
+        .route(API_WDL_EVALUATE, post(evaluate_expression))
         .route(
             API_WDL_IMPORT,
             post(import_wdl::<T>).layer(Extension(pool.clone())),

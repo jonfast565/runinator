@@ -31,6 +31,13 @@ impl Decompiler<'_> {
                         .and_then(Value::as_array)
                         .cloned()
                         .unwrap_or_default();
+                    // re-sugar an `at(base, key)` into `base.key` / `base[index]` access syntax.
+                    if name == "at"
+                        && args.len() == 2
+                        && let Some(text) = self.access(&args[0], &args[1])?
+                    {
+                        return Ok(text);
+                    }
                     let rendered = args
                         .iter()
                         .map(|arg| self.expr(arg))
@@ -38,6 +45,29 @@ impl Decompiler<'_> {
                     return Ok(format!("{name}({})", rendered.join(", ")));
                 }
                 if map.len() == 1 {
+                    if let Some(spec) = map.get("$lambda").and_then(Value::as_object) {
+                        let params = spec
+                            .get("params")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_string)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        let body = spec
+                            .get("body")
+                            .ok_or_else(|| WdlError::Decompile("$lambda missing body".into()))?;
+                        // a single param renders bare (`x => …`); zero or many parenthesize.
+                        let head = if params.len() == 1 {
+                            params[0].clone()
+                        } else {
+                            format!("({})", params.join(", "))
+                        };
+                        return Ok(format!("{head} => {}", self.expr(body)?));
+                    }
                     if let Some(reference) = map.get("$ref") {
                         return self.reference(reference);
                     }
@@ -152,6 +182,36 @@ impl Decompiler<'_> {
         Ok(text)
     }
 
+    // re-sugar an `at(base, key)` call into access syntax, returning None when it must stay a call.
+    // a static key on a `$ref` base is left alone: `base.key` would fold back into the path on
+    // recompile and change the graph, whereas every other `at` round-trips through access syntax.
+    fn access(&self, base: &Value, key: &Value) -> Result<Option<String>, WdlError> {
+        let base_is_ref = base
+            .as_object()
+            .is_some_and(|object| object.contains_key("$ref"));
+        let static_key = key.as_i64().is_some() || key.as_str().is_some();
+        if base_is_ref && static_key {
+            return Ok(None);
+        }
+        let text = self.expr(base)?;
+        let base_text = if needs_access_parens(base) {
+            format!("({text})")
+        } else {
+            text
+        };
+        if let Some(index) = key.as_i64() {
+            return Ok(Some(format!("{base_text}[{index}]")));
+        }
+        if let Some(name) = key.as_str() {
+            if is_ident(name) {
+                return Ok(Some(format!("{base_text}.{name}")));
+            }
+            return Ok(Some(format!("{base_text}[{}]", quote(name))));
+        }
+        // a dynamic key (a ref/call/arithmetic expression) renders as a bracketed expression.
+        Ok(Some(format!("{base_text}[{}]", self.expr(key)?)))
+    }
+
     fn reference(&self, reference: &Value) -> Result<String, WdlError> {
         let object = reference
             .as_object()
@@ -242,6 +302,9 @@ impl Decompiler<'_> {
                 return Ok(format!("{left_text} {op} {}", self.expr(operand)?));
             }
         }
+        if object.len() == 1 && object.contains_key("value") {
+            return self.expr(left);
+        }
         Err(WdlError::Decompile("unrecognized condition".into()))
     }
 
@@ -267,6 +330,26 @@ const ARITH_SUM: u8 = 1;
 const ARITH_PRODUCT: u8 = 2;
 const ARITH_UNARY: u8 = 3;
 const ARITH_ATOM: u8 = 4;
+
+/// whether an expression value must be parenthesized before a `.key` / `[i]` access is appended.
+/// operator forms bind looser than access; refs, calls, coercions, and literals do not.
+fn needs_access_parens(value: &Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    [
+        "$add",
+        "$sub",
+        "$mul",
+        "$div",
+        "$mod",
+        "$neg",
+        "$concat",
+        "$coalesce",
+    ]
+    .iter()
+    .any(|key| map.contains_key(*key))
+}
 
 /// the top-level arithmetic precedence of a lowered expression value.
 fn arith_prec(value: &Value) -> u8 {

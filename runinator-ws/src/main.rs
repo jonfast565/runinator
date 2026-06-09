@@ -15,7 +15,7 @@ use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use runinator_ws::run_webserver;
+use runinator_ws::{ReplicaAdvertisement, run_webserver};
 
 use crate::config::{CliArgs, DatabaseKind};
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
@@ -56,7 +56,27 @@ async fn main() -> Result<(), SendableError> {
         broker_control_topic,
         broker_result_topic,
         broker_client_id,
+        advertise_host,
     } = args;
+    // treat a blank advertise host as unset so the replica list omits it rather than storing "".
+    let advertise_host = {
+        let trimmed = advertise_host.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
+    // advertise the backends this replica runs on so the replica list has parity with worker/waker.
+    let database_backend = match &database {
+        DatabaseKind::Sqlite => "sqlite",
+        DatabaseKind::Postgres => "postgres",
+        DatabaseKind::Mysql => "mysql",
+    };
+    let advertisement = ReplicaAdvertisement {
+        host: advertise_host,
+        attributes: runinator_models::json!({
+            "broker_backend": broker_backend.clone(),
+            "broker_client_id": broker_client_id.clone(),
+            "database_backend": database_backend,
+        }),
+    };
     let broker = build_broker(
         &broker_backend,
         &broker_endpoint,
@@ -106,7 +126,7 @@ async fn main() -> Result<(), SendableError> {
             );
             let sqlite_path = sqlite_path.to_string_lossy();
             let db = Arc::new(SqliteDb::new(sqlite_path.as_ref()).await?);
-            run_webserver(db, notify.clone(), port, broker).await?;
+            run_webserver(db, notify.clone(), port, broker, advertisement.clone()).await?;
         }
         DatabaseKind::Postgres => {
             let url = database_url
@@ -120,7 +140,7 @@ async fn main() -> Result<(), SendableError> {
 
             info!("Starting Runinator webservice with Postgres database");
             let db = Arc::new(PostgresDb::new(&url).await?);
-            run_webserver(db, notify.clone(), port, broker).await?;
+            run_webserver(db, notify.clone(), port, broker, advertisement.clone()).await?;
         }
         DatabaseKind::Mysql => {
             let url = database_url
@@ -134,7 +154,7 @@ async fn main() -> Result<(), SendableError> {
 
             info!("Starting Runinator webservice with MySQL/MariaDB database");
             let db = Arc::new(MySqlDb::new(&url).await?);
-            run_webserver(db, notify.clone(), port, broker).await?;
+            run_webserver(db, notify.clone(), port, broker, advertisement.clone()).await?;
         }
     }
 

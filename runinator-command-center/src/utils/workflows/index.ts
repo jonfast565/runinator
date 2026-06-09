@@ -6,6 +6,7 @@ import type {
   WorkflowDirectTransitionKey,
   WorkflowEdgeEditorDraft,
   WorkflowEdgeEditorMatchKind,
+  WorkflowEdgeLabelAnchor,
   WorkflowEdgeLabelOffset,
   WorkflowEdgeStyle,
   WorkflowEdgeSemanticOption,
@@ -301,6 +302,7 @@ export function renameWorkflowNodeReferences(definition: JsonRecord, previousId:
     renameNodeRefs(node.wait, previousId, nextId);
     renameNodeRefs(node.condition, previousId, nextId);
   }
+  renameWorkflowEdgeHandleSource(definition, previousId, nextId);
 }
 
 export function validateWorkflowIssues(definition: JsonRecord, providers: ProviderMetadata[] = []): WorkflowValidationIssue[] {
@@ -435,7 +437,7 @@ export function applyWorkflowEdgeEditorDraft(
 
   const semanticKey = writeWorkflowEdgeDraft(sourceNode, draft, parsed);
   if (!semanticKey) return { ok: false, message: "Choose a valid edge type" };
-  setWorkflowEdgeHandles(definition, draft.source, semanticKey, draft.sourceHandle, draft.targetHandle, draft.edgeStyle);
+  setWorkflowEdgeHandles(definition, draft.source, semanticKey, draft.sourceHandle, draft.targetHandle, draft.edgeStyle, undefined, { position: draft.labelAnchor / 100 });
   return { ok: true, semanticKey };
 }
 
@@ -474,6 +476,7 @@ function defaultWorkflowEdgeEditorDraft(edge: Edge, optionId: string): WorkflowE
     sourceHandle: edge.sourceHandle as WorkflowConnectionHandle | null | undefined,
     targetHandle: edge.targetHandle as WorkflowConnectionHandle | null | undefined,
     edgeStyle: normalizeWorkflowEdgeStyle(data?.edgeStyle),
+    labelAnchor: Math.round((normalizeLabelAnchor(data?.labelAnchor)?.position ?? 0.5) * 100),
     label: "",
     whenJson: stringifyJson(defaultConditionBranchWhen()),
     matchKind: "equals",
@@ -867,19 +870,23 @@ export function setWorkflowEdgeHandles(
   sourceHandle?: string | null,
   targetHandle?: string | null,
   edgeStyle?: WorkflowEdgeStyle | null,
-  labelOffset?: WorkflowEdgeLabelOffset | null
+  labelOffset?: WorkflowEdgeLabelOffset | null,
+  labelAnchor?: WorkflowEdgeLabelAnchor | null
 ) {
   definition.ui = isRecord(definition.ui) ? definition.ui : {};
   definition.ui.edge_handles = isRecord(definition.ui.edge_handles) ? definition.ui.edge_handles : {};
   const key = edgeHandleKey(source, semanticKey);
-  // a missing labelOffset argument preserves any manual placement; null clears it.
+  // missing label metadata preserves manual placement; null/default clears it.
   const previousOffset = normalizeLabelOffset(definition.ui.edge_handles[key]?.labelOffset);
   const nextOffset = labelOffset === undefined ? previousOffset : normalizeLabelOffset(labelOffset);
+  const previousAnchor = normalizeLabelAnchor(definition.ui.edge_handles[key]?.labelAnchor);
+  const nextAnchor = labelAnchor === undefined ? previousAnchor : normalizeLabelAnchor(labelAnchor);
   definition.ui.edge_handles[key] = {
     sourceHandle: normalizeConnectionHandle(sourceHandle),
     targetHandle: normalizeConnectionHandle(targetHandle),
     edgeStyle: normalizeWorkflowEdgeStyle(edgeStyle),
-    ...(nextOffset ? { labelOffset: nextOffset } : {})
+    ...(nextOffset ? { labelOffset: nextOffset } : {}),
+    ...(nextAnchor ? { labelAnchor: nextAnchor } : {})
   };
 }
 
@@ -911,6 +918,22 @@ export function setWorkflowEdgeLabelOffset(definition: JsonRecord, edge: Edge, l
   );
 }
 
+export function setWorkflowEdgeLabelAnchor(definition: JsonRecord, edge: Edge, labelAnchor: WorkflowEdgeLabelAnchor | null) {
+  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const semanticKey = workflowEdgeSemanticKey(edge);
+  if (!semanticKey) return;
+  setWorkflowEdgeHandles(
+    definition,
+    edge.source,
+    semanticKey,
+    edge.sourceHandle,
+    edge.targetHandle,
+    normalizeWorkflowEdgeStyle(data?.edgeStyle),
+    undefined,
+    labelAnchor
+  );
+}
+
 function removeEdgeHandlesForEdge(definition: JsonRecord, edge: Edge) {
   const data = edge.data as WorkflowEditorEdgeData | undefined;
   if (data?.transitionKey) removeWorkflowEdgeHandles(definition, edge.source, data.transitionKey);
@@ -929,6 +952,18 @@ function swapWorkflowEdgeHandles(definition: JsonRecord, source: string, leftSem
   else handles[leftKey] = right;
   if (left === undefined) delete handles[rightKey];
   else handles[rightKey] = left;
+}
+
+function renameWorkflowEdgeHandleSource(definition: JsonRecord, previousId: string, nextId: string) {
+  const handles = definition.ui?.edge_handles;
+  if (!isRecord(handles)) return;
+  const prefix = `${previousId}:`;
+  for (const key of Object.keys(handles)) {
+    if (!key.startsWith(prefix)) continue;
+    const nextKey = `${nextId}:${key.slice(prefix.length)}`;
+    if (handles[nextKey] === undefined) handles[nextKey] = handles[key];
+    delete handles[key];
+  }
 }
 
 
@@ -1144,6 +1179,7 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
   const edgeLabel = data.validationCount ? `${label} !` : label;
   const edgeStyle = normalizeWorkflowEdgeStyle(data.edgeStyle);
   const labelOffset = normalizeLabelOffset(data.labelOffset);
+  const labelAnchor = normalizeLabelAnchor(data.labelAnchor);
   return {
     id: edgeId(source, target, label, data),
     type: "workflow",
@@ -1152,7 +1188,7 @@ function graphEdge(source: string, target: string, label: string, data: Workflow
     sourceHandle: data.sourceHandle,
     targetHandle: data.targetHandle,
     label: edgeLabel,
-    data: { ...data, edgeStyle, labelOffset },
+    data: { ...data, edgeStyle, labelOffset, labelAnchor },
     updatable: data.editable,
     interactionWidth: 24,
     markerEnd: MarkerType.ArrowClosed
@@ -1712,13 +1748,14 @@ function firstAvailableTransition(node: JsonRecord): WorkflowDirectTransitionKey
   return directTransitionKeys.find((key) => !transitions[key]) ?? "next";
 }
 
-function edgeHandles(definition: JsonRecord, source: string, semanticKey: string): Pick<WorkflowEditorEdgeData, "sourceHandle" | "targetHandle" | "edgeStyle" | "labelOffset"> {
+function edgeHandles(definition: JsonRecord, source: string, semanticKey: string): Pick<WorkflowEditorEdgeData, "sourceHandle" | "targetHandle" | "edgeStyle" | "labelOffset" | "labelAnchor"> {
   const saved = definition.ui?.edge_handles?.[edgeHandleKey(source, semanticKey)];
   return {
     sourceHandle: normalizeConnectionHandle(saved?.sourceHandle) ?? semanticSourceHandleId(optionIdFromSemanticKey(semanticKey)),
     targetHandle: normalizeConnectionHandle(saved?.targetHandle) ?? semanticTargetHandleId,
     edgeStyle: normalizeWorkflowEdgeStyle(saved?.edgeStyle),
-    labelOffset: normalizeLabelOffset(saved?.labelOffset)
+    labelOffset: normalizeLabelOffset(saved?.labelOffset),
+    labelAnchor: normalizeLabelAnchor(saved?.labelAnchor)
   };
 }
 
@@ -1777,6 +1814,15 @@ function normalizeLabelOffset(value: unknown): WorkflowEdgeLabelOffset | undefin
   if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
   if (x === 0 && y === 0) return undefined;
   return { x, y };
+}
+
+function normalizeLabelAnchor(value: unknown): WorkflowEdgeLabelAnchor | undefined {
+  if (!isRecord(value)) return undefined;
+  const position = Number(value.position);
+  if (!Number.isFinite(position)) return undefined;
+  const clamped = Math.min(Math.max(position, 0), 1);
+  if (Math.abs(clamped - 0.5) < 0.001) return undefined;
+  return { position: clamped };
 }
 
 function titleFromNodeId(nodeId: string): string {

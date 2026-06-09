@@ -278,5 +278,6 @@ fn test_config() -> Config {
         shutdown_grace_seconds: 30,
         api_base_url: "http://127.0.0.1:8080/".into(),
         worker_id: Uuid::new_v4(),
+        advertise_host: None,
     }
 }

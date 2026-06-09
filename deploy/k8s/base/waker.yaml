@@ -1,3 +1,17 @@
+# Headless Service so the wakers have a resolvable DNS name to advertise to the replica list. The
+# wakers are broker-only (nothing dials into them), so this exists purely for discovery/observability,
+# not load balancing — hence clusterIP: None.
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-waker
+  namespace: runinator
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: runinator-waker
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,6 +41,10 @@ spec:
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
             - "--broker-client-id"
             - "runinator-waker-$(POD_NAME)"
+            - "--api-base-url"
+            - "$(WS_API_BASE_URL)"
+            - "--advertise-host"
+            - "runinator-waker.runinator.svc.cluster.local"
           envFrom:
             - configMapRef:
                 name: runinator-common

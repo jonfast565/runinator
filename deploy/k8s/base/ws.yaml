@@ -55,6 +55,8 @@ spec:
             - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - "--port"
             - "8080"
+            - "--advertise-host"
+            - "runinator-ws.runinator.svc.cluster.local"
             - "--disable-gossip"
             - "--broker-backend"
             - "rabbitmq"

@@ -68,6 +68,7 @@ export interface WorkflowEdgeEditorDraft {
   sourceHandle?: WorkflowConnectionHandle | null;
   targetHandle?: WorkflowConnectionHandle | null;
   edgeStyle: WorkflowEdgeStyle;
+  labelAnchor: number;
   label: string;
   whenJson: string;
   matchKind: WorkflowEdgeEditorMatchKind;
@@ -85,6 +86,10 @@ export interface WorkflowEdgeLabelOffset {
   y: number;
 }
 
+export interface WorkflowEdgeLabelAnchor {
+  position: number;
+}
+
 export interface WorkflowEditorEdgeData {
   kind: WorkflowEditorEdgeKind;
   transitionKey?: WorkflowDirectTransitionKey;
@@ -95,6 +100,7 @@ export interface WorkflowEditorEdgeData {
   targetHandle?: WorkflowConnectionHandle;
   edgeStyle?: WorkflowEdgeStyle;
   labelOffset?: WorkflowEdgeLabelOffset | null;
+  labelAnchor?: WorkflowEdgeLabelAnchor | null;
   parallelOffset?: number;
   validationCount?: number;
   validationSeverity?: WorkflowValidationSeverity;
@@ -367,6 +373,7 @@ export interface ReplicaRecord {
   port?: number | null;
   base_path?: string | null;
   observed_ip?: string | null;
+  version?: string | null;
   attributes: JsonRecord;
   first_seen_at: string;
   last_heartbeat_at: string;

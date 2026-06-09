@@ -57,6 +57,7 @@ import {
   removeWorkflowNodeReferences,
   setConditionBranch,
   setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelAnchor,
   setWorkflowEdgeLabelOffset,
   moveWorkflowEdgeEditorDraft,
   optionIdForSourceHandle,
@@ -1316,6 +1317,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return true;
   }
 
+  function setEdgeLabelAnchor(edgeId: string, position: number | null): boolean {
+    const edge = graphEdges.value.find((item: Edge) => item.id === edgeId);
+    if (!edge) return false;
+    dismissStepEditorForCanvasEdit();
+    setWorkflowEdgeLabelAnchor(workflowDraft.definition, edge, position === null ? null : { position });
+    syncWorkflowDraftToJson();
+    return true;
+  }
+
   function applyGraphEdgeSemantic(connection: any, optionId: string, previousEdgeId = ""): boolean {
     const { source, target, sourceHandle } = connection;
     if (!source || !target) return false;
@@ -1445,6 +1455,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   // on a compile error we keep the wdl text and surface the message rather than clobbering.
   async function syncWorkflowWdl(): Promise<boolean> {
     let compiled: WorkflowDefinition;
+    const previousUi = isJsonObject(workflowDraft.definition?.ui) ? cloneJson(workflowDraft.definition.ui) : null;
     try {
       compiled = await compileWdl(workflowWdl.value, workflowDraft.enabled);
     } catch (err) {
@@ -1455,6 +1466,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowDraft.version = compiled.version;
     workflowDraft.input_type = compiled.input_type;
     workflowDraft.definition = compiled.definition;
+    if (previousUi) workflowDraft.definition.ui = previousUi;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
     workflowJson.value = pretty(workflowDraft.definition);
@@ -1791,12 +1803,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const triggers = workflowId === null
       ? []
       : workflowSaveTriggers(workflowId);
-    return {
+    const request: WorkflowWdlSaveRequest = {
       source,
       enabled: workflow.enabled,
       workflow_id: workflowId,
       triggers
     };
+    if (isJsonObject(workflow.definition?.ui)) request.ui = cloneJson(workflow.definition.ui);
+    return request;
   }
 
   function parseStepJson(label: string, text: string): { ok: true; value: any } | { ok: false } {
@@ -1804,6 +1818,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (value !== null || text.trim() === "null") return { ok: true, value };
     setStepEditorError(`${label} must be valid JSON`);
     return { ok: false };
+  }
+
+  function isJsonObject(value: unknown): value is JsonRecord {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
   function validateStepParameters(parameters: JsonRecord): string {
@@ -2011,6 +2029,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     moveSelectedEdge,
     reverseSelectedEdgeHandles,
     setEdgeLabelOffset,
+    setEdgeLabelAnchor,
     workflowEdgeOptions,
     applyGraphEdgeSemantic,
     applyStepEditor,

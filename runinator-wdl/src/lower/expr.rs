@@ -2,6 +2,8 @@
 // `$ref`/`$concat`/`$coalesce`/`$to_string`/`$to_json_string` for expressions and the
 // `{value, <op>}` / `{all|any|not}` shape for conditions.
 
+use std::path::{Component, Path};
+
 use runinator_models::value::{Map, Value};
 
 use crate::ast::*;
@@ -29,6 +31,8 @@ impl Lowerer {
             ExprKind::Int(value) => Ok(Value::from(*value)),
             ExprKind::Float(value) => Ok(Value::from(*value)),
             ExprKind::Str(parts) => self.lower_string(parts),
+            ExprKind::FileInclude { path } => self.lower_file_include(expr, path),
+            ExprKind::InlineCode { content, .. } => Ok(Value::String(content.clone())),
             ExprKind::Path(segs) => self.lower_path(segs),
             ExprKind::Array(items) => {
                 let items = items
@@ -66,11 +70,60 @@ impl Lowerer {
                 map.insert("args".into(), Value::Array(args));
                 Ok(Value::Object(map))
             }
+            // a lambda lowers to `{ "$lambda": { "params": [...], "body": <body> } }`. its params are
+            // registered as locals while lowering the body so body paths become `let` refs. params
+            // a compute block already pre-collected stay (insert returns false); only freshly added
+            // ones — the inline-lambda case — are removed afterward, keeping scope correct either way.
+            ExprKind::Lambda { params, body } => {
+                let added: Vec<String> = params
+                    .iter()
+                    .filter(|p| self.compute_locals.borrow_mut().insert((*p).clone()))
+                    .cloned()
+                    .collect();
+                let body_value = self.lower_expr(body);
+                for name in &added {
+                    self.compute_locals.borrow_mut().remove(name);
+                }
+                let mut spec = Map::new();
+                spec.insert(
+                    "params".into(),
+                    Value::Array(params.iter().map(|p| Value::String(p.clone())).collect()),
+                );
+                spec.insert("body".into(), body_value?);
+                Ok(single_key("$lambda", Value::Object(spec)))
+            }
             // spreads are expanded by desugaring before lowering; one reaching here is a bug.
             ExprKind::Spread(name) => {
                 Err(WdlError::lower(format!("unexpanded spread '...{name}'")))
             }
         }
+    }
+
+    fn lower_file_include(&self, expr: &Expr, include_path: &str) -> Result<Value, WdlError> {
+        let Some(source_dir) = &self.source_dir else {
+            return Err(WdlError::semantic(
+                expr.span,
+                "file() requires a source directory; compile from a .wdl file or pack source",
+            ));
+        };
+        let relative = Path::new(include_path);
+        if relative.as_os_str().is_empty() {
+            return Err(WdlError::semantic(expr.span, "file() path cannot be empty"));
+        }
+        if !is_safe_relative_path(relative) {
+            return Err(WdlError::semantic(
+                expr.span,
+                "file() path must be relative and cannot contain '..'",
+            ));
+        }
+        let path = source_dir.join(relative);
+        let text = std::fs::read_to_string(&path).map_err(|err| {
+            WdlError::semantic(
+                expr.span,
+                format!("failed to read included file {}: {err}", path.display()),
+            )
+        })?;
+        Ok(Value::String(text))
     }
 
     fn lower_string(&self, parts: &[StrPart]) -> Result<Value, WdlError> {
@@ -119,7 +172,7 @@ impl Lowerer {
 
         // a compute-block local resolves to the `let` slot: the whole path (including the head
         // name) becomes the lookup key list.
-        if self.compute_locals.contains(&head) {
+        if self.compute_locals.borrow().contains(&head) {
             let mut inner = Map::new();
             inner.insert("let".into(), path_array(segs));
             return Ok(single_key("$ref", Value::Object(inner)));
@@ -163,6 +216,11 @@ impl Lowerer {
                 Ok(single_key("any", Value::Array(items)))
             }
             CondKind::Not(inner) => Ok(single_key("not", self.lower_cond(inner)?)),
+            CondKind::Expr(expr) => {
+                let mut map = Map::new();
+                map.insert("value".into(), self.lower_expr(expr)?);
+                Ok(Value::Object(map))
+            }
             CondKind::Exists(expr) => {
                 let mut map = Map::new();
                 map.insert("value".into(), self.lower_expr(expr)?);
@@ -177,6 +235,11 @@ impl Lowerer {
             }
         }
     }
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 /// lower `secret.<scope>.<name…>` to the `secret://<scope>/<name>` string the worker resolves.

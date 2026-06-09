@@ -9,6 +9,7 @@ mod spreads;
 pub(crate) mod types;
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
@@ -42,10 +43,14 @@ struct Lowerer {
     // per-node `...alias` spread recipes (node id -> recipe segments), kept for graph metadata so
     // decompile can resugar the spreads. empty for spread-free workflows.
     spreads: Map,
-    // in-scope compute-block local names, so a bare local path lowers to a `let` ref.
-    compute_locals: HashSet<String>,
+    // in-scope local names (compute-block `let`s and lambda params), so a bare local path lowers to
+    // a `let` ref. interior-mutable because `lower_expr` (`&self`) scopes a lambda's params while
+    // lowering its body, whether the lambda sits in a compute block or inline in any expression.
+    compute_locals: std::cell::RefCell<HashSet<String>>,
     // resolved `type <Name>` declarations, consulted when lowering named type references.
     named_types: std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
+    // base directory used for compile-time `file("...")` text includes.
+    source_dir: Option<PathBuf>,
 }
 
 pub fn lower_document(
@@ -54,6 +59,7 @@ pub fn lower_document(
 ) -> Result<WorkflowDefinition, WdlError> {
     let workflow = &document.workflow;
     let mut lowerer = Lowerer::new();
+    lowerer.source_dir = options.source_dir.clone();
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
@@ -189,8 +195,9 @@ impl Lowerer {
             declared_types: Vec::new(),
             aliases: AliasTable::new(),
             spreads: Map::new(),
-            compute_locals: HashSet::new(),
+            compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
+            source_dir: None,
         }
     }
 

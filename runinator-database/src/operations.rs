@@ -42,7 +42,7 @@ use crate::{
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
-const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
+const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 
 impl<B> DatabaseImpl for B
@@ -1856,6 +1856,7 @@ where
                     "port",
                     "base_path",
                     "observed_ip",
+                    "version",
                     "attributes",
                     "last_heartbeat_at",
                     "last_seen_at",
@@ -1863,8 +1864,8 @@ where
                 ],
             );
             sqlx::query(&self.render(&format!(
-                "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-                 VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
+                "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+                 VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
             )))
             .bind(replica_id)
             .bind(request.replica_type.as_str())
@@ -1875,6 +1876,7 @@ where
             .bind(request.port.map(i64::from))
             .bind(request.base_path.clone())
             .bind(observed_ip.clone())
+            .bind(request.version.clone())
             .bind(request.attributes.to_string())
             .bind(now)
             .bind(now)
@@ -1892,9 +1894,9 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-             VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-             ON CONFLICT(instance_id, runtime_id) DO UPDATE SET replica_type = excluded.replica_type, status = 'live', display_name = excluded.display_name, host = excluded.host, port = excluded.port, base_path = excluded.base_path, observed_ip = excluded.observed_ip, attributes = excluded.attributes, last_heartbeat_at = excluded.last_heartbeat_at, last_seen_at = excluded.last_seen_at, offline_at = NULL
+            "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
+             VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(instance_id, runtime_id) DO UPDATE SET replica_type = excluded.replica_type, status = 'live', display_name = excluded.display_name, host = excluded.host, port = excluded.port, base_path = excluded.base_path, observed_ip = excluded.observed_ip, version = excluded.version, attributes = excluded.attributes, last_heartbeat_at = excluded.last_heartbeat_at, last_seen_at = excluded.last_seen_at, offline_at = NULL
              RETURNING {REPLICA_COLUMNS}",
         )))
         .bind(replica_id)
@@ -1906,6 +1908,7 @@ where
         .bind(request.port.map(i64::from))
         .bind(request.base_path)
         .bind(observed_ip)
+        .bind(request.version)
         .bind(request.attributes.to_string())
         .bind(now)
         .bind(now)
@@ -2003,7 +2006,7 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
                  FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"
             )))
             .bind(stale_before.timestamp())
@@ -2018,7 +2021,7 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
                  FROM replicas ORDER BY replica_type, instance_id, replica_id",
             ))
             .bind(stale_before.timestamp())

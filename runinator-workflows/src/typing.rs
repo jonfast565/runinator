@@ -445,6 +445,8 @@ fn infer_expression_type(
         // intrinsic return types are checked by WDL sema against provider signatures; the
         // declarative type pass treats a call result as unknown.
         WorkflowExpression::Call { .. } => Ok(WorkflowType::Any),
+        // a lambda is only valid as a higher-order argument; it carries no value type of its own.
+        WorkflowExpression::Lambda { .. } => Ok(WorkflowType::Any),
     }
 }
 
@@ -624,6 +626,9 @@ fn validate_condition_types(
     }
     if let Some(expected) = object.get(COND_EXISTS) {
         expect_value_type(expected, context, &WorkflowType::Boolean, "exists")?;
+        return Ok(());
+    }
+    if object.len() == 1 && object.contains_key(COND_VALUE) {
         return Ok(());
     }
     Ok(())

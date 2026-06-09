@@ -206,6 +206,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "wdl/decompile",
     body: (args) => ({ workflow: arg(args, "workflow") })
   },
+  evaluate_expression: {
+    method: "POST",
+    path: () => "wdl/evaluate",
+    body: (args) => ({ expression: arg(args, "expression"), context: arg(args, "context") })
+  },
   fetch_providers: { method: "GET", path: () => "providers" },
   fetch_replicas: { method: "GET", path: () => "replicas" },
   fetch_credentials: { method: "GET", path: () => "credentials" },

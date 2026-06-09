@@ -2,21 +2,36 @@ use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
 
-use crate::compute::IntrinsicLibrary;
+use crate::compute::{IntrinsicLibrary, cmp_values, is_higher_order};
 use crate::errors::WorkflowValidationError;
 use crate::keys::{
-    EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_LITERAL, EXPR_MOD,
-    EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB, EXPR_TO_JSON_STRING, EXPR_TO_STRING,
-    EXPR_VALUE, REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS,
-    REF_WORKFLOW,
+    EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_LAMBDA,
+    EXPR_LITERAL, EXPR_MOD, EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB, EXPR_TO_JSON_STRING,
+    EXPR_TO_STRING, EXPR_VALUE, LAMBDA_BODY, LAMBDA_PARAMS, REF_CONFIG, REF_INPUT, REF_LOCAL,
+    REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
 };
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
 
+/// resolve refs/arithmetic plus pure `$call` intrinsics against `context`. this is the eager
+/// reducer path: declarative expressions fold here with the pure standard library, so pure calls
+/// (and higher-order `map`/`filter`/...) work outside compute blocks. effectful intrinsics are not
+/// in this library and error; the wdl front end already rejects them in declarative positions.
 pub fn resolve_value_refs(
     value: &Value,
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
-    resolve_value_refs_with(value, context, None)
+    resolve_value_refs_with(value, context, Some(&crate::compute::PureIntrinsics))
+}
+
+/// resolve refs/arithmetic plus pure `$call` intrinsics (the std stdlib and higher-order
+/// `map`/`filter`/`reduce`/...) against `context`. effectful intrinsics (`http_get`/`now`/`uuid`/...)
+/// are not available and error, so this is safe for previews: it evaluates the compute tier without
+/// running side effects.
+pub fn resolve_value_refs_pure(
+    value: &Value,
+    context: &Value,
+) -> Result<Value, WorkflowValidationError> {
+    resolve_value_refs_with(value, context, Some(&crate::compute::PureIntrinsics))
 }
 
 /// resolve refs/arithmetic and (when a library is supplied) `$call` intrinsics against `context`.
@@ -109,6 +124,33 @@ pub(crate) fn parse_expression(
             Ok(WorkflowExpression::Call {
                 name: name.to_string(),
                 args,
+            })
+        }
+        Value::Object(map) if map.contains_key(EXPR_LAMBDA) => {
+            if map.len() != 1 {
+                return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
+            }
+            let spec = map
+                .get(EXPR_LAMBDA)
+                .and_then(Value::as_object)
+                .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+            let params =
+                spec.get(LAMBDA_PARAMS)
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?
+                    .iter()
+                    .map(|param| {
+                        param.as_str().map(str::to_string).ok_or_else(|| {
+                            WorkflowValidationError::InvalidValueRef(value.to_string())
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            let body = spec
+                .get(LAMBDA_BODY)
+                .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))?;
+            Ok(WorkflowExpression::Lambda {
+                params,
+                body: Box::new(parse_expression(body)?),
             })
         }
         Value::Object(map)
@@ -275,6 +317,16 @@ pub(crate) fn evaluate_static_expression(
                 ),
             ),
         ]))),
+        WorkflowExpression::Lambda { params, body } => Ok(Value::Object(Map::from_iter([(
+            EXPR_LAMBDA.into(),
+            Value::Object(Map::from_iter([
+                (
+                    LAMBDA_PARAMS.into(),
+                    Value::Array(params.into_iter().map(Value::String).collect()),
+                ),
+                (LAMBDA_BODY.into(), evaluate_static_expression(*body)?),
+            ])),
+        )]))),
     }
 }
 
@@ -414,6 +466,11 @@ pub(crate) fn evaluate_expression_with(
             }
         }
         WorkflowExpression::Call { name, args } => {
+            // higher-order intrinsics need the evaluator and context to apply their lambda, so the
+            // engine handles them directly rather than dispatching through the library.
+            if is_higher_order(name) {
+                return evaluate_higher_order(name, args, context, lib);
+            }
             let lib = lib.ok_or_else(|| {
                 WorkflowValidationError::InvalidValueRef(format!(
                     "call to '{name}' is not allowed in this context"
@@ -425,7 +482,176 @@ pub(crate) fn evaluate_expression_with(
                 .collect::<Result<Vec<_>, _>>()?;
             lib.call(name, &args)
         }
+        // a lambda has no standalone value; it is only meaningful as a higher-order argument.
+        WorkflowExpression::Lambda { .. } => Err(WorkflowValidationError::InvalidValueRef(
+            "a lambda may only be passed to a higher-order intrinsic".into(),
+        )),
     }
+}
+
+/// evaluate a higher-order intrinsic (`map`/`filter`/`reduce`/...). the collection argument is
+/// evaluated eagerly; the lambda argument stays an expression whose body is applied per element with
+/// its parameters bound into a fresh `let` scope.
+fn evaluate_higher_order(
+    name: &str,
+    args: &[WorkflowExpression],
+    context: &Value,
+    lib: Option<&dyn IntrinsicLibrary>,
+) -> Result<Value, WorkflowValidationError> {
+    let arg = |index: usize| {
+        args.get(index).ok_or_else(|| {
+            WorkflowValidationError::InvalidValueRef(format!("'{name}' is missing an argument"))
+        })
+    };
+    // reduce takes (collection, initial, lambda); every other higher-order takes (collection, lambda).
+    let lambda_index = if name == "reduce" { 2 } else { 1 };
+    let items = collection(name, evaluate_expression_with(arg(0)?, context, lib)?)?;
+    let (params, body) = as_lambda(name, arg(lambda_index)?)?;
+
+    match name {
+        "map" => {
+            let mapped = items
+                .iter()
+                .map(|item| apply_lambda(params, body, &[item.clone()], context, lib))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Value::Array(mapped))
+        }
+        "flat_map" => {
+            let mut out = Vec::new();
+            for item in &items {
+                match apply_lambda(params, body, &[item.clone()], context, lib)? {
+                    Value::Array(inner) => out.extend(inner),
+                    other => out.push(other),
+                }
+            }
+            Ok(Value::Array(out))
+        }
+        "filter" => {
+            let mut out = Vec::new();
+            for item in items {
+                if predicate(
+                    name,
+                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                )? {
+                    out.push(item);
+                }
+            }
+            Ok(Value::Array(out))
+        }
+        "find" => {
+            for item in items {
+                if predicate(
+                    name,
+                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                )? {
+                    return Ok(item);
+                }
+            }
+            Ok(Value::Null)
+        }
+        "any" => {
+            for item in &items {
+                if predicate(
+                    name,
+                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                )? {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            Ok(Value::Bool(false))
+        }
+        "all" => {
+            for item in &items {
+                if !predicate(
+                    name,
+                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                )? {
+                    return Ok(Value::Bool(false));
+                }
+            }
+            Ok(Value::Bool(true))
+        }
+        "sort_by" => {
+            // compute each element's key once, then sort element/key pairs by the key.
+            let mut keyed = items
+                .into_iter()
+                .map(|item| {
+                    let key = apply_lambda(params, body, &[item.clone()], context, lib)?;
+                    Ok((key, item))
+                })
+                .collect::<Result<Vec<_>, WorkflowValidationError>>()?;
+            keyed.sort_by(|(a, _), (b, _)| cmp_values(a, b));
+            Ok(Value::Array(
+                keyed.into_iter().map(|(_, item)| item).collect(),
+            ))
+        }
+        "reduce" => {
+            let mut acc = evaluate_expression_with(arg(1)?, context, lib)?;
+            for item in items {
+                acc = apply_lambda(params, body, &[acc, item], context, lib)?;
+            }
+            Ok(acc)
+        }
+        _ => Err(WorkflowValidationError::InvalidValueRef(format!(
+            "unknown higher-order intrinsic '{name}'"
+        ))),
+    }
+}
+
+/// extract a lambda's parameters and body, rejecting a non-lambda argument.
+fn as_lambda<'a>(
+    name: &str,
+    expr: &'a WorkflowExpression,
+) -> Result<(&'a [String], &'a WorkflowExpression), WorkflowValidationError> {
+    match expr {
+        WorkflowExpression::Lambda { params, body } => Ok((params, body)),
+        _ => Err(WorkflowValidationError::InvalidValueRef(format!(
+            "'{name}' requires a lambda argument"
+        ))),
+    }
+}
+
+/// require an array, naming the offending intrinsic.
+fn collection(name: &str, value: Value) -> Result<Vec<Value>, WorkflowValidationError> {
+    match value {
+        Value::Array(items) => Ok(items),
+        other => Err(WorkflowValidationError::InvalidValueRef(format!(
+            "'{name}' requires an array, got {other}"
+        ))),
+    }
+}
+
+/// require a boolean lambda result for the predicate-style higher-order intrinsics.
+fn predicate(name: &str, value: Value) -> Result<bool, WorkflowValidationError> {
+    match value {
+        Value::Bool(value) => Ok(value),
+        other => Err(WorkflowValidationError::InvalidValueRef(format!(
+            "'{name}' lambda must return a boolean, got {other}"
+        ))),
+    }
+}
+
+/// apply a lambda body with `values` bound to its parameters in a fresh `let` scope layered over a
+/// clone of `context`.
+fn apply_lambda(
+    params: &[String],
+    body: &WorkflowExpression,
+    values: &[Value],
+    context: &Value,
+    lib: Option<&dyn IntrinsicLibrary>,
+) -> Result<Value, WorkflowValidationError> {
+    let mut scope = context.clone();
+    if !scope.get(REF_LOCAL).is_some_and(Value::is_object)
+        && let Some(object) = scope.as_object_mut()
+    {
+        object.insert(REF_LOCAL.into(), Value::Object(Map::new()));
+    }
+    for (param, value) in params.iter().zip(values.iter()) {
+        if let Some(locals) = scope.get_mut(REF_LOCAL).and_then(Value::as_object_mut) {
+            locals.insert(param.clone(), value.clone());
+        }
+    }
+    evaluate_expression_with(body, &scope, lib)
 }
 
 #[derive(Clone, Copy)]

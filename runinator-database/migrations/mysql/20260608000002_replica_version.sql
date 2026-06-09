@@ -1,0 +1,1 @@
+ALTER TABLE replicas ADD COLUMN version TEXT NULL;

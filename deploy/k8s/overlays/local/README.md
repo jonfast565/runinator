@@ -12,13 +12,17 @@ local-path provisioner installed; minikube enables it by default).
 The local overlay runs every service (ws, worker, waker, command-center) at 2
 replicas with HorizontalPodAutoscalers (capped low for laptop capacity) and
 PodDisruptionBudgets — the same multi-replica topology as prod, just smaller.
-Install [metrics-server](https://github.com/kubernetes-sigs/metrics-server) for
-the HPAs to actually autoscale (minikube: `minikube addons enable metrics-server`).
-Without it the services simply hold their Deployment replica count, and you can
-still scale by hand:
+The worker runs as a StatefulSet behind a headless Service so each pod keeps a
+stable ordinal identity and DNS name across restarts; ws/waker/command-center
+stay Deployments. Install
+[metrics-server](https://github.com/kubernetes-sigs/metrics-server) for the HPAs
+to actually autoscale (minikube: `minikube addons enable metrics-server`).
+Without it the services simply hold their replica count, and you can still scale
+by hand:
 
 ```sh
 kubectl -n runinator scale deploy/runinator-ws --replicas=3
+kubectl -n runinator scale statefulset/runinator-worker --replicas=3
 ```
 
 The preferred end-to-end command is:

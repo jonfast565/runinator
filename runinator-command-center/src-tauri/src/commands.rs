@@ -36,6 +36,8 @@ pub struct WorkflowWdlSaveRequest {
     pub workflow_id: Option<Uuid>,
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
+    #[serde(default)]
+    pub ui: Option<Value>,
 }
 
 #[tauri::command]
@@ -163,6 +165,19 @@ pub fn complete_wdl(
 #[tauri::command]
 pub fn format_wdl(source: String) -> CommandResult<String> {
     runinator_wdl::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
+/// resolve a lowered WDL expression against a sample context (e.g. a prior run's data) so the editor
+/// can preview the value a reference/transform/compute expression produces. evaluates the pure
+/// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
+/// side effects; an unresolvable reference or effectful call surfaces as a command error.
+#[tauri::command]
+pub fn evaluate_expression(expression: Value, context: Value) -> CommandResult<Value> {
+    let expr = runinator_models::value::Value::from(expression);
+    let ctx = runinator_models::value::Value::from(context);
+    let resolved = runinator_workflows::resolve_value_refs_pure(&expr, &ctx)
+        .map_err(|err| CommandError::Unexpected(err.to_string()))?;
+    serde_json::to_value(&resolved).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
 /// flatten a `WdlError` into a single error diagnostic anchored to its span when it has one.

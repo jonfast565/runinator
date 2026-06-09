@@ -5,6 +5,7 @@
 
 use runinator_models::semver::SemVer;
 use runinator_models::workflows::WorkflowDefinition;
+use std::path::PathBuf;
 
 pub mod ast;
 pub mod completion;
@@ -12,6 +13,7 @@ mod decompile;
 mod desugar;
 pub mod errors;
 mod format;
+mod includes;
 pub(crate) mod lower;
 mod parser;
 mod purity;
@@ -20,6 +22,7 @@ pub mod sema;
 
 pub use decompile::DecompileOptions;
 pub use errors::{Span, WdlError};
+pub use includes::included_file_paths;
 pub use parser::parse_document;
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
@@ -34,6 +37,8 @@ pub struct CompileOptions {
     pub enabled: bool,
     /// fallback version when the source omits `vN`.
     pub default_version: SemVer,
+    /// directory used to resolve `file("...")` includes.
+    pub source_dir: Option<PathBuf>,
 }
 
 impl Default for CompileOptions {
@@ -41,6 +46,7 @@ impl Default for CompileOptions {
         Self {
             enabled: false,
             default_version: SemVer::default(),
+            source_dir: None,
         }
     }
 }

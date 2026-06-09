@@ -562,6 +562,8 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         ExprKind::Int(_) => Some(RuninatorType::Integer),
         ExprKind::Float(_) => Some(RuninatorType::Number),
         ExprKind::Str(_) => Some(RuninatorType::String),
+        ExprKind::FileInclude { .. } => Some(RuninatorType::String),
+        ExprKind::InlineCode { .. } => Some(RuninatorType::String),
         ExprKind::Array(items) => {
             let item_type = items
                 .first()
@@ -584,6 +586,8 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         | ExprKind::Mod(_)
         | ExprKind::Neg(_) => Some(RuninatorType::Number),
         ExprKind::Call { .. } => Some(RuninatorType::Any),
+        // a lambda carries no value type of its own.
+        ExprKind::Lambda { .. } => None,
         ExprKind::Path(segs) => infer_path_type(segs, context),
         // a spread carries no value type of its own; it is resolved by desugaring.
         ExprKind::Spread(_) => None,
