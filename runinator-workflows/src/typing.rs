@@ -447,6 +447,14 @@ fn infer_expression_type(
         WorkflowExpression::Call { .. } => Ok(WorkflowType::Any),
         // a lambda is only valid as a higher-order argument; it carries no value type of its own.
         WorkflowExpression::Lambda { .. } => Ok(WorkflowType::Any),
+        // a conditional resolves to the common type of its branches (the condition is not typed here).
+        WorkflowExpression::Cond {
+            then, otherwise, ..
+        } => {
+            let then_ty = infer_expression_type(then, context)?;
+            let otherwise_ty = infer_expression_type(otherwise, context)?;
+            Ok(common_type(then_ty, otherwise_ty).unwrap_or(WorkflowType::Any))
+        }
     }
 }
 

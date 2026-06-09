@@ -41,6 +41,12 @@ pub(crate) const EXPR_LAMBDA: &str = "$lambda";
 pub(crate) const LAMBDA_PARAMS: &str = "params";
 pub(crate) const LAMBDA_BODY: &str = "body";
 
+// a lazy conditional expression: { "$if": <cond>, "then": <expr>, "else": <expr> }. only the taken
+// branch is evaluated, so a recursive function's base case can terminate.
+pub(crate) const EXPR_IF: &str = "$if";
+pub(crate) const EXPR_THEN: &str = "then";
+pub(crate) const EXPR_ELSE: &str = "else";
+
 // compute program statements.
 pub(crate) const STMT_LET: &str = "$let";
 pub(crate) const STMT_RETURN: &str = "$return";

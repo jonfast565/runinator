@@ -615,6 +615,9 @@ function Write-LocalSupervisorConfig {
         "127.0.0.1:$($gossipPorts.Scheduler)"
         "127.0.0.1:$($gossipPorts.Web)"
     )
+    $localReplicaHost = '127.0.0.1'
+    $localWakerId = 'runinator-waker-local'
+    $localWorkerId = 'runinator-worker-local'
 
     $pluginFileName = Get-PluginLibraryName
     $pluginPath = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'plugins') -ChildPath $pluginFileName
@@ -629,7 +632,8 @@ function Write-LocalSupervisorConfig {
     $normalizedDatabaseBackend = Resolve-LocalDatabaseBackend -Backend $LocalDatabaseBackend
     $webServiceArgs = @(
         '--database', $normalizedDatabaseBackend,
-        '--announce-address', '127.0.0.1'
+        '--announce-address', $localReplicaHost,
+        '--advertise-host', $localReplicaHost
     )
     switch ($normalizedDatabaseBackend) {
         'sqlite' {
@@ -668,8 +672,11 @@ function Write-LocalSupervisorConfig {
             command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-waker'))
             cwd = $WorkspacePath
             args = @(
+                '--waker-id', $localWakerId,
                 '--broker-backend', 'http',
-                '--broker-endpoint', 'http://127.0.0.1:7070/'
+                '--broker-endpoint', 'http://127.0.0.1:7070/',
+                '--api-base-url', 'http://127.0.0.1:8080/',
+                '--advertise-host', $localReplicaHost
             )
             env = @{
                 RUST_LOG = 'info'
@@ -681,10 +688,12 @@ function Write-LocalSupervisorConfig {
             cwd = $WorkspacePath
             args = @(
                 '--dll-path', (Join-Path -Path $ArtifactsDir -ChildPath 'plugins'),
+                '--worker-id', $localWorkerId,
                 '--broker-backend', 'http',
                 '--broker-endpoint', 'http://127.0.0.1:7070/',
                 '--broker-poll-timeout-seconds', '5',
-                '--api-base-url', 'http://127.0.0.1:8080/'
+                '--api-base-url', 'http://127.0.0.1:8080/',
+                '--advertise-host', $localReplicaHost
             )
             env = @{
                 RUST_LOG = 'info'

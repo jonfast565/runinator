@@ -22,6 +22,7 @@ import {
 // structural declarations that open blocks or bind names.
 const DECL_KW = new Set([
   "workflow", "input", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
+  "fn",
 ]);
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
@@ -40,8 +41,8 @@ const OP_KW = new Set(["exists", "contains", "in", "starts_with", "ends_with"]);
 const OUTCOMES = new Set(["ok", "next", "fail", "timeout", "reject"]);
 // constant-like policy/target atoms.
 const ATOMS = new Set(["all", "any", "first_success", "done", "none"]);
-// coercion builtins, highlighted as functions only when called.
-const BUILTINS = new Set(["string", "json"]);
+// coercion and compile-time intrinsics, highlighted as functions only when called.
+const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);
 // reference roots that are never keywords.
 const PURE_REFS = new Set(["run", "loop", "state", "item"]);
 // roots that double as keywords; treated as a reference only before a `.`.

@@ -3,9 +3,10 @@ use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetad
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 
-use crate::conditions::evaluate_condition_with;
+use crate::conditions::evaluate_condition_env;
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{evaluate_expression_with, parse_expression};
+use crate::functions::{EvalEnv, FunctionTable};
 use crate::keys::{
     REF_LOCAL, STMT_ELSE, STMT_GOTO, STMT_IF, STMT_LET, STMT_RETURN, STMT_THEN, STMT_VALUE,
 };
@@ -117,9 +118,21 @@ pub fn run_program(
     context: &Value,
     lib: &dyn IntrinsicLibrary,
 ) -> Result<ComputeOutcome, WorkflowValidationError> {
+    run_program_with(program, context, lib, None)
+}
+
+/// like `run_program`, but also resolving calls to the workflow's user-defined functions through
+/// `functions`. the reducer/worker pass the definition's function table here.
+pub fn run_program_with(
+    program: &ComputeProgram,
+    context: &Value,
+    lib: &dyn IntrinsicLibrary,
+    functions: Option<&FunctionTable>,
+) -> Result<ComputeOutcome, WorkflowValidationError> {
     let mut working = context.clone();
     ensure_local_slot(&mut working);
-    match run_block(&program.0, &mut working, lib)? {
+    let env = EvalEnv::new(Some(lib), functions);
+    match run_block(&program.0, &mut working, env)? {
         Some(outcome) => Ok(outcome),
         None => Ok(ComputeOutcome::Fallthrough(Value::Null)),
     }
@@ -128,35 +141,35 @@ pub fn run_program(
 fn run_block(
     statements: &[ComputeStmt],
     context: &mut Value,
-    lib: &dyn IntrinsicLibrary,
+    env: EvalEnv,
 ) -> Result<Option<ComputeOutcome>, WorkflowValidationError> {
     for statement in statements {
         match statement {
             ComputeStmt::Let { name, value } => {
-                let evaluated = evaluate_expression_with(value, context, Some(lib))?;
+                let evaluated = evaluate_expression_with(value, context, env)?;
                 set_local(context, name, evaluated);
             }
             ComputeStmt::Return(expr) => {
-                let value = evaluate_expression_with(expr, context, Some(lib))?;
+                let value = evaluate_expression_with(expr, context, env)?;
                 return Ok(Some(ComputeOutcome::Return(value)));
             }
             ComputeStmt::Goto(target) => {
                 return Ok(Some(ComputeOutcome::Goto(target.clone())));
             }
             ComputeStmt::Expr(expr) => {
-                evaluate_expression_with(expr, context, Some(lib))?;
+                evaluate_expression_with(expr, context, env)?;
             }
             ComputeStmt::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let branch = if evaluate_condition_with(condition, context, lib)? {
+                let branch = if evaluate_condition_env(condition, context, env)? {
                     &then_branch.0
                 } else {
                     &else_branch.0
                 };
-                if let Some(outcome) = run_block(branch, context, lib)? {
+                if let Some(outcome) = run_block(branch, context, env)? {
                     return Ok(Some(outcome));
                 }
             }

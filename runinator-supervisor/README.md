@@ -60,4 +60,7 @@ When `state_dir` is omitted, supervisor state defaults to
 The repository's local supervisor config runs `runinatorctl workflows apply`
 once on startup to import the workflow pack. The checked-in supervisor config
 uses `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files during
-import.
+import. It also passes `--advertise-host 127.0.0.1` to the web service,
+waker, and worker, plus stable local instance ids for the waker and worker, so
+the replicas view shows host/IP/version data instead of blank fields after a
+restart.

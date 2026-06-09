@@ -36,6 +36,10 @@ fn action_config_value<'a>(
         .unwrap_or_else(|| panic!("missing action configuration key '{key}'"))
 }
 
+fn graph_value(definition: &runinator_models::workflows::WorkflowDefinition) -> serde_json::Value {
+    serde_json::to_value(&definition.definition).expect("serialize graph")
+}
+
 #[test]
 fn lists_included_file_paths() {
     let src = r#"
@@ -802,6 +806,178 @@ fn file_include_cannot_escape_source_dir() {
     }
 }
 
+fn dir_fixture(label: &str) -> std::path::PathBuf {
+    let mut dir = std::env::temp_dir();
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    dir.push(format!("runinator-wdl-{label}-{unique}"));
+    fs::create_dir_all(dir.join("scripts/lib")).expect("mkdir");
+    fs::write(dir.join("scripts/job.py"), "a").expect("write");
+    fs::write(dir.join("scripts/setup.py"), "b").expect("write");
+    fs::write(dir.join("scripts/lib/util.py"), "c").expect("write");
+    dir
+}
+
+fn dir_listing(value: &Value) -> Vec<String> {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().expect("string entry").to_string())
+            .collect(),
+        other => panic!("expected array listing, got {other:?}"),
+    }
+}
+
+#[test]
+fn dir_include_lists_top_level_by_default() {
+    let dir = dir_fixture("dir-top");
+    let src = r#"
+        workflow "DirInclude" v1 {
+            let go = console.run(command: dir("scripts"))
+        }
+    "#;
+    let options = CompileOptions {
+        source_dir: Some(dir.clone()),
+        ..CompileOptions::default()
+    };
+    let definition = compile_str(src, &options).expect("compile with dir");
+    assert_eq!(
+        dir_listing(action_config_value(&definition, "command")),
+        vec!["job.py".to_string(), "setup.py".to_string()]
+    );
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn dir_include_recurses_with_relative_paths() {
+    let dir = dir_fixture("dir-recursive");
+    let src = r#"
+        workflow "DirInclude" v1 {
+            let go = console.run(command: dir("scripts", true))
+        }
+    "#;
+    let options = CompileOptions {
+        source_dir: Some(dir.clone()),
+        ..CompileOptions::default()
+    };
+    let definition = compile_str(src, &options).expect("compile with recursive dir");
+    assert_eq!(
+        dir_listing(action_config_value(&definition, "command")),
+        vec![
+            "job.py".to_string(),
+            "lib/util.py".to_string(),
+            "setup.py".to_string(),
+        ]
+    );
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn dir_include_depth_cap_stops_descent() {
+    let dir = dir_fixture("dir-depth");
+    let src = r#"
+        workflow "DirInclude" v1 {
+            let go = console.run(command: dir("scripts", true, 1))
+        }
+    "#;
+    let options = CompileOptions {
+        source_dir: Some(dir.clone()),
+        ..CompileOptions::default()
+    };
+    let definition = compile_str(src, &options).expect("compile with depth cap");
+    assert_eq!(
+        dir_listing(action_config_value(&definition, "command")),
+        vec!["job.py".to_string(), "setup.py".to_string()]
+    );
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn dir_include_requires_source_dir() {
+    let src = r#"
+        workflow "DirInclude" v1 {
+            let go = console.run(command: dir("scripts"))
+        }
+    "#;
+    match compile_str(src, &CompileOptions::default()) {
+        Err(WdlError::Semantic { message, .. }) => {
+            assert!(message.contains("source directory"), "{message}");
+        }
+        other => panic!("expected source directory error, got {other:?}"),
+    }
+}
+
+#[test]
+fn dir_include_round_trips_through_formatter() {
+    let src = r#"workflow "DirInclude" v1 {
+    let go = console.run(command: dir("scripts", true, 2))
+}
+"#;
+    let formatted = format_str(src).expect("format");
+    assert!(
+        formatted.contains("dir(\"scripts\", true, 2)"),
+        "{formatted}"
+    );
+}
+
+#[test]
+fn comparison_operators_lower_to_intrinsic_calls() {
+    let src = r#"
+        workflow "Cmp" v1 {
+            let go = console.run(le: input.x <= 1, eq: input.y == input.z, gt: input.a > 2)
+        }
+    "#;
+    let definition = compile(src);
+    for (key, intrinsic) in [("le", "lte"), ("eq", "eq"), ("gt", "gt")] {
+        let value = action_config_value(&definition, key);
+        let call = value
+            .get("$call")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("{key} is not a $call: {value:?}"));
+        assert_eq!(call, intrinsic, "{key} lowered to wrong intrinsic");
+        let args = value.get("args").and_then(Value::as_array).expect("args");
+        assert_eq!(args.len(), 2, "{key} should have two operands");
+    }
+}
+
+#[test]
+fn ternary_lowers_to_if_form() {
+    let src = r#"
+        workflow "Tern" v1 {
+            let go = console.run(size: input.n <= 1 ? "small" : "big")
+        }
+    "#;
+    let definition = compile(src);
+    let value = action_config_value(&definition, "size");
+    assert_eq!(
+        value.get("then").and_then(Value::as_str),
+        Some("small"),
+        "{value:?}"
+    );
+    assert_eq!(value.get("else").and_then(Value::as_str), Some("big"));
+    let cond = value.get("$if").expect("$if branch");
+    assert_eq!(cond.get("$call").and_then(Value::as_str), Some("lte"));
+}
+
+#[test]
+fn ternary_round_trips_through_formatter() {
+    let src = "workflow \"Tern\" v1 {\n    let go = console.run(size: input.n <= 1 ? \"small\" : \"big\")\n}\n";
+    let formatted = format_str(src).expect("format");
+    assert!(
+        formatted.contains("input.n <= 1 ? \"small\" : \"big\""),
+        "{formatted}"
+    );
+}
+
+#[test]
+fn comparison_round_trips_through_formatter() {
+    let src = "workflow \"Cmp\" v1 {\n    let go = console.run(flag: input.x >= 2)\n}\n";
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("input.x >= 2"), "{formatted}");
+}
+
 #[test]
 fn secret_reference_requires_scope_and_name() {
     let src = r#"
@@ -1401,6 +1577,109 @@ fn compute_lambda_filter_reduce_round_trip() {
 }
 
 #[test]
+fn function_defaults_and_lambdas_lower_into_metadata() {
+    let src = r#"
+        fn fold_values(xs: integer[], seed: integer = 0) -> integer = reduce(xs, seed, (acc, x) => add(acc, x))
+
+        workflow "Fn" v1 {
+            compute {
+                let total = fold_values(input.xs)
+                return total
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let functions = graph["metadata"]["functions"]
+        .as_array()
+        .expect("functions metadata");
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0]["name"], "fold_values");
+    assert_eq!(functions[0]["params"][0]["name"], "xs");
+    assert_eq!(functions[0]["params"][1]["name"], "seed");
+    assert_eq!(functions[0]["body"]["$call"], "reduce");
+    assert_eq!(
+        functions[0]["body"]["args"][0],
+        serde_json::json!({ "$ref": { "let": ["xs"] } })
+    );
+    assert_eq!(
+        functions[0]["body"]["args"][1],
+        serde_json::json!({ "$ref": { "let": ["seed"] } })
+    );
+    assert_eq!(
+        functions[0]["body"]["args"][2]["$lambda"]["params"],
+        serde_json::json!(["acc", "x"])
+    );
+    assert_eq!(
+        functions[0]["body"]["args"][2]["$lambda"]["body"],
+        serde_json::json!({
+            "$call": "add",
+            "args": [
+                { "$ref": { "let": ["acc"] } },
+                { "$ref": { "let": ["x"] } }
+            ]
+        })
+    );
+
+    let node = graph["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["provider"], "std");
+    assert_eq!(node["action"]["function"], "run");
+    assert_eq!(
+        node["action"]["configuration"]["program"][0]["value"],
+        serde_json::json!({
+            "$call": "fold_values",
+            "args": [
+                { "$ref": { "input": ["xs"] } },
+                0
+            ]
+        })
+    );
+}
+
+#[test]
+fn recursive_function_requires_annotation() {
+    let src = r#"
+        fn loop(n: integer) = loop(n)
+
+        workflow "Fn" v1 {
+            console.run(command: "go")
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("recursive"), "got: {message}");
+    assert!(message.contains("@recursive"), "got: {message}");
+}
+
+#[test]
+fn recursive_function_surface_round_trips_through_formatter() {
+    let src = r#"
+        @recursive(max_depth: 4)
+        fn fold(xs: integer[], seed: integer = 0) -> integer = reduce(xs, seed, (acc, x) => add(acc, x))
+
+        workflow "Fn" v1 {
+            console.run(command: "go")
+        }
+    "#;
+    let formatted = format_str(src).expect("format");
+    assert!(
+        formatted.contains("@recursive(max_depth: 4)"),
+        "{formatted}"
+    );
+    assert!(
+        formatted.contains(
+            "fn fold(xs: integer[], seed: integer = 0) -> integer = reduce(xs, seed, (acc, x) => add(acc, x))"
+        ),
+        "{formatted}"
+    );
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+}
+
+#[test]
 fn compute_effectful_lowers_to_std_exec() {
     let src = r#"
         workflow "Fetch" v1 {
@@ -1445,7 +1724,7 @@ fn compute_rejects_unknown_intrinsic() {
         }
     "#;
     let (_, message) = expect_semantic(src);
-    assert!(message.contains("unknown intrinsic"), "got: {message}");
+    assert!(message.contains("unknown function"), "got: {message}");
 }
 
 #[test]
@@ -3112,4 +3391,113 @@ fn rejects_non_literal_trigger_schedule() {
     "#,
     );
     assert!(message.contains("string literal"), "{message}");
+}
+
+#[test]
+fn lowers_user_function_into_metadata_and_call() {
+    let src = r#"
+        fn double(x: integer) -> integer = x * 2
+        workflow "Fns" v1 {
+            let go = console.run(value: double(21))
+        }
+    "#;
+    let def = compile(src);
+    let functions = def
+        .definition
+        .metadata
+        .pointer("/functions")
+        .and_then(Value::as_array)
+        .expect("functions in metadata");
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0].get("name"), Some(&Value::from("double")));
+    let params = functions[0]
+        .get("params")
+        .and_then(Value::as_array)
+        .expect("params");
+    assert_eq!(params[0].get("name"), Some(&Value::from("x")));
+    // the body lowers to the multiplication over the parameter local.
+    assert!(functions[0].get("body").is_some());
+    // the call lowers to the shared `$call` shape with the single positional argument.
+    let value = action_config_value(&def, "value");
+    assert_eq!(value.get("$call").and_then(Value::as_str), Some("double"));
+    let args = value.get("args").and_then(Value::as_array).expect("args");
+    assert_eq!(args.len(), 1);
+}
+
+#[test]
+fn named_args_resolve_to_positional_with_defaults() {
+    let src = r#"
+        fn greet(name: string, excited: boolean = false) -> string = name
+        workflow "Named" v1 {
+            let go = console.run(value: greet(name: "ada"))
+        }
+    "#;
+    let def = compile(src);
+    let value = action_config_value(&def, "value");
+    assert_eq!(value.get("$call").and_then(Value::as_str), Some("greet"));
+    let args = value.get("args").and_then(Value::as_array).expect("args");
+    // the omitted optional is filled from its default, so both parameters are positional.
+    assert_eq!(args.len(), 2);
+    assert_eq!(args[0], Value::from("ada"));
+    assert_eq!(args[1], Value::from(false));
+}
+
+#[test]
+fn rejects_unannotated_recursion() {
+    let message = expect_semantic_error(
+        r#"
+        fn fact(n: integer) -> integer = n <= 1 ? 1 : n * fact(n - 1)
+        workflow "Rec" v1 {
+            let go = console.run(value: fact(5))
+        }
+    "#,
+    );
+    assert!(message.contains("@recursive"), "{message}");
+}
+
+#[test]
+fn recursive_function_evaluates_under_runtime() {
+    // a `@recursive`-annotated factorial compiles, carries its body in metadata, and the runtime
+    // function table evaluates it to a terminating value via the lazy `$if` form.
+    let src = r#"
+        @recursive(max_depth: 100)
+        fn fact(n: integer) -> integer = n <= 1 ? 1 : n * fact(n - 1)
+        workflow "Rec" v1 {
+            let go = console.run(value: "ok")
+        }
+    "#;
+    let def = compile(src);
+    let functions = def.definition.metadata.get("functions").expect("functions");
+    let table = runinator_workflows::FunctionTable::from_metadata(Some(functions))
+        .expect("function table");
+    let call = Value::from(serde_json::json!({ "$call": "fact", "args": [5] }));
+    let result = runinator_workflows::resolve_value_refs_with_functions(
+        &call,
+        &Value::from(serde_json::json!({})),
+        &table,
+    )
+    .expect("evaluate");
+    assert_eq!(result, Value::from(120));
+}
+
+#[test]
+fn rejects_function_shadowing_intrinsic() {
+    let message = expect_semantic_error(
+        r#"
+        fn substring(s: string) -> string = s
+        workflow "Shadow" v1 {
+            let go = console.run(value: "x")
+        }
+    "#,
+    );
+    assert!(message.contains("intrinsic"), "{message}");
+}
+
+#[test]
+fn function_definition_round_trips_through_formatter() {
+    let src =
+        "fn double(x: integer) -> integer = x * 2\n\nworkflow \"Fns\" v1 {\n    let go = console.run(value: double(21))\n}\n";
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("fn double(x: integer)"), "{formatted}");
+    assert!(formatted.contains("= x * 2"), "{formatted}");
 }

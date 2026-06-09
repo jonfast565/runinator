@@ -17,6 +17,7 @@ mod includes;
 pub(crate) mod lower;
 mod parser;
 mod purity;
+mod registry;
 mod secrets;
 pub mod sema;
 

@@ -21,12 +21,86 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
     let document = pairs
         .next()
         .ok_or_else(|| WdlError::Parse("empty input".into()))?;
-    let workflow = document
-        .into_inner()
-        .find(|pair| pair.as_rule() == Rule::workflow)
-        .ok_or_else(|| WdlError::Parse("missing workflow".into()))?;
+    let mut functions = Vec::new();
+    let mut workflow = None;
+    for inner in document.into_inner() {
+        match inner.as_rule() {
+            Rule::func_def => functions.push(parse_func_def(inner)?),
+            Rule::workflow => workflow = Some(parse_workflow(inner)?),
+            _ => {}
+        }
+    }
+    let workflow = workflow.ok_or_else(|| WdlError::Parse("missing workflow".into()))?;
     Ok(Document {
-        workflow: parse_workflow(workflow)?,
+        functions,
+        workflow,
+    })
+}
+
+fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, WdlError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut params = Vec::new();
+    let mut ret = None;
+    let mut body = None;
+    let mut recursive = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::fn_recursive => {
+                let depth = inner
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::integer)
+                    .ok_or_else(|| WdlError::syntax(span, "@recursive requires max_depth"))?;
+                let value = parse_i64(depth.as_str(), span_of(&depth))?;
+                if value < 1 {
+                    return Err(WdlError::syntax(
+                        span,
+                        "@recursive max_depth must be at least 1",
+                    ));
+                }
+                recursive = Some(value as u32);
+            }
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::fn_params => {
+                for param in inner.into_inner().filter(|p| p.as_rule() == Rule::fn_param) {
+                    params.push(parse_fn_param(param)?);
+                }
+            }
+            Rule::type_expr => ret = Some(parse_type_expr(inner)?),
+            Rule::expr => body = Some(parse_expr(inner)?),
+            _ => {}
+        }
+    }
+    let body = body.ok_or_else(|| WdlError::syntax(span, "function is missing a body"))?;
+    Ok(FunctionDef {
+        name,
+        params,
+        ret,
+        body: Box::new(body),
+        recursive,
+        span,
+    })
+}
+
+fn parse_fn_param(pair: Pair<Rule>) -> Result<FnParam, WdlError> {
+    let mut name = String::new();
+    let mut optional = false;
+    let mut ty = TypeExpr::Named("any".into());
+    let mut default = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::optional_mark => optional = true,
+            Rule::type_expr => ty = parse_type_expr(inner)?,
+            Rule::field_default => default = Some(parse_expr(first_inner(inner)?)?),
+            _ => {}
+        }
+    }
+    Ok(FnParam {
+        name,
+        ty,
+        optional,
+        default,
     })
 }
 
@@ -544,14 +618,38 @@ fn parse_lib_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let span = span_of(&pair);
     let mut name = String::new();
     let mut args = Vec::new();
+    let mut named = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::ident => name = inner.as_str().to_string(),
-            Rule::expr => args.push(parse_expr(inner)?),
+            Rule::call_arg => parse_call_arg(inner, &mut args, &mut named)?,
             _ => {}
         }
     }
-    Ok(Expr::new(ExprKind::Call { name, args }, span))
+    Ok(Expr::new(ExprKind::Call { name, args, named }, span))
+}
+
+// split one `call_arg` into the positional or keyword bucket.
+fn parse_call_arg(
+    pair: Pair<Rule>,
+    args: &mut Vec<Expr>,
+    named: &mut Vec<(String, Expr)>,
+) -> Result<(), WdlError> {
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::named_arg => {
+            let mut parts = inner.into_inner();
+            let key = parts
+                .next()
+                .ok_or_else(|| WdlError::lower("named argument missing name"))?;
+            let value = parts
+                .next()
+                .ok_or_else(|| WdlError::lower("named argument missing value"))?;
+            named.push((key.as_str().to_string(), parse_expr(value)?));
+        }
+        _ => args.push(parse_expr(inner)?),
+    }
+    Ok(())
 }
 
 fn parse_condition_expr(expr: Expr, span: Span) -> Result<Expr, WdlError> {
@@ -1148,11 +1246,14 @@ fn parse_cond_cmp(pair: Pair<Rule>) -> Result<Cond, WdlError> {
     let mut right = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::expr => {
+            // cond_cmp operands are `coalesce_expr` (one level below `expr`) so an expression-level
+            // comparison never shadows a condition comparison.
+            Rule::coalesce_expr => {
+                let operand = parse_condition_expr(parse_coalesce(inner)?, span)?;
                 if left.is_none() {
-                    left = Some(parse_condition_expr(parse_expr(inner)?, span)?);
+                    left = Some(operand);
                 } else {
-                    right = Some(parse_condition_expr(parse_expr(inner)?, span)?);
+                    right = Some(operand);
                 }
             }
             Rule::cmp_op => op = Some(parse_cmp_op(inner.as_str(), span_of(&inner))?),
@@ -1193,11 +1294,78 @@ fn parse_cmp_op(text: &str, span: Span) -> Result<CmpOp, WdlError> {
 // expressions ---------------------------------------------------------------
 
 fn parse_expr(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    // expr -> lambda | coalesce_expr
+    // expr -> lambda | ternary_expr
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::lambda => parse_lambda(inner),
-        _ => parse_coalesce(inner),
+        _ => parse_ternary(inner),
+    }
+}
+
+fn parse_ternary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    // ternary_expr -> compare_expr ("?" expr ":" expr)?
+    let span = span_of(&pair);
+    let mut cond = None;
+    let mut then = None;
+    let mut els = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::compare_expr => cond = Some(parse_compare(inner)?),
+            Rule::expr if then.is_none() => then = Some(parse_expr(inner)?),
+            Rule::expr => els = Some(parse_expr(inner)?),
+            _ => {}
+        }
+    }
+    let cond = cond.ok_or_else(|| WdlError::lower("empty ternary"))?;
+    match (then, els) {
+        (Some(then), Some(els)) => Ok(Expr::new(
+            ExprKind::Ternary {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(els),
+            },
+            span,
+        )),
+        _ => Ok(cond),
+    }
+}
+
+fn parse_compare(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    // compare_expr -> coalesce_expr (compare_op coalesce_expr)?
+    let span = span_of(&pair);
+    let mut left = None;
+    let mut op = None;
+    let mut right = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::coalesce_expr if left.is_none() => left = Some(parse_coalesce(inner)?),
+            Rule::coalesce_expr => right = Some(parse_coalesce(inner)?),
+            Rule::compare_op => op = Some(compare_op(inner.as_str())),
+            _ => {}
+        }
+    }
+    let left = left.ok_or_else(|| WdlError::lower("empty comparison"))?;
+    match (op, right) {
+        (Some(op), Some(right)) => Ok(Expr::new(
+            ExprKind::Compare {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            span,
+        )),
+        _ => Ok(left),
+    }
+}
+
+fn compare_op(token: &str) -> CompareOp {
+    match token {
+        "==" => CompareOp::Eq,
+        "!=" => CompareOp::Ne,
+        "<=" => CompareOp::Lte,
+        ">=" => CompareOp::Gte,
+        "<" => CompareOp::Lt,
+        _ => CompareOp::Gt,
     }
 }
 
@@ -1315,10 +1483,11 @@ fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
         Rule::ident => {
             let name = first.as_str().to_string();
             let mut args = vec![base];
-            for arg in parts.filter(|p| p.as_rule() == Rule::expr) {
-                args.push(parse_expr(arg)?);
+            let mut named = Vec::new();
+            for arg in parts.filter(|p| p.as_rule() == Rule::call_arg) {
+                parse_call_arg(arg, &mut args, &mut named)?;
             }
-            Ok(Expr::new(ExprKind::Call { name, args }, span))
+            Ok(Expr::new(ExprKind::Call { name, args, named }, span))
         }
         Rule::path_seg => Ok(index_access(base, path_seg_key(first)?, span)),
         Rule::expr => Ok(index_access(base, parse_expr(first)?, span)),
@@ -1357,6 +1526,7 @@ fn index_access(base: Expr, key: Expr, span: Span) -> Expr {
         ExprKind::Call {
             name: "at".to_string(),
             args: vec![base, key],
+            named: Vec::new(),
         },
         span,
     )
@@ -1386,6 +1556,7 @@ fn parse_primary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let kind = match inner.as_rule() {
         Rule::paren_expr => return parse_expr(first_inner(inner)?),
         Rule::file_call => return parse_file_call(inner),
+        Rule::dir_call => return parse_dir_call(inner),
         Rule::inline_call => return parse_inline_call(inner),
         Rule::func_call => return parse_func_call(inner),
         Rule::lib_call => return parse_lib_call(inner),
@@ -1406,6 +1577,36 @@ fn parse_file_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let span = span_of(&pair);
     let path = plain_string(first_inner(pair)?)?;
     Ok(Expr::new(ExprKind::FileInclude { path }, span))
+}
+
+fn parse_dir_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let span = span_of(&pair);
+    let mut path = None;
+    let mut recursive = false;
+    let mut max_depth = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => path = Some(plain_string(inner)?),
+            Rule::boolean => recursive = inner.as_str() == "true",
+            Rule::number => {
+                let depth = parse_i64(inner.as_str(), span)?;
+                if depth < 1 {
+                    return Err(WdlError::syntax(span, "dir() depth must be at least 1"));
+                }
+                max_depth = Some(depth as usize);
+            }
+            _ => {}
+        }
+    }
+    let path = path.ok_or_else(|| WdlError::syntax(span, "dir() missing path"))?;
+    Ok(Expr::new(
+        ExprKind::DirInclude {
+            path,
+            recursive,
+            max_depth,
+        },
+        span,
+    ))
 }
 
 fn parse_inline_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {

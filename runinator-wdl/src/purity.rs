@@ -4,48 +4,59 @@
 // single source is consulted by both lowering and sema so their views cannot drift.
 
 use crate::ast::{ComputeLine, Cond, CondKind, Expr, ExprKind, PathSeg};
+use crate::registry::FunctionRegistry;
 
 /// whether a compute block must run on the worker (`std.exec`).
-pub(crate) fn block_is_effectful(body: &[ComputeLine]) -> bool {
+pub(crate) fn block_is_effectful(body: &[ComputeLine], registry: &FunctionRegistry) -> bool {
     body.iter().any(|line| match line {
         ComputeLine::Let { value, .. } | ComputeLine::Return(value) | ComputeLine::Expr(value) => {
-            expr_is_effectful(value)
+            expr_is_effectful(value, registry)
         }
         ComputeLine::If {
             cond,
             then_branch,
             else_branch,
         } => {
-            cond_is_effectful(cond)
-                || block_is_effectful(then_branch)
-                || block_is_effectful(else_branch)
+            cond_is_effectful(cond, registry)
+                || block_is_effectful(then_branch, registry)
+                || block_is_effectful(else_branch, registry)
         }
         ComputeLine::Goto(_) => false,
     })
 }
 
 /// whether a condition reads an effectful expression (a call or secret in an operand).
-pub(crate) fn cond_is_effectful(cond: &Cond) -> bool {
+pub(crate) fn cond_is_effectful(cond: &Cond, registry: &FunctionRegistry) -> bool {
     match &cond.kind {
-        CondKind::All(parts) | CondKind::Any(parts) => parts.iter().any(cond_is_effectful),
-        CondKind::Not(inner) => cond_is_effectful(inner),
-        CondKind::Expr(expr) => expr_is_effectful(expr),
-        CondKind::Cmp { left, right, .. } => expr_is_effectful(left) || expr_is_effectful(right),
-        CondKind::Exists(expr) => expr_is_effectful(expr),
+        CondKind::All(parts) | CondKind::Any(parts) => {
+            parts.iter().any(|part| cond_is_effectful(part, registry))
+        }
+        CondKind::Not(inner) => cond_is_effectful(inner, registry),
+        CondKind::Expr(expr) => expr_is_effectful(expr, registry),
+        CondKind::Cmp { left, right, .. } => {
+            expr_is_effectful(left, registry) || expr_is_effectful(right, registry)
+        }
+        CondKind::Exists(expr) => expr_is_effectful(expr, registry),
     }
 }
 
-/// whether an expression is effectful: it calls a non-pure intrinsic or reads a secret.
-pub(crate) fn expr_is_effectful(expr: &Expr) -> bool {
+/// whether an expression is effectful: it calls a non-pure intrinsic or reads a secret. a
+/// user-function call is pure in itself (bodies are validated pure), so only its arguments matter.
+pub(crate) fn expr_is_effectful(expr: &Expr, registry: &FunctionRegistry) -> bool {
     match &expr.kind {
-        ExprKind::Call { name, args } => {
-            // higher-order intrinsics are structurally pure: a call is pure when its collection and
-            // lambda body are pure, so they do not by themselves force a block to the worker.
-            let structurally_pure = runinator_workflows::PureIntrinsics::contains(name)
+        ExprKind::Call { name, args, named } => {
+            // higher-order intrinsics and user functions are structurally pure: only the arguments
+            // can carry effects. any other unknown/effectful name forces the block to the worker.
+            let structurally_pure = registry.is_user(name)
+                || runinator_workflows::PureIntrinsics::contains(name)
                 || runinator_workflows::is_higher_order(name);
-            !structurally_pure || args.iter().any(expr_is_effectful)
+            !structurally_pure
+                || args.iter().any(|arg| expr_is_effectful(arg, registry))
+                || named
+                    .iter()
+                    .any(|(_, value)| expr_is_effectful(value, registry))
         }
-        ExprKind::Lambda { body, .. } => expr_is_effectful(body),
+        ExprKind::Lambda { body, .. } => expr_is_effectful(body, registry),
         // a secret reference forces the block to the worker, where secrets resolve.
         ExprKind::Path(segs) => {
             matches!(segs.first(), Some(PathSeg::Key(head)) if head == "secret")
@@ -57,11 +68,23 @@ pub(crate) fn expr_is_effectful(expr: &Expr) -> bool {
         | ExprKind::Mod(parts)
         | ExprKind::Concat(parts)
         | ExprKind::Coalesce(parts)
-        | ExprKind::Array(parts) => parts.iter().any(expr_is_effectful),
+        | ExprKind::Array(parts) => parts.iter().any(|part| expr_is_effectful(part, registry)),
         ExprKind::Neg(inner) | ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
-            expr_is_effectful(inner)
+            expr_is_effectful(inner, registry)
         }
-        ExprKind::Object(entries) => entries.iter().any(|(_, value)| expr_is_effectful(value)),
+        // the comparison intrinsic is pure, but either operand may itself be effectful.
+        ExprKind::Compare { left, right, .. } => {
+            expr_is_effectful(left, registry) || expr_is_effectful(right, registry)
+        }
+        // a ternary is effectful if its condition or either branch is.
+        ExprKind::Ternary { cond, then, els } => {
+            expr_is_effectful(cond, registry)
+                || expr_is_effectful(then, registry)
+                || expr_is_effectful(els, registry)
+        }
+        ExprKind::Object(entries) => entries
+            .iter()
+            .any(|(_, value)| expr_is_effectful(value, registry)),
         _ => false,
     }
 }

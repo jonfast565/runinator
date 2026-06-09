@@ -1,6 +1,9 @@
 use super::context::runtime_context;
 use super::*;
-use runinator_workflows::{ComputeOutcome, PureIntrinsics, parse_program, run_program};
+use runinator_models::workflows::WorkflowDefinition;
+use runinator_workflows::{
+    ComputeOutcome, FunctionTable, PureIntrinsics, parse_program, run_program_with,
+};
 
 const PROGRAM_KEY: &str = "program";
 
@@ -26,6 +29,7 @@ pub(super) fn is_inprocess_compute(node: &WorkflowNode) -> bool {
 /// or set the active node directly on `goto`.
 pub(super) async fn process_compute_node<T: DatabaseImpl>(
     db: &T,
+    workflow: &WorkflowDefinition,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
@@ -54,7 +58,9 @@ pub(super) async fn process_compute_node<T: DatabaseImpl>(
         )
         .await?;
     let context = runtime_context(db, workflow_run, node_runs).await;
-    let outcome = run_program(&program, &context, &PureIntrinsics)
+    let functions = FunctionTable::from_metadata(workflow.definition.metadata.get("functions"))
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let outcome = run_program_with(&program, &context, &PureIntrinsics, Some(&functions))
         .map_err(|err| -> SendableError { Box::new(err) })?;
 
     match outcome {

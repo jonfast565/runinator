@@ -2,13 +2,14 @@ use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowNodeRef;
 
-use crate::compute::{IntrinsicLibrary, cmp_values, is_higher_order};
+use crate::compute::{cmp_values, is_higher_order};
 use crate::errors::WorkflowValidationError;
+use crate::functions::{EvalEnv, FunctionTable, invoke_user_function};
 use crate::keys::{
-    EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_LAMBDA,
-    EXPR_LITERAL, EXPR_MOD, EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB, EXPR_TO_JSON_STRING,
-    EXPR_TO_STRING, EXPR_VALUE, LAMBDA_BODY, LAMBDA_PARAMS, REF_CONFIG, REF_INPUT, REF_LOCAL,
-    REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
+    EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_ELSE, EXPR_IF,
+    EXPR_LAMBDA, EXPR_LITERAL, EXPR_MOD, EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB,
+    EXPR_THEN, EXPR_TO_JSON_STRING, EXPR_TO_STRING, EXPR_VALUE, LAMBDA_BODY, LAMBDA_PARAMS,
+    REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
 };
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
 
@@ -20,7 +21,11 @@ pub fn resolve_value_refs(
     value: &Value,
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
-    resolve_value_refs_with(value, context, Some(&crate::compute::PureIntrinsics))
+    resolve_value_refs_with(
+        value,
+        context,
+        EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
+    )
 }
 
 /// resolve refs/arithmetic plus pure `$call` intrinsics (the std stdlib and higher-order
@@ -31,18 +36,37 @@ pub fn resolve_value_refs_pure(
     value: &Value,
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
-    resolve_value_refs_with(value, context, Some(&crate::compute::PureIntrinsics))
+    resolve_value_refs_with(
+        value,
+        context,
+        EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
+    )
 }
 
-/// resolve refs/arithmetic and (when a library is supplied) `$call` intrinsics against `context`.
-/// passing `None` for `lib` forbids `$call` (the library-free path used outside compute blocks).
+/// resolve refs/arithmetic, `$call` intrinsics, and user-function calls against `context`, using the
+/// library and function table carried by `env`. an `env` with no library forbids `$call` (the
+/// library-free path used outside compute blocks); an `env` with no function table forbids user calls.
 pub(crate) fn resolve_value_refs_with(
     value: &Value,
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
     let expression = parse_expression(value)?;
-    evaluate_expression_with(&expression, context, lib)
+    evaluate_expression_with(&expression, context, env)
+}
+
+/// like `resolve_value_refs`, but also resolving user-function calls from `functions`. used by the
+/// reducer when folding declarative expressions that may reference user-defined functions.
+pub fn resolve_value_refs_with_functions(
+    value: &Value,
+    context: &Value,
+    functions: &FunctionTable,
+) -> Result<Value, WorkflowValidationError> {
+    resolve_value_refs_with(
+        value,
+        context,
+        EvalEnv::new(Some(&crate::compute::PureIntrinsics), Some(functions)),
+    )
 }
 
 /// fill omitted top-level input fields from their declared defaults, mutating the `input` slot of
@@ -151,6 +175,25 @@ pub(crate) fn parse_expression(
             Ok(WorkflowExpression::Lambda {
                 params,
                 body: Box::new(parse_expression(body)?),
+            })
+        }
+        Value::Object(map) if map.contains_key(EXPR_IF) => {
+            let allowed = map
+                .keys()
+                .all(|key| key == EXPR_IF || key == EXPR_THEN || key == EXPR_ELSE);
+            if !allowed {
+                return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
+            }
+            let branch = |key: &str| {
+                map.get(key)
+                    .ok_or_else(|| WorkflowValidationError::InvalidValueRef(value.to_string()))
+                    .and_then(parse_expression)
+                    .map(Box::new)
+            };
+            Ok(WorkflowExpression::Cond {
+                condition: Box::new(parse_expression(map.get(EXPR_IF).expect("checked above"))?),
+                then: branch(EXPR_THEN)?,
+                otherwise: branch(EXPR_ELSE)?,
             })
         }
         Value::Object(map)
@@ -327,6 +370,15 @@ pub(crate) fn evaluate_static_expression(
                 (LAMBDA_BODY.into(), evaluate_static_expression(*body)?),
             ])),
         )]))),
+        WorkflowExpression::Cond {
+            condition,
+            then,
+            otherwise,
+        } => Ok(Value::Object(Map::from_iter([
+            (EXPR_IF.into(), evaluate_static_expression(*condition)?),
+            (EXPR_THEN.into(), evaluate_static_expression(*then)?),
+            (EXPR_ELSE.into(), evaluate_static_expression(*otherwise)?),
+        ]))),
     }
 }
 
@@ -348,20 +400,20 @@ fn static_arith(
 pub(crate) fn evaluate_expression_with(
     expression: &WorkflowExpression,
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
     match expression {
         WorkflowExpression::Literal(value) => match value {
             Value::Object(map) => {
                 let mut resolved = Map::new();
                 for (key, nested) in map {
-                    resolved.insert(key.clone(), resolve_value_refs_with(nested, context, lib)?);
+                    resolved.insert(key.clone(), resolve_value_refs_with(nested, context, env)?);
                 }
                 Ok(Value::Object(resolved))
             }
             Value::Array(items) => items
                 .iter()
-                .map(|item| resolve_value_refs_with(item, context, lib))
+                .map(|item| resolve_value_refs_with(item, context, env))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
             _ => Ok(value.clone()),
@@ -370,7 +422,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Concat(items) => {
             let mut rendered = String::new();
             for item in items {
-                let Value::String(value) = evaluate_expression_with(item, context, lib)? else {
+                let Value::String(value) = evaluate_expression_with(item, context, env)? else {
                     return Err(WorkflowValidationError::InvalidValueRef(
                         "$concat items must resolve to strings".into(),
                     ));
@@ -381,7 +433,7 @@ pub(crate) fn evaluate_expression_with(
         }
         WorkflowExpression::Coalesce(items) => {
             for item in items {
-                let value = evaluate_expression_with(item, context, lib)?;
+                let value = evaluate_expression_with(item, context, env)?;
                 if !value.is_null() {
                     return Ok(value);
                 }
@@ -389,7 +441,7 @@ pub(crate) fn evaluate_expression_with(
             Ok(Value::Null)
         }
         WorkflowExpression::ToString(nested) => {
-            match evaluate_expression_with(nested, context, lib)? {
+            match evaluate_expression_with(nested, context, env)? {
                 Value::String(value) => Ok(Value::String(value)),
                 Value::Bool(value) => Ok(Value::String(value.to_string())),
                 Value::Number(value) => Ok(Value::String(value.to_string())),
@@ -401,7 +453,7 @@ pub(crate) fn evaluate_expression_with(
             }
         }
         WorkflowExpression::ToJsonString(nested) => {
-            let value = evaluate_expression_with(nested, context, lib)?;
+            let value = evaluate_expression_with(nested, context, env)?;
             if !matches!(value, Value::Array(_) | Value::Object(_)) {
                 return Err(WorkflowValidationError::InvalidValueRef(
                     "$to_json_string requires an array or object".into(),
@@ -414,7 +466,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Add(items) => fold_arith(
             items,
             context,
-            lib,
+            env,
             "+",
             |a, b| Ok(a.wrapping_add(b)),
             |a, b| a + b,
@@ -422,7 +474,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Sub(items) => fold_arith(
             items,
             context,
-            lib,
+            env,
             "-",
             |a, b| Ok(a.wrapping_sub(b)),
             |a, b| a - b,
@@ -430,7 +482,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Mul(items) => fold_arith(
             items,
             context,
-            lib,
+            env,
             "*",
             |a, b| Ok(a.wrapping_mul(b)),
             |a, b| a * b,
@@ -438,7 +490,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Div(items) => fold_arith(
             items,
             context,
-            lib,
+            env,
             "/",
             |a, b| {
                 a.checked_div(b).ok_or_else(|| {
@@ -450,7 +502,7 @@ pub(crate) fn evaluate_expression_with(
         WorkflowExpression::Mod(items) => fold_arith(
             items,
             context,
-            lib,
+            env,
             "%",
             |a, b| {
                 a.checked_rem(b).ok_or_else(|| {
@@ -460,7 +512,7 @@ pub(crate) fn evaluate_expression_with(
             |a, b| a % b,
         ),
         WorkflowExpression::Neg(nested) => {
-            match as_number(&evaluate_expression_with(nested, context, lib)?)? {
+            match as_number(&evaluate_expression_with(nested, context, env)?)? {
                 Num::Int(value) => Ok(Value::from(value.wrapping_neg())),
                 Num::Float(value) => Ok(float_value(-value)?),
             }
@@ -469,23 +521,57 @@ pub(crate) fn evaluate_expression_with(
             // higher-order intrinsics need the evaluator and context to apply their lambda, so the
             // engine handles them directly rather than dispatching through the library.
             if is_higher_order(name) {
-                return evaluate_higher_order(name, args, context, lib);
+                return evaluate_higher_order(name, args, context, env);
             }
-            let lib = lib.ok_or_else(|| {
+            // a user-defined function: evaluate its args in this context, then apply the body.
+            if let Some(function) = env.lookup(name) {
+                let values = args
+                    .iter()
+                    .map(|arg| evaluate_expression_with(arg, context, env))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return invoke_user_function(name, function, &values, env);
+            }
+            let lib = env.lib.ok_or_else(|| {
                 WorkflowValidationError::InvalidValueRef(format!(
                     "call to '{name}' is not allowed in this context"
                 ))
             })?;
             let args = args
                 .iter()
-                .map(|arg| evaluate_expression_with(arg, context, Some(lib)))
+                .map(|arg| evaluate_expression_with(arg, context, env))
                 .collect::<Result<Vec<_>, _>>()?;
             lib.call(name, &args)
+        }
+        // evaluate the condition, then only the taken branch — keeping recursion base cases lazy.
+        WorkflowExpression::Cond {
+            condition,
+            then,
+            otherwise,
+        } => {
+            let taken = if is_truthy(&evaluate_expression_with(condition, context, env)?) {
+                then
+            } else {
+                otherwise
+            };
+            evaluate_expression_with(taken, context, env)
         }
         // a lambda has no standalone value; it is only meaningful as a higher-order argument.
         WorkflowExpression::Lambda { .. } => Err(WorkflowValidationError::InvalidValueRef(
             "a lambda may only be passed to a higher-order intrinsic".into(),
         )),
+    }
+}
+
+/// truthiness for a conditional expression: everything is truthy except null, `false`, zero, the
+/// empty string, and empty collections.
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
     }
 }
 
@@ -496,7 +582,7 @@ fn evaluate_higher_order(
     name: &str,
     args: &[WorkflowExpression],
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
     let arg = |index: usize| {
         args.get(index).ok_or_else(|| {
@@ -505,21 +591,21 @@ fn evaluate_higher_order(
     };
     // reduce takes (collection, initial, lambda); every other higher-order takes (collection, lambda).
     let lambda_index = if name == "reduce" { 2 } else { 1 };
-    let items = collection(name, evaluate_expression_with(arg(0)?, context, lib)?)?;
+    let items = collection(name, evaluate_expression_with(arg(0)?, context, env)?)?;
     let (params, body) = as_lambda(name, arg(lambda_index)?)?;
 
     match name {
         "map" => {
             let mapped = items
                 .iter()
-                .map(|item| apply_lambda(params, body, &[item.clone()], context, lib))
+                .map(|item| apply_lambda(params, body, &[item.clone()], context, env))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Value::Array(mapped))
         }
         "flat_map" => {
             let mut out = Vec::new();
             for item in &items {
-                match apply_lambda(params, body, &[item.clone()], context, lib)? {
+                match apply_lambda(params, body, &[item.clone()], context, env)? {
                     Value::Array(inner) => out.extend(inner),
                     other => out.push(other),
                 }
@@ -531,7 +617,7 @@ fn evaluate_higher_order(
             for item in items {
                 if predicate(
                     name,
-                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                    apply_lambda(params, body, &[item.clone()], context, env)?,
                 )? {
                     out.push(item);
                 }
@@ -542,7 +628,7 @@ fn evaluate_higher_order(
             for item in items {
                 if predicate(
                     name,
-                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                    apply_lambda(params, body, &[item.clone()], context, env)?,
                 )? {
                     return Ok(item);
                 }
@@ -553,7 +639,7 @@ fn evaluate_higher_order(
             for item in &items {
                 if predicate(
                     name,
-                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                    apply_lambda(params, body, &[item.clone()], context, env)?,
                 )? {
                     return Ok(Value::Bool(true));
                 }
@@ -564,7 +650,7 @@ fn evaluate_higher_order(
             for item in &items {
                 if !predicate(
                     name,
-                    apply_lambda(params, body, &[item.clone()], context, lib)?,
+                    apply_lambda(params, body, &[item.clone()], context, env)?,
                 )? {
                     return Ok(Value::Bool(false));
                 }
@@ -576,7 +662,7 @@ fn evaluate_higher_order(
             let mut keyed = items
                 .into_iter()
                 .map(|item| {
-                    let key = apply_lambda(params, body, &[item.clone()], context, lib)?;
+                    let key = apply_lambda(params, body, &[item.clone()], context, env)?;
                     Ok((key, item))
                 })
                 .collect::<Result<Vec<_>, WorkflowValidationError>>()?;
@@ -586,9 +672,9 @@ fn evaluate_higher_order(
             ))
         }
         "reduce" => {
-            let mut acc = evaluate_expression_with(arg(1)?, context, lib)?;
+            let mut acc = evaluate_expression_with(arg(1)?, context, env)?;
             for item in items {
-                acc = apply_lambda(params, body, &[acc, item], context, lib)?;
+                acc = apply_lambda(params, body, &[acc, item], context, env)?;
             }
             Ok(acc)
         }
@@ -638,7 +724,7 @@ fn apply_lambda(
     body: &WorkflowExpression,
     values: &[Value],
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
     let mut scope = context.clone();
     if !scope.get(REF_LOCAL).is_some_and(Value::is_object)
@@ -651,7 +737,7 @@ fn apply_lambda(
             locals.insert(param.clone(), value.clone());
         }
     }
-    evaluate_expression_with(body, &scope, lib)
+    evaluate_expression_with(body, &scope, env)
 }
 
 #[derive(Clone, Copy)]
@@ -686,7 +772,7 @@ fn float_value(value: f64) -> Result<Value, WorkflowValidationError> {
 fn fold_arith(
     items: &[WorkflowExpression],
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
     op: &str,
     int_op: impl Fn(i64, i64) -> Result<i64, WorkflowValidationError>,
     float_op: impl Fn(f64, f64) -> f64,
@@ -695,9 +781,9 @@ fn fold_arith(
     let first = iter.next().ok_or_else(|| {
         WorkflowValidationError::InvalidValueRef(format!("'{op}' requires at least one operand"))
     })?;
-    let mut acc = as_number(&evaluate_expression_with(first, context, lib)?)?;
+    let mut acc = as_number(&evaluate_expression_with(first, context, env)?)?;
     for item in iter {
-        let next = as_number(&evaluate_expression_with(item, context, lib)?)?;
+        let next = as_number(&evaluate_expression_with(item, context, env)?)?;
         acc = match (acc, next) {
             (Num::Int(a), Num::Int(b)) => Num::Int(int_op(a, b)?),
             (a, b) => Num::Float(float_op(num_as_f64(a), num_as_f64(b))),

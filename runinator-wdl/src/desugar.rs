@@ -215,6 +215,15 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             expand_expr(inner, aliases)?
         }
+        ExprKind::Compare { left, right, .. } => {
+            expand_expr(left, aliases)?;
+            expand_expr(right, aliases)?;
+        }
+        ExprKind::Ternary { cond, then, els } => {
+            expand_expr(cond, aliases)?;
+            expand_expr(then, aliases)?;
+            expand_expr(els, aliases)?;
+        }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
         | ExprKind::Mul(parts)
@@ -251,6 +260,7 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::FileInclude { .. }
+        | ExprKind::DirInclude { .. }
         | ExprKind::InlineCode { .. }
         | ExprKind::Path(_) => {}
     }

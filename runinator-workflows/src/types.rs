@@ -69,6 +69,13 @@ pub enum WorkflowExpression {
         params: Vec<String>,
         body: Box<WorkflowExpression>,
     },
+    // a lazy conditional: the condition is evaluated, then only the taken branch is evaluated. this
+    // laziness lets a recursive function's base case terminate before the recursive branch runs.
+    Cond {
+        condition: Box<WorkflowExpression>,
+        then: Box<WorkflowExpression>,
+        otherwise: Box<WorkflowExpression>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

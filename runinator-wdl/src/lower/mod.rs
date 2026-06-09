@@ -51,6 +51,8 @@ struct Lowerer {
     named_types: std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
     // base directory used for compile-time `file("...")` text includes.
     source_dir: Option<PathBuf>,
+    // the callable registry (intrinsics + user functions), used to resolve keyword arguments.
+    registry: crate::registry::FunctionRegistry,
 }
 
 pub fn lower_document(
@@ -60,6 +62,8 @@ pub fn lower_document(
     let workflow = &document.workflow;
     let mut lowerer = Lowerer::new();
     lowerer.source_dir = options.source_dir.clone();
+    // the callable registry resolves keyword args in both the workflow body and function bodies.
+    lowerer.registry = crate::registry::FunctionRegistry::build(&document.functions);
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
@@ -149,12 +153,17 @@ pub fn lower_document(
     // header `trigger cron` declarations, carried as runtime data the web service materializes on
     // import (unlike the render-only `wdl` sidecar).
     let triggers = lowerer.lower_triggers(&workflow.triggers)?;
+    // user `fn` definitions, lowered to runtime-evaluable expression bodies the engine calls.
+    let functions = lowerer.lower_functions(&document.functions)?;
     let mut metadata = Map::new();
     if !wdl.is_empty() {
         metadata.insert("wdl".into(), Value::Object(wdl));
     }
     if !triggers.is_empty() {
         metadata.insert("triggers".into(), Value::Array(triggers));
+    }
+    if !functions.is_empty() {
+        metadata.insert("functions".into(), Value::Array(functions));
     }
     if !metadata.is_empty() {
         definition.insert("metadata".into(), Value::Object(metadata));
@@ -198,6 +207,7 @@ impl Lowerer {
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
             source_dir: None,
+            registry: crate::registry::FunctionRegistry::build(&[]),
         }
     }
 
@@ -286,6 +296,52 @@ impl Lowerer {
             specs.push(Value::Object(spec));
         }
         Ok(specs)
+    }
+
+    /// lower user `fn` definitions into the `metadata.functions` runtime form:
+    /// `[{ name, params: [{name}], body: <expr>, recursive?: { max_depth } }]`. each body lowers
+    /// with its parameters registered as locals, so param references become `let` refs the engine
+    /// binds at call time.
+    fn lower_functions(&self, functions: &[FunctionDef]) -> Result<Vec<Value>, WdlError> {
+        let mut out = Vec::with_capacity(functions.len());
+        for def in functions {
+            let added: Vec<String> = def
+                .params
+                .iter()
+                .map(|param| param.name.clone())
+                .filter(|name| self.compute_locals.borrow_mut().insert(name.clone()))
+                .collect();
+            let body = self.lower_expr(&def.body);
+            for name in &added {
+                self.compute_locals.borrow_mut().remove(name);
+            }
+            let body = body?;
+            let params = def
+                .params
+                .iter()
+                .map(|param| {
+                    Value::Object(Map::from_iter([(
+                        "name".into(),
+                        Value::String(param.name.clone()),
+                    )]))
+                })
+                .collect();
+            let mut entry = Map::new();
+            entry.insert("name".into(), Value::String(def.name.clone()));
+            entry.insert("params".into(), Value::Array(params));
+            entry.insert("body".into(), body);
+            if let Some(max_depth) = def.recursive {
+                entry.insert(
+                    "recursive".into(),
+                    Value::Object(Map::from_iter([(
+                        "max_depth".into(),
+                        Value::from(max_depth as i64),
+                    )])),
+                );
+            }
+            out.push(Value::Object(entry));
+        }
+        Ok(out)
     }
 
     /// record a `let <id>: <type>` annotation for the graph metadata sidecar.

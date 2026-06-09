@@ -7,7 +7,32 @@ use runinator_models::semver::SemVer;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
+    /// top-level `fn` definitions, callable from the workflow body, compute blocks, and other
+    /// function bodies. siblings of the workflow.
+    pub functions: Vec<FunctionDef>,
     pub workflow: Workflow,
+}
+
+/// a top-level `fn name(params) -> ret = body` definition. the body is a single expression;
+/// `recursive` carries the `@recursive(max_depth: N)` cap when present.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDef {
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub ret: Option<TypeExpr>,
+    pub body: Box<Expr>,
+    pub recursive: Option<u32>,
+    pub span: Span,
+}
+
+/// a function parameter: a typed name, optionally marked `?` or given a `= default` (both make it
+/// omittable at the call site).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnParam {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub optional: bool,
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -322,6 +347,14 @@ pub enum ExprKind {
     FileInclude {
         path: String,
     },
+    /// a compile-time directory listing, resolved relative to the source file's directory. lowers
+    /// to an array of the relative file paths found under `path`. `recursive` descends into
+    /// subdirectories; `max_depth` caps how many levels are walked (`None` is unlimited).
+    DirInclude {
+        path: String,
+        recursive: bool,
+        max_depth: Option<usize>,
+    },
     /// a fenced source block that lowers to its literal text.
     InlineCode {
         language: String,
@@ -349,10 +382,27 @@ pub enum ExprKind {
     Div(Vec<Expr>),
     Mod(Vec<Expr>),
     Neg(Box<Expr>),
-    /// a library call `name(args...)`, e.g. `add(a, b)` or `http_get(url)`.
+    /// a relational comparison `left <op> right`, lowering to the matching pure intrinsic
+    /// (`==`→`eq`, `!=`→`ne`, `<`→`lt`, `<=`→`lte`, `>`→`gt`, `>=`→`gte`). resolves to a boolean.
+    Compare {
+        op: CompareOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    /// a lazy conditional `cond ? then : els`, lowering to the runtime `$if` form. only the taken
+    /// branch is evaluated, so a recursive function's base case terminates.
+    Ternary {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        els: Box<Expr>,
+    },
+    /// a library or user-function call `name(args...)`, e.g. `add(a, b)` or `double(x)`. positional
+    /// arguments are in `args`; trailing keyword arguments (`f(x, k: v)`) are in `named`. the
+    /// lowering pass resolves `named` into positional order against the callee's signature.
     Call {
         name: String,
         args: Vec<Expr>,
+        named: Vec<(String, Expr)>,
     },
     /// an anonymous function `params => body`, only valid inside `compute { }` as the argument to a
     /// higher-order library call (`map`, `filter`, `reduce`, ...).
@@ -360,6 +410,43 @@ pub enum ExprKind {
         params: Vec<String>,
         body: Box<Expr>,
     },
+}
+
+/// the relational operators available at expression level, each backed by a pure intrinsic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareOp {
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
+impl CompareOp {
+    /// the pure intrinsic this operator lowers to.
+    pub fn intrinsic(self) -> &'static str {
+        match self {
+            CompareOp::Eq => "eq",
+            CompareOp::Ne => "ne",
+            CompareOp::Lt => "lt",
+            CompareOp::Lte => "lte",
+            CompareOp::Gt => "gt",
+            CompareOp::Gte => "gte",
+        }
+    }
+
+    /// the source token, used by the formatter.
+    pub fn token(self) -> &'static str {
+        match self {
+            CompareOp::Eq => "==",
+            CompareOp::Ne => "!=",
+            CompareOp::Lt => "<",
+            CompareOp::Lte => "<=",
+            CompareOp::Gt => ">",
+            CompareOp::Gte => ">=",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

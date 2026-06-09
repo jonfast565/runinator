@@ -26,7 +26,7 @@ impl Lowerer {
         collect_locals(&compute.body, &mut self.compute_locals.borrow_mut());
 
         let program = self.lower_program(&compute.body)?;
-        let function = if block_is_effectful(&compute.body) {
+        let function = if block_is_effectful(&compute.body, &self.registry) {
             "exec"
         } else {
             "run"

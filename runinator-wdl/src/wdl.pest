@@ -5,7 +5,15 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
-document = { SOI ~ workflow ~ EOI }
+document = { SOI ~ func_def* ~ workflow ~ func_def* ~ EOI }
+
+// a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
+// signature and a single-expression body. params reuse the input-field shape (`name: type` with an
+// optional `?` or `= default`).
+func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ expr }
+fn_recursive = { "@recursive" ~ "(" ~ "max_depth" ~ ":" ~ integer ~ ")" }
+fn_params    = { fn_param ~ ("," ~ fn_param)* ~ ","? }
+fn_param     = { ident ~ optional_mark? ~ ":" ~ type_expr ~ field_default? }
 
 // a `.wdls` secrets/config file: a flat list of `secret`/`config` declarations addressing a
 // dotted `scope.name`, each assigned a literal value. mirrors wdl's `secret.*` / `config.*`
@@ -210,7 +218,9 @@ not_cond     = { "!" ~ cond_unary }
 cond_primary = { paren_cond | cond_exists | cond_cmp | expr }
 paren_cond   = { "(" ~ cond ~ ")" }
 cond_exists  = { "exists" ~ expr }
-cond_cmp     = { expr ~ cmp_op ~ expr }
+// operands are `coalesce_expr`, one level below `expr`, so an expression-level comparison can never
+// shadow a condition comparison: `a == b` in a condition stays a `cond_cmp`, not an `expr` form.
+cond_cmp     = { coalesce_expr ~ cmp_op ~ coalesce_expr }
 cmp_op       = {
     "==" | "!=" | ">=" | "<=" | ">" | "<"
   | "contains" | "in" | "starts_with" | "ends_with"
@@ -225,9 +235,16 @@ cmp_op       = {
 
 // a lambda (`x => expr` or `(a, b) => expr`) binds loosest and is passed to higher-order library
 // calls like `map`/`filter`/`reduce`. it is tried first and backtracks when no `=>` follows.
-expr          = { lambda | coalesce_expr }
+expr          = { lambda | ternary_expr }
 lambda        = { lambda_params ~ "=>" ~ expr }
 lambda_params = { ("(" ~ (ident ~ ("," ~ ident)*)? ~ ")") | ident }
+// a lazy conditional `cond ? a : b`, binding loosest below lambda; the branches are full
+// expressions so ternaries nest right-associatively. lowers to the runtime `$if` form.
+ternary_expr  = { compare_expr ~ ("?" ~ expr ~ ":" ~ expr)? }
+// a single, non-associative relational comparison binding looser than coalesce; `>=`/`<=` precede
+// `>`/`<` so the two-char forms win. each lowers to the matching pure intrinsic (`eq`/`lt`/...).
+compare_expr  = { coalesce_expr ~ (compare_op ~ coalesce_expr)? }
+compare_op    = { "==" | "!=" | ">=" | "<=" | ">" | "<" }
 coalesce_expr = { concat_expr ~ ("??" ~ concat_expr)* }
 concat_expr   = { sum_expr ~ ("++" ~ sum_expr)* }
 sum_expr      = { term_expr ~ (add_op ~ term_expr)* }
@@ -242,11 +259,12 @@ neg_expr      = { "-" ~ unary_expr }
 //     lowers to the `at` intrinsic.
 //   - `[expr]` — index access (same fold/`at` rule). the key may be dynamic (`items[input.i]`).
 postfix_expr  = { primary ~ access* }
-access        = { ("." ~ ident ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") }
+access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") }
 
 primary = {
     paren_expr
   | file_call
+  | dir_call
   | inline_call
   | func_call
   | lib_call
@@ -262,11 +280,18 @@ primary = {
 
 paren_expr = { "(" ~ expr ~ ")" }
 file_call  = { "file" ~ "(" ~ string ~ ")" }
+// directory listing: `dir(path)` lists the top level; an optional boolean recurses, an optional
+// trailing integer caps the recursion depth.
+dir_call   = { "dir" ~ "(" ~ string ~ ("," ~ boolean ~ ("," ~ number)?)? ~ ")" }
 inline_call = { "inline" ~ "(" ~ string ~ "," ~ raw_block ~ ")" }
 // `string`/`json` are the coercion calls; every other `name(...)` is a library call.
 func_call  = { func_name ~ "(" ~ expr ~ ")" }
 func_name  = { "string" | "json" }
-lib_call   = { !(func_name ~ "(") ~ ident ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+// call arguments are positional expressions or trailing `name: value` keyword args. `named_arg`
+// is tried first; a bare positional expression (even a path or ternary) backtracks cleanly.
+lib_call   = { !(func_name ~ "(") ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" }
+call_arg   = { named_arg | expr }
+named_arg  = { ident ~ ":" ~ expr }
 
 // a dotted reference path. a segment that is an identifier immediately followed by `(` is NOT
 // consumed here — it is a fluent method call (`recv.f(...)`) handled by `access`, not a path field.

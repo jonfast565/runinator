@@ -220,6 +220,29 @@ fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
             }
             paths.push(source_dir.join(relative));
         }
+        ExprKind::DirInclude {
+            path,
+            recursive,
+            max_depth,
+        } => {
+            let relative = Path::new(path);
+            if relative.as_os_str().is_empty() {
+                return Err(WdlError::semantic(expr.span, "dir() path cannot be empty"));
+            }
+            if !is_safe_relative_path(relative) {
+                return Err(WdlError::semantic(
+                    expr.span,
+                    "dir() path must be relative and cannot contain '..'",
+                ));
+            }
+            // best-effort bundling: list the directory so its files travel with the pack source.
+            let base = source_dir.join(relative);
+            if let Ok(entries) = dir_relative_files(&base, *recursive, *max_depth) {
+                for entry in entries {
+                    paths.push(base.join(entry));
+                }
+            }
+        }
         ExprKind::Str(parts) => {
             for part in parts {
                 if let StrPart::Expr(inner) = part {
@@ -243,6 +266,15 @@ fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             collect_expr(inner, source_dir, paths)?
         }
+        ExprKind::Compare { left, right, .. } => {
+            collect_expr(left, source_dir, paths)?;
+            collect_expr(right, source_dir, paths)?;
+        }
+        ExprKind::Ternary { cond, then, els } => {
+            collect_expr(cond, source_dir, paths)?;
+            collect_expr(then, source_dir, paths)?;
+            collect_expr(els, source_dir, paths)?;
+        }
         ExprKind::Call { args, .. } => {
             for arg in args {
                 collect_expr(arg, source_dir, paths)?;
@@ -263,4 +295,50 @@ fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
 fn is_safe_relative_path(path: &Path) -> bool {
     path.components()
         .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+/// list files under `base` as paths relative to `base`, sorted for determinism. `recursive`
+/// descends into subdirectories; `max_depth` caps how many directory levels are walked (`None` is
+/// unlimited). top-level files always sit at depth 1.
+pub(crate) fn dir_relative_files(
+    base: &Path,
+    recursive: bool,
+    max_depth: Option<usize>,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    walk_dir(base, Path::new(""), 1, recursive, max_depth, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn walk_dir(
+    dir: &Path,
+    prefix: &Path,
+    depth: usize,
+    recursive: bool,
+    max_depth: Option<usize>,
+    out: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let relative = prefix.join(entry.file_name());
+        if file_type.is_file() {
+            out.push(relative);
+            continue;
+        }
+        // descend only when recursion is enabled and the depth cap allows another level.
+        let within_cap = max_depth.map(|cap| depth < cap).unwrap_or(true);
+        if file_type.is_dir() && recursive && within_cap {
+            walk_dir(
+                &entry.path(),
+                &relative,
+                depth + 1,
+                recursive,
+                max_depth,
+                out,
+            )?;
+        }
+    }
+    Ok(())
 }

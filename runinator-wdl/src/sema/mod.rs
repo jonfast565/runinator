@@ -9,6 +9,7 @@
 // still use the statement span. the one remaining coarseness is per-`PathSeg`: a whole dotted
 // path shares one span, so `input.b.c` blames the path, not the `b` segment — a future refinement.
 
+mod functions;
 mod reachability;
 mod scope;
 mod types;
@@ -67,8 +68,10 @@ pub fn analyze(document: &Document) -> Vec<Diagnostic> {
     let workflow = &document.workflow;
     let mut diagnostics = Vec::new();
 
+    // pass 0: validate top-level `fn` definitions (duplicates, pure bodies, recursion annotations).
+    functions::analyze(&document.functions, &mut diagnostics);
     // pass 1+2: build the label table, then resolve references and scopes against it.
-    scope::analyze(workflow, &mut diagnostics);
+    scope::analyze(workflow, &document.functions, &mut diagnostics);
     // pass 3: type-check expressions, conditions, and `let` annotations.
     types::analyze(workflow, &mut diagnostics);
     // pass 4: flag structurally unreachable statements (warnings only).

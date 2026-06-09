@@ -4,6 +4,7 @@ use runinator_models::workflows::{WorkflowNode, WorkflowStatus};
 use crate::compute::IntrinsicLibrary;
 use crate::errors::WorkflowValidationError;
 use crate::expressions::resolve_value_refs_with;
+use crate::functions::EvalEnv;
 use crate::keys::{
     COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS, COND_GREATER_THAN,
     COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN, COND_LESS_THAN_OR_EQUAL,
@@ -17,7 +18,11 @@ pub fn evaluate_condition(
     condition: &Value,
     context: &Value,
 ) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(condition, context, Some(&crate::compute::PureIntrinsics))
+    evaluate_condition_inner(
+        condition,
+        context,
+        EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
+    )
 }
 
 /// evaluate a condition whose operands may include `$call` intrinsics, resolved through `lib`.
@@ -26,13 +31,23 @@ pub fn evaluate_condition_with(
     context: &Value,
     lib: &dyn IntrinsicLibrary,
 ) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(condition, context, Some(lib))
+    evaluate_condition_inner(condition, context, EvalEnv::lib_only(Some(lib)))
+}
+
+/// evaluate a condition with a full evaluation environment (library + user functions). used by the
+/// compute loop so conditions can call user-defined functions.
+pub(crate) fn evaluate_condition_env(
+    condition: &Value,
+    context: &Value,
+    env: EvalEnv,
+) -> Result<bool, WorkflowValidationError> {
+    evaluate_condition_inner(condition, context, env)
 }
 
 fn evaluate_condition_inner(
     condition: &Value,
     context: &Value,
-    lib: Option<&dyn IntrinsicLibrary>,
+    env: EvalEnv,
 ) -> Result<bool, WorkflowValidationError> {
     if condition.is_null() {
         return Ok(true);
@@ -42,7 +57,7 @@ fn evaluate_condition_inner(
             "condition must be an object".into(),
         ));
     };
-    let resolve = |value: &Value| resolve_value_refs_with(value, context, lib);
+    let resolve = |value: &Value| resolve_value_refs_with(value, context, env);
     if let Some(all) = object.get(COND_ALL) {
         let Some(items) = all.as_array() else {
             return Err(WorkflowValidationError::InvalidCondition(
@@ -50,7 +65,7 @@ fn evaluate_condition_inner(
             ));
         };
         for item in items {
-            if !evaluate_condition_inner(item, context, lib)? {
+            if !evaluate_condition_inner(item, context, env)? {
                 return Ok(false);
             }
         }
@@ -63,14 +78,14 @@ fn evaluate_condition_inner(
             ));
         };
         for item in items {
-            if evaluate_condition_inner(item, context, lib)? {
+            if evaluate_condition_inner(item, context, env)? {
                 return Ok(true);
             }
         }
         return Ok(false);
     }
     if let Some(not) = object.get(COND_NOT) {
-        return Ok(!evaluate_condition_inner(not, context, lib)?);
+        return Ok(!evaluate_condition_inner(not, context, env)?);
     }
 
     let left = object

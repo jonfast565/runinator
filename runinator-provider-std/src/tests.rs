@@ -50,6 +50,43 @@ fn exec_uses_effectful_intrinsic() {
 }
 
 #[test]
+fn exec_dispatches_user_function_from_carried_table() {
+    // an effectful program on the worker calls a user function carried in the dispatch's
+    // `functions` table, the same way the reducer evaluates pure user-function calls in-process.
+    let provider = StdProvider;
+    let parameters = json!({
+        "program": [ { "$return": { "$call": "double", "args": [{ "$ref": { "input": ["a"] } }] } } ],
+        "context": { "input": { "a": 21 } },
+        "functions": [
+            {
+                "name": "double",
+                "params": [ { "name": "x" } ],
+                "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 2] }
+            }
+        ]
+    });
+    let result = provider
+        .execute_service(request(parameters), None, CancellationToken::new())
+        .unwrap();
+    assert_eq!(result.output_json, Some(json!(42)));
+}
+
+#[test]
+fn exec_tolerates_null_functions_table() {
+    // the dispatch always carries a `functions` key; a json null means "no user functions".
+    let provider = StdProvider;
+    let parameters = json!({
+        "program": [ { "$return": { "$ref": { "input": ["a"] } } } ],
+        "context": { "input": { "a": 7 } },
+        "functions": null
+    });
+    let result = provider
+        .execute_service(request(parameters), None, CancellationToken::new())
+        .unwrap();
+    assert_eq!(result.output_json, Some(json!(7)));
+}
+
+#[test]
 fn metadata_advertises_run_exec_and_pure_flags() {
     let metadata = StdProvider.metadata();
     let run = metadata

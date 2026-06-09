@@ -6,6 +6,7 @@ mod compute;
 mod conditions;
 mod errors;
 mod expressions;
+mod functions;
 mod keys;
 mod normalize;
 mod parameters;
@@ -19,10 +20,15 @@ pub use compute::{
     ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES,
     IntrinsicLibrary, PureIntrinsics, call_pure, effectful_signatures, intrinsic_arity,
     intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program, run_program,
+    run_program_with,
 };
 pub use conditions::{evaluate_condition, evaluate_condition_with, next_transition};
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
-pub use expressions::{apply_input_defaults, resolve_value_refs, resolve_value_refs_pure};
+pub use expressions::{
+    apply_input_defaults, resolve_value_refs, resolve_value_refs_pure,
+    resolve_value_refs_with_functions,
+};
+pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_switch, parse_approval_parameters, parse_emit_parameters, parse_join_parameters,
@@ -56,5 +62,7 @@ pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> 
 
 #[cfg(test)]
 mod compute_tests;
+#[cfg(test)]
+mod functions_tests;
 #[cfg(test)]
 mod tests;

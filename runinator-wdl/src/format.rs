@@ -18,7 +18,48 @@ struct Formatter {
 }
 
 impl Formatter {
+    fn function_def(&mut self, function: &FunctionDef) {
+        if let Some(max_depth) = function.recursive {
+            self.line(&format!("@recursive(max_depth: {max_depth})"));
+        }
+        let params = function
+            .params
+            .iter()
+            .map(|param| {
+                let optional = if param.optional { "?" } else { "" };
+                let default = param
+                    .default
+                    .as_ref()
+                    .map(|expr| format!(" = {}", format_expr(expr)))
+                    .unwrap_or_default();
+                format!(
+                    "{}{optional}: {}{default}",
+                    param.name,
+                    format_type(&param.ty)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ret = function
+            .ret
+            .as_ref()
+            .map(|ty| format!(" -> {}", format_type(ty)))
+            .unwrap_or_default();
+        self.line(&format!(
+            "fn {}({params}){ret} = {}",
+            function.name,
+            format_expr(&function.body)
+        ));
+    }
+
     fn document(&mut self, document: &Document) {
+        // top-level `fn` definitions render first, each on its own line.
+        for function in &document.functions {
+            self.function_def(function);
+        }
+        if !document.functions.is_empty() {
+            self.out.push('\n');
+        }
         let workflow = &document.workflow;
         let version = workflow
             .version
@@ -633,6 +674,10 @@ fn format_expr_multiline(expr: &Expr, indent_level: usize) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ExprPrec {
     Lowest,
+    // a ternary binds loosest of the operators (just above a lambda).
+    Ternary,
+    // a relational comparison binds looser than every value operator.
+    Compare,
     // compute arithmetic tiers, looser than coalesce/concat (which sit inside `cprimary`).
     Sum,
     Product,
@@ -659,6 +704,21 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
         ExprKind::Float(value) => (ExprPrec::Primary, value.to_string()),
         ExprKind::Str(parts) => (ExprPrec::Primary, format_string_parts(parts)),
         ExprKind::FileInclude { path } => (ExprPrec::Primary, format!("file({})", quote(path))),
+        ExprKind::DirInclude {
+            path,
+            recursive,
+            max_depth,
+        } => {
+            let mut text = format!("dir({}", quote(path));
+            if *recursive || max_depth.is_some() {
+                text.push_str(&format!(", {recursive}"));
+            }
+            if let Some(depth) = max_depth {
+                text.push_str(&format!(", {depth}"));
+            }
+            text.push(')');
+            (ExprPrec::Primary, text)
+        }
         ExprKind::InlineCode { language, content } => {
             (ExprPrec::Primary, format_inline_code(language, content))
         }
@@ -705,14 +765,37 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
             ExprPrec::Unary,
             format!("-{}", format_expr_at(inner, ExprPrec::Unary)),
         ),
-        ExprKind::Call { name, args } => {
+        ExprKind::Compare { op, left, right } => (
+            ExprPrec::Compare,
+            format!(
+                "{} {} {}",
+                format_expr_at(left, ExprPrec::Compare),
+                op.token(),
+                format_expr_at(right, ExprPrec::Compare),
+            ),
+        ),
+        ExprKind::Ternary { cond, then, els } => (
+            ExprPrec::Ternary,
+            format!(
+                "{} ? {} : {}",
+                format_expr_at(cond, ExprPrec::Compare),
+                format_expr(then),
+                format_expr(els),
+            ),
+        ),
+        ExprKind::Call { name, args, named } => {
             // re-sugar `at(base, key)` into `base.key` / `base[index]` access syntax.
-            let rendered = (name == "at" && args.len() == 2)
+            let rendered = (name == "at" && args.len() == 2 && named.is_empty())
                 .then(|| format_access(&args[0], &args[1]))
                 .flatten()
                 .unwrap_or_else(|| {
-                    let args = args.iter().map(format_expr).collect::<Vec<_>>().join(", ");
-                    format!("{name}({args})")
+                    let mut rendered = args.iter().map(format_expr).collect::<Vec<_>>();
+                    rendered.extend(
+                        named
+                            .iter()
+                            .map(|(key, value)| format!("{key}: {}", format_expr(value))),
+                    );
+                    format!("{name}({})", rendered.join(", "))
                 });
             (ExprPrec::Primary, rendered)
         }

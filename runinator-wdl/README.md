@@ -113,7 +113,15 @@ it lowers to `std.run` when pure and `std.exec` when effectful.
 **Source text includes**: `file("scripts/job.py")` reads a UTF-8 text file at compile time,
 relative to the `.wdl` file's directory, and lowers to a normal string value. Paths must be
 relative and cannot contain `..`, so pack compilation stays deterministic and local to the source
-tree. For embedded source, use a fenced inline block:
+tree.
+
+**Directory listings**: `dir("scripts")` lists the files under a directory at compile time and
+lowers to an array of forward-slash relative paths (sorted, e.g. `["job.py", "lib/util.py"]`). It
+lists the top level only by default; pass a boolean to recurse (`dir("scripts", true)`) and an
+optional trailing integer to cap the recursion depth (`dir("scripts", true, 2)`). The same
+relative-path safety rules as `file()` apply, and the listed files are bundled with the pack source.
+
+For embedded source, use a fenced inline block:
 
 ````
 let run = console.run(command: inline("python", ```

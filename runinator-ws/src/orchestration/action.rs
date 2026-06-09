@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 pub(super) async fn process_action_node<T: DatabaseImpl>(
     db: &T,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
@@ -49,7 +50,8 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         }
     };
     let attempt = node_run.attempt + 1;
-    let parameters = build_node_parameters(db, action, node, workflow_run, node_runs).await?;
+    let parameters =
+        build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
     let command = build_action_command(workflow_run.id, &node_run, action, parameters.clone());
     db.enqueue_action_dispatch(format!("workflow-node-run:{}", node_run.id), command)
         .await?;
@@ -76,14 +78,15 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
 
 async fn build_node_parameters<T: DatabaseImpl>(
     db: &T,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
     action: &WorkflowAction,
     node: &WorkflowNode,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
     // an effectful `std.exec` program is interpreted by the worker, not resolved here: ship the
-    // program verbatim alongside the full runtime context so the worker's interpreter can resolve
-    // refs/calls (with the effectful library) against it.
+    // program verbatim alongside the full runtime context and the workflow's user-function table so
+    // the worker's interpreter can resolve refs/calls (with the effectful library) against it.
     if action.provider == "std" {
         let context = runtime_context(db, workflow_run, node_runs).await;
         let program = action
@@ -92,7 +95,15 @@ async fn build_node_parameters<T: DatabaseImpl>(
             .get("program")
             .cloned()
             .unwrap_or(Value::Null);
-        return Ok(runinator_models::json!({ "program": program, "context": context }));
+        let functions = workflow
+            .definition
+            .metadata
+            .get("functions")
+            .cloned()
+            .unwrap_or(Value::Null);
+        return Ok(
+            runinator_models::json!({ "program": program, "context": context, "functions": functions }),
+        );
     }
     let base = merge_parameters(&action.configuration, &node.parameters);
     let context = runtime_context(db, workflow_run, node_runs).await;

@@ -563,6 +563,12 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         ExprKind::Float(_) => Some(RuninatorType::Number),
         ExprKind::Str(_) => Some(RuninatorType::String),
         ExprKind::FileInclude { .. } => Some(RuninatorType::String),
+        ExprKind::DirInclude { .. } => Some(RuninatorType::array(RuninatorType::String)),
+        ExprKind::Compare { .. } => Some(RuninatorType::Boolean),
+        ExprKind::Ternary { then, els, .. } => {
+            let then_ty = infer_expr_type(then, context)?;
+            (Some(&then_ty) == infer_expr_type(els, context).as_ref()).then_some(then_ty)
+        }
         ExprKind::InlineCode { .. } => Some(RuninatorType::String),
         ExprKind::Array(items) => {
             let item_type = items

@@ -29,16 +29,41 @@ enum ExprCtx {
     Compute,
 }
 
-/// the declared-label table shared with later passes.
+/// the declared-label table plus the callable registry, shared across this pass.
 pub(super) struct Symbols {
     pub labels: HashSet<String>,
+    pub registry: crate::registry::FunctionRegistry,
+}
+
+/// resolve every function body's references against its parameters (functions are hermetic: only
+/// their params, plus nested lambda params, are in scope). a body resolves in a compute context so
+/// the purity pass — not name resolution — owns the effectful-call rule.
+pub(super) fn resolve_function_bodies(
+    functions: &[FunctionDef],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let symbols = Symbols {
+        labels: HashSet::new(),
+        registry: crate::registry::FunctionRegistry::build(functions),
+    };
+    for def in functions {
+        let scope: Vec<String> = def.params.iter().map(|param| param.name.clone()).collect();
+        resolve_expr(&def.body, &symbols, &scope, ExprCtx::Compute, diagnostics);
+    }
 }
 
 /// collect declared labels (reporting duplicates), then resolve references and scopes.
-pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) -> Symbols {
+pub(super) fn analyze(
+    workflow: &Workflow,
+    functions: &[FunctionDef],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Symbols {
     let mut labels = HashSet::new();
     collect_block(&workflow.body, &mut labels, diagnostics);
-    let symbols = Symbols { labels };
+    let symbols = Symbols {
+        labels,
+        registry: crate::registry::FunctionRegistry::build(functions),
+    };
 
     // an explicit `start -> <target>` must name a declared step (or a terminal).
     if let Some(start) = &workflow.start {
@@ -293,7 +318,7 @@ fn resolve_compute(
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let effectful = crate::purity::block_is_effectful(&compute.body);
+    let effectful = crate::purity::block_is_effectful(&compute.body, &symbols.registry);
     let base = scope.len();
     resolve_compute_block(&compute.body, symbols, scope, span, diagnostics, effectful);
     scope.truncate(base);
@@ -393,6 +418,7 @@ fn resolve_expr(
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::FileInclude { .. }
+        | ExprKind::DirInclude { .. }
         | ExprKind::InlineCode { .. } => {}
         ExprKind::Str(parts) => {
             for part in parts {
@@ -420,6 +446,15 @@ fn resolve_expr(
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             resolve_expr(inner, symbols, scope, ctx, diagnostics);
         }
+        ExprKind::Compare { left, right, .. } => {
+            resolve_expr(left, symbols, scope, ctx, diagnostics);
+            resolve_expr(right, symbols, scope, ctx, diagnostics);
+        }
+        ExprKind::Ternary { cond, then, els } => {
+            resolve_expr(cond, symbols, scope, ctx, diagnostics);
+            resolve_expr(then, symbols, scope, ctx, diagnostics);
+            resolve_expr(els, symbols, scope, ctx, diagnostics);
+        }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
         | ExprKind::Mul(parts)
@@ -429,15 +464,18 @@ fn resolve_expr(
                 resolve_expr(part, symbols, scope, ctx, diagnostics);
             }
         }
-        ExprKind::Call { name, args } => {
-            // validate the call against the shared intrinsic vocabulary: unknown names (typos) and
-            // obvious arity mistakes are reported here rather than failing late at the worker.
-            if !runinator_workflows::is_known_intrinsic(name) {
+        ExprKind::Call { name, args, named } => {
+            let is_user = symbols.registry.is_user(name);
+            // validate the call against the callable vocabulary: unknown names (typos), arity, and
+            // keyword-argument mistakes are reported here rather than failing late at the worker.
+            if !symbols.registry.knows(name) {
                 diagnostics.push(Diagnostic::error(
                     expr.span,
-                    format!("unknown intrinsic '{name}'"),
+                    format!("unknown function '{name}'"),
                 ));
-            } else if let Some((min, max)) = runinator_workflows::intrinsic_arity(name)
+            } else if !is_user
+                && let Some((min, max)) = runinator_workflows::intrinsic_arity(name)
+                && named.is_empty()
                 && (args.len() < min || args.len() > max)
             {
                 let expected = if min == max {
@@ -461,8 +499,11 @@ fn resolve_expr(
                     expr.span,
                     format!("effectful intrinsic '{name}' must be inside a compute block"),
                 ));
+            } else if let Err(err) = symbols.registry.resolve_args(name, args, named) {
+                // keyword/arity resolution errors (unknown keyword, missing required, gaps).
+                diagnostics.push(Diagnostic::error(expr.span, err));
             }
-            for arg in args {
+            for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
                 resolve_expr(arg, symbols, scope, ctx, diagnostics);
             }
         }
@@ -485,6 +526,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::FileInclude { .. }
+        | ExprKind::DirInclude { .. }
         | ExprKind::InlineCode { .. } => {}
         ExprKind::Str(parts) => {
             for part in parts {
@@ -528,6 +570,15 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             resolve_default_expr(inner, diagnostics);
         }
+        ExprKind::Compare { left, right, .. } => {
+            resolve_default_expr(left, diagnostics);
+            resolve_default_expr(right, diagnostics);
+        }
+        ExprKind::Ternary { cond, then, els } => {
+            resolve_default_expr(cond, diagnostics);
+            resolve_default_expr(then, diagnostics);
+            resolve_default_expr(els, diagnostics);
+        }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
         | ExprKind::Mul(parts)
@@ -537,7 +588,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                 resolve_default_expr(part, diagnostics);
             }
         }
-        ExprKind::Call { name, args } => {
+        ExprKind::Call { name, args, named } => {
             // defaults are evaluated eagerly at workflow start, so an effectful call is not allowed.
             if runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str()) {
                 diagnostics.push(Diagnostic::error(
@@ -545,7 +596,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                     format!("effectful intrinsic '{name}' is not allowed in an input default"),
                 ));
             }
-            for arg in args {
+            for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
                 resolve_default_expr(arg, diagnostics);
             }
         }

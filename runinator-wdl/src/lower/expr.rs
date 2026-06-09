@@ -32,6 +32,11 @@ impl Lowerer {
             ExprKind::Float(value) => Ok(Value::from(*value)),
             ExprKind::Str(parts) => self.lower_string(parts),
             ExprKind::FileInclude { path } => self.lower_file_include(expr, path),
+            ExprKind::DirInclude {
+                path,
+                recursive,
+                max_depth,
+            } => self.lower_dir_include(expr, path, *recursive, *max_depth),
             ExprKind::InlineCode { content, .. } => Ok(Value::String(content.clone())),
             ExprKind::Path(segs) => self.lower_path(segs),
             ExprKind::Array(items) => {
@@ -60,8 +65,27 @@ impl Lowerer {
             ExprKind::Div(parts) => self.wrap_array("$div", parts),
             ExprKind::Mod(parts) => self.wrap_array("$mod", parts),
             ExprKind::Neg(inner) => self.wrap_unary("$neg", inner),
-            ExprKind::Call { name, args } => {
-                let args = args
+            ExprKind::Compare { op, left, right } => {
+                let args = vec![self.lower_expr(left)?, self.lower_expr(right)?];
+                let mut map = Map::new();
+                map.insert("$call".into(), Value::String(op.intrinsic().to_string()));
+                map.insert("args".into(), Value::Array(args));
+                Ok(Value::Object(map))
+            }
+            ExprKind::Ternary { cond, then, els } => {
+                let mut map = Map::new();
+                map.insert("$if".into(), self.lower_expr(cond)?);
+                map.insert("then".into(), self.lower_expr(then)?);
+                map.insert("else".into(), self.lower_expr(els)?);
+                Ok(Value::Object(map))
+            }
+            ExprKind::Call { name, args, named } => {
+                // resolve keyword args into positional order and fill user-function defaults.
+                let positional = self
+                    .registry
+                    .resolve_args(name, args, named)
+                    .map_err(|err| WdlError::semantic(expr.span, err))?;
+                let args = positional
                     .iter()
                     .map(|arg| self.lower_expr(arg))
                     .collect::<Result<Vec<_>, _>>()?;
@@ -124,6 +148,45 @@ impl Lowerer {
             )
         })?;
         Ok(Value::String(text))
+    }
+
+    fn lower_dir_include(
+        &self,
+        expr: &Expr,
+        include_path: &str,
+        recursive: bool,
+        max_depth: Option<usize>,
+    ) -> Result<Value, WdlError> {
+        let Some(source_dir) = &self.source_dir else {
+            return Err(WdlError::semantic(
+                expr.span,
+                "dir() requires a source directory; compile from a .wdl file or pack source",
+            ));
+        };
+        let relative = Path::new(include_path);
+        if relative.as_os_str().is_empty() {
+            return Err(WdlError::semantic(expr.span, "dir() path cannot be empty"));
+        }
+        if !is_safe_relative_path(relative) {
+            return Err(WdlError::semantic(
+                expr.span,
+                "dir() path must be relative and cannot contain '..'",
+            ));
+        }
+        let base = source_dir.join(relative);
+        let entries =
+            crate::includes::dir_relative_files(&base, recursive, max_depth).map_err(|err| {
+                WdlError::semantic(
+                    expr.span,
+                    format!("failed to list directory {}: {err}", base.display()),
+                )
+            })?;
+        // emit forward-slash relative paths so listings are stable across platforms.
+        let items = entries
+            .iter()
+            .map(|entry| Value::String(to_forward_slashes(entry)))
+            .collect();
+        Ok(Value::Array(items))
     }
 
     fn lower_string(&self, parts: &[StrPart]) -> Result<Value, WdlError> {
@@ -240,6 +303,17 @@ impl Lowerer {
 fn is_safe_relative_path(path: &Path) -> bool {
     path.components()
         .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+// join a relative path's normal components with `/` so directory listings are platform-stable.
+fn to_forward_slashes(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// lower `secret.<scope>.<name…>` to the `secret://<scope>/<name>` string the worker resolves.

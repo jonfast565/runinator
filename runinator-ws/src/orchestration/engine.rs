@@ -126,10 +126,25 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
             // pure `std.run` compute nodes reduce in-process; everything else dispatches to a
             // worker through the action outbox.
             if compute::is_inprocess_compute(node) {
-                compute::process_compute_node(db, &workflow_run, node, &node_runs, &nodes).await?;
+                compute::process_compute_node(
+                    db,
+                    &workflow,
+                    &workflow_run,
+                    node,
+                    &node_runs,
+                    &nodes,
+                )
+                .await?;
             } else {
-                action::process_action_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                    .await?;
+                action::process_action_node(
+                    db,
+                    &workflow,
+                    &workflow_run,
+                    node,
+                    latest.as_ref(),
+                    &node_runs,
+                )
+                .await?;
             }
             return Ok(ReadyNodeDisposition::Complete);
         }

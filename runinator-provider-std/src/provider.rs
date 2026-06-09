@@ -9,8 +9,8 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use runinator_workflows::{
-    ComputeOutcome, PureIntrinsics, WorkflowValidationError, effectful_signatures, parse_program,
-    run_program,
+    ComputeOutcome, FunctionTable, PureIntrinsics, WorkflowValidationError, effectful_signatures,
+    parse_program, run_program_with,
 };
 
 use crate::errors::{GOTO_NOT_ALLOWED, HTTP_ERROR, INTRINSIC_FAILED, INVALID_PROGRAM};
@@ -28,6 +28,7 @@ fn map_run_error(err: WorkflowValidationError) -> SendableError {
 
 const PROGRAM_KEY: &str = "program";
 const CONTEXT_KEY: &str = "context";
+const FUNCTIONS_KEY: &str = "functions";
 
 #[derive(Clone)]
 pub struct StdProvider;
@@ -81,8 +82,13 @@ impl Provider for StdProvider {
             .unwrap_or(Value::Null);
         let program =
             parse_program(program_value).map_err(|err| INVALID_PROGRAM.error(err.to_string()))?;
+        // the web service ships the workflow's user-function table alongside the program so the
+        // worker's interpreter can dispatch user-function calls the same way the reducer does.
+        let functions = FunctionTable::from_metadata(request.parameters.get(FUNCTIONS_KEY))
+            .map_err(|err| INVALID_PROGRAM.error(err.to_string()))?;
         let library = FullIntrinsics::new(request.timeout_secs, token);
-        let outcome = run_program(&program, &context, &library).map_err(map_run_error)?;
+        let outcome = run_program_with(&program, &context, &library, Some(&functions))
+            .map_err(map_run_error)?;
         match outcome {
             ComputeOutcome::Return(value) | ComputeOutcome::Fallthrough(value) => {
                 Ok(TaskExecutionResult {

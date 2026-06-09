@@ -242,9 +242,18 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(part, env, diagnostics);
             }
         }
-        ExprKind::Call { name, args } => {
-            // check each argument against the intrinsic's declared parameter type, skipping opaque
-            // (`any`) types on either side to avoid false positives on prev/node references.
+        ExprKind::Compare { left, right, .. } => {
+            check_expr(left, env, diagnostics);
+            check_expr(right, env, diagnostics);
+        }
+        ExprKind::Ternary { cond, then, els } => {
+            check_expr(cond, env, diagnostics);
+            check_expr(then, env, diagnostics);
+            check_expr(els, env, diagnostics);
+        }
+        ExprKind::Call { name, args, named } => {
+            // check each positional argument against the intrinsic's declared parameter type,
+            // skipping opaque (`any`) types on either side to avoid false positives on refs.
             if let Some(sig) = runinator_workflows::intrinsic_signature(name) {
                 for (param, arg) in sig.parameters.iter().zip(args.iter()) {
                     let arg_ty = infer_expr(arg, env, diagnostics);
@@ -257,7 +266,7 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                     );
                 }
             }
-            for arg in args {
+            for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
                 check_expr(arg, env, diagnostics);
             }
         }
@@ -275,6 +284,7 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::FileInclude { .. }
+        | ExprKind::DirInclude { .. }
         | ExprKind::InlineCode { .. } => {}
     }
 }
@@ -360,6 +370,7 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ExprKind::Float(_) => RuninatorType::Number,
         ExprKind::Str(_) => RuninatorType::String,
         ExprKind::FileInclude { .. } => RuninatorType::String,
+        ExprKind::DirInclude { .. } => RuninatorType::array(RuninatorType::String),
         ExprKind::InlineCode { .. } => RuninatorType::String,
         ExprKind::Concat(_) => RuninatorType::String,
         ExprKind::ToString(_) => RuninatorType::String,
@@ -390,6 +401,18 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         | ExprKind::Div(_)
         | ExprKind::Mod(_)
         | ExprKind::Neg(_) => RuninatorType::Number,
+        // a relational comparison resolves to a boolean.
+        ExprKind::Compare { .. } => RuninatorType::Boolean,
+        // a ternary resolves to its branches' common type, or `any` when they differ.
+        ExprKind::Ternary { then, els, .. } => {
+            let then_ty = infer_expr(then, env, diagnostics);
+            let els_ty = infer_expr(els, env, diagnostics);
+            if then_ty == els_ty {
+                then_ty
+            } else {
+                RuninatorType::Any
+            }
+        }
         // a call's result type comes from the intrinsic signature (its first declared result).
         ExprKind::Call { name, .. } => runinator_workflows::intrinsic_signature(name)
             .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))

@@ -26,6 +26,8 @@
         "127.0.0.1",
         "--announce-base-path",
         "/",
+        "--advertise-host",
+        "127.0.0.1",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",
@@ -36,16 +38,26 @@
       "name": "waker",
       "command": "./target/debug/runinator-waker",
       "args": [
+        "--waker-id",
+        "runinator-waker-local",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",
-        "127.0.0.1:7070"
+        "127.0.0.1:7070",
+        "--api-base-url",
+        "http://127.0.0.1:8080/",
+        "--advertise-host",
+        "127.0.0.1"
       ]
     },
     {
       "name": "worker",
       "command": "./target/debug/runinator-worker",
       "args": [
+        "--worker-id",
+        "runinator-worker-local",
+        "--advertise-host",
+        "127.0.0.1",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",
