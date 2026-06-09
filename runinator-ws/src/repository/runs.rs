@@ -58,10 +58,10 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
     next_ready: Option<(Uuid, String, chrono::DateTime<Utc>)>,
 ) -> Result<TaskResponse, SendableError> {
     let Some(ready_node) = db.fetch_ready_node(ready_node_id).await? else {
-        return Err(crate::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
+        return Err(runinator_reducer::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
     };
     if ready_node.claimed_by.as_deref() != Some(scheduler_id.as_str()) {
-        return Err(crate::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
+        return Err(runinator_reducer::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
     }
     let disposition = crate::orchestration::process_ready_node(db, &ready_node).await?;
     if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
@@ -71,7 +71,7 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
         });
     }
     if !db.complete_ready_node(ready_node_id, scheduler_id).await? {
-        return Err(crate::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
+        return Err(runinator_reducer::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
     }
     if let Some((workflow_run_id, node_id, ready_at)) = next_ready {
         support::enqueue_node_ready(

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
 
-pub(crate) async fn process_ready_node<T: DatabaseImpl>(
+pub async fn process_ready_node<T: DatabaseImpl>(
     db: &T,
     ready_node: &ReadyNodeRecord,
 ) -> Result<ReadyNodeDisposition, SendableError> {

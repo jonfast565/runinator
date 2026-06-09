@@ -6,6 +6,7 @@ members = [
     "runinator-models",
     "runinator-pack",
     "runinator-lsp",
+    "runinator-reducer",
     "runinator-database",
     "runinator-migration",
     "runinator-waker",

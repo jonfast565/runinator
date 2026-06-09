@@ -5495,6 +5495,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-reducer"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "runinator-comm",
+ "runinator-database",
+ "runinator-models",
+ "runinator-utilities",
+ "runinator-workflows",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-supervisor"
 version = "0.1.0"
 dependencies = [
@@ -5618,6 +5633,7 @@ dependencies = [
  "runinator-comm",
  "runinator-database",
  "runinator-models",
+ "runinator-reducer",
  "runinator-supervisor",
  "runinator-utilities",
  "runinator-wdl",

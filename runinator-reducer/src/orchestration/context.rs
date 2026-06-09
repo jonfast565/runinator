@@ -33,10 +33,7 @@ pub(super) async fn runtime_context<T: DatabaseImpl>(
         }
         // config refs (`{"$ref":{"config":[...]}}`) resolve here, before any action command
         // is published; secrets stay unresolved until the worker.
-        object.insert(
-            "config".into(),
-            crate::handlers::credentials::config_tree(db).await,
-        );
+        object.insert("config".into(), crate::config::config_tree(db).await);
     }
     // fill omitted input fields from their declared defaults, evaluated against this context (so a
     // default may read config/run/secret or a sibling input). resolved here, after config is in

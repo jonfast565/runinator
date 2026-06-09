@@ -3468,8 +3468,8 @@ fn recursive_function_evaluates_under_runtime() {
     "#;
     let def = compile(src);
     let functions = def.definition.metadata.get("functions").expect("functions");
-    let table = runinator_workflows::FunctionTable::from_metadata(Some(functions))
-        .expect("function table");
+    let table =
+        runinator_workflows::FunctionTable::from_metadata(Some(functions)).expect("function table");
     let call = Value::from(serde_json::json!({ "$call": "fact", "args": [5] }));
     let result = runinator_workflows::resolve_value_refs_with_functions(
         &call,
@@ -3495,8 +3495,7 @@ fn rejects_function_shadowing_intrinsic() {
 
 #[test]
 fn function_definition_round_trips_through_formatter() {
-    let src =
-        "fn double(x: integer) -> integer = x * 2\n\nworkflow \"Fns\" v1 {\n    let go = console.run(value: double(21))\n}\n";
+    let src = "fn double(x: integer) -> integer = x * 2\n\nworkflow \"Fns\" v1 {\n    let go = console.run(value: double(21))\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("fn double(x: integer)"), "{formatted}");
     assert!(formatted.contains("= x * 2"), "{formatted}");

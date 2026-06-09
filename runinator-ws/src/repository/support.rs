@@ -7,7 +7,7 @@ pub(super) async fn fetch_workflow_snapshot<T: DatabaseImpl>(
 ) -> Result<WorkflowDefinition, SendableError> {
     db.fetch_workflow(workflow_id)
         .await?
-        .ok_or_else(|| crate::errors::WORKFLOW_NOT_FOUND.error(workflow_id))
+        .ok_or_else(|| runinator_reducer::errors::WORKFLOW_NOT_FOUND.error(workflow_id))
 }
 
 pub(super) async fn enqueue_start_ready_node<T: DatabaseImpl>(
@@ -17,7 +17,7 @@ pub(super) async fn enqueue_start_ready_node<T: DatabaseImpl>(
     let workflow = run
         .workflow_snapshot
         .as_ref()
-        .ok_or_else(|| crate::errors::WORKFLOW_RUN_SNAPSHOT_MISSING.error(run.id))?;
+        .ok_or_else(|| runinator_reducer::errors::WORKFLOW_RUN_SNAPSHOT_MISSING.error(run.id))?;
     let (start, _) = runinator_workflows::parse_nodes(workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let event = NewOrchestrationEvent::new(

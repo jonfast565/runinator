@@ -23,7 +23,7 @@ use runinator_workflows::{branch_policy_name, join_satisfied, latest_status, rac
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReadyNodeDisposition {
+pub enum ReadyNodeDisposition {
     Complete,
     KeepClaim,
 }
@@ -40,4 +40,4 @@ mod subflow;
 mod transitions;
 mod wait;
 
-pub(crate) use engine::process_ready_node;
+pub use engine::process_ready_node;

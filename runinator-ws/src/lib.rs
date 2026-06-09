@@ -4,7 +4,9 @@ pub mod errors;
 mod events;
 mod handlers;
 mod models;
-mod orchestration;
+pub mod orchestration {
+    pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
+}
 mod repository;
 mod repository_runs;
 mod repository_state;

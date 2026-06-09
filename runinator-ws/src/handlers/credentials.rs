@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::types::RuninatorType;
-use runinator_models::value::{Map, Value};
+use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
     settings::SettingKind,
@@ -33,29 +33,6 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(0)
-}
-
-/// the config reference tree `{ <scope>: { <name>: <value> } }`. secrets are never included — they
-/// resolve late at the worker. read live from the database so every replica sees current config.
-pub(crate) async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
-    let cipher = settings_cipher();
-    let Ok(entries) = db.list_settings().await else {
-        return Value::Object(Map::new());
-    };
-    let mut root = Map::new();
-    for entry in entries {
-        if entry.kind != SettingKind::Config {
-            continue;
-        }
-        let value = decode_config_value(&cipher.decrypt(&entry.value));
-        let scope = root
-            .entry(entry.scope)
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(scope) = scope.as_object_mut() {
-            scope.insert(entry.name, value);
-        }
-    }
-    Value::Object(root)
 }
 
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references

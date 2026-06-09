@@ -21,6 +21,7 @@ mime_guess = "2"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 
 runinator-broker = { path = "../runinator-broker" }
+runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }

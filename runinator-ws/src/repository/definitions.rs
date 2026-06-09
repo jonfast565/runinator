@@ -53,7 +53,7 @@ async fn validate_workflow_subflows<T: DatabaseImpl>(
             match db.fetch_workflow(subflow_id).await {
                 Ok(Some(_)) => {} // workflow exists, validation passes
                 _ => {
-                    return Err(crate::errors::SUBFLOW_INVALID_ID.error(format!(
+                    return Err(runinator_reducer::errors::SUBFLOW_INVALID_ID.error(format!(
                         "node '{}' references non-existent workflow with id {subflow_id}",
                         node.id
                     )));
@@ -332,7 +332,9 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     bump: SemVerBump,
 ) -> Result<WorkflowDefinition, SendableError> {
     let Some(existing) = fetch_workflow(db, workflow_id).await? else {
-        return Err(crate::errors::WORKFLOW_NOT_FOUND.error(format!("id {workflow_id}")));
+        return Err(
+            runinator_reducer::errors::WORKFLOW_NOT_FOUND.error(format!("id {workflow_id}"))
+        );
     };
     let mut copy = existing;
     copy.id = None;
