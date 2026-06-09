@@ -192,6 +192,84 @@ async fn ready_node_processing_reduces_start_to_action_dispatch() {
 }
 
 #[tokio::test]
+async fn emit_nodes_write_automation_events_for_the_events_tab() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "emit-events");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "emit" } } },
+            {
+                "id": "emit",
+                "kind": "emit",
+                "parameters": {
+                    "event_type": "workflow.routed",
+                    "data": { "ok": true, "count": 1 }
+                },
+                "transitions": { "next": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let ready = crate::repository::claim_ready_nodes(
+        &db,
+        "scheduler-a".into(),
+        chrono::Utc::now() + chrono::Duration::seconds(30),
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(ready.len(), 1);
+
+    crate::repository::complete_ready_node(&db, ready[0].id, "scheduler-a".into(), None)
+        .await
+        .unwrap();
+
+    let events = db
+        .fetch_automation_records("automation_events".into(), Some(run.id), None)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    let metadata = event
+        .get("metadata")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        event.get("event_type").and_then(Value::as_str),
+        Some("workflow.routed")
+    );
+    assert_eq!(
+        event.get("provider").and_then(Value::as_str),
+        Some("runinator")
+    );
+    assert_eq!(event.get("status").and_then(Value::as_str), Some("emitted"));
+    assert_eq!(
+        metadata
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("ok"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn pure_compute_node_reruns_in_loop_body() {
     let (db, path) = test_db().await;
     let mut workflow = workflow(None, "loop-compute");

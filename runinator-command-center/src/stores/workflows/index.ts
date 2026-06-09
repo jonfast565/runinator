@@ -844,10 +844,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const nodes = ensureWorkflowNodes();
     const newNode = createWorkflowNode(kind, nodes);
     stripNewNodeConnections(newNode);
+    const position = graphCentroidPosition();
     const endIndex = nodes.findIndex((node: JsonRecord) => node.kind === "end");
     if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
     else nodes.push(newNode);
-    setGraphNodePosition(newNode.id, nextNodePosition(nodes.length));
+    setGraphNodePosition(newNode.id, position);
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     workflowJson.value = pretty(workflowDraft.definition);
     isDirty.value = true;
@@ -1557,6 +1558,24 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     node.parameters = parameters;
   }
 
+  function graphCentroidPosition(): { x: number; y: number } {
+    const positioned = graphNodes.value
+      .map((node) => ({
+        x: Number(node.position?.x),
+        y: Number(node.position?.y)
+      }))
+      .filter((position) => Number.isFinite(position.x) && Number.isFinite(position.y));
+    if (positioned.length === 0) return nextNodePosition(1);
+    const totals = positioned.reduce(
+      (sum, position) => ({ x: sum.x + position.x, y: sum.y + position.y }),
+      { x: 0, y: 0 }
+    );
+    return {
+      x: Math.round(totals.x / positioned.length),
+      y: Math.round(totals.y / positioned.length)
+    };
+  }
+
   function moveWorkflowSelection(delta: number) {
     const list = filteredWorkflows.value;
     if (list.length === 0) return;
@@ -1776,8 +1795,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const copy = cloneJson(source);
     copy.id = uniqueWorkflowNodeId(nodes, `${source.id}_copy`);
     stripNewNodeConnections(copy);
+    const position = graphCentroidPosition();
     nodes.push(copy);
-    setGraphNodePosition(copy.id, nextNodePosition(nodes.length));
+    setGraphNodePosition(copy.id, position);
     syncWorkflowDraftToJson();
     populateStepEditor(copy.id);
     openStepEditor(copy.id, true);

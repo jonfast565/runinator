@@ -337,6 +337,7 @@ export function validateWorkflowIssues(definition: JsonRecord, providers: Provid
       );
     }
     pushControlFlowIssues(issues, node, nodeIds, nodeId);
+    pushConnectivityIssues(issues, node, nodeId);
     pushExpressionIssues(issues, node.parameters, nodeIds, nodeId, `${nodeId}.parameters`);
     pushExpressionIssues(issues, node.wait, nodeIds, nodeId, `${nodeId}.wait`);
     pushExpressionIssues(issues, node.condition, nodeIds, nodeId, `${nodeId}.condition`);
@@ -348,6 +349,13 @@ export function validateWorkflowIssues(definition: JsonRecord, providers: Provid
     pushProviderIssues(issues, node, providers, nodeId);
   }
   return issues;
+}
+
+function pushConnectivityIssues(issues: WorkflowValidationIssue[], node: JsonRecord, nodeId: string) {
+  const kind = workflowNodeKind(node.kind);
+  if (kind === "end" || kind === "fail") return;
+  if (hasSuccessTransition(node)) return;
+  issues.push({ severity: "error", nodeId, message: `${nodeId} has no outgoing path` });
 }
 
 export function workflowEdgeOptionId(edge: Edge): string {
@@ -1053,14 +1061,9 @@ function normalizeDefinition(definition: JsonRecord): JsonRecord {
   nextDefinition.nodes = nodes;
 
   const ids = new Set(nodes.map((node: JsonRecord) => String(node.id)).filter(Boolean));
-  const endId = ensureEndNode(nodes, ids);
+  ensureEndNode(nodes, ids);
   ensureFailNode(nodes, ids);
-  const previousStart =
-    typeof nextDefinition.start === "string" && ids.has(nextDefinition.start) && nodeKindById(nodes, nextDefinition.start) !== "start"
-      ? nextDefinition.start
-      : firstNodeId(nodes, (kind) => kind !== "start" && kind !== "end" && kind !== "fail") ?? endId;
-  const startId = ensureStartNode(nodes, ids, previousStart, endId);
-  routeSuccessTerminalsToEnd(nodes, endId);
+  const startId = ensureStartNode(nodes, ids);
   nextDefinition.start = startId;
   return nextDefinition;
 }
@@ -1093,32 +1096,16 @@ function ensureFailNode(nodes: JsonRecord[], ids: Set<string>): string {
   return id;
 }
 
-function ensureStartNode(nodes: JsonRecord[], ids: Set<string>, previousStart: string, endId: string): string {
+function ensureStartNode(nodes: JsonRecord[], ids: Set<string>): string {
   const existing = firstNodeId(nodes, (kind) => kind === "start");
-  if (existing) {
-    const node = nodes.find((item) => String(item.id) === existing);
-    if (node) ensureNextTransition(node, existing === previousStart ? endId : previousStart);
-    return existing;
-  }
+  if (existing) return existing;
   const id = uniqueNodeId("start", ids);
   nodes.unshift({
     id,
     kind: "start",
-    transitions: { next: nodeRef(previousStart === id ? endId : previousStart) }
+    transitions: {}
   });
   return id;
-}
-
-function routeSuccessTerminalsToEnd(nodes: JsonRecord[], endId: string) {
-  for (const node of nodes) {
-    if (node.kind === "end" || node.kind === "fail" || hasSuccessTransition(node)) continue;
-    ensureNextTransition(node, endId);
-  }
-}
-
-function ensureNextTransition(node: JsonRecord, target: string) {
-  node.transitions = isRecord(node.transitions) ? node.transitions : {};
-  if (!node.transitions.next) node.transitions.next = nodeRef(target);
 }
 
 function hasSuccessTransition(node: JsonRecord): boolean {

@@ -34,6 +34,7 @@ mod basic;
 mod compute;
 mod context;
 mod control_flow;
+mod emit;
 mod engine;
 mod map;
 mod subflow;

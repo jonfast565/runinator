@@ -590,6 +590,9 @@ describe("workflow graph utils", () => {
         expect.objectContaining({ nodeId: "missing_start", message: "Workflow start references missing node missing_start" }),
         expect.objectContaining({ nodeId: "task", message: "Duplicate node ID task" }),
         expect.objectContaining({ nodeId: "task", edgeKey: "task:next", message: "task.next references missing node missing" }),
+        expect.objectContaining({ nodeId: "task", message: "task has no outgoing path" }),
+        expect.objectContaining({ nodeId: "task", message: "task.parameters.data references missing node missing" }),
+        expect.objectContaining({ nodeId: "route", message: "route has no outgoing path" }),
         expect.objectContaining({ nodeId: "guard", edgeKey: "guard:branches.0", message: "guard.branches.0 must be { \"$node\": \"node_id\" }" }),
         expect.objectContaining({ nodeId: "route", edgeKey: "route:cases.0", message: "route.cases.0 must be { \"$node\": \"node_id\" }" }),
         expect.objectContaining({ nodeId: "task", message: "task references unknown provider Unknown" })
@@ -675,7 +678,8 @@ describe("workflow graph utils", () => {
     const normalized = normalizeWorkflowDefinition(workflow);
     expect(normalized.definition.start).toBe("start");
     expect(normalized.definition.nodes.map((node: any) => node.kind)).toEqual(["start", "action", "action", "end", "fail"]);
-    expect(normalized.definition.nodes.find((node: any) => node.id === "b").transitions.next).toEqual({ "$node": "end" });
+    expect(normalized.definition.nodes.find((node: any) => node.id === "start").transitions ?? {}).toEqual({});
+    expect(normalized.definition.nodes.find((node: any) => node.id === "b").transitions?.next).toBeUndefined();
     expect(normalized.definition.ui.layout.nodes.a).toEqual({ x: 10, y: 20 });
   });
 
@@ -756,6 +760,31 @@ describe("workflow graph utils", () => {
       nodes: []
     });
     expect(nodes.find((node) => node.id === "end")?.class).toBe("node-success");
+  });
+
+  it("renders emit nodes with the emit kind instead of fail", () => {
+    const nodes = buildGraphNodes({
+      id: WORKFLOW_ID,
+      name: "emit check",
+      version: "1.0.0",
+      enabled: true,
+      input_type: { type: "struct", fields: {} },
+      definition: {
+        start: "start",
+        nodes: [
+          { id: "start", kind: "start", transitions: {} },
+          { id: "emit_1", kind: "emit", parameters: { event_type: "workflow.event", data: {} }, transitions: {} },
+          { id: "end", kind: "end" },
+          { id: "fail", kind: "fail" }
+        ]
+      }
+    }, null);
+
+    expect(nodes.find((node) => node.id === "emit_1")?.data).toMatchObject({
+      kind: "emit",
+      title: "emit_1"
+    });
+    expect(nodes.find((node) => node.id === "fail")?.data).toMatchObject({ kind: "fail" });
   });
 
   it("marks the active workflow node as running before its node run appears", () => {

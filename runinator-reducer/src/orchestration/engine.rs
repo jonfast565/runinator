@@ -238,33 +238,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
             }
         }
         runinator_models::workflows::WorkflowNodeKind::Emit => {
-            let node_run = db
-                .create_workflow_node_run(
-                    workflow_run.id,
-                    node.id.clone(),
-                    node.parameters.clone().into(),
-                )
-                .await?;
-            let params = runinator_workflows::parse_emit_parameters(node)
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-            let context = runtime_context(db, &workflow_run, &node_runs).await;
-            let data = runinator_workflows::resolve_value_refs(&params.data, &context)
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-            let output = EmitOutput {
-                event_type: params.event_type,
-                data,
-            };
-            transitions::transition_from_node(
-                db,
-                &workflow_run,
-                node,
-                &node_run,
-                WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
-                Some("emit_recorded".into()),
-                &node_runs,
-            )
-            .await?;
+            emit::process_emit_node(db, &workflow_run, node, &node_runs).await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Config => {
             basic::process_config_node(db, &workflow_run, node, &node_runs).await?;

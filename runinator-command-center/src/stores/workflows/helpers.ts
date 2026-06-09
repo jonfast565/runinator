@@ -113,7 +113,7 @@ export function newWorkflowDraft(): WorkflowDefinition {
     definition: {
       start: "start",
       nodes: [
-        { id: "start", kind: "start", transitions: { next: nodeRef("end") } },
+        { id: "start", kind: "start", transitions: {} },
         { id: "end", kind: "end" },
         { id: "fail", kind: "fail" }
       ],

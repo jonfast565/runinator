@@ -221,6 +221,7 @@ describe("workflow run detail state", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "standalone node"));
     workflows.workflowJson = JSON.stringify(workflows.workflowDraft.definition);
+    const centroid = graphCentroid(workflows.graphNodes);
 
     await workflows.addWorkflowNode("approval");
 
@@ -230,6 +231,7 @@ describe("workflow run detail state", () => {
       parameters: { approval_type: "generic", prompt: "Approval required" },
       transitions: {}
     });
+    expect(workflows.workflowDraft.definition.ui?.layout?.nodes?.[created!.id]).toEqual(centroid);
     expect(workflows.graphEdges.some((edge) => edge.target === created?.id)).toBe(false);
     expect(workflows.selectedStepId).toBe(created?.id);
   });
@@ -239,6 +241,7 @@ describe("workflow run detail state", () => {
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "standalone node"));
     workflows.workflowJson = JSON.stringify(workflows.workflowDraft.definition);
     workflows.selectedStepId = "start";
+    const centroid = graphCentroid(workflows.graphNodes);
 
     await workflows.addConnectedWorkflowNode("emit");
 
@@ -248,6 +251,7 @@ describe("workflow run detail state", () => {
       parameters: { event_type: "workflow.event", data: {} },
       transitions: {}
     });
+    expect(workflows.workflowDraft.definition.ui?.layout?.nodes?.[created!.id]).toEqual(centroid);
     expect(workflows.graphEdges.some((edge) => edge.target === created?.id)).toBe(false);
     expect(workflows.selectedStepId).toBe(created?.id);
   });
@@ -263,6 +267,7 @@ describe("workflow run detail state", () => {
       transitions: { next: { "$node": "end" } }
     });
     workflows.populateStepEditor("task-1");
+    const centroid = graphCentroid(workflows.graphNodes);
 
     workflows.duplicateSelectedStep();
 
@@ -272,6 +277,7 @@ describe("workflow run detail state", () => {
       action: { provider: "console", function: "run" },
       transitions: {}
     });
+    expect(workflows.workflowDraft.definition.ui?.layout?.nodes?.[copy!.id]).toEqual(centroid);
     expect(workflows.graphEdges.some((edge) => edge.source === "task-1_copy")).toBe(false);
     expect(workflows.selectedStepId).toBe(copy?.id);
   });
@@ -360,6 +366,17 @@ function workflowDefinition(id: string, name: string): WorkflowDefinition {
         { id: "fail", kind: "fail" }
       ]
     }
+  };
+}
+
+function graphCentroid(nodes: Array<{ position?: { x: number; y: number } }>): { x: number; y: number } {
+  const positioned = nodes
+    .map((node) => ({ x: Number(node.position?.x), y: Number(node.position?.y) }))
+    .filter((position) => Number.isFinite(position.x) && Number.isFinite(position.y));
+  const totals = positioned.reduce((sum, position) => ({ x: sum.x + position.x, y: sum.y + position.y }), { x: 0, y: 0 });
+  return {
+    x: Math.round(totals.x / positioned.length),
+    y: Math.round(totals.y / positioned.length)
   };
 }
 
