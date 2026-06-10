@@ -50,7 +50,7 @@
     </div>
 
     <form v-else-if="isWaiting && isInputPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSubmitInput">
-      <textarea v-model="inputDraft" rows="5" spellcheck="false" placeholder="Enter JSON input"></textarea>
+      <JsonEditor class="node-input-json" :model-value="inputDraft" title="" @update:model-value="onInputDraftChange" />
       <div class="node-actions">
         <button class="node-btn approve" type="submit">Submit</button>
       </div>
@@ -98,6 +98,7 @@ import { statusClassForNode } from "../../utils/status";
 import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
 import { resolveWorkflowInput } from "../../api/commandCenterApi";
 import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
+import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
 
 const props = defineProps<{
@@ -208,6 +209,11 @@ function cancelInlineEdit() {
   inlineId.value = props.id;
   inlineValue.value = props.data.inlineEdit?.value ?? "";
   workflows.clearWorkflowGraphSelection();
+}
+
+function onInputDraftChange(value: string) {
+  inputDraft.value = value;
+  inputError.value = "";
 }
 
 async function onApprove() {
@@ -520,6 +526,19 @@ function formatInputDraft(value: unknown): string {
   display: flex;
   gap: 4px;
   margin-top: 4px;
+}
+
+.node-input-json {
+  min-height: 120px;
+}
+
+.node-input-json :deep(.json-editor-container) {
+  min-height: 72px;
+}
+
+.node-input-error {
+  color: #b91c1c;
+  font-size: 11px;
 }
 
 .node-btn {

@@ -25,7 +25,12 @@
       />
     </div>
     <div v-else class="rif-json">
-      <textarea v-model="jsonDraft" class="rif-json-input" spellcheck="false" @input="onJsonInput"></textarea>
+      <JsonEditor
+        class="rif-json-editor"
+        :model-value="jsonDraft"
+        :key-hints="jsonKeyHints"
+        @update:model-value="onJsonInput"
+      />
       <div v-if="jsonError" class="rif-json-error">{{ jsonError }}</div>
     </div>
   </div>
@@ -33,6 +38,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import JsonEditor from "./JsonEditor.vue";
 import TypedValueEditor from "./TypedValueEditor.vue";
 import { pretty } from "../../utils/format";
 import type { RuninatorType } from "../../types/models";
@@ -69,6 +75,8 @@ const orderedInputType = computed<RuninatorType>(() => {
   return { ...ty, fields: Object.fromEntries(ordered) };
 });
 
+const jsonKeyHints = computed(() => (orderedInputType.value.type === "struct" ? Object.keys(orderedInputType.value.fields) : []));
+
 function presetsStorageKey() {
   return `runinator.runInput.presets.${props.storageKey}`;
 }
@@ -100,7 +108,8 @@ function setMode(next: "form" | "json") {
   mode.value = next;
 }
 
-function onJsonInput() {
+function onJsonInput(value: string) {
+  jsonDraft.value = value;
   try {
     const parsed = JSON.parse(jsonDraft.value || "null");
     jsonError.value = "";
@@ -231,11 +240,8 @@ watch(
 .rif-body {
   min-width: 0;
 }
-.rif-json-input {
-  width: 100%;
+.rif-json-editor {
   min-height: 120px;
-  resize: vertical;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .rif-json-error {
   margin-top: 4px;

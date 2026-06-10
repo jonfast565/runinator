@@ -378,7 +378,7 @@
         </div>
         <div class="form-field">
           <span class="form-field-label">Transitions JSON</span>
-          <JsonEditor v-model="workflows.stepEditor.transitions_json" />
+          <JsonEditor v-model="workflows.stepEditor.transitions_json" :key-hints="[...directTransitionKeys, 'branches']" />
         </div>
       </section>
 
@@ -409,7 +409,7 @@ import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import { buildSampleContext } from "../../utils/workflow-references";
 import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
-import { workflowNodeActionConfig } from "../../utils/workflows";
+import { directTransitionKeys, workflowNodeActionConfig } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();

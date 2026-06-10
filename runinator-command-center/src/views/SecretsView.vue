@@ -109,7 +109,14 @@
               </label>
               <label class="secret-value-field">
                 <span>{{ isConfig ? "Config Value (JSON)" : "Secret Value" }}</span>
-                <textarea v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
+                <JsonEditor
+                  v-if="isConfig"
+                  class="secret-config-json"
+                  :model-value="secrets.draft.secret"
+                  title=""
+                  @update:model-value="secrets.draft.secret = $event"
+                />
+                <textarea v-else v-model="secrets.draft.secret" :placeholder="valuePlaceholder" />
               </label>
             </div>
             <datalist id="secret-scopes">
@@ -130,6 +137,7 @@
 import { computed, onMounted } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import JsonEditor from "../components/shared/JsonEditor.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useProvidersStore } from "../stores/providers";
 import { useSecretsStore } from "../stores/secrets";
@@ -217,6 +225,14 @@ onMounted(() => {
 
 .secret-value-field {
   grid-column: 1 / -1;
+}
+
+.secret-config-json {
+  min-height: 120px;
+}
+
+.secret-config-json :deep(.json-editor-container) {
+  min-height: 72px;
 }
 
 .secret-form textarea {

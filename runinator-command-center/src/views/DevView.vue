@@ -155,6 +155,12 @@
           :providers="providers.providers"
           :settings="secrets.secrets"
         />
+        <JsonEditor
+          v-else-if="selectedIsJson"
+          v-model="sourceText"
+          class="dev-json-editor"
+          title="JSON"
+        />
         <textarea
           v-else
           v-model="sourceText"
@@ -255,6 +261,7 @@ import {
   writeDevPackFile
 } from "../api/commandCenterApi";
 import Icon from "../components/shared/Icon.vue";
+import JsonEditor from "../components/shared/JsonEditor.vue";
 import PackDiff from "../components/shared/PackDiff.vue";
 import RunInputForm from "../components/shared/RunInputForm.vue";
 import RunNodeActions, { type RunNodeActionType } from "../components/shared/RunNodeActions.vue";
@@ -309,9 +316,10 @@ let lastFingerprint = "";
 const watchedFiles = computed(() => inspectResult.value?.files ?? []);
 const availableWorkflows = computed(() => inspectResult.value?.workflows ?? workflows.workflows);
 const selectedIsWdl = computed(() => selectedFilePath.value.endsWith(".wdl"));
+const selectedIsJson = computed(() => selectedFilePath.value.endsWith(".json"));
 const runWorkflowInputType = computed<RuninatorType>(() => resolveRunWorkflow()?.input_type ?? { type: "any" });
 const runWorkflowKey = computed(() => String(runWorkflowRef.value || "none"));
-const canSaveSource = computed(() => selectedIsWdl.value && sourceText.value !== savedSourceText.value);
+const canSaveSource = computed(() => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value);
 const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
 const runInFlight = computed(() => {
   const status = latestRunDetail.value?.run.status;
@@ -873,6 +881,10 @@ function fileMeta(file: DevPackFile) {
 }
 
 .dev-wdl-editor {
+  min-height: 0;
+}
+
+.dev-json-editor {
   min-height: 0;
 }
 

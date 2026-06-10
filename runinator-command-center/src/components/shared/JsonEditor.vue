@@ -12,13 +12,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { autocompletion, completionKeymap, startCompletion } from '@codemirror/autocomplete';
 import { EditorView, basicSetup } from 'codemirror';
 import { json } from '@codemirror/lang-json';
 import { EditorState } from '@codemirror/state';
+import { keymap } from '@codemirror/view';
+import { shouldStartJsonCompletion, jsonCompletionSource } from '../../utils/json-completion';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
   readonly?: boolean;
+  keyHints?: string[];
   // header label; pass an empty string to hide the title bar.
   title?: string;
 }>(), { title: "JSON" });
@@ -50,11 +54,14 @@ onMounted(() => {
     extensions: [
       basicSetup,
       json(),
+      autocompletion({ override: [jsonCompletionSource(() => ({ keyHints: props.keyHints ?? [] }))] }),
+      keymap.of(completionKeymap),
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit('update:modelValue', update.state.doc.toString());
         }
+        if (!props.readonly && shouldStartJsonCompletion(update)) startCompletion(update.view);
       }),
       EditorView.theme({
         "&": { height: "100%" },
