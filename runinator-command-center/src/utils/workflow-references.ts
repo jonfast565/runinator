@@ -18,7 +18,7 @@ export interface WorkflowReference {
   type: string;
 }
 
-// references sharing an origin (workflow input, a prior node's output, or the run roots).
+// references sharing an origin (workflow parameters, a prior node's output, or the run roots).
 export interface ReferenceGroup {
   title: string;
   references: WorkflowReference[];
@@ -32,21 +32,21 @@ const STATIC_ROOTS: WorkflowReference[] = [
   { label: "secret", insert: "secret", type: "secret reference" }
 ];
 
-/// references for every field of the workflow input struct, flattened by dotted path.
-export function inputReferences(ty: RuninatorType | null | undefined): WorkflowReference[] {
+/// references for every field of the workflow parameter struct, flattened by dotted path.
+export function paramsReferences(ty: RuninatorType | null | undefined): WorkflowReference[] {
   if (!ty || ty.type !== "struct") return [];
   const references: WorkflowReference[] = [];
-  collectInputFields(ty, ["input"], references);
+  collectParamFields(ty, ["params"], references);
   return references;
 }
 
-function collectInputFields(ty: RuninatorType, path: string[], references: WorkflowReference[]) {
+function collectParamFields(ty: RuninatorType, path: string[], references: WorkflowReference[]) {
   if (ty.type !== "struct") return;
   for (const [name, field] of Object.entries(ty.fields)) {
     const nextPath = [...path, name];
     const dotted = nextPath.join(".");
     references.push({ label: dotted, insert: dotted, type: describeType(field.ty) });
-    collectInputFields(field.ty, nextPath, references);
+    collectParamFields(field.ty, nextPath, references);
   }
 }
 
@@ -72,9 +72,9 @@ export function nodeOutputReferences(context?: WorkflowExpressionEditorContext):
 export function workflowReferenceGroups(context?: WorkflowExpressionEditorContext): ReferenceGroup[] {
   const groups: ReferenceGroup[] = [];
 
-  const inputs = inputReferences(context?.workflowInputType ?? null);
-  if (inputs.length > 0) {
-    groups.push({ title: "Workflow input", references: inputs });
+  const params = paramsReferences(context?.workflowInputType ?? null);
+  if (params.length > 0) {
+    groups.push({ title: "Workflow parameters", references: params });
   }
 
   // group prior node outputs under each producing node so the source is obvious.
@@ -93,7 +93,7 @@ export function workflowReferenceGroups(context?: WorkflowExpressionEditorContex
 }
 
 /// build the context a lowered expression resolves against from a run's data, mirroring the
-/// reducer's runtime context: `input` is the run parameters, `steps.<node>.output` each node's
+/// reducer's runtime context: `params` is the run parameters, `steps.<node>.output` each node's
 /// output, and `prev` the most recent output. `config`/`secret` are not available client-side, so
 /// references to them resolve to null in a preview.
 export function buildSampleContext(detail: WorkflowRunDetail | null | undefined): JsonRecord | null {
@@ -106,7 +106,7 @@ export function buildSampleContext(detail: WorkflowRunDetail | null | undefined)
     prev = node.output_json;
   }
   return {
-    input: detail.run.parameters ?? {},
+    params: detail.run.parameters ?? {},
     steps,
     prev,
     workflow: {

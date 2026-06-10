@@ -307,10 +307,10 @@
           :expression-context="expressionContext"
           @update:model-value="onSubflowParametersChange"
         />
-        <p v-else class="hint">Select a workflow to configure its inputs, or use the advanced editor below.</p>
+        <p v-else class="hint">Select a workflow to configure its parameters, or use the advanced editor below.</p>
         <details class="advanced-params">
-          <summary>Advanced WDL inputs</summary>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="WDL Inputs" />
+          <summary>Advanced WDL parameters</summary>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="WDL Parameters" />
         </details>
       </section>
 

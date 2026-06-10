@@ -172,7 +172,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     loop_items_json: "[]",
     loop_target: "",
     loop_max_iterations: 10,
-    switch_value_json: pretty(valueRef("input", ["mode"])),
+    switch_value_json: pretty(valueRef("params", ["mode"])),
     switch_cases: [] as SwitchCaseEditor[],
     switch_default: "",
     parallel_branches: [] as string[],
@@ -1138,7 +1138,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.loop_items_json = pretty(node.parameters?.items ?? []);
     stepEditor.loop_target = nodeRefId(node.parameters?.target) ?? "";
     stepEditor.loop_max_iterations = Number(node.max_iterations ?? 10);
-    stepEditor.switch_value_json = pretty(node.parameters?.value ?? valueRef("input", ["mode"]));
+    stepEditor.switch_value_json = pretty(node.parameters?.value ?? valueRef("params", ["mode"]));
     stepEditor.switch_cases = Array.isArray(node.parameters?.cases)
       ? node.parameters.cases.map(switchCaseEditor)
       : [];
@@ -1608,7 +1608,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function addConditionBranchEditor() {
-    stepEditor.condition_branches.push({ when_json: pretty({ value: valueRef("input", ["value"]), equals: true }), target: "" });
+    stepEditor.condition_branches.push({ when_json: pretty({ value: valueRef("params", ["value"]), equals: true }), target: "" });
     markWorkflowDirty();
   }
 

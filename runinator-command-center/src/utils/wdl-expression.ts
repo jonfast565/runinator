@@ -49,7 +49,7 @@ function wrapBinaryPart(value: string): string {
 }
 
 function refToWdl(ref: JsonRecord): string {
-  if (Array.isArray(ref.input)) return appendPath("input", ref.input);
+  if (Array.isArray(ref.params)) return appendPath("params", ref.params);
   if (Array.isArray(ref.prev)) return appendPath("prev", ref.prev);
   if (Array.isArray(ref.workflow)) return appendPath("run", ref.workflow);
   if (Array.isArray(ref.config)) return appendPath("config", ref.config);
@@ -260,7 +260,7 @@ class Parser {
 
 function lowerPath(path: string[]): unknown {
   const [head, ...rest] = path;
-  if (head === "input" || head === "prev" || head === "config") return { "$ref": { [head]: pathSegments(rest) } };
+  if (head === "params" || head === "prev" || head === "config") return { "$ref": { [head]: pathSegments(rest) } };
   if (head === "run" || head === "workflow") return { "$ref": { workflow: pathSegments(rest) } };
   if (head === "secret" && rest.length >= 2) return `secret://${rest[0]}/${rest.slice(1).join("/")}`;
   return { "$ref": { node: head, output: pathSegments(rest) } };

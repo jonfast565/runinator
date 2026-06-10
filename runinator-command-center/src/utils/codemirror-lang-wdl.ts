@@ -46,7 +46,7 @@ const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);
 // reference roots that are never keywords.
 const PURE_REFS = new Set(["run", "loop", "state", "item"]);
 // roots that double as keywords; treated as a reference only before a `.`.
-const ROOT_KEYWORDS = new Set(["input", "config", "secret", "workflow"]);
+const ROOT_KEYWORDS = new Set(["params", "config", "secret", "workflow"]);
 // primitive type names, surfaced for completion only (too ambiguous to color reliably).
 const TYPES = ["any", "boolean", "integer", "map", "number", "string"];
 
@@ -256,7 +256,7 @@ const wdlHighlightStyle = HighlightStyle.define([
   // provider namespace vs the action/method/builtin function names.
   { tag: t.namespace, color: "#c18401" },
   { tag: [t.function(t.variableName), t.function(t.propertyName), t.standard(t.function(t.variableName))], color: "#4078f2" },
-  // reference roots (`input.*`, `run.*`) and their member path.
+  // reference roots (`params.*`, `run.*`) and their member path.
   { tag: t.special(t.variableName), color: "#e45649" },
   { tag: t.propertyName, color: "#383a42" },
   // annotations (`@id`, `@skip`) in dark blue.

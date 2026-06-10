@@ -327,8 +327,8 @@ function defaultValueForType(ty: RuninatorType): unknown {
 }
 
 function defaultExpressionForType(ty: RuninatorType): JsonRecord {
-  if (ty.type === "string") return { "$to_string": { "$ref": { input: ["value"] } } };
-  return { "$ref": { input: ["value"] } };
+  if (ty.type === "string") return { "$to_string": { "$ref": { params: ["value"] } } };
+  return { "$ref": { params: ["value"] } };
 }
 
 function describeType(ty: RuninatorType | undefined, depth = 0): string {

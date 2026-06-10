@@ -9,6 +9,6 @@ describe("workflow expression detection", () => {
   });
 
   it("does not treat plain WDL object literals as whole-value expressions", () => {
-    expect(isWorkflowExpressionValue({ value: { "$ref": { input: ["name"] } }, equals: "prod" })).toBe(false);
+    expect(isWorkflowExpressionValue({ value: { "$ref": { params: ["name"] } }, equals: "prod" })).toBe(false);
   });
 });

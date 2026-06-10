@@ -25,9 +25,11 @@ kubectl -n runinator scale deploy/runinator-ws --replicas=3
 kubectl -n runinator scale statefulset/runinator-worker --replicas=3
 ```
 
-Each worker pod also mounts the host's `~/.aws` directory at
+Each worker pod also mounts a node-local AWS config directory at
+`/var/runinator/aws`, which is exposed inside the container as
 `/home/runinator/.aws` so AWS SSO profile and cache files are available to the
-worker process.
+worker process. Point that node path at your real `~/.aws` using your local
+cluster driver's mount or symlink support before applying the overlay.
 
 The preferred end-to-end command is:
 

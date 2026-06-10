@@ -10,8 +10,7 @@ export function useKeyboardShortcuts() {
   const secrets = useSecretsStore();
 
   function handleKeydown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement;
-    const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    const editing = isEditableTarget(event.target);
     // debug shortcuts intentionally run even while editing as long as the editor
     // doesn't swallow them — CodeMirror handles its own focus.
     if (event.key === "F5") {
@@ -80,4 +79,17 @@ export function useKeyboardShortcuts() {
   }
 
   return { handleKeydown, refreshActive };
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target || typeof target !== "object") return false;
+  const element = target as HTMLElement & {
+    isContentEditable?: boolean;
+    closest?: (selectors: string) => Element | null;
+    tagName?: string;
+  };
+  if (typeof element.tagName !== "string") return false;
+  if (element.isContentEditable) return true;
+  if (element.closest?.(".cm-editor, [contenteditable='true']")) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName);
 }

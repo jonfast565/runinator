@@ -451,7 +451,7 @@ function valueLabel(value: unknown): string {
 }
 
 function refExpressionLabel(ref: JsonRecord): string {
-  for (const source of ["input", "prev", "workflow", "output"]) {
+  for (const source of ["params", "prev", "workflow", "output"]) {
     if (Array.isArray(ref[source])) return `${source}.${ref[source].join(".")}`;
   }
   if (typeof ref.node === "string" && Array.isArray(ref.output)) return `${ref.node}.output.${ref.output.join(".")}`;

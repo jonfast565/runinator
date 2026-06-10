@@ -1,5 +1,5 @@
 import { snippet, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
-import { inputReferences, nodeOutputReferences, type WorkflowExpressionEditorContext } from "./workflow-references";
+import { nodeOutputReferences, paramsReferences, type WorkflowExpressionEditorContext } from "./workflow-references";
 export { isWorkflowExpressionValue } from "./wdl-expression";
 export type { WorkflowExpressionEditorContext } from "./workflow-references";
 
@@ -17,7 +17,7 @@ export function workflowExpressionCompletionSource(context: () => WorkflowExpres
 
 function expressionCompletions(context?: WorkflowExpressionEditorContext): Completion[] {
   const completions: Completion[] = [
-    snippetCompletion("input", "input.${field}", "variable", "workflow input reference"),
+    snippetCompletion("params", "params.${field}", "variable", "workflow parameter reference"),
     snippetCompletion("prev", "prev.${field}", "variable", "previous node output reference"),
     snippetCompletion("run", "run.${field}", "variable", "workflow state reference"),
     snippetCompletion("config", "config.${field}", "variable", "configuration reference"),
@@ -30,8 +30,8 @@ function expressionCompletions(context?: WorkflowExpressionEditorContext): Compl
     snippetCompletion("array", "[${items}]", "constant", "array literal")
   ];
 
-  // schema-derived input fields and prior node outputs share the picker's reference catalog.
-  for (const ref of inputReferences(context?.workflowInputType ?? null)) {
+  // schema-derived parameter fields and prior node outputs share the picker's reference catalog.
+  for (const ref of paramsReferences(context?.workflowInputType ?? null)) {
     completions.push(snippetCompletion(ref.insert, ref.insert, "variable", ref.type));
   }
 

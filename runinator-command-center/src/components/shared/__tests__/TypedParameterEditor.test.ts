@@ -11,7 +11,7 @@ describe("TypedParameterEditor", () => {
   it("renders a direct WDL-lowered expression value as an expression editor", async () => {
     const app = createSSRApp({
       render: () => h(TypedValueEditor, {
-        modelValue: { "$concat": ["ticket ", { "$ref": { input: ["ticket_id"] } }] },
+        modelValue: { "$concat": ["ticket ", { "$ref": { params: ["ticket_id"] } }] },
         ty: { type: "string" }
       })
     });
@@ -50,7 +50,7 @@ describe("TypedParameterEditor", () => {
 
   it("surfaces an existing WDL-lowered expression as an expression editor on first render", async () => {
     const modelValue = {
-      summary: { "$concat": ["ticket ", { "$ref": { input: ["ticket_id"] } }] }
+      summary: { "$concat": ["ticket ", { "$ref": { params: ["ticket_id"] } }] }
     };
     expect(isWorkflowExpressionValue(modelValue.summary)).toBe(true);
     const app = createSSRApp({

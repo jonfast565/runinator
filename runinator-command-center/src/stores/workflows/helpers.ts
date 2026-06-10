@@ -21,7 +21,7 @@ export function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
     edgeStyle: "square",
     labelAnchor: 50,
     label: "",
-    whenJson: pretty({ value: valueRef("input", ["value"]), equals: true }),
+    whenJson: pretty({ value: valueRef("params", ["value"]), equals: true }),
     matchKind: "equals",
     matchJson: pretty(true),
     canEditLabel: false,

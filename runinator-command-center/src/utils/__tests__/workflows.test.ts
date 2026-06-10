@@ -319,7 +319,7 @@ describe("workflow graph utils", () => {
     expect(workflowEdgeSemanticOptions(condition).map((option) => option.id)).toContain("branch:new");
     expect(applyWorkflowEdgeSemantic(condition, "approved", "branch:new")).toBe("branches.0");
     expect(condition.transitions.branches[0]).toEqual({
-      when: { value: { "$ref": { input: ["value"] } }, equals: true },
+      when: { value: { "$ref": { params: ["value"] } }, equals: true },
       target: { "$node": "approved" }
     });
 
@@ -346,7 +346,7 @@ describe("workflow graph utils", () => {
             id: "guard",
             kind: "condition",
             transitions: {
-              branches: [{ label: "approved", when: { value: { "$ref": { input: ["approved"] } }, equals: true }, target: { "$node": "ok" } }]
+              branches: [{ label: "approved", when: { value: { "$ref": { params: ["approved"] } }, equals: true }, target: { "$node": "ok" } }]
             }
           },
           {
@@ -373,7 +373,7 @@ describe("workflow graph utils", () => {
       orderIndex: 0,
       orderCount: 1
     });
-    expect(JSON.parse(branchDraft!.whenJson)).toEqual({ value: { "$ref": { input: ["approved"] } }, equals: true });
+    expect(JSON.parse(branchDraft!.whenJson)).toEqual({ value: { "$ref": { params: ["approved"] } }, equals: true });
     expect(caseDraft).toMatchObject({
       optionId: "control:cases:0",
       label: "premium",
@@ -404,13 +404,13 @@ describe("workflow graph utils", () => {
     const edge = buildGraphEdges(rich).find((item) => item.source === "guard")!;
     const draft = workflowEdgeEditorDraft(rich, edge)!;
     draft.label = "rejected";
-    draft.whenJson = JSON.stringify({ value: { "$ref": { input: ["approved"] } }, equals: false });
+    draft.whenJson = JSON.stringify({ value: { "$ref": { params: ["approved"] } }, equals: false });
     draft.target = "fail";
 
     expect(applyWorkflowEdgeEditorDraft(rich.definition, edge, draft)).toEqual({ ok: true, semanticKey: "branches.0" });
     expect((rich.definition.nodes[0] as any).transitions.branches[0]).toEqual({
       label: "rejected",
-      when: { value: { "$ref": { input: ["approved"] } }, equals: false },
+      when: { value: { "$ref": { params: ["approved"] } }, equals: false },
       target: { "$node": "fail" }
     });
   });

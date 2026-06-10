@@ -1,5 +1,7 @@
-# Mount the host's AWS config directory into each worker pod so aws sso login
+# Mount a node-local AWS config directory into each worker pod so aws sso
 # cache and profile files are visible at the default home-directory location.
+# Point the node path at the developer's real ~/.aws through the local cluster
+# driver's mount or symlink mechanism before applying this overlay.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -17,5 +19,5 @@ spec:
       volumes:
         - name: aws-config
           hostPath:
-            path: /Users/jfast/.aws
+            path: /var/runinator/aws
             type: Directory

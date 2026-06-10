@@ -4,7 +4,7 @@
     <div class="watch-add">
       <input
         v-model="draft"
-        placeholder="JSON pointer (e.g. /workflow/state/map/item or input.name)"
+        placeholder="JSON pointer (e.g. /workflow/state/map/item or /params/name, legacy /input/name)"
         @keyup.enter="onAdd"
       />
       <button :disabled="!draft.trim()" @click="onAdd">+ Add watch</button>

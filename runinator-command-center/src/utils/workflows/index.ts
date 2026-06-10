@@ -502,7 +502,7 @@ function defaultWorkflowEdgeEditorDraft(edge: Edge, optionId: string): WorkflowE
 }
 
 function defaultConditionBranchWhen(): JsonRecord {
-  return { value: valueRef("input", ["value"]), equals: true };
+  return { value: valueRef("params", ["value"]), equals: true };
 }
 
 function switchCaseMatchDraft(switchCase: JsonRecord): { kind: WorkflowEdgeEditorMatchKind; value: unknown } {
@@ -671,7 +671,7 @@ export function applyWorkflowEdgeSemantic(node: JsonRecord, target: string, opti
     if (!Number.isInteger(index) || index < 0) return null;
     const previous = isRecord(node.transitions.branches[index]) ? node.transitions.branches[index] : {};
     node.transitions.branches[index] = {
-      when: isRecord(previous.when) ? previous.when : { value: valueRef("input", ["value"]), equals: true },
+      when: isRecord(previous.when) ? previous.when : { value: valueRef("params", ["value"]), equals: true },
       target: nodeRef(target)
     };
     return `branches.${index}`;
@@ -811,7 +811,7 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
     case "condition":
       node.condition = {};
       node.transitions = {
-        branches: [{ when: { value: valueRef("input", ["approved"]), equals: true }, target: nodeRef("end") }],
+        branches: [{ when: { value: valueRef("params", ["approved"]), equals: true }, target: nodeRef("end") }],
         next: nodeRef("end")
       };
       break;
@@ -819,7 +819,7 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
       node.wait = { seconds: 60 };
       break;
     case "switch":
-      node.parameters = { value: valueRef("input", ["mode"]), cases: [], default: nodeRef("end") };
+      node.parameters = { value: valueRef("params", ["mode"]), cases: [], default: nodeRef("end") };
       break;
     case "parallel":
     case "race":
@@ -1423,7 +1423,7 @@ function nodeRefArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(nodeRefId).filter((item): item is string => Boolean(item)) : [];
 }
 
-export function valueRef(source: "input" | "prev" | "workflow", path: Array<string | number>): JsonRecord {
+export function valueRef(source: "params" | "prev" | "workflow", path: Array<string | number>): JsonRecord {
   return { "$ref": { [source]: path } };
 }
 
@@ -1499,7 +1499,10 @@ function pushExpressionIssues(
   if (operators.length > 0 && Object.keys(value).length !== 1) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} expression object must contain exactly one operator` });
   if (isRecord(value.$ref)) {
     if (typeof value.$ref.node === "string" && !nodeIds.has(value.$ref.node)) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} references missing node ${value.$ref.node}` });
-    for (const path of [value.$ref.input, value.$ref.prev, value.$ref.workflow, value.$ref.output]) {
+    if (value.$ref.input !== undefined) {
+      issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} uses removed input reference root` });
+    }
+    for (const path of [value.$ref.params, value.$ref.prev, value.$ref.workflow, value.$ref.output]) {
       if (path !== undefined && !validRefPath(path)) issues.push({ severity: "error", nodeId, edgeKey: edgeKey ? edgeValidationKey(nodeId, edgeKey) : undefined, message: `${label} has invalid reference path` });
     }
   }

@@ -36,14 +36,14 @@ describe("workflowReferenceGroups", () => {
     providers
   });
 
-  it("flattens workflow input fields by dotted path with types", () => {
-    const input = groups.find((group) => group.title === "Workflow input");
-    expect(input).toBeDefined();
-    const inserts = input!.references.map((reference) => reference.insert);
-    expect(inserts).toContain("input.cart");
-    expect(inserts).toContain("input.cart.total");
-    expect(inserts).toContain("input.name");
-    expect(input!.references.find((r) => r.insert === "input.cart.total")?.type).toBe("number");
+  it("flattens workflow parameter fields by dotted path with types", () => {
+    const params = groups.find((group) => group.title === "Workflow parameters");
+    expect(params).toBeDefined();
+    const inserts = params!.references.map((reference) => reference.insert);
+    expect(inserts).toContain("params.cart");
+    expect(inserts).toContain("params.cart.total");
+    expect(inserts).toContain("params.name");
+    expect(params!.references.find((r) => r.insert === "params.cart.total")?.type).toBe("number");
   });
 
   it("groups prior node outputs and excludes the current node", () => {
@@ -76,9 +76,9 @@ describe("buildSampleContext", () => {
     ]
   } as unknown as WorkflowRunDetail;
 
-  it("mirrors the reducer context with input/steps/prev/workflow", () => {
-    expect(buildSampleContext(detail)).toEqual({
-      input: { x: 1 },
+  it("mirrors the reducer context with params/steps/prev/workflow", () => {
+    expect(buildSampleContext(detail)).toMatchObject({
+      params: { x: 1 },
       steps: { a: { output: { k: "v" } }, b: { output: { n: 2 } } },
       prev: { n: 2 },
       workflow: { run_id: "r1", workflow_id: "w1", state: "succeeded" }
