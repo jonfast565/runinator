@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useEventStream } from "../useEventStream";
 import { useAppStore } from "../../stores/app";
+import { useResourcesStore } from "../../stores/resources";
 
 class MockWebSocket {
   static sockets: MockWebSocket[] = [];
@@ -74,6 +75,25 @@ describe("useEventStream", () => {
     first.onclose?.();
 
     expect(app.eventStreamState).toBe("connecting");
+    scope.stop();
+  });
+
+  it("refreshes automation events when a workflow run changes", async () => {
+    const app = useAppStore();
+    const resources = useResourcesStore();
+    const refreshResourcesFor = vi.spyOn(resources, "refreshResourcesFor").mockResolvedValue();
+    app.setServiceUrl("http://127.0.0.1:8080/");
+    app.activeTab = "Events";
+
+    const scope = effectScope();
+    scope.run(() => useEventStream());
+    await nextTick();
+
+    MockWebSocket.sockets[0].onmessage?.({
+      data: JSON.stringify({ type: "workflow_run_changed", run_id: "run-1" })
+    });
+
+    expect(refreshResourcesFor).toHaveBeenCalledWith("automation_events");
     scope.stop();
   });
 });

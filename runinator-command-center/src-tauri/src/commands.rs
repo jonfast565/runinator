@@ -525,6 +525,29 @@ pub async fn skip_workflow_node(
 }
 
 #[tauri::command]
+pub async fn resolve_workflow_input(
+    state: State<'_, CommandCenterState>,
+    node_run_id: Uuid,
+    output_json: Value,
+    resolved_by: Option<String>,
+    message: Option<String>,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("workflow_node_runs/{node_run_id}/input")).await?;
+    let response = state
+        .client
+        .post(url.clone())
+        .json(&json!({
+            "output_json": output_json,
+            "resolved_by": resolved_by,
+            "message": message
+        }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
 pub async fn rerun_workflow_node(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,

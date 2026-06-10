@@ -14,7 +14,7 @@ export function statusBadgeClass(status?: string) {
   if (isBadStatus(status)) return "status-failed";
   if (isGoodStatus(status)) return "status-succeeded";
   if (status === "running") return "status-running";
-  if (["queued", "waiting", "approval_required", "debug_paused", "paused"].includes(status ?? "")) return "status-waiting";
+  if (["queued", "waiting", "approval_required", "input_required", "debug_paused", "paused"].includes(status ?? "")) return "status-waiting";
   return "status-muted";
 }
 
@@ -22,7 +22,7 @@ export function statusClassForNode(status?: string) {
   if (["succeeded", "passed", "approved"].includes(status ?? "")) return "node-success";
   if (["failed", "rejected", "timed_out", "canceled", "blocked"].includes(status ?? "")) return "node-danger";
   if (status === "running") return "node-running";
-  if (["waiting", "approval_required", "approval-required", "debug_paused", "paused", "pending"].includes(status ?? "")) return "node-warning";
+  if (["waiting", "approval_required", "input_required", "approval-required", "debug_paused", "paused", "pending"].includes(status ?? "")) return "node-warning";
   if (status) return "node-active";
   return "";
 }

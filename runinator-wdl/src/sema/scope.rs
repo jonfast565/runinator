@@ -14,11 +14,11 @@ use super::{Diagnostic, child_blocks, effective_id};
 const RESERVED: [&str; 3] = ["start", "end", "fail"];
 
 /// reserved path roots that always resolve regardless of declared labels.
-const ROOTS: [&str; 5] = ["input", "prev", "run", "config", "secret"];
+const ROOTS: [&str; 5] = ["params", "prev", "run", "config", "secret"];
 
-/// roots an input-field default may reference. defaults run at workflow start, before any step,
-/// so `prev` and step outputs are not yet available; only start-time sources are allowed.
-const DEFAULT_ROOTS: [&str; 4] = ["input", "config", "run", "secret"];
+/// roots a workflow-parameter default may reference. defaults run at workflow start, before any
+/// step, so `prev` and step outputs are not yet available; only start-time sources are allowed.
+const DEFAULT_ROOTS: [&str; 4] = ["params", "config", "run", "secret"];
 
 /// where an expression sits: a declarative position is evaluated eagerly by the reducer (so it may
 /// only call pure intrinsics), while a compute position runs in `std.run`/`std.exec` and may call
@@ -70,7 +70,7 @@ pub(super) fn analyze(
         resolve_target(start, &symbols, workflow.span, diagnostics);
     }
 
-    // validate top-level input field defaults against the start-time roots.
+    // validate top-level workflow parameter defaults against the start-time roots.
     if let Some(TypeExpr::Struct { fields, .. }) = &workflow.input {
         for field in fields {
             if let Some(default) = &field.default {
@@ -174,9 +174,14 @@ fn resolve_stmt(
             }
         }
         StmtKind::Wait(_) => {}
-        StmtKind::Emit(emit) => {
-            if let Some(data) = &emit.data {
+        StmtKind::Output(output) => {
+            if let Some(data) = &output.data {
                 resolve_expr(data, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::Input(input) => {
+            if let Some(prompt) = &input.prompt {
+                resolve_expr(prompt, symbols, scope, ctx, diagnostics);
             }
         }
         StmtKind::Approval(approval) => {
@@ -518,7 +523,7 @@ fn resolve_expr(
     }
 }
 
-/// validate an input-field default expression: only `DEFAULT_ROOTS` may head a reference.
+/// validate a workflow-parameter default expression: only `DEFAULT_ROOTS` may head a reference.
 fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
     match &expr.kind {
         ExprKind::Null
@@ -547,7 +552,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                 diagnostics.push(Diagnostic::error(
                     expr.span,
                     format!(
-                        "input default may only reference input, config, run, or secret, not '{head}'"
+                        "parameter default may only reference params, config, run, or secret, not '{head}'"
                     ),
                 ));
             }
@@ -593,7 +598,9 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
             if runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str()) {
                 diagnostics.push(Diagnostic::error(
                     expr.span,
-                    format!("effectful intrinsic '{name}' is not allowed in an input default"),
+                    format!(
+                        "effectful intrinsic '{name}' is not allowed in a workflow parameter default"
+                    ),
                 ));
             }
             for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
@@ -603,7 +610,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         // a lambda is a compute-only form; the default grammar (`= expr`) never produces one.
         ExprKind::Lambda { .. } => diagnostics.push(Diagnostic::error(
             expr.span,
-            "a lambda is not allowed in an input default",
+            "a lambda is not allowed in a workflow parameter default",
         )),
         ExprKind::Spread(_) => {}
     }

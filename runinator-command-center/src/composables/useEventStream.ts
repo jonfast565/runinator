@@ -36,6 +36,7 @@ export function useEventStream() {
     switch (event.type) {
       case "run_status_changed":
         if (workflows.selectedWorkflowRunId) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+        refreshResourcesIfActive();
         break;
       case "resync":
         refreshActiveState();
@@ -51,6 +52,7 @@ export function useEventStream() {
           workflows.fetchWorkflowRunDetail(runId, true);
         }
         if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
+        refreshResourcesIfActive();
         break;
       }
       case "resources_changed":

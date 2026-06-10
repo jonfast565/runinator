@@ -1,6 +1,6 @@
 workflow "Ticket Work" v1 {
     // only the per-ticket payload is dynamic input; everything else is shared config.* and secret.*.
-    input {
+    params {
         ticket: { key: string, fields: { summary: string } }
         parent_workflow_run_id: string
     }
@@ -10,26 +10,26 @@ workflow "Ticket Work" v1 {
     alias github_conn = { token: secret.github.token, owner: config.github.owner, repo: config.github.repo }
     alias slack_conn = { token: secret.slack.token, channel: config.slack.channel }
 
-    set name = "Ticket Work: " ++ input.ticket.key
-    set meta { parent_workflow_run_id: input.parent_workflow_run_id, ticket_key: input.ticket.key }
+    set name = "Ticket Work: " ++ params.ticket.key
+    set meta { parent_workflow_run_id: params.parent_workflow_run_id, ticket_key: params.ticket.key }
 
     let transition_in_progress = jira.transition(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         transition_id: config.transitions.in_progress
     ).timeout(30s)
         fail -> notify_failure
 
     let kickoff_comment = jira.comment(
         ...jira_conn,
-        key: input.ticket.key,
-        body: "Automation started for " ++ input.ticket.key ++ ". Run " ++ string(run.run_id)
+        key: params.ticket.key,
+        body: "Automation started for " ++ params.ticket.key ++ ". Run " ++ string(run.run_id)
     ).timeout(30s)
 
     let create_workspace = git.worktree(
         repo: config.git.repo,
-        branch: "feature/" ++ input.ticket.key,
-        path: config.git.repo ++ "/../runinator-worktrees/" ++ input.ticket.key
+        branch: "feature/" ++ params.ticket.key,
+        path: config.git.repo ++ "/../runinator-worktrees/" ++ params.ticket.key
     ).timeout(120s)
         fail -> notify_failure
 
@@ -42,43 +42,43 @@ workflow "Ticket Work" v1 {
         extra_args: config.claude.extra_args,
         working_dir: create_workspace.workspace,
         prompt: config.claude.prompt_intro
-            ++ "\n\nTicket: " ++ input.ticket.key
-            ++ "\nSummary: " ++ input.ticket.fields.summary
-            ++ "\n\nFull issue payload follows as JSON:\n" ++ json(input.ticket)
+            ++ "\n\nTicket: " ++ params.ticket.key
+            ++ "\nSummary: " ++ params.ticket.fields.summary
+            ++ "\n\nFull issue payload follows as JSON:\n" ++ json(params.ticket)
     ).timeout(1800s)
         fail -> notify_failure
 
     let commit_change = git.commit(
         workspace: create_workspace.workspace,
-        message: input.ticket.key ++ " " ++ input.ticket.fields.summary
+        message: params.ticket.key ++ " " ++ params.ticket.fields.summary
     ).timeout(60s)
         fail -> notify_failure
 
     let push_branch = git.push(
         workspace: create_workspace.workspace,
         remote: config.git.remote,
-        branch: "feature/" ++ input.ticket.key
+        branch: "feature/" ++ params.ticket.key
     ).timeout(60s)
         fail -> notify_failure
 
     let create_pr = github.create_pr(
         ...github_conn,
         base: config.github.base_branch,
-        head: "feature/" ++ input.ticket.key,
-        title: input.ticket.key ++ ": " ++ input.ticket.fields.summary,
-        body: "Automated implementation for " ++ input.ticket.key ++ "."
+        head: "feature/" ++ params.ticket.key,
+        title: params.ticket.key ++ ": " ++ params.ticket.fields.summary,
+        body: "Automated implementation for " ++ params.ticket.key ++ "."
     ).timeout(60s)
         fail -> notify_failure
 
     let link_pr_to_ticket = jira.comment(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         body: "Pull request opened: " ++ create_pr.html_url
     ).timeout(30s)
 
     let transition_in_review = jira.transition(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         transition_id: config.transitions.in_review
     ).timeout(30s)
 
@@ -93,7 +93,7 @@ workflow "Ticket Work" v1 {
 
     // passed -> ask for merge approval; anything else (failed or exhausted) -> notify failure.
     if poll_checks.status == "passed" {
-        approve "Approve merge of automated PR for " ++ input.ticket.key type "merge"
+        approve "Approve merge of automated PR for " ++ params.ticket.key type "merge"
             ok -> merge_pr
             reject -> comment_rejected
     } -> notify_failure
@@ -107,32 +107,32 @@ workflow "Ticket Work" v1 {
 
     let transition_done = jira.transition(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         transition_id: config.transitions.done
     ).timeout(30s)
 
     let comment_merged = jira.comment(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         body: "Merged " ++ create_pr.html_url
     ).timeout(30s)
 
     let notify_done = slack.send_message(
         ...slack_conn,
-        text: ":white_check_mark: " ++ input.ticket.key ++ " merged and closed."
+        text: ":white_check_mark: " ++ params.ticket.key ++ " merged and closed."
     ).timeout(15s)
         -> cleanup_workspace
 
     let comment_rejected = jira.comment(
         ...jira_conn,
-        key: input.ticket.key,
+        key: params.ticket.key,
         body: "Reviewer rejected automated merge. Manual follow-up required."
     ).timeout(30s)
         -> cleanup_workspace
 
     let notify_failure = slack.send_message(
         ...slack_conn,
-        text: ":x: SDLC pipeline failed on " ++ input.ticket.key
+        text: ":x: SDLC pipeline failed on " ++ params.ticket.key
     ).timeout(15s)
         -> cleanup_workspace
 

@@ -325,7 +325,7 @@ fn complete_path(path: PathContext, context: &CompletionContext) -> Option<WdlCo
 }
 
 fn root_type(name: &str, context: &CompletionContext) -> Option<RuninatorType> {
-    if name == "input" {
+    if name == "params" {
         return Some(context.input.clone());
     }
     if name == "run" {

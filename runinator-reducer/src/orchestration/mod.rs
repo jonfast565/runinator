@@ -9,10 +9,11 @@ use runinator_models::{
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     value::Value,
     workflow_state::{
-        ApprovalRecord, ApprovalState, ConfigSummary, EmitOutput, JoinOutput, LoopFrame,
-        LoopOutput, MapChild, MapChildState, MapFrame, MapOutput, ParallelFrame, ParallelOutput,
-        RaceFrame, RaceOutput, SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame,
-        WaitElapsedOutput, WaitState, WorkflowContextHeader, WorkflowRunState,
+        ApprovalRecord, ApprovalState, ConfigSummary, InputState, JoinOutput, LoopFrame,
+        LoopOutput, MapChild, MapChildState, MapFrame, MapOutput, OutputPayload, ParallelFrame,
+        ParallelOutput, RaceFrame, RaceOutput, SkippedOutput, SubflowOutcome, SubflowState,
+        SwitchOutput, TryFrame, WaitElapsedOutput, WaitState, WorkflowContextHeader,
+        WorkflowRunState,
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowRun,
@@ -34,9 +35,10 @@ mod basic;
 mod compute;
 mod context;
 mod control_flow;
-mod emit;
 mod engine;
+mod input;
 mod map;
+mod output;
 mod subflow;
 mod transitions;
 mod wait;

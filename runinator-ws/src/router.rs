@@ -46,7 +46,7 @@ use crate::handlers::{
         add_workflow_node_run_artifact, append_workflow_node_run_chunk,
         claim_workflow_node_run_executor, create_workflow_node_run,
         get_workflow_node_run_artifacts, get_workflow_node_run_chunks,
-        release_workflow_node_run_executor, update_workflow_node_run,
+        release_workflow_node_run_executor, resolve_workflow_input, update_workflow_node_run,
     },
     notifications::{
         create_notification, list_notifications, mark_all_notifications_read,
@@ -361,6 +361,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflow_node_runs/{id}",
             patch(update_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/input",
+            post(resolve_workflow_input::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_node_runs/{id}/chunks",

@@ -186,8 +186,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     map_concurrency: 1,
     race_branches: [] as string[],
     race_winner: "first_success" as BranchPolicyName,
-    emit_event_type: "workflow.event",
-    emit_data_json: "{}",
+    output_event_type: "workflow.output",
+    output_data_json: "{}",
+    input_prompt: "Provide input",
     subflow_id: "",
     subflow_parameters_json: "{}",
     locked: false,
@@ -1078,13 +1079,19 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         winner: stepEditor.race_winner
       };
     }
-    if (next.kind === "emit") {
-      const data = parseStepJson("Emit data", stepEditor.emit_data_json);
+    if (next.kind === "output") {
+      const data = parseStepJson("Output data", stepEditor.output_data_json);
       if (!data.ok) return false;
       next.parameters = {
         ...parameters,
-        event_type: stepEditor.emit_event_type.trim() || "workflow.event",
+        event_type: stepEditor.output_event_type.trim() || "workflow.output",
         data: data.value
+      };
+    }
+    if (next.kind === "input") {
+      next.parameters = {
+        ...parameters,
+        prompt: stepEditor.input_prompt.trim() || "Provide input"
       };
     }
     if (next.kind === "subflow") {
@@ -1147,8 +1154,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.map_concurrency = Number(node.parameters?.concurrency ?? 1);
     stepEditor.race_branches = nodeRefArray(node.parameters?.branches);
     stepEditor.race_winner = branchPolicyName(node.parameters?.winner, "first_success");
-    stepEditor.emit_event_type = String(node.parameters?.event_type ?? "workflow.event");
-    stepEditor.emit_data_json = pretty(node.parameters?.data ?? {});
+    stepEditor.output_event_type = String(node.parameters?.event_type ?? "workflow.output");
+    stepEditor.output_data_json = pretty(node.parameters?.data ?? {});
+    stepEditor.input_prompt = String(node.parameters?.prompt ?? "Provide input");
     stepEditor.subflow_id = String(node.subflow_id ?? "");
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
     stepEditor.locked = isLockedWorkflowNode(node);

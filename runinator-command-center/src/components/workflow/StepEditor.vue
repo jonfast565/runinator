@@ -323,11 +323,13 @@ function kindSection(current: JsonRecord): DetailSection {
       ]);
     case "race":
       return section("Race", [item("Winner", current.parameters?.winner ?? "first_success")], nodeRefArray(current.parameters?.branches).map((target) => `race -> ${target}`));
-    case "emit":
-      return section("Emit", [
-        item("Event", current.parameters?.event_type ?? "workflow.event"),
+    case "output":
+      return section("Output", [
+        item("Event", current.parameters?.event_type ?? "workflow.output"),
         item("Data", valueLabel(current.parameters?.data))
       ]);
+    case "input":
+      return section("Input", [item("Prompt", valueLabel(current.parameters?.prompt ?? "Provide input"))]);
     case "config":
       return section("Config", [
         item("Name", valueLabel(current.parameters?.name)),

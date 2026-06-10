@@ -47,6 +47,7 @@ pub fn run() {
             crate::commands::patch_workflow_run_debug,
             crate::commands::run_to_cursor_workflow_run,
             crate::commands::skip_workflow_node,
+            crate::commands::resolve_workflow_input,
             crate::commands::rerun_workflow_node,
             crate::commands::replay_workflow_run,
             crate::commands::rename_workflow_run,

@@ -274,10 +274,16 @@
         <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
       </section>
 
-      <section v-if="workflows.stepEditor.kind === 'emit'" class="form-section">
-        <h3>Emit</h3>
-        <label>Event Type <input v-model="workflows.stepEditor.emit_event_type" /></label>
-        <label>Data <ExpressionJsonEditor v-model="workflows.stepEditor.emit_data_json" :context="expressionContext" title="WDL Data" /></label>
+      <section v-if="workflows.stepEditor.kind === 'output'" class="form-section">
+        <h3>Output</h3>
+        <label>Event Type <input v-model="workflows.stepEditor.output_event_type" /></label>
+        <label>Data <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="WDL Data" /></label>
+        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'input'" class="form-section">
+        <h3>Input</h3>
+        <label>Prompt <input v-model="workflows.stepEditor.input_prompt" /></label>
         <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
       </section>
 

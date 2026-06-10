@@ -244,6 +244,22 @@ pub struct WaitElapsedOutput {
     pub deadline_unix: i64,
 }
 
+/// output node output recorded when an output node publishes its payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    pub data: Value,
+}
+
+/// input node state while it waits for a user response in the ui.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputState {
+    pub input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_id: Option<Uuid>,
+}
+
 /// subflow node-run state, also mirrored into output for fire-and-forget links. only
 /// `subflow_run_id` is required; the rest default so a partial snapshot still deserializes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,13 +315,6 @@ pub struct RaceOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchOutput {
     pub target: Option<String>,
-}
-
-/// emit node output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmitOutput {
-    pub event_type: Option<String>,
-    pub data: Value,
 }
 
 /// config node output summarizing the applied name/metadata patch.

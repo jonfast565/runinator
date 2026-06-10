@@ -374,6 +374,7 @@ pub enum WorkflowStatus {
     DebugPaused,
     Waiting,
     ApprovalRequired,
+    InputRequired,
     Blocked,
     Succeeded,
     Failed,
@@ -390,6 +391,7 @@ impl WorkflowStatus {
             WorkflowStatus::DebugPaused => "debug_paused",
             WorkflowStatus::Waiting => "waiting",
             WorkflowStatus::ApprovalRequired => "approval_required",
+            WorkflowStatus::InputRequired => "input_required",
             WorkflowStatus::Blocked => "blocked",
             WorkflowStatus::Succeeded => "succeeded",
             WorkflowStatus::Failed => "failed",
@@ -416,6 +418,7 @@ impl WorkflowStatus {
                 | WorkflowStatus::DebugPaused
                 | WorkflowStatus::Waiting
                 | WorkflowStatus::ApprovalRequired
+                | WorkflowStatus::InputRequired
         )
     }
 }
@@ -431,6 +434,7 @@ impl TryFrom<&str> for WorkflowStatus {
             "debug_paused" => Ok(WorkflowStatus::DebugPaused),
             "waiting" => Ok(WorkflowStatus::Waiting),
             "approval_required" => Ok(WorkflowStatus::ApprovalRequired),
+            "input_required" => Ok(WorkflowStatus::InputRequired),
             "blocked" => Ok(WorkflowStatus::Blocked),
             "succeeded" => Ok(WorkflowStatus::Succeeded),
             "failed" => Ok(WorkflowStatus::Failed),
@@ -456,7 +460,9 @@ pub enum WorkflowNodeKind {
     Try,
     Map,
     Race,
-    Emit,
+    #[serde(rename = "output")]
+    Output,
+    Input,
     Subflow,
     Config,
     End,

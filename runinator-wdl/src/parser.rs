@@ -172,7 +172,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                         WdlError::syntax(span, format!("invalid version: {err}"))
                     })?);
             }
-            Rule::input_block => input = Some(parse_input_block(inner)?),
+            Rule::params_block => input = Some(parse_params_block(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
@@ -251,19 +251,19 @@ fn parse_alias_decl(pair: Pair<Rule>) -> Result<Alias, WdlError> {
     })
 }
 
-// input typing --------------------------------------------------------------
+// parameter typing -----------------------------------------------------------
 
-fn parse_input_block(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
+fn parse_params_block(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
     let mut fields = Vec::new();
     let mut additional = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::input_field => fields.push(parse_input_field(inner)?),
+            Rule::params_field => fields.push(parse_params_field(inner)?),
             Rule::type_additional => {
                 let ty = inner
                     .into_inner()
                     .find(|p| p.as_rule() == Rule::type_expr)
-                    .ok_or_else(|| WdlError::lower("open input additional type"))?;
+                    .ok_or_else(|| WdlError::lower("open parameter additional type"))?;
                 additional = Some(Box::new(parse_type_expr(ty)?));
             }
             _ => {}
@@ -272,8 +272,8 @@ fn parse_input_block(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
     Ok(TypeExpr::Struct { fields, additional })
 }
 
-/// a top-level input field, optionally carrying a `= expr` default.
-fn parse_input_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
+/// a top-level workflow parameter field, optionally carrying a `= expr` default.
+fn parse_params_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
     let mut name = String::new();
     let mut optional = false;
     let mut ty = TypeExpr::Named("any".into());
@@ -474,7 +474,8 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::compute_stmt => Ok(StmtKind::Compute(parse_compute(inner)?)),
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
-        Rule::emit_stmt => Ok(StmtKind::Emit(parse_emit(inner)?)),
+        Rule::output_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
+        Rule::input_stmt => Ok(StmtKind::Input(parse_input(inner)?)),
         Rule::approval_stmt => Ok(StmtKind::Approval(parse_approval(inner)?)),
         Rule::config_stmt => Ok(StmtKind::Config(parse_config(inner)?)),
         Rule::fail_stmt => Ok(StmtKind::Fail(parse_fail(inner)?)),
@@ -835,7 +836,7 @@ fn parse_wait(pair: Pair<Rule>) -> Result<WaitStmt, WdlError> {
     })
 }
 
-fn parse_emit(pair: Pair<Rule>) -> Result<EmitStmt, WdlError> {
+fn parse_output(pair: Pair<Rule>) -> Result<OutputStmt, WdlError> {
     let mut event_type = None;
     let mut data = None;
     for inner in pair.into_inner() {
@@ -845,7 +846,16 @@ fn parse_emit(pair: Pair<Rule>) -> Result<EmitStmt, WdlError> {
             _ => {}
         }
     }
-    Ok(EmitStmt { event_type, data })
+    Ok(OutputStmt { event_type, data })
+}
+
+fn parse_input(pair: Pair<Rule>) -> Result<InputStmt, WdlError> {
+    let prompt = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::expr)
+        .map(parse_expr)
+        .transpose()?;
+    Ok(InputStmt { prompt })
 }
 
 fn parse_approval(pair: Pair<Rule>) -> Result<ApprovalStmt, WdlError> {

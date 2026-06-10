@@ -123,9 +123,14 @@ pub struct RaceParameters {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EmitParameters {
+pub struct OutputParameters {
     pub event_type: Option<String>,
     pub data: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputParameters {
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -68,7 +68,7 @@ impl Formatter {
         self.line(&format!("workflow {}{version} {{", quote(&workflow.name)));
         self.indent += 1;
         if let Some(input) = &workflow.input {
-            self.input(input);
+            self.params(input);
             if !workflow.triggers.is_empty()
                 || !workflow.aliases.is_empty()
                 || !workflow.body.is_empty()
@@ -115,11 +115,11 @@ impl Formatter {
         self.line("}");
     }
 
-    fn input(&mut self, input: &TypeExpr) {
+    fn params(&mut self, input: &TypeExpr) {
         let TypeExpr::Struct { fields, additional } = input else {
             return;
         };
-        self.line("input {");
+        self.line("params {");
         self.indent += 1;
         for field in fields {
             self.type_field(field, false);
@@ -255,7 +255,8 @@ impl Formatter {
             StmtKind::Compute(compute) => self.compute(compute),
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
-            StmtKind::Emit(emit) => self.emit(emit),
+            StmtKind::Output(output) => self.output(output),
+            StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
             StmtKind::Config(config) => self.config(config),
             StmtKind::Fail(expr) => match expr {
@@ -448,20 +449,29 @@ impl Formatter {
         text
     }
 
-    fn emit(&self, emit: &EmitStmt) -> String {
-        let mut text = "emit".to_string();
-        if let Some(event_type) = &emit.event_type {
+    fn output(&self, output: &OutputStmt) -> String {
+        let mut text = "output".to_string();
+        if let Some(event_type) = &output.event_type {
             text.push_str(&format!(" {}", quote(event_type)));
         }
-        if let Some(data) = &emit.data {
+        if let Some(data) = &output.data {
             let rendered = format_expr_multiline(data, self.indent);
             // object payloads keep their brace form; an event-less scalar is parenthesized so it
             // is not re-parsed as the event type. mirrors the decompiler.
-            if emit.event_type.is_some() || matches!(data.kind, ExprKind::Object(_)) {
+            if output.event_type.is_some() || matches!(data.kind, ExprKind::Object(_)) {
                 text.push_str(&format!(" {rendered}"));
             } else {
                 text.push_str(&format!(" ({rendered})"));
             }
+        }
+        text
+    }
+
+    fn input_stmt(&self, input: &InputStmt) -> String {
+        let mut text = "input".to_string();
+        if let Some(prompt) = &input.prompt {
+            text.push(' ');
+            text.push_str(&format_expr(prompt));
         }
         text
     }

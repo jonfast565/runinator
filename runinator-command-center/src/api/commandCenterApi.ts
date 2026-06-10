@@ -225,6 +225,10 @@ export async function skipWorkflowNode(workflowRunId: string, outputJson: any, m
   return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
 }
 
+export async function resolveWorkflowInput(nodeRunId: string, outputJson: any, resolvedBy?: string, message?: string) {
+  return command<TaskResponse>("resolve_workflow_input", { nodeRunId, outputJson, resolvedBy, message });
+}
+
 export async function rerunWorkflowNode(workflowRunId: string, parameters: any) {
   return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
 }

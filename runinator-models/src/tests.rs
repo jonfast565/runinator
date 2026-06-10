@@ -219,7 +219,9 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         ("try", WorkflowNodeKind::Try),
         ("map", WorkflowNodeKind::Map),
         ("race", WorkflowNodeKind::Race),
-        ("emit", WorkflowNodeKind::Emit),
+        ("output", WorkflowNodeKind::Output),
+        ("output", WorkflowNodeKind::Output),
+        ("input", WorkflowNodeKind::Input),
         ("config", WorkflowNodeKind::Config),
     ] {
         let node: WorkflowNode = serde_json::from_value(json!({

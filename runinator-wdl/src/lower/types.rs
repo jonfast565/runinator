@@ -1,4 +1,4 @@
-// maps the wdl `input { }` type expression onto RuninatorType.
+// maps the wdl `params { }` type expression onto RuninatorType.
 
 use std::collections::{BTreeMap, HashSet};
 

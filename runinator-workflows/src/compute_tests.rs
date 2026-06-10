@@ -42,7 +42,7 @@ fn effectful_call_is_rejected_eagerly() {
 #[test]
 fn pure_program_returns_value() {
     let program = parse_program(&json!([
-        { "$let": "total", "value": { "$add": [{ "$ref": { "input": ["a"] } }, 3] } },
+        { "$let": "total", "value": { "$add": [{ "$ref": { "params": ["a"] } }, 3] } },
         { "$return": { "total": { "$ref": { "let": ["total"] } } } }
     ]))
     .unwrap();
@@ -54,7 +54,7 @@ fn pure_program_returns_value() {
 #[test]
 fn goto_short_circuits() {
     let program = parse_program(&json!([
-        { "$if": { "value": { "$ref": { "input": ["x"] } }, "less_than": 0 },
+        { "$if": { "value": { "$ref": { "params": ["x"] } }, "less_than": 0 },
           "then": [ { "$goto": "fail" } ],
           "else": [] },
         { "$return": "ok" }
@@ -71,7 +71,7 @@ fn goto_short_circuits() {
 fn condition_resolves_call_via_library() {
     // a compute `if` whose condition calls an intrinsic resolves it through the library.
     let program = parse_program(&json!([
-        { "$if": { "value": { "$call": "len", "args": [{ "$ref": { "input": ["xs"] } }] }, "greater_than": 1 },
+        { "$if": { "value": { "$call": "len", "args": [{ "$ref": { "params": ["xs"] } }] }, "greater_than": 1 },
           "then": [ { "$return": "many" } ],
           "else": [ { "$return": "few" } ] }
     ]))
@@ -286,7 +286,7 @@ fn regex_intrinsics() {
 fn lambda_map_doubles_elements() {
     let program = parse_program(&json!([
         { "$return": { "$call": "map", "args": [
-            { "$ref": { "input": ["xs"] } },
+            { "$ref": { "params": ["xs"] } },
             { "$lambda": { "params": ["x"], "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 2] } } }
         ] } }
     ]))
@@ -304,7 +304,7 @@ fn lambda_map_doubles_elements() {
 fn lambda_filter_keeps_matches() {
     let program = parse_program(&json!([
         { "$return": { "$call": "filter", "args": [
-            { "$ref": { "input": ["xs"] } },
+            { "$ref": { "params": ["xs"] } },
             { "$lambda": { "params": ["x"], "body": { "$call": "gt", "args": [{ "$ref": { "let": ["x"] } }, 1] } } }
         ] } }
     ]))
@@ -322,7 +322,7 @@ fn lambda_filter_keeps_matches() {
 fn lambda_reduce_sums() {
     let program = parse_program(&json!([
         { "$return": { "$call": "reduce", "args": [
-            { "$ref": { "input": ["xs"] } },
+            { "$ref": { "params": ["xs"] } },
             0,
             { "$lambda": { "params": ["acc", "x"], "body": { "$add": [
                 { "$ref": { "let": ["acc"] } }, { "$ref": { "let": ["x"] } }
@@ -343,7 +343,7 @@ fn lambda_reduce_sums() {
 fn lambda_sort_by_key() {
     let program = parse_program(&json!([
         { "$return": { "$call": "sort_by", "args": [
-            { "$ref": { "input": ["xs"] } },
+            { "$ref": { "params": ["xs"] } },
             { "$lambda": { "params": ["u"], "body": { "$ref": { "let": ["u", "age"] } } } }
         ] } }
     ]))
@@ -377,7 +377,7 @@ fn pure_resolver_evaluates_compute_tier() {
     );
     // a higher-order map with a lambda resolves against the context.
     let mapped = json!({ "$call": "map", "args": [
-        { "$ref": { "input": ["xs"] } },
+        { "$ref": { "params": ["xs"] } },
         { "$lambda": { "params": ["x"], "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 10] } } }
     ] });
     assert_eq!(

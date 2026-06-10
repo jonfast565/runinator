@@ -237,8 +237,11 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 }
             }
         }
-        runinator_models::workflows::WorkflowNodeKind::Emit => {
-            emit::process_emit_node(db, &workflow_run, node, &node_runs).await?;
+        runinator_models::workflows::WorkflowNodeKind::Output => {
+            output::process_output_node(db, &workflow_run, node, &node_runs).await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Input => {
+            input::process_input_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Config => {
             basic::process_config_node(db, &workflow_run, node, &node_runs).await?;

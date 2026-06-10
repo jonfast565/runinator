@@ -133,6 +133,11 @@ fn static_node_output_type(
             ("name", WorkflowType::String),
             ("metadata", WorkflowType::Any),
         ]))),
+        WorkflowNodeKind::Output => Ok(Some(WorkflowType::structure([
+            ("event_type", WorkflowType::String),
+            ("data", WorkflowType::Any),
+        ]))),
+        WorkflowNodeKind::Input => Ok(Some(WorkflowType::Any)),
         _ => Ok(None),
     }
 }
@@ -259,17 +264,23 @@ fn validate_node_types(
             }
             Ok(())
         }
-        WorkflowNodeKind::Emit => {
+        WorkflowNodeKind::Output => {
             if let Some(event_type) = node.parameters.get("event_type") {
                 expect_value_type(
                     event_type,
                     context,
                     &WorkflowType::String,
-                    "emit.event_type",
+                    "output.event_type",
                 )?;
             }
             if let Some(data) = node.parameters.get("data") {
                 infer_value_type(data, context)?;
+            }
+            Ok(())
+        }
+        WorkflowNodeKind::Input => {
+            if let Some(prompt) = node.parameters.get("prompt") {
+                expect_value_type(prompt, context, &WorkflowType::String, "input.prompt")?;
             }
             Ok(())
         }

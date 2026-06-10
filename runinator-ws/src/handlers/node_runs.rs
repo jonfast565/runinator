@@ -13,7 +13,7 @@ use crate::events::{EventSender, emit_workflow_node_run, emit_workflow_run};
 use crate::handlers::runs::ChunkQuery;
 use crate::models::{
     ApiResponse, WorkflowNodeRunExecutorClaimRequest, WorkflowNodeRunExecutorReleaseRequest,
-    WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
+    WorkflowNodeRunInputRequest, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
 };
 use crate::repository;
 use crate::responses::api_error;
@@ -58,6 +58,29 @@ pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
         request.output_json,
         request.state,
         request.transition_reason,
+        request.message,
+    )
+    .await
+    {
+        Ok(resp) => {
+            emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn resolve_workflow_input<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(node_run_id): Path<Uuid>,
+    Json(request): Json<WorkflowNodeRunInputRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::resolve_workflow_input(
+        db.as_ref(),
+        node_run_id,
+        request.output_json,
+        request.resolved_by,
         request.message,
     )
     .await

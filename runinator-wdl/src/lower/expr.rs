@@ -249,7 +249,7 @@ impl Lowerer {
         }
 
         match head.as_str() {
-            "input" => Ok(scoped_ref("input", rest)),
+            "params" => Ok(scoped_ref("params", rest)),
             "prev" => Ok(scoped_ref("prev", rest)),
             "run" => Ok(scoped_ref("workflow", rest)),
             // config resolves eagerly in the web service, so it is a plain ref.

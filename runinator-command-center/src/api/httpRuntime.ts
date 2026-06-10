@@ -138,6 +138,15 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       message: argOpt(args, "message") ?? null
     })
   },
+  resolve_workflow_input: {
+    method: "POST",
+    path: (args) => `workflow_node_runs/${escape(arg<string>(args, "nodeRunId"))}/input`,
+    body: (args) => ({
+      output_json: arg(args, "outputJson"),
+      resolved_by: argOpt(args, "resolvedBy") ?? null,
+      message: argOpt(args, "message") ?? null
+    })
+  },
   rerun_workflow_node: {
     method: "POST",
     path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/debug/rerun_node`,

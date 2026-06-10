@@ -25,6 +25,10 @@ kubectl -n runinator scale deploy/runinator-ws --replicas=3
 kubectl -n runinator scale statefulset/runinator-worker --replicas=3
 ```
 
+Each worker pod also mounts the host's `~/.aws` directory at
+`/home/runinator/.aws` so AWS SSO profile and cache files are available to the
+worker process.
+
 The preferred end-to-end command is:
 
 ```sh

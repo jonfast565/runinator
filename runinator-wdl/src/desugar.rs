@@ -106,9 +106,14 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_expr(metadata, aliases)?;
             }
         }
-        StmtKind::Emit(emit) => {
-            if let Some(data) = emit.data.as_mut() {
+        StmtKind::Output(output) => {
+            if let Some(data) = output.data.as_mut() {
                 expand_expr(data, aliases)?;
+            }
+        }
+        StmtKind::Input(input) => {
+            if let Some(prompt) = input.prompt.as_mut() {
+                expand_expr(prompt, aliases)?;
             }
         }
         StmtKind::Wait(wait) => {

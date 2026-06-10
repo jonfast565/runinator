@@ -192,16 +192,16 @@ async fn ready_node_processing_reduces_start_to_action_dispatch() {
 }
 
 #[tokio::test]
-async fn emit_nodes_write_automation_events_for_the_events_tab() {
+async fn output_nodes_write_automation_events_for_the_events_tab() {
     let (db, path) = test_db().await;
-    let mut workflow = workflow(None, "emit-events");
+    let mut workflow = workflow(None, "output-events");
     workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
         "nodes": [
-            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "emit" } } },
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "output" } } },
             {
-                "id": "emit",
-                "kind": "emit",
+                "id": "output",
+                "kind": "output",
                 "parameters": {
                     "event_type": "workflow.routed",
                     "data": { "ok": true, "count": 1 }
@@ -256,7 +256,10 @@ async fn emit_nodes_write_automation_events_for_the_events_tab() {
         event.get("provider").and_then(Value::as_str),
         Some("runinator")
     );
-    assert_eq!(event.get("status").and_then(Value::as_str), Some("emitted"));
+    assert_eq!(
+        event.get("status").and_then(Value::as_str),
+        Some("output_recorded")
+    );
     assert_eq!(
         metadata
             .get("data")
@@ -1565,7 +1568,7 @@ async fn reducer_runs_loop_node_over_all_items() {
                     "parameters": { "items": ["a", "b", "c"] },
                     "transitions": { "next": { "$node": "body" }, "on_success": { "$node": "done" } }
                 },
-                { "id": "body", "kind": "emit", "transitions": { "on_success": { "$node": "loop" } } },
+                { "id": "body", "kind": "output", "transitions": { "on_success": { "$node": "loop" } } },
                 { "id": "done", "kind": "end" }
             ]
         }),
@@ -1702,7 +1705,7 @@ async fn reducer_maps_items_through_target_node() {
                     "parameters": { "items": [1, 2], "target": { "$node": "each" } },
                     "transitions": { "on_success": { "$node": "done" } }
                 },
-                { "id": "each", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+                { "id": "each", "kind": "output", "transitions": { "on_success": { "$node": "map" } } },
                 { "id": "done", "kind": "end" }
             ]
         }),
@@ -1751,7 +1754,7 @@ async fn reducer_maps_items_concurrently_in_order() {
                 },
                 {
                     "id": "each",
-                    "kind": "emit",
+                    "kind": "output",
                     "parameters": { "data": { "$ref": { "node": "map", "output": ["item"] } } },
                     "transitions": { "on_success": { "$node": "map" } }
                 },
@@ -1863,8 +1866,8 @@ async fn reducer_try_node_runs_body_then_finally() {
                     "parameters": { "body": { "$node": "body" }, "finally": { "$node": "cleanup" } },
                     "transitions": { "on_success": { "$node": "done" } }
                 },
-                { "id": "body", "kind": "emit", "transitions": { "on_success": { "$node": "try" } } },
-                { "id": "cleanup", "kind": "emit", "transitions": { "on_success": { "$node": "try" } } },
+                { "id": "body", "kind": "output", "transitions": { "on_success": { "$node": "try" } } },
+                { "id": "cleanup", "kind": "output", "transitions": { "on_success": { "$node": "try" } } },
                 { "id": "done", "kind": "end" }
             ]
         }),

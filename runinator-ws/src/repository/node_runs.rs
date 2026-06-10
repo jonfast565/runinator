@@ -149,3 +149,84 @@ pub async fn update_workflow_node_run<T: DatabaseImpl>(
         message: "Workflow node run updated".into(),
     })
 }
+
+pub async fn resolve_workflow_input<T: DatabaseImpl>(
+    db: &T,
+    node_run_id: Uuid,
+    output_json: Value,
+    resolved_by: Option<String>,
+    message: Option<String>,
+) -> Result<TaskResponse, SendableError> {
+    let Some(node_run) = db.fetch_workflow_node_run(node_run_id).await? else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Workflow node run {node_run_id} not found"),
+        )));
+    };
+    let Some(workflow_run) = db.fetch_workflow_run(node_run.workflow_run_id).await? else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Workflow run {} not found", node_run.workflow_run_id),
+        )));
+    };
+    let Some(workflow) = workflow_run.workflow_snapshot.as_ref() else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Workflow snapshot for run {} not found", workflow_run.id),
+        )));
+    };
+    let Some(node) = workflow
+        .definition
+        .nodes
+        .iter()
+        .find(|candidate| candidate.id == node_run.node_id)
+    else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Workflow node {} not found", node_run.node_id),
+        )));
+    };
+    if node.kind != WorkflowNodeKind::Input {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Workflow node {} is not an input node", node_run.node_id),
+        )));
+    }
+
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Succeeded,
+        None,
+        None,
+        Some(output_json.clone()),
+        Some(node_run.state.clone()),
+        Some("input_resolved".into()),
+        message.clone(),
+    )
+    .await?;
+    db.update_workflow_run_status(
+        workflow_run.id,
+        WorkflowStatus::Running,
+        Some(node.id.clone()),
+        None,
+        message.clone(),
+    )
+    .await?;
+    support::enqueue_node_ready(
+        db,
+        workflow_run.id,
+        node.id.clone(),
+        "input_resolved",
+        Utc::now(),
+        runinator_models::json!({
+            "workflow_node_run_id": node_run.id,
+            "resolved_by": resolved_by,
+            "value": output_json,
+        }),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow input resolved".into(),
+    })
+}

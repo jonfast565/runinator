@@ -139,6 +139,7 @@ pub(crate) async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
             runinator_models::workflows::WorkflowStatus::DebugPaused,
             runinator_models::workflows::WorkflowStatus::Waiting,
             runinator_models::workflows::WorkflowStatus::ApprovalRequired,
+            runinator_models::workflows::WorkflowStatus::InputRequired,
             runinator_models::workflows::WorkflowStatus::Blocked,
         ]
     } else {

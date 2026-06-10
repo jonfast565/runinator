@@ -1,6 +1,6 @@
-// type checking. seeds an environment from the workflow `input` type and infers expression
+// type checking. seeds an environment from the workflow parameter type and infers expression
 // types from there, reusing the `RuninatorType` algebra in runinator-models. only facts the
-// front end can know author-time are enforced: input field access, iterable `for`/`map`
+// front end can know author-time are enforced: parameter field access, iterable `for`/`map`
 // sources, orderable comparison operands, and `string()`/`json()` argument kinds. action and
 // subflow results, `prev`, and `run` are `Any`, so references through them stay permissive.
 
@@ -12,8 +12,8 @@ use crate::lower::types::{NamedTypes, lower_type_with, resolve_named_types};
 
 use super::Diagnostic;
 
-/// the typing environment: the workflow input type, declared named types, and active loop/map and
-/// compute-local variable types.
+/// the typing environment: the workflow parameter type, declared named types, and active loop/map
+/// and compute-local variable types.
 struct Env {
     input: RuninatorType,
     named: NamedTypes,
@@ -22,7 +22,7 @@ struct Env {
 
 pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
     // resolve declared type names (ignoring cycle/duplicate errors, which scope/lowering report) so
-    // input and annotation types referencing them type-check against the resolved shape.
+    // parameter and annotation types referencing them type-check against the resolved shape.
     let named = resolve_named_types(&workflow.type_decls).unwrap_or_default();
     let input = workflow
         .input
@@ -64,9 +64,14 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
         StmtKind::Wait(_) => {}
-        StmtKind::Emit(emit) => {
-            if let Some(data) = &emit.data {
+        StmtKind::Output(output) => {
+            if let Some(data) = &output.data {
                 check_expr(data, env, diagnostics);
+            }
+        }
+        StmtKind::Input(input) => {
+            if let Some(prompt) = &input.prompt {
+                check_expr(prompt, env, diagnostics);
             }
         }
         StmtKind::Approval(approval) => {
@@ -434,12 +439,12 @@ fn infer_path(
         return RuninatorType::Any;
     };
     let rest = &segs[1..];
-    // a loop/map variable shadows everything else; input is the only other typed root.
+    // a loop/map variable shadows everything else; params is the only other typed root.
     if let Some((_, ty)) = env.scope.iter().rev().find(|(name, _)| name == head) {
         return navigate(ty.clone(), rest, head, span, diagnostics);
     }
-    if head == "input" {
-        return navigate(env.input.clone(), rest, "input", span, diagnostics);
+    if head == "params" {
+        return navigate(env.input.clone(), rest, head, span, diagnostics);
     }
     // prev/run/node references are opaque author-time.
     RuninatorType::Any

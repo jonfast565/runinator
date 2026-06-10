@@ -39,7 +39,8 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
   "try",
   "map",
   "race",
-  "emit",
+  "output",
+  "input",
   "config",
   "subflow"
 ];
@@ -63,7 +64,8 @@ export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo
   try: { icon: "shield", description: "Guards a body node and catches failures with a handler." },
   map: { icon: "grid", description: "Runs its target once for each item in a collection." },
   race: { icon: "race", description: "Runs branches concurrently; the first to finish wins." },
-  emit: { icon: "emit", description: "Publishes an event without interrupting the flow." },
+  output: { icon: "output", description: "Publishes output without interrupting the flow." },
+  input: { icon: "message", description: "Waits for a user-supplied value from the UI." },
   subflow: { icon: "workflow", description: "Invokes another workflow as a nested step." },
   config: { icon: "gear", description: "Sets configuration values for downstream nodes." },
   end: { icon: "flag", description: "Terminal node that completes the run successfully." },
@@ -121,6 +123,7 @@ export function buildGraphNodes(workflow: WorkflowDefinition, detail: WorkflowRu
         statusLabel: run ? `${run.status} a${run.attempt}` : status,
         executionCount: executionCounts.get(id) ?? 0,
         approvalPrompt: approvalPrompt(node, run?.state),
+        inputPrompt: inputPrompt(node, run?.state),
         running: status === "running" || status === "queued",
         status,
         protected: kind === "start" || kind === "end" || kind === "fail",
@@ -831,8 +834,11 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
     case "map":
       node.parameters = { items: [], target: nodeRef("end"), concurrency: 1 };
       break;
-    case "emit":
-      node.parameters = { event_type: "workflow.event", data: {} };
+    case "output":
+      node.parameters = { event_type: "workflow.output", data: {} };
+      break;
+    case "input":
+      node.parameters = { prompt: "Provide input" };
       break;
     case "config":
       node.parameters = { name: "", metadata: {} };
@@ -1704,8 +1710,10 @@ function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): stri
       const parts = ["body", "catch", "finally"].filter((key) => nodeRefId(parameters[key]));
       return parts.length ? `Try (${parts.join(", ")})` : "Try";
     }
-    case "emit":
-      return `Emit ${describeValue(parameters.event_type) || "workflow.event"}`;
+    case "output":
+      return `Output ${describeValue(parameters.event_type) || "workflow.output"}`;
+    case "input":
+      return describeValue(parameters.prompt) || "Input";
     case "config":
       return describeValue(parameters.name) || "Config";
     case "subflow": {
@@ -1728,6 +1736,11 @@ function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): stri
 function approvalPrompt(node: JsonRecord, state?: JsonRecord): string | undefined {
   if (workflowNodeKind(node.kind) !== "approval") return undefined;
   return describeValue(state?.prompt ?? state?.approval?.prompt ?? node.parameters?.prompt) || "Approval required";
+}
+
+function inputPrompt(node: JsonRecord, state?: JsonRecord): string | undefined {
+  if (workflowNodeKind(node.kind) !== "input") return undefined;
+  return describeValue(state?.input?.prompt ?? node.parameters?.prompt) || "Input required";
 }
 
 function firstAvailableTransition(node: JsonRecord): WorkflowDirectTransitionKey {

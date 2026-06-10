@@ -9,7 +9,8 @@ use crate::keys::{
     EXPR_ADD, EXPR_ARGS, EXPR_CALL, EXPR_COALESCE, EXPR_CONCAT, EXPR_DIV, EXPR_ELSE, EXPR_IF,
     EXPR_LAMBDA, EXPR_LITERAL, EXPR_MOD, EXPR_MUL, EXPR_NEG, EXPR_NODE, EXPR_REF, EXPR_SUB,
     EXPR_THEN, EXPR_TO_JSON_STRING, EXPR_TO_STRING, EXPR_VALUE, LAMBDA_BODY, LAMBDA_PARAMS,
-    REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
+    REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PARAMS, REF_PREV, REF_STEPS,
+    REF_WORKFLOW,
 };
 use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
 
@@ -811,7 +812,7 @@ pub(crate) fn parse_value_ref(value: &Value) -> Result<WorkflowValueRef, Workflo
     {
         return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
     }
-    if let Some(path) = object.get(REF_INPUT) {
+    if let Some(path) = object.get(REF_PARAMS) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Input,
             path: parse_path(path)?,
@@ -925,7 +926,7 @@ pub(crate) fn serialize_value_ref(reference: &WorkflowValueRef) -> Value {
             .collect(),
     );
     match &reference.source {
-        WorkflowRefSource::Input => runinator_models::json!({ (REF_INPUT): path }),
+        WorkflowRefSource::Input => runinator_models::json!({ (REF_PARAMS): path }),
         WorkflowRefSource::Prev => runinator_models::json!({ (REF_PREV): path }),
         WorkflowRefSource::Workflow => runinator_models::json!({ (REF_WORKFLOW): path }),
         WorkflowRefSource::Config => runinator_models::json!({ (REF_CONFIG): path }),

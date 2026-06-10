@@ -7,7 +7,8 @@
 // offending sub-expression (a bad operand, a missing field, an unknown reference) is the unit
 // of blame. statement-level findings (duplicate/reserved ids, transition targets, reachability)
 // still use the statement span. the one remaining coarseness is per-`PathSeg`: a whole dotted
-// path shares one span, so `input.b.c` blames the path, not the `b` segment — a future refinement.
+// path shares one span, so `params.b.c` blames the path, not the `b` segment — a future
+// refinement.
 
 mod functions;
 mod reachability;

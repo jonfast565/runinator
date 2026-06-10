@@ -3,7 +3,7 @@ use super::transitions::transition_from_node;
 use super::*;
 use runinator_models::json;
 
-pub(super) async fn process_emit_node<T: DatabaseImpl>(
+pub(super) async fn process_output_node<T: DatabaseImpl>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -16,7 +16,7 @@ pub(super) async fn process_emit_node<T: DatabaseImpl>(
             node.parameters.clone().into(),
         )
         .await?;
-    let params = runinator_workflows::parse_emit_parameters(node)
+    let params = runinator_workflows::parse_output_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let context = runtime_context(db, workflow_run, node_runs).await;
     let data = runinator_workflows::resolve_value_refs(&params.data, &context)
@@ -24,9 +24,9 @@ pub(super) async fn process_emit_node<T: DatabaseImpl>(
     let event_type = params
         .event_type
         .as_deref()
-        .unwrap_or("workflow.event")
+        .unwrap_or("workflow.output")
         .to_string();
-    let message = format!("Emitted {}", event_type);
+    let message = format!("Output {}", event_type);
     db.create_automation_record(
         "automation_events".into(),
         json!({
@@ -35,7 +35,7 @@ pub(super) async fn process_emit_node<T: DatabaseImpl>(
             "provider": "runinator",
             "resource_type": "automation_event",
             "external_id": node_run.id,
-            "status": "emitted",
+            "status": "output_recorded",
             "event_type": event_type.clone(),
             "message": message,
             "metadata": {
@@ -46,7 +46,7 @@ pub(super) async fn process_emit_node<T: DatabaseImpl>(
         }),
     )
     .await?;
-    let output = EmitOutput {
+    let output = OutputPayload {
         event_type: params.event_type,
         data,
     };
@@ -57,7 +57,7 @@ pub(super) async fn process_emit_node<T: DatabaseImpl>(
         &node_run,
         WorkflowStatus::Succeeded,
         Some(output.to_wire_value()?),
-        Some("emit_recorded".into()),
+        Some("output_recorded".into()),
         node_runs,
     )
     .await?;

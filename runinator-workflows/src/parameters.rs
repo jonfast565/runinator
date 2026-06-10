@@ -8,9 +8,9 @@ use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_value_ref;
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
-    ApprovalParameters, BranchPolicy, EmitParameters, JoinParameters, LoopParameters,
-    MapParameters, ParallelParameters, RaceParameters, SwitchCase, SwitchParameters, TryParameters,
-    WaitParameters, WorkflowValueRef,
+    ApprovalParameters, BranchPolicy, InputParameters, JoinParameters, LoopParameters,
+    MapParameters, OutputParameters, ParallelParameters, RaceParameters, SwitchCase,
+    SwitchParameters, TryParameters, WaitParameters, WorkflowValueRef,
 };
 
 pub fn parse_switch_parameters(
@@ -137,13 +137,24 @@ pub fn parse_race_parameters(
     Ok(RaceParameters { branches, winner })
 }
 
-pub fn parse_emit_parameters(
+pub fn parse_output_parameters(
     node: &WorkflowNode,
-) -> Result<EmitParameters, WorkflowValidationError> {
+) -> Result<OutputParameters, WorkflowValidationError> {
     let object = parameter_object(node)?;
     let event_type = optional_string(object.get("event_type"));
     let data = object.get("data").cloned().unwrap_or(Value::Null);
-    Ok(EmitParameters { event_type, data })
+    Ok(OutputParameters { event_type, data })
+}
+
+pub fn parse_input_parameters(node: &WorkflowNode) -> InputParameters {
+    let object = parameter_object(node);
+    let prompt = object
+        .ok()
+        .and_then(|object| object.get("prompt"))
+        .and_then(Value::as_str)
+        .map(|prompt| prompt.trim().to_string())
+        .filter(|prompt| !prompt.is_empty());
+    InputParameters { prompt }
 }
 
 /// parse a wait node's `wait` config. all fields default, so non-object configs are tolerated.
@@ -236,8 +247,11 @@ pub(crate) fn validate_control_node_parameters(
         WorkflowNodeKind::Race => {
             parse_race_parameters(node)?;
         }
-        WorkflowNodeKind::Emit => {
-            parse_emit_parameters(node)?;
+        WorkflowNodeKind::Output => {
+            parse_output_parameters(node)?;
+        }
+        WorkflowNodeKind::Input => {
+            let _ = parse_input_parameters(node);
         }
         _ => {}
     }

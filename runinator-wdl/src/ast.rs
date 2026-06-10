@@ -39,6 +39,7 @@ pub struct FnParam {
 pub struct Workflow {
     pub name: String,
     pub version: Option<SemVer>,
+    /// top-level workflow parameters, surfaced in source as `params { ... }`.
     pub input: Option<TypeExpr>,
     /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
     /// action calls by `...name` spreads during desugaring.
@@ -63,7 +64,7 @@ pub struct TypeDecl {
 }
 
 /// a header `trigger cron <schedule> (with <params>)?` declaration. `schedule` is a string
-/// expression (the cron expression); `params` is the optional run input object.
+/// expression (the cron expression); `params` is the optional run parameter object.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TriggerDecl {
     pub schedule: Expr,
@@ -111,7 +112,8 @@ pub enum StmtKind {
     Compute(ComputeStmt),
     Subflow(SubflowStmt),
     Wait(WaitStmt),
-    Emit(EmitStmt),
+    Output(OutputStmt),
+    Input(InputStmt),
     Approval(ApprovalStmt),
     Config(ConfigStmt),
     Fail(Option<Expr>),
@@ -228,9 +230,14 @@ pub enum WaitAmount {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EmitStmt {
+pub struct OutputStmt {
     pub event_type: Option<String>,
     pub data: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputStmt {
+    pub prompt: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -360,7 +367,7 @@ pub enum ExprKind {
         language: String,
         content: String,
     },
-    /// a dotted reference: `input.a.b`, `prev.x`, `run.id`, `<binding>.field`.
+    /// a dotted reference: `params.a.b`, `prev.x`, `run.id`, `<binding>.field`.
     Path(Vec<PathSeg>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
@@ -531,7 +538,7 @@ pub struct TypeField {
     pub name: String,
     pub optional: bool,
     pub ty: TypeExpr,
-    /// an optional default expression, only present on top-level `input { }` fields. when set the
-    /// field is effectively optional and the expression fills it at run start if omitted.
+    /// an optional default expression, only present on top-level workflow parameter fields. when
+    /// set the field is effectively optional and the expression fills it at run start if omitted.
     pub default: Option<Expr>,
 }

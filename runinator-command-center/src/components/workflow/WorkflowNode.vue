@@ -39,15 +39,23 @@
       <div class="node-title">{{ data.title }}</div>
       <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
     </template>
-    <div v-if="isWaiting && data.approvalPrompt" class="node-prompt">{{ data.approvalPrompt }}</div>
+    <div v-if="isWaiting && (data.approvalPrompt || data.inputPrompt)" class="node-prompt">{{ data.approvalPrompt || data.inputPrompt }}</div>
     <div v-if="isNodeRunning" class="node-loader">
       <div class="spinner"></div>
     </div>
 
-    <div v-if="isWaiting && !data.readOnly && !submitting" class="node-actions">
+    <div v-if="isWaiting && isApprovalPending && !data.readOnly && !submitting" class="node-actions">
       <button class="node-btn approve" @click.stop="onApprove">Approve</button>
       <button class="node-btn reject" @click.stop="onReject">Reject</button>
     </div>
+
+    <form v-else-if="isWaiting && isInputPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSubmitInput">
+      <textarea v-model="inputDraft" rows="5" spellcheck="false" placeholder="Enter JSON input"></textarea>
+      <div class="node-actions">
+        <button class="node-btn approve" type="submit">Submit</button>
+      </div>
+      <div v-if="inputError" class="node-input-error">{{ inputError }}</div>
+    </form>
 
     <div v-if="submitting" class="node-loader">
       <div class="spinner"></div>
@@ -85,8 +93,10 @@ import { useWorkflowsStore } from "../../stores/workflows";
 import { useResourcesStore } from "../../stores/resources";
 import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
+import { isInputWaitingStatus } from "../../utils/inputs";
 import { statusClassForNode } from "../../utils/status";
 import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
+import { resolveWorkflowInput } from "../../api/commandCenterApi";
 import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import Icon from "../shared/Icon.vue";
 
@@ -106,6 +116,7 @@ const props = defineProps<{
     statusLabel?: string;
     executionCount?: number;
     approvalPrompt?: string;
+    inputPrompt?: string;
     running?: boolean;
     status?: string;
     protected?: boolean;
@@ -122,11 +133,15 @@ const app = useAppStore();
 const submitting = ref(false);
 const inlineId = ref(props.id);
 const inlineValue = ref(props.data.inlineEdit?.value ?? "");
+const inputDraft = ref("{}");
+const inputError = ref("");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
 const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
 const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
+const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
+const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
 
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
@@ -135,7 +150,7 @@ const isNodeRunning = computed(() => {
 });
 
 const isWaiting = computed(() => {
-  return isApprovalWaitingStatus(props.data.status);
+  return isApprovalPending.value || isInputPending.value;
 });
 
 const isDebugActive = computed(() => {
@@ -160,6 +175,17 @@ watch(() => [props.id, props.data.inlineEdit?.value], () => {
   inlineId.value = props.id;
   inlineValue.value = props.data.inlineEdit?.value ?? "";
 });
+
+watch(
+  () => [props.id, workflows.workflowRunDetail?.nodes?.filter((node) => node.node_id === props.id).at(-1)?.status],
+  () => {
+    const nodeRun = workflows.workflowRunDetail?.nodes.filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status)).at(-1);
+    if (!nodeRun) return;
+    inputDraft.value = formatInputDraft(nodeRun.output_json ?? nodeRun.state?.input ?? {});
+    inputError.value = "";
+  },
+  { immediate: true }
+);
 
 function semanticHandleStyle(index: number, total: number) {
   return { right: "0", top: `${semanticHandleTop(index, total)}%` };
@@ -204,6 +230,36 @@ async function resolveApproval(action: ApprovalAction) {
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;
+  }
+}
+
+async function onSubmitInput() {
+  const detail = workflows.workflowRunDetail;
+  if (!detail) return app.setError("No workflow run selected");
+  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status)).at(-1);
+  if (!nodeRun) return app.setError(`No pending input found for workflow node ${props.id}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(inputDraft.value || "null");
+    inputError.value = "";
+  } catch (err) {
+    inputError.value = String(err);
+    return;
+  }
+  submitting.value = true;
+  try {
+    await app.runOperation(`Submitting input for ${props.id}`, () => resolveWorkflowInput(nodeRun.id, parsed, undefined, "Input submitted"));
+    await workflows.fetchWorkflowRunDetail(detail.run.id);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function formatInputDraft(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return "{}";
   }
 }
 </script>

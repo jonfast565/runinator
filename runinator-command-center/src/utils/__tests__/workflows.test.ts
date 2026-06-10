@@ -237,14 +237,14 @@ describe("workflow graph utils", () => {
           { id: "guard", kind: "try", parameters: { body: { "$node": "body" }, catch: { "$node": "recover" }, finally: { "$node": "cleanup" } } },
           { id: "batch", kind: "map", parameters: { target: { "$node": "item" } } },
           { id: "race", kind: "race", parameters: { branches: [{ "$node": "fast" }, { "$node": "slow" }] } },
-          { id: "a", kind: "emit" },
-          { id: "b", kind: "emit" },
-          { id: "body", kind: "emit" },
-          { id: "recover", kind: "emit" },
-          { id: "cleanup", kind: "emit" },
-          { id: "item", kind: "emit" },
-          { id: "fast", kind: "emit" },
-          { id: "slow", kind: "emit" },
+          { id: "a", kind: "output" },
+          { id: "b", kind: "output" },
+          { id: "body", kind: "output" },
+          { id: "recover", kind: "output" },
+          { id: "cleanup", kind: "output" },
+          { id: "item", kind: "output" },
+          { id: "fast", kind: "output" },
+          { id: "slow", kind: "output" },
           { id: "done", kind: "end" }
         ]
       }
@@ -278,7 +278,7 @@ describe("workflow graph utils", () => {
     const conditionNode = createWorkflowNode("condition", nodes);
     expect(conditionNode.transitions?.branches).toHaveLength(1);
     expect(createWorkflowNode("action", nodes)).toMatchObject({ kind: "action", action: { provider: "", function: "" }, retry: { max_attempts: 1 } });
-    for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "emit", "subflow"] as const) {
+    for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "output", "input", "subflow"] as const) {
       expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind, retry: { max_attempts: 1 } });
     }
   });
@@ -356,7 +356,7 @@ describe("workflow graph utils", () => {
               cases: [{ label: "premium", not_equals: "free", target: { "$node": "done" } }]
             }
           },
-          { id: "ok", kind: "emit" },
+          { id: "ok", kind: "output" },
           { id: "done", kind: "end" }
         ]
       }
@@ -396,7 +396,7 @@ describe("workflow graph utils", () => {
               branches: [{ when: { equals: true }, target: { "$node": "ok" } }]
             }
           },
-          { id: "ok", kind: "emit" },
+          { id: "ok", kind: "output" },
           { id: "fail", kind: "end" }
         ]
       }
@@ -428,8 +428,8 @@ describe("workflow graph utils", () => {
               default: { "$node": "b" }
             }
           },
-          { id: "a", kind: "emit" },
-          { id: "b", kind: "emit" },
+          { id: "a", kind: "output" },
+          { id: "b", kind: "output" },
           { id: "c", kind: "end" }
         ]
       }
@@ -482,7 +482,7 @@ describe("workflow graph utils", () => {
               ]
             }
           },
-          { id: "a", kind: "emit" },
+          { id: "a", kind: "output" },
           { id: "b", kind: "end" }
         ],
         ui: {
@@ -519,8 +519,8 @@ describe("workflow graph utils", () => {
           { id: "fanout", kind: "parallel", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
           { id: "race", kind: "race", parameters: { branches: [{ "$node": "a" }, { "$node": "b" }] } },
           { id: "join", kind: "join", parameters: { wait_for: [{ "$node": "a" }, { "$node": "b" }] } },
-          { id: "a", kind: "emit" },
-          { id: "b", kind: "emit" },
+          { id: "a", kind: "output" },
+          { id: "b", kind: "output" },
           { id: "c", kind: "end" }
         ]
       }
@@ -558,7 +558,7 @@ describe("workflow graph utils", () => {
               branches: [{ when: { equals: true }, target: { "$node": "ok" } }]
             }
           },
-          { id: "ok", kind: "emit" },
+          { id: "ok", kind: "output" },
           { id: "fail", kind: "end" }
         ]
       }
@@ -578,7 +578,7 @@ describe("workflow graph utils", () => {
       start: "missing_start",
       nodes: [
         { id: "task", kind: "action", action: { provider: "Unknown", function: "run", configuration: {} }, transitions: { next: { "$node": "missing" } } },
-        { id: "task", kind: "emit", parameters: { data: { "$ref": { node: "missing" } } } },
+        { id: "task", kind: "output", parameters: { data: { "$ref": { node: "missing" } } } },
         { id: "guard", kind: "condition", transitions: { branches: [{ when: { value: "{{legacy}}" } }] } },
         { id: "route", kind: "switch", parameters: { cases: [{ equals: true }] } }
       ]
@@ -762,10 +762,10 @@ describe("workflow graph utils", () => {
     expect(nodes.find((node) => node.id === "end")?.class).toBe("node-success");
   });
 
-  it("renders emit nodes with the emit kind instead of fail", () => {
+  it("renders output nodes with the output kind instead of fail", () => {
     const nodes = buildGraphNodes({
       id: WORKFLOW_ID,
-      name: "emit check",
+      name: "output check",
       version: "1.0.0",
       enabled: true,
       input_type: { type: "struct", fields: {} },
@@ -773,16 +773,16 @@ describe("workflow graph utils", () => {
         start: "start",
         nodes: [
           { id: "start", kind: "start", transitions: {} },
-          { id: "emit_1", kind: "emit", parameters: { event_type: "workflow.event", data: {} }, transitions: {} },
+          { id: "output_1", kind: "output", parameters: { event_type: "workflow.output", data: {} }, transitions: {} },
           { id: "end", kind: "end" },
           { id: "fail", kind: "fail" }
         ]
       }
     }, null);
 
-    expect(nodes.find((node) => node.id === "emit_1")?.data).toMatchObject({
-      kind: "emit",
-      title: "emit_1"
+    expect(nodes.find((node) => node.id === "output_1")?.data).toMatchObject({
+      kind: "output",
+      title: "output_1"
     });
     expect(nodes.find((node) => node.id === "fail")?.data).toMatchObject({ kind: "fail" });
   });

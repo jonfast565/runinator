@@ -18,6 +18,7 @@ resources:
 patches:
   - path: resources-patch.yaml
   - path: autoscaling-patch.yaml
+  - path: aws-creds-patch.yaml
 
 # Default image refs are local dev tags. build.ps1 -DeployKube renders matching
 # tags into a copied overlay under target/k8s-render before applying.

@@ -260,7 +260,7 @@
       <line x1="9" y1="3" x2="15" y2="3" />
       <line x1="12" y1="3" x2="12" y2="6" />
     </template>
-    <template v-else-if="name === 'emit'">
+    <template v-else-if="name === 'output' || name === 'emit'">
       <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
       <path d="M8 8a5.6 5.6 0 0 0 0 8" />
       <path d="M16 8a5.6 5.6 0 0 1 0 8" />
@@ -286,7 +286,7 @@ export type IconName =
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
   | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
   | "bolt" | "clock" | "branch" | "switch" | "loop" | "parallel" | "join"
-  | "shield" | "grid" | "race" | "emit";
+  | "shield" | "grid" | "race" | "emit" | "output";
 
 const props = withDefaults(
   defineProps<{ name: IconName | string; size?: number | string; strokeWidth?: number | string }>(),

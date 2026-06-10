@@ -142,7 +142,7 @@ fn assert_round_trips(src: &str) {
 
 /// like `assert_round_trips`, but compares the node *set* rather than array order. node order
 /// carries no execution meaning (the graph is followed via `start` + transitions), and a
-/// decompiler that re-nests branches legitimately emits nodes in a different order.
+/// decompiler that re-nests branches legitimately renders nodes in a different order.
 fn assert_round_trips_unordered(src: &str) {
     let first = compile(src);
     let wdl = decompile(&first).expect("decompile");
@@ -397,23 +397,23 @@ fn decompile_renders_back_edge_as_arrow_without_panicking() {
 
 #[test]
 fn format_normalizes_wdl_source() {
-    let src = r#"workflow "Fmt"   v1{input{jira:{base_url:string,email?:string}, "odd-key": map<string[]>, fallback?: string, enabled: boolean, retry: integer, transitions:{done:string,in_progress:string,in_review:string}}
-@skip let first: { output: string, status: string, items: string[] } = console.run(command:"echo ${input.jira.base_url}"++(input.fallback??"none"), transitions:{done:"done",in_progress:"progress",in_review:"review"}).timeout(30s).retry(2).tags("ci","fmt").mcp()
+    let src = r#"workflow "Fmt"   v1{params{jira:{base_url:string,email?:string}, "odd-key": map<string[]>, fallback?: string, enabled: boolean, retry: integer, transitions:{done:string,in_progress:string,in_review:string}}
+@skip let first: { output: string, status: string, items: string[] } = console.run(command:"echo ${params.jira.base_url}"++(params.fallback??"none"), transitions:{done:"done",in_progress:"progress",in_review:"review"}).timeout(30s).retry(2).tags("ci","fmt").mcp()
 fail -> cleanup
 timeout -> fail
-if input.enabled==true&&exists first.output{emit "ready"{value:first.output}}else{wait 5s}
-match first.status{"ok"->console.run(command:"ok") when input.retry > 0 -> {console.run(command:"retry")} else -> fail "bad"}
+if params.enabled==true&&exists first.output{output "ready"{value:first.output}}else{wait 5s}
+match first.status{"ok"->console.run(command:"ok") when params.retry > 0 -> {console.run(command:"retry")} else -> fail "bad"}
 parallel{branch{console.run(command:"a")}branch{console.run(command:"b")}}join any
 try{console.run(command:"risky")}catch{console.run(command:"recover")}finally{console.run(command:"done")}
 race winner first_success{branch{console.run(command:"primary")}branch{console.run(command:"backup")}}
 map item in first.items concurrency 2{console.run(command:string(item))}
 let cleanup = console.run(command:"cleanup")
-jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.output,token:"secret",transition_id:input.transitions.in_progress).timeout(30s)
+jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.output,token:"secret",transition_id:params.transitions.in_progress).timeout(30s)
 }"#;
 
     let formatted = format_str(src).expect("format");
     let expected = r#"workflow "Fmt" v1.0.0 {
-    input {
+    params {
         jira: {
             base_url: string,
             email?: string
@@ -431,7 +431,7 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
 
     @skip
     let first: { output: string, status: string, items: string[] } = console.run(
-        command: "echo ${input.jira.base_url}" ++ (input.fallback ?? "none"),
+        command: "echo ${params.jira.base_url}" ++ (params.fallback ?? "none"),
         transitions: {
             done: "done",
             in_progress: "progress",
@@ -444,8 +444,8 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
         .mcp()
         fail -> cleanup
         timeout -> fail
-    if input.enabled == true && exists first.output {
-        emit "ready" {
+    if params.enabled == true && exists first.output {
+        output "ready" {
             value: first.output
         }
     } else {
@@ -457,7 +457,7 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
                 command: "ok"
             )
         }
-        when input.retry > 0 -> {
+        when params.retry > 0 -> {
             console.run(
                 command: "retry"
             )
@@ -512,11 +512,11 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
         command: "cleanup"
     )
     jira.transition(
-        base_url: input.jira.base_url,
-        email: input.jira.email,
+        base_url: params.jira.base_url,
+        email: params.jira.email,
         key: first.output,
         token: "secret",
-        transition_id: input.transitions.in_progress
+        transition_id: params.transitions.in_progress
     )
         .timeout(30s)
 }
@@ -533,13 +533,13 @@ jira.transition(base_url:input.jira.base_url,email:input.jira.email,key:first.ou
 }
 
 #[test]
-fn format_parenthesizes_eventless_scalar_emit() {
+fn format_parenthesizes_eventless_scalar_output() {
     // an event-less scalar payload must keep its parens through formatting, otherwise it would
     // be re-parsed as the event type and silently lose the payload.
-    let src = r#"workflow "E" { emit ("ready") }"#;
+    let src = r#"workflow "E" { output ("ready") }"#;
     let formatted = format_str(src).expect("format");
     assert!(
-        formatted.contains("emit (\"ready\")"),
+        formatted.contains("output (\"ready\")"),
         "parens preserved:\n{formatted}"
     );
     assert_eq!(format_str(&formatted).expect("format twice"), formatted);
@@ -590,10 +590,10 @@ fn round_trips_concurrency() {
 fn round_trips_sdlc() {
     let src = r#"
         workflow "Core Team SDLC Pipeline" v1 {
-            input {
+            params {
                 jira: { base_url: string, email: string, token: string, jql: string }
             }
-            let tickets = jira.search(jql: input.jira.jql).timeout(120s).retry(3)
+            let tickets = jira.search(jql: params.jira.jql).timeout(120s).retry(3)
             for ticket in tickets.issues limit 50 {
                 spawn "Ticket Work" reuse
                     as "Ticket Work: ${ticket.key}"
@@ -605,13 +605,22 @@ fn round_trips_sdlc() {
 }
 
 #[test]
+fn compiles_checked_in_sdlc_ticket_workflow() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../packs/sdlc/wdl/ticket-work.wdl");
+    let src = fs::read_to_string(&path).expect("read sdlc ticket workflow");
+    let definition = compile(&src);
+    assert_eq!(definition.name, "Ticket Work");
+}
+
+#[test]
 fn round_trips_expression_wait() {
     // wait can take a literal duration or an expression that yields seconds.
     let src = r#"
         workflow "DynWait" v1 {
-            input { poll: { interval: int } }
+            params { poll: { interval: int } }
             let seed = console.run(command: "seed")
-            wait input.poll.interval until "ready"
+            wait params.poll.interval until "ready"
             let done = console.run(command: "done")
         }
     "#;
@@ -926,7 +935,7 @@ fn dir_include_round_trips_through_formatter() {
 fn comparison_operators_lower_to_intrinsic_calls() {
     let src = r#"
         workflow "Cmp" v1 {
-            let go = console.run(le: input.x <= 1, eq: input.y == input.z, gt: input.a > 2)
+            let go = console.run(le: params.x <= 1, eq: params.y == params.z, gt: params.a > 2)
         }
     "#;
     let definition = compile(src);
@@ -946,7 +955,7 @@ fn comparison_operators_lower_to_intrinsic_calls() {
 fn ternary_lowers_to_if_form() {
     let src = r#"
         workflow "Tern" v1 {
-            let go = console.run(size: input.n <= 1 ? "small" : "big")
+            let go = console.run(size: params.n <= 1 ? "small" : "big")
         }
     "#;
     let definition = compile(src);
@@ -963,19 +972,19 @@ fn ternary_lowers_to_if_form() {
 
 #[test]
 fn ternary_round_trips_through_formatter() {
-    let src = "workflow \"Tern\" v1 {\n    let go = console.run(size: input.n <= 1 ? \"small\" : \"big\")\n}\n";
+    let src = "workflow \"Tern\" v1 {\n    let go = console.run(size: params.n <= 1 ? \"small\" : \"big\")\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(
-        formatted.contains("input.n <= 1 ? \"small\" : \"big\""),
+        formatted.contains("params.n <= 1 ? \"small\" : \"big\""),
         "{formatted}"
     );
 }
 
 #[test]
 fn comparison_round_trips_through_formatter() {
-    let src = "workflow \"Cmp\" v1 {\n    let go = console.run(flag: input.x >= 2)\n}\n";
+    let src = "workflow \"Cmp\" v1 {\n    let go = console.run(flag: params.x >= 2)\n}\n";
     let formatted = format_str(src).expect("format");
-    assert!(formatted.contains("input.x >= 2"), "{formatted}");
+    assert!(formatted.contains("params.x >= 2"), "{formatted}");
 }
 
 #[test]
@@ -1000,14 +1009,14 @@ fn round_trips_fanin_error_handlers_and_convergence() {
     // the decompiler's worklist + back-arrow handling for arbitrary fan-in.
     let src = r#"
         workflow "Fanin" v1 {
-            input { poll: { interval: integer } }
+            params { poll: { interval: integer } }
             let prepare = console.run(command: "prepare")
                 fail -> notify_failure
             let build = console.run(command: "build")
                 fail -> notify_failure
 
             until check.status == "passed" || check.status == "failed" limit 20 {
-                wait input.poll.interval
+                wait params.poll.interval
                 let check = console.run(command: "poll")
             }
 
@@ -1169,7 +1178,7 @@ fn round_trips_leaves() {
         workflow "Leaves" v1 {
             let probe = console.run(command: "probe")
             wait 30s until "ready"
-            emit "checked" { count: probe.count }
+            output "checked" { count: probe.count }
             approve "Ship it?" type "change_request" { env: "prod" }
         }
     "#;
@@ -1177,16 +1186,16 @@ fn round_trips_leaves() {
 }
 
 #[test]
-fn round_trips_scalar_emit_payloads() {
-    // emit payloads are arbitrary expressions, not just objects. an event-less scalar is
+fn round_trips_scalar_output_payloads() {
+    // output payloads are arbitrary expressions, not just objects. an event-less scalar is
     // parenthesized so it is not parsed as the event type.
     let src = r#"
         workflow "Payloads" {
             let probe = console.run(command: "probe")
-            emit "count" probe.count
-            emit "nums" [1, 2, 3]
-            emit ("ready")
-            emit (42)
+            output "count" probe.count
+            output "nums" [1, 2, 3]
+            output ("ready")
+            output (42)
         }
     "#;
     assert_round_trips(src);
@@ -1294,15 +1303,15 @@ fn switch_shorthand_conditions_decompile() {
 fn compiles_and_validates_sdlc() {
     let src = r#"
         workflow "Core Team SDLC Pipeline" v1 {
-            input {
+            params {
                 jira: { base_url: string, email: string, token: string, jql: string }
             }
 
             let tickets = jira.search(
-                base_url: input.jira.base_url,
-                email:    input.jira.email,
-                token:    input.jira.token,
-                jql:      input.jira.jql,
+                base_url: params.jira.base_url,
+                email:    params.jira.email,
+                token:    params.jira.token,
+                jql:      params.jira.jql,
             ).timeout(60s)
 
             for ticket in tickets.issues limit 50 {
@@ -1358,7 +1367,7 @@ fn compiles_control_flow() {
             if probe.count > 0 && probe.label contains "P0" {
                 console.run(command: "page")
             } else {
-                emit "skip" { }
+                output "skip" { }
             }
 
             match probe.mode {
@@ -1432,8 +1441,8 @@ fn rejects_unknown_input_field() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            input { a: string }
-            console.run(command: input.b)
+            params { a: string }
+            console.run(command: params.b)
         }
     "#,
     );
@@ -1445,8 +1454,8 @@ fn rejects_non_array_for_source() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            input { n: integer }
-            for x in input.n { console.run(command: "y") }
+            params { n: integer }
+            for x in params.n { console.run(command: "y") }
         }
     "#,
     );
@@ -1458,8 +1467,8 @@ fn rejects_unorderable_comparison() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            input { flag: boolean }
-            if input.flag > 0 { console.run(command: "y") }
+            params { flag: boolean }
+            if params.flag > 0 { console.run(command: "y") }
         }
     "#,
     );
@@ -1471,8 +1480,8 @@ fn rejects_loop_var_out_of_scope() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            input { items: string[] }
-            for x in input.items { console.run(command: "in") }
+            params { items: string[] }
+            for x in params.items { console.run(command: "in") }
             console.run(command: x)
         }
     "#,
@@ -1540,7 +1549,7 @@ fn compute_lambda_map_lowers_and_round_trips() {
     let src = r#"
         workflow "Map" v1 {
             compute {
-                let names = map(input.users, u => u.name)
+                let names = map(params.users, u => u.name)
                 return { names: names }
             }
         }
@@ -1567,7 +1576,7 @@ fn compute_lambda_filter_reduce_round_trip() {
     let src = r#"
         workflow "Pipe" v1 {
             compute {
-                let big = filter(input.xs, x => gt(x, 1))
+                let big = filter(params.xs, x => gt(x, 1))
                 let total = reduce(big, 0, (acc, x) => add(acc, x))
                 return { total: total }
             }
@@ -1583,7 +1592,7 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
 
         workflow "Fn" v1 {
             compute {
-                let total = fold_values(input.xs)
+                let total = fold_values(params.xs)
                 return total
             }
         }
@@ -1634,7 +1643,7 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
         serde_json::json!({
             "$call": "fold_values",
             "args": [
-                { "$ref": { "input": ["xs"] } },
+                { "$ref": { "params": ["xs"] } },
                 0
             ]
         })
@@ -1684,7 +1693,7 @@ fn compute_effectful_lowers_to_std_exec() {
     let src = r#"
         workflow "Fetch" v1 {
             compute {
-                let resp = http_get(input.url)
+                let resp = http_get(params.url)
                 return { status: resp.status }
             }
         }
@@ -1706,7 +1715,7 @@ fn compute_rejects_goto_in_effectful_block() {
     let src = r#"
         workflow "Bad" v1 {
             compute {
-                let resp = http_get(input.url)
+                let resp = http_get(params.url)
                 if resp.status > 0 { goto fail }
                 return resp
             }
@@ -1765,9 +1774,9 @@ fn compute_accepts_well_typed_program() {
     // a correctly typed program with annotations and a call result flows cleanly.
     let src = r#"
         workflow "Typed" v1 {
-            input { a: integer, b: integer }
+            params { a: integer, b: integer }
             compute {
-                let sum: number = add(input.a, input.b)
+                let sum: number = add(params.a, params.b)
                 return sum
             }
         }
@@ -1800,7 +1809,7 @@ fn compute_condition_allows_arithmetic_and_calls() {
     let pure_src = r#"
         workflow "PureCond" v1 {
             compute {
-                let total = input.a + input.b
+                let total = params.a + params.b
                 if total * 2 > 100 { goto fail }
                 return total
             }
@@ -1811,8 +1820,8 @@ fn compute_condition_allows_arithmetic_and_calls() {
     let call_src = r#"
         workflow "CallCond" v1 {
             compute {
-                if len(input.items) > 0 {
-                    return http_get(input.url)
+                if len(params.items) > 0 {
+                    return http_get(params.url)
                 }
                 return null
             }
@@ -1836,7 +1845,7 @@ fn compute_arithmetic_round_trips() {
     let src = r#"
         workflow "Math" v1 {
             compute {
-                let x = (input.a + input.b) * 2 - input.c
+                let x = (params.a + params.b) * 2 - params.c
                 return { x: x, y: add(x, 1), zs: [x, x * 2] }
             }
         }
@@ -1850,7 +1859,7 @@ fn declarative_pure_call_lowers_and_round_trips() {
     // it lowers to a `$call` and folds eagerly in the reducer.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(text: upper(input.name), count: len(input.items))
+            slack.send_message(text: upper(params.name), count: len(params.items))
         }
     "#;
     let definition = compile(src);
@@ -1872,7 +1881,7 @@ fn declarative_higher_order_call_round_trips() {
     // a higher-order call with a lambda is valid in a declarative argument and round-trips.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(ids: map(input.users, u => u.id))
+            slack.send_message(ids: map(params.users, u => u.id))
         }
     "#;
     let value = serde_json::to_value(&compile(src).definition).unwrap();
@@ -1901,7 +1910,7 @@ fn declarative_interpolation_allows_calls() {
     // string interpolation shares the one expression grammar, so a call works inside `${...}`.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(text: "hello ${upper(input.name)}")
+            slack.send_message(text: "hello ${upper(params.name)}")
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -1921,7 +1930,7 @@ fn postfix_access_on_call_lowers_to_at_and_round_trips() {
     // access syntax (not `at(...)`).
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(text: upper(split(input.csv, ",")[0]))
+            slack.send_message(text: upper(split(params.csv, ",")[0]))
         }
     "#;
     let value = serde_json::to_value(&compile(src).definition).unwrap();
@@ -1944,7 +1953,7 @@ fn method_call_desugars_receiver_first() {
     // `recv.method(args)` lowers to `method(recv, args...)`.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: input.name.upper())
+            slack.send_message(text: params.name.upper())
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -1956,7 +1965,7 @@ fn method_call_desugars_receiver_first() {
         .clone();
     assert_eq!(
         params,
-        serde_json::json!({ "$call": "upper", "args": [{ "$ref": { "input": ["name"] } }] })
+        serde_json::json!({ "$call": "upper", "args": [{ "$ref": { "params": ["name"] } }] })
     );
     assert_round_trips(src);
 }
@@ -1966,7 +1975,7 @@ fn fluent_chain_reads_left_to_right_and_round_trips() {
     // a multi-stage fluent pipeline nests into receiver-first calls.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(ids: input.xs.filter(x => gt(x, 1)).map(x => mul(x, 2)))
+            slack.send_message(ids: params.xs.filter(x => gt(x, 1)).map(x => mul(x, 2)))
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -1976,12 +1985,12 @@ fn fluent_chain_reads_left_to_right_and_round_trips() {
         .find(|n| n["kind"] == "action")
         .unwrap()["action"]["configuration"]["ids"]
         .clone();
-    // outermost call is `map`; its first arg is the `filter` call over the input ref.
+    // outermost call is `map`; its first arg is the `filter` call over the parameter ref.
     assert_eq!(params["$call"], "map");
     assert_eq!(params["args"][0]["$call"], "filter");
     assert_eq!(
         params["args"][0]["args"][0],
-        serde_json::json!({ "$ref": { "input": ["xs"] } })
+        serde_json::json!({ "$ref": { "params": ["xs"] } })
     );
     assert_round_trips(src);
 }
@@ -1991,7 +2000,7 @@ fn method_call_on_call_result_chains() {
     // `a(..).b(..)` — a method call whose receiver is itself a call result.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: split(input.csv, ",").join("-"))
+            slack.send_message(text: split(params.csv, ",").join("-"))
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -2012,7 +2021,7 @@ fn method_call_effectful_receiver_in_compute() {
     let src = r#"
         workflow "Fetch" v1 {
             compute {
-                let host = http_get(input.url).body.host
+                let host = http_get(params.url).body.host
                 return { host: host }
             }
         }
@@ -2033,7 +2042,7 @@ fn method_call_effectful_outside_compute_is_rejected() {
     // `url.http_get()` is the effectful `http_get(url)` — rejected in a declarative position.
     let src = r#"
         workflow "Bad" v1 {
-            slack.send_message(text: input.url.http_get())
+            slack.send_message(text: params.url.http_get())
         }
     "#;
     let message = expect_semantic_error(src);
@@ -2045,7 +2054,7 @@ fn path_field_named_like_method_still_works() {
     // a plain `.field` (no parens) named like a function stays a path field, not a call.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: input.map.value)
+            slack.send_message(text: params.map.value)
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -2057,7 +2066,7 @@ fn path_field_named_like_method_still_works() {
         .clone();
     assert_eq!(
         params,
-        serde_json::json!({ "$ref": { "input": ["map", "value"] } })
+        serde_json::json!({ "$ref": { "params": ["map", "value"] } })
     );
     assert_round_trips(src);
 }
@@ -2067,7 +2076,7 @@ fn postfix_access_on_path_folds_into_ref() {
     // chaining static keys onto a path stays a single `$ref`, not an `at` call.
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(id: input.items[0].name)
+            slack.send_message(id: params.items[0].name)
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -2090,7 +2099,7 @@ fn dynamic_index_lowers_to_at() {
     // a non-literal `[expr]` key never folds into a path; it indexes via `at`.
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(v: input.items[input.idx])
+            slack.send_message(v: params.items[params.idx])
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -2110,7 +2119,7 @@ fn effectful_postfix_access_in_compute_lowers_to_exec() {
     let src = r#"
         workflow "Fetch" v1 {
             compute {
-                let body = http_get(input.url).body
+                let body = http_get(params.url).body
                 return { body: body }
             }
         }
@@ -2137,7 +2146,7 @@ fn explicit_at_with_literal_key_is_preserved() {
     // path on recompile and change the graph. it stays an `at` call through a round trip.
     let src = r#"
         workflow "At" v1 {
-            slack.send_message(v: at(input.items, 0))
+            slack.send_message(v: at(params.items, 0))
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -2158,7 +2167,7 @@ fn effectful_postfix_access_outside_compute_is_rejected() {
     // the effectful call inside an access chain is still rejected in a declarative position.
     let src = r#"
         workflow "Bad" v1 {
-            slack.send_message(text: http_get(input.url))
+            slack.send_message(text: http_get(params.url))
         }
     "#;
     let message = expect_semantic_error(src);
@@ -2186,7 +2195,7 @@ fn declarative_effectful_call_in_condition_is_rejected() {
     // the same rule applies to declarative conditions.
     let src = r#"
         workflow "Inline" v1 {
-            if now() == input.deadline {
+            if now() == params.deadline {
                 slack.send_message(text: "ok")
             }
         }
@@ -2199,7 +2208,7 @@ fn declarative_effectful_call_in_condition_is_rejected() {
 fn round_trips_named_type_decls() {
     let src = r#"
         workflow "Typed" v1 {
-            input {
+            params {
                 cart: Cart
             }
             type Cart { subtotal: number, tax: number }
@@ -2214,10 +2223,10 @@ fn round_trips_named_type_decls() {
         wdl.contains("type Ids = integer[]"),
         "alias decl missing:\n{wdl}"
     );
-    // the input field references the declared name, not the expanded struct shape.
+    // the parameter field references the declared name, not the expanded struct shape.
     assert!(
         wdl.contains("cart: Cart"),
-        "named input ref missing:\n{wdl}"
+        "named parameter ref missing:\n{wdl}"
     );
 }
 
@@ -2243,7 +2252,7 @@ fn named_type_preserved_on_let_annotation() {
 fn named_type_resolves_in_input() {
     let src = r#"
         workflow "Typed" v1 {
-            input { cart: Cart }
+            params { cart: Cart }
             type Cart { subtotal: number, tax: number }
             console.run(command: "go")
         }
@@ -2286,28 +2295,28 @@ fn round_trips_let_type_annotation() {
 fn semantic_error_span_points_at_subexpression() {
     let src = r#"
         workflow "Bad" v1 {
-            input { a: string }
-            console.run(command: input.b)
+            params { a: string }
+            console.run(command: params.b)
         }
     "#;
     let (span, message) = expect_semantic(src);
     assert!(message.contains("unknown field 'b'"), "{message}");
     // the span is the path expression, not the whole statement.
-    assert_eq!(&src[span.start..span.end], "input.b", "span = {span:?}");
+    assert_eq!(&src[span.start..span.end], "params.b", "span = {span:?}");
 }
 
 #[test]
 fn unorderable_comparison_blames_the_operand() {
     let src = r#"
         workflow "Bad" v1 {
-            input { flag: boolean }
-            if input.flag > 0 { console.run(command: "y") }
+            params { flag: boolean }
+            if params.flag > 0 { console.run(command: "y") }
         }
     "#;
     let (span, message) = expect_semantic(src);
     assert!(message.contains("cannot order"), "{message}");
     // the left operand is blamed, not the enclosing if statement.
-    assert_eq!(&src[span.start..span.end], "input.flag", "span = {span:?}");
+    assert_eq!(&src[span.start..span.end], "params.flag", "span = {span:?}");
 }
 
 #[test]
@@ -2326,15 +2335,15 @@ fn unknown_reference_blames_the_path() {
 fn renders_semantic_error_with_caret() {
     let src = r#"
         workflow "Bad" v1 {
-            input { a: string }
-            console.run(command: input.b)
+            params { a: string }
+            console.run(command: params.b)
         }
     "#;
     let err = compile_str(src, &CompileOptions::default()).unwrap_err();
     let rendered = err.render(src);
     assert!(rendered.contains("error:"), "{rendered}");
     assert!(rendered.contains("^"), "{rendered}");
-    // `input.b` sits on the fourth line of the raw string literal.
+    // `params.b` sits on the fourth line of the raw string literal.
     assert!(rendered.contains("line 4"), "{rendered}");
 }
 
@@ -2342,9 +2351,9 @@ fn renders_semantic_error_with_caret() {
 fn analyze_source_reports_all_diagnostics() {
     let src = r#"
         workflow "Bad" v1 {
-            input { a: string }
-            console.run(command: input.b)
-            console.run(command: input.c)
+            params { a: string }
+            console.run(command: params.b)
+            console.run(command: params.c)
         }
     "#;
     let diagnostics = analyze_source(src).expect("parse");
@@ -2421,13 +2430,13 @@ fn completes_missing_action_arguments() {
     let response = complete_source(WdlCompletionRequest {
         source: r#"
         workflow "Complete" v1 {
-            jira.search(base_url: input.base, <>)
+            jira.search(base_url: params.base, <>)
         }
         "#
         .replace("<>", ""),
         cursor_byte: r#"
         workflow "Complete" v1 {
-            jira.search(base_url: input.base, <>)
+            jira.search(base_url: params.base, <>)
         }
         "#
         .find("<>")
@@ -2453,10 +2462,10 @@ fn completes_nested_input_fields() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            input {
+            params {
                 jira: { base_url: string, token: string }
             }
-            jira.search(base_url: input.jira.<>, token: input.jira.token, jql: "x")
+            jira.search(base_url: params.jira.<>, token: params.jira.token, jql: "x")
         }
     "#,
         "<>",
@@ -2471,7 +2480,7 @@ fn completes_provider_result_outputs() {
         r#"
         workflow "Complete" v1 {
             let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "tickets" { issues: tickets.<> }
+            output "tickets" { issues: tickets.<> }
         }
     "#,
         "<>",
@@ -2486,7 +2495,7 @@ fn explicit_binding_type_overrides_provider_results() {
         r#"
         workflow "Complete" v1 {
             let tickets: { custom: string } = jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "tickets" { value: tickets.<> }
+            output "tickets" { value: tickets.<> }
         }
     "#,
         "<>",
@@ -2502,7 +2511,7 @@ fn completes_loop_variable_fields_from_array_source() {
         workflow "Complete" v1 {
             let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
             for item in tickets.issues limit 10 {
-                emit "ticket" { key: item.<> }
+                output "ticket" { key: item.<> }
             }
         }
     "#,
@@ -2529,7 +2538,7 @@ fn suppresses_completion_inside_plain_string() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            emit "jira.<>"
+            output "jira.<>"
         }
     "#,
         "<>",
@@ -2542,7 +2551,7 @@ fn completes_run_context_fields() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            emit "run" { id: run.<> }
+            output "run" { id: run.<> }
         }
     "#,
         "<>",
@@ -2585,7 +2594,7 @@ fn completes_secret_scopes() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { token: secret.<> }
+            output "out" { token: secret.<> }
         }
     "#,
         "<>",
@@ -2603,7 +2612,7 @@ fn completes_secret_names_within_scope() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { token: secret.github.<> }
+            output "out" { token: secret.github.<> }
         }
     "#,
         "<>",
@@ -2621,7 +2630,7 @@ fn completes_config_scopes_separately_from_secrets() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { url: config.github.<> }
+            output "out" { url: config.github.<> }
         }
     "#,
         "<>",
@@ -2678,7 +2687,7 @@ fn parameter_defaults_use_typed_placeholders() {
 fn parses_kitchen_sink() {
     let src = r#"
         workflow "Kitchen Sink" v2 {
-            input {
+            params {
                 jira: { base_url: string, email: string, token: string, jql: string }
                 github?: { token: string }
                 shards: string[]
@@ -2687,12 +2696,12 @@ fn parses_kitchen_sink() {
             }
 
             let tickets = jira.search(
-                base_url: input.jira.base_url,
-                jql:      input.jira.jql,
+                base_url: params.jira.base_url,
+                jql:      params.jira.jql,
             ).timeout(60s).retry(3).tags("ci", "release").mcp()
 
-            if tickets.count > 0 && input.jira.jql contains "P0" {
-                emit "found" { count: tickets.count }
+            if tickets.count > 0 && params.jira.jql contains "P0" {
+                output "found" { count: tickets.count }
             } else if exists github.token {
                 console.run(command: "noop")
             } else {
@@ -2706,10 +2715,10 @@ fn parses_kitchen_sink() {
             }
             -> done
 
-            match input.payload.kind {
+            match params.payload.kind {
                 "fanout" -> { console.run(command: "a") }
-                when input.shards contains "x" -> console.run(command: "b")
-                else -> { emit "default" { } }
+                when params.shards contains "x" -> console.run(command: "b")
+                else -> { output "default" { } }
             }
 
             parallel {
@@ -2722,7 +2731,7 @@ fn parses_kitchen_sink() {
                 branch { console.run(command: "backup") }
             }
 
-            map shard in input.shards concurrency 4 {
+            map shard in params.shards concurrency 4 {
                 console.run(command: "reindex ${shard}")
             }
 
@@ -3076,17 +3085,17 @@ fn resugars_override_keeping_authored_order() {
     assert!(second.contains(r#"x: "from-arg", ...conn"#), "{second}");
 }
 
-// input parameter defaults --------------------------------------------------
+// parameter defaults --------------------------------------------------------
 
 #[test]
 fn input_default_literal_lowers_and_round_trips() {
     let src = r#"
         workflow "Defaults" v1 {
-            input {
+            params {
                 count: integer = 5
                 label: string = "hello"
             }
-            console.run(command: "go ${input.label}")
+            console.run(command: "go ${params.label}")
         }
     "#;
     let def = compile(src);
@@ -3109,12 +3118,12 @@ fn input_default_literal_lowers_and_round_trips() {
 fn input_default_expression_round_trips() {
     let src = r#"
         workflow "Defaults" v1 {
-            input {
+            params {
                 base: string = config.api.base_url
                 token: string = secret.api.token
                 full: string = config.api.base_url ++ "/v1"
             }
-            console.run(command: input.base)
+            console.run(command: params.base)
         }
     "#;
     let def = compile(src);
@@ -3133,11 +3142,11 @@ fn input_default_expression_round_trips() {
 fn open_input_struct_lowers_and_round_trips() {
     let src = r#"
         workflow "Open" v1 {
-            input {
+            params {
                 name: string
                 ...: integer
             }
-            console.run(command: input.name)
+            console.run(command: params.name)
         }
     "#;
     let def = compile(src);
@@ -3160,13 +3169,13 @@ fn rejects_input_default_referencing_prev() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            input { x: string = prev.foo }
-            console.run(command: input.x)
+            params { x: string = prev.foo }
+            console.run(command: params.x)
         }
     "#,
     );
     assert!(
-        message.contains("input default may only reference"),
+        message.contains("parameter default may only reference"),
         "{message}"
     );
 }
@@ -3175,12 +3184,12 @@ fn rejects_input_default_referencing_prev() {
 fn apply_input_defaults_fills_missing_fields() {
     let src = r#"
         workflow "Defaults" v1 {
-            input {
+            params {
                 count: integer = 5
-                label: string = "n-" ++ string(input.count)
+                label: string = "n-" ++ string(params.count)
                 provided: string
             }
-            console.run(command: input.label)
+            console.run(command: params.label)
         }
     "#;
     let def = compile(src);
@@ -3200,8 +3209,8 @@ fn apply_input_defaults_fills_missing_fields() {
 fn apply_input_defaults_synthesizes_input_when_absent() {
     let src = r#"
         workflow "Defaults" v1 {
-            input { greeting: string = "hi" }
-            console.run(command: input.greeting)
+            params { greeting: string = "hi" }
+            console.run(command: params.greeting)
         }
     "#;
     let def = compile(src);
@@ -3215,11 +3224,11 @@ fn apply_input_defaults_synthesizes_input_when_absent() {
 
 #[test]
 fn format_renders_input_defaults() {
-    let src = "workflow \"D\" v1 {\ninput {\ncount: integer = 5\nbase: string = config.x\n}\nconsole.run(command: input.base)\n}\n";
+    let src = "workflow \"D\" v1 {\nparams {\ncount: integer = 5\nbase: string = config.x\n}\nconsole.run(command: params.base)\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("count: integer = 5"), "{formatted}");
     assert!(formatted.contains("base: string = config.x"), "{formatted}");
-    // formatted source still compiles to the same input type.
+    // formatted source still compiles to the same parameter type.
     let a = compile(src);
     let b = compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");
     assert_eq!(a.input_type, b.input_type);
@@ -3274,7 +3283,7 @@ fn rejects_wdls_reference_value() {
 #[test]
 fn rejects_wdls_interpolated_value() {
     use crate::parse_secrets_str;
-    let err = parse_secrets_str("secret app.k = \"a-${input.x}\"\n").unwrap_err();
+    let err = parse_secrets_str("secret app.k = \"a-${params.x}\"\n").unwrap_err();
     let message = format!("{err}");
     assert!(message.contains("interpolate"), "{message}");
 }
@@ -3385,7 +3394,7 @@ fn rejects_non_literal_trigger_schedule() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            trigger cron input.schedule
+            trigger cron params.schedule
             Console.run(command: "x")
         }
     "#,

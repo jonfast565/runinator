@@ -187,6 +187,16 @@ pub struct WorkflowNodeRunStatusRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct WorkflowNodeRunInputRequest {
+    #[serde(default)]
+    pub output_json: Value,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WorkflowNodeRunExecutorClaimRequest {
     pub replica_id: Uuid,
     pub claimed_at: DateTime<Utc>,

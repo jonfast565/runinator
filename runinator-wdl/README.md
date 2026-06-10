@@ -11,7 +11,7 @@ The grammar in [`src/wdl.pest`](src/wdl.pest) is the canonical spec.
 ## Why
 
 The JSON model is precise but the control flow is invisible: every edge is a
-`{ "$node": "id" }`, every value is `{ "$ref": { "input": [...] } }`, every string is a
+`{ "$node": "id" }`, every value is `{ "$ref": { "params": [...] } }`, every string is a
 `{ "$concat": [...] }`, and conditions are nested objects. WDL makes the graph readable —
 sequence implies edges, blocks expand into control nodes, references are dotted paths,
 and conditions are infix.
@@ -20,13 +20,13 @@ and conditions are infix.
 
 ```
 workflow "Core Team SDLC Pipeline" v1 {
-    input {
+    params {
         jira: { base_url: string, email: string, token: string, jql: string }
     }
 
     let tickets = jira.search(
-        base_url: input.jira.base_url,
-        jql:      input.jira.jql,
+        base_url: params.jira.base_url,
+        jql:      params.jira.jql,
     ).timeout(60s)
 
     for ticket in tickets.issues limit 50 {
@@ -76,14 +76,14 @@ deploy()
 | `race winner first_success { branch {} }` | race |
 | `try { } catch { } finally { }` | try |
 
-**Expressions**: `input.x`, `prev.x`, `run.x`, `<binding>.x` (dotted refs); `"a ${x}"`
+**Expressions**: `params.x`, `prev.x`, `run.x`, `<binding>.x` (dotted refs); `"a ${x}"`
 or `a ++ b` (`$concat`); `a ?? b` (`$coalesce`); `string(x)` / `json(x)`; arithmetic
 (`+ - * / %`); standard-library calls (`upper(x)`, `len(xs)`, …) and higher-order calls with
 lambdas (`map(xs, x => x.id)`, `filter`, `reduce`); object/array literals.
 
 **Access chaining**: any value-producing expression can be followed by `.key` / `.0` (dot) or
 `[expr]` (bracket) access — `http_get(url).body`, `split(s, ",")[0]`, `(a ?? b).field`,
-`items[input.idx]`. On a plain reference this just extends the path (`input.items[0].name` is one
+`items[params.idx]`. On a plain reference this just extends the path (`params.items[0].name` is one
 `$ref`); on a call result, parenthesized expression, or object/array literal it lowers to the `at`
 intrinsic (missing key → null, mirroring path access). A `[expr]` key may be dynamic.
 
@@ -92,14 +92,14 @@ function call with the receiver as the first argument — `recv.f(a)` ≡ `f(rec
 standard-library intrinsic takes its subject first, pipelines read left-to-right:
 
 ```
-input.xs.filter(x => gt(x, 1)).map(x => mul(x, 2))   // == map(filter(input.xs, …), …)
-split(input.csv, ",").join("-")                       // == join(split(input.csv, ","), "-")
-input.name.upper()                                    // == upper(input.name)
+params.xs.filter(x => gt(x, 1)).map(x => mul(x, 2))   // == map(filter(params.xs, …), …)
+split(params.csv, ",").join("-")                       // == join(split(params.csv, ","), "-")
+params.name.upper()                                    // == upper(params.name)
 http_get(url).body.host                               // access + method chained
 ```
 
 A bare `.field` (no parentheses) stays a field/path access even when it shares a name with a
-function (`input.map.value` is a path), so the two never collide. Method calls decompile to the
+function (`params.map.value` is a path), so the two never collide. Method calls decompile to the
 canonical `f(recv, …)` function-call form.
 
 One expression grammar serves every position — action arguments, conditions, `${…}`
@@ -135,23 +135,23 @@ not read files.
 **Conditions**: `== != > >= < <=`, `contains`, `in`, `starts_with`, `ends_with`,
 `exists x`, `&&`, `||`, `!`.
 
-**Input typing**: `{ a: string, b?: integer, c: string[], d: map<string>, e: A | B }`
+**Parameter typing**: `{ a: string, b?: integer, c: string[], d: map<string>, e: A | B }`
 maps to `RuninatorType`. Open structs use `...: type`, e.g. `{ known: string, ...: any }`.
 
-**Input defaults**: a top-level input field may carry a default — `name: type = expr` — used
+**Parameter defaults**: a top-level parameter field may carry a default — `name: type = expr` — used
 when the field is omitted at run start:
 
 ```
-input {
+params {
     poll_interval: integer = 30
     base_url:      string  = config.api.base_url
-    label:         string  = "run-" ++ string(input.poll_interval)
+    label:         string  = "run-" ++ string(params.poll_interval)
     token:         string  = secret.api.token
 }
 ```
 
 The default is an ordinary expression (a literal, object/array, or a `config.*` / `run.*` /
-`secret.*` / sibling `input.*` reference; `prev` and step outputs are rejected since defaults run
+`secret.*` / sibling `params.*` reference; `prev` and step outputs are rejected since defaults run
 before any step). A defaulted field is implicitly optional. Defaults are evaluated lazily against
 the run context (after `config` resolves, with secrets left as `secret://` strings), filling only
 omitted fields and never overwriting a supplied value; one default may read another. They survive
@@ -172,7 +172,7 @@ workflow "Nightly" v1 {
 }
 ```
 
-The cron expression must be a string literal; the optional `with { … }` object is the run input.
+The cron expression must be a string literal; the optional `with { … }` object is the run parameters.
 `disabled` creates the trigger disabled, and `blackout` carries RFC3339 start/end timestamps.
 Triggers belong to their workflow, so they are carried inside the compiled definition
 (`definition.metadata.triggers`) and **materialized at import**: the web service replaces that
@@ -195,7 +195,7 @@ metadata, and re-emitted by the decompiler so it survives a round trip.
 workflow "Ticket Work" v1 {
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
-    let t = jira.transition(...jira_conn, key: input.ticket.key, transition_id: config.transitions.done)
+    let t = jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
 }
 ```
 
@@ -264,15 +264,15 @@ workflow "Hello" v1 {
 diagnostics anchor to source spans (`WdlError::Semantic { span, message }`). Spans are
 **expression-granular**: `Expr` and `Cond` carry their own spans, so a bad operand, a missing
 field, or an unknown reference is blamed precisely rather than the whole statement. (A dotted
-path still shares one span, so `input.a.b` blames the path, not the `b` segment.) It performs
+path still shares one span, so `params.a.b` blames the path, not the `b` segment.) It performs
 four checks:
 
 - **Name/reference resolution** — every path head (`input`/`prev`/`run`, an in-scope
   loop/map variable, or a declared step label) and every transition target must resolve.
 - **Scope correctness** — loop/map variables are only visible inside their body; duplicate
   or reserved (`start`/`end`/`fail`) node ids are rejected.
-- **Type checking** — reuses the `RuninatorType` algebra: `input.*` field access is checked
-  against the declared input type, `for`/`map` sources must be iterable, ordering
+- **Type checking** — reuses the `RuninatorType` algebra: `params.*` field access is checked
+  against the declared parameter type, `for`/`map` sources must be iterable, ordering
   comparisons need orderable operands, and `string(x)` rejects composite values. Action,
   subflow, `prev`, and `run` references are `any` (no provider metadata author-time), so
   references through them stay permissive.
@@ -291,7 +291,7 @@ pass runs again when decompiled WDL is recompiled, so a round trip stays semanti
 error: unknown field 'b' on 'input'
  --> line 4, column 34
   |
-4 |     console.run(command: input.b)
+4 |     console.run(command: params.b)
   |                          ^^^^^^^
 ```
 

@@ -67,7 +67,7 @@ pub fn lower_document(
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
-    // resolve named `type <Name>` declarations so they can be referenced by input/let types.
+    // resolve named `type <Name>` declarations so they can be referenced by parameter/let types.
     lowerer.resolve_type_decls(&workflow.type_decls)?;
     let end_id = lowerer.end_id.clone();
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
@@ -128,8 +128,9 @@ pub fn lower_document(
         }
         wdl.insert("type_decls".into(), Value::Object(decls));
     }
-    // surface-form overrides for top-level input fields whose type references a declared name, so
-    // `input { cart: Cart }` decompiles back to the name instead of the expanded struct shape.
+    // surface-form overrides for top-level workflow parameter fields whose type references a
+    // declared name, so `params { cart: Cart }` decompiles back to the name instead of the
+    // expanded struct shape.
     if let Some(TypeExpr::Struct { fields, .. }) = &workflow.input {
         let mut overrides = Map::new();
         for field in fields {
@@ -211,8 +212,9 @@ impl Lowerer {
         }
     }
 
-    /// lower the top-level `input { }` type, attaching each field's default expression. defaults
-    /// only exist on top-level input fields; nested struct fields go through plain type lowering.
+    /// lower the top-level workflow `params { }` type, attaching each field's default expression.
+    /// defaults only exist on top-level parameter fields; nested struct fields go through plain
+    /// type lowering.
     fn lower_input_type(
         &self,
         type_expr: &TypeExpr,
@@ -393,7 +395,8 @@ impl Lowerer {
             StmtKind::Compute(_) => "compute",
             StmtKind::Subflow(_) => "subflow",
             StmtKind::Wait(_) => "wait",
-            StmtKind::Emit(_) => "emit",
+            StmtKind::Output(_) => "output",
+            StmtKind::Input(_) => "input",
             StmtKind::Approval(_) => "approval",
             StmtKind::Config(_) => "config",
             StmtKind::Fail(_) => "fail_node",
@@ -415,7 +418,8 @@ impl Lowerer {
             StmtKind::Compute(compute) => self.lower_compute(compute, stmt, id, next),
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
-            StmtKind::Emit(emit) => self.lower_emit(emit, stmt, id, next),
+            StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
+            StmtKind::Input(input) => self.lower_input(input, stmt, id, next),
             StmtKind::Approval(approval) => self.lower_approval(approval, stmt, id, next),
             StmtKind::Config(config) => self.lower_config(config, stmt, id, next),
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
@@ -588,18 +592,18 @@ impl Lowerer {
         Ok(())
     }
 
-    fn lower_emit(
+    fn lower_output(
         &mut self,
-        emit: &EmitStmt,
+        output: &OutputStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
     ) -> Result<(), WdlError> {
         let mut params = Map::new();
-        if let Some(event_type) = &emit.event_type {
+        if let Some(event_type) = &output.event_type {
             params.insert("event_type".into(), Value::String(event_type.clone()));
         }
-        let data = match &emit.data {
+        let data = match &output.data {
             Some(data) => self.lower_expr(data)?,
             None => Value::Null,
         };
@@ -612,7 +616,30 @@ impl Lowerer {
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
-        self.push(node(id, "emit", fields));
+        self.push(node(id, "output", fields));
+        Ok(())
+    }
+
+    fn lower_input(
+        &mut self,
+        input: &InputStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        if let Some(prompt) = &input.prompt {
+            params.insert("prompt".into(), self.lower_expr(prompt)?);
+        }
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "next", next),
+            ),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "input", fields));
         Ok(())
     }
 

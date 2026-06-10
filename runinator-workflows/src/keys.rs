@@ -58,6 +58,7 @@ pub(crate) const STMT_ELSE: &str = "else";
 
 pub(crate) const REF_NODE: &str = "node";
 pub(crate) const REF_OUTPUT: &str = "output";
+pub(crate) const REF_PARAMS: &str = "params";
 pub(crate) const REF_INPUT: &str = "input";
 pub(crate) const REF_PREV: &str = "prev";
 pub(crate) const REF_WORKFLOW: &str = "workflow";

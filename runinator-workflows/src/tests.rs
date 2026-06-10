@@ -88,7 +88,7 @@ fn validates_subflow_target_by_id_or_name() {
 }
 
 #[test]
-fn rejects_old_reference_syntax() {
+fn rejects_string_value_reference_syntax() {
     let graph = WorkflowGraph::from_value(runinator_models::json!({
         "start": "start",
         "nodes": [
@@ -103,7 +103,7 @@ fn rejects_old_reference_syntax() {
         "start": "start",
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
-            { "id": "build", "kind": "emit", "parameters": { "data": { "$value": "input#/value" } }, "transitions": { "next": { "$node": "done" } } },
+            { "id": "build", "kind": "output", "parameters": { "data": { "$value": "params#/value" } }, "transitions": { "next": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -158,7 +158,7 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
                 { "id": "start", "kind": "start", "transitions": { "next": { "$node": "produce" } } },
                 {
                     "id": "produce",
-                    "kind": "emit",
+                    "kind": "output",
                     "parameters": {
                         "data": { "ok": true }
                     },
@@ -166,10 +166,10 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
                 },
                 {
                     "id": "consume",
-                    "kind": "emit",
+                    "kind": "output",
                     "parameters": {
                         "data": {
-                            "input": { "$ref": { "input": ["not_in_input_type"] } },
+                            "input": { "$ref": { "params": ["not_in_input_type"] } },
                             "output": { "$ref": { "node": "produce", "output": ["not_in_result_metadata"] } }
                         }
                     },
@@ -244,7 +244,7 @@ fn evaluates_conditions() {
     // logical all (and).
     let cond3 = runinator_models::json!({
         "all": [
-            { "value": { "$ref": { "input": ["env"] } }, "equals": "prod" },
+            { "value": { "$ref": { "params": ["env"] } }, "equals": "prod" },
             { "value": { "$ref": { "node": "check", "output": ["status"] } }, "equals": "ok" }
         ]
     });
@@ -253,7 +253,7 @@ fn evaluates_conditions() {
     // logical any (or).
     let cond4 = runinator_models::json!({
         "any": [
-            { "value": { "$ref": { "input": ["env"] } }, "equals": "dev" },
+            { "value": { "$ref": { "params": ["env"] } }, "equals": "dev" },
             { "value": { "$ref": { "node": "check", "output": ["count"] } }, "equals": 10 }
         ]
     });
@@ -272,14 +272,14 @@ fn evaluates_richer_conditions() {
     });
 
     for condition in [
-        runinator_models::json!({ "value": { "$ref": { "input": ["ticket"] } }, "starts_with": "ITP-" }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["ticket"] } }, "ends_with": "123" }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["ticket"] } }, "contains": "TP-1" }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["labels"] } }, "contains": "auto-implement" }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["fields"] } }, "contains": "priority" }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["ticket"] } }, "in": ["OPS-1", "ITP-123"] }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["score"] } }, "greater_than": 5 }),
-        runinator_models::json!({ "value": { "$ref": { "input": ["score"] } }, "less_than_or_equal": 7 }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["ticket"] } }, "starts_with": "ITP-" }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["ticket"] } }, "ends_with": "123" }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["ticket"] } }, "contains": "TP-1" }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["labels"] } }, "contains": "auto-implement" }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["fields"] } }, "contains": "priority" }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["ticket"] } }, "in": ["OPS-1", "ITP-123"] }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["score"] } }, "greater_than": 5 }),
+        runinator_models::json!({ "value": { "$ref": { "params": ["score"] } }, "less_than_or_equal": 7 }),
     ] {
         assert!(
             evaluate_condition(&condition, &context).unwrap(),
@@ -311,7 +311,7 @@ fn validates_node_transitions() {
                 "id": "a",
                 "kind": "condition",
                 "transitions": {
-                    "branches": [{ "when": { "value": { "$ref": { "input": ["foo"] } }, "equals": "bar" }, "target": { "$node": "b" } }],
+                    "branches": [{ "when": { "value": { "$ref": { "params": ["foo"] } }, "equals": "bar" }, "target": { "$node": "b" } }],
                     "next": { "$node": "c" }
                 }
             },
@@ -332,28 +332,28 @@ fn validates_rich_control_flow_node_targets() {
                 "id": "route",
                 "kind": "switch",
                 "parameters": {
-                    "value": { "$ref": { "input": ["mode"] } },
+                    "value": { "$ref": { "params": ["mode"] } },
                     "cases": [
                         { "equals": "fanout", "target": { "$node": "fanout" } },
                         { "equals": "batch", "target": { "$node": "batch" } }
                     ],
-                    "default": { "$node": "emit" }
+                    "default": { "$node": "output" }
                 }
             },
             { "id": "fanout", "kind": "parallel", "parameters": { "branches": [{ "$node": "check_a" }, { "$node": "check_b" }] } },
-            { "id": "check_a", "kind": "emit", "parameters": { "data": { "check": "a" } }, "transitions": { "next": { "$node": "joined" } } },
-            { "id": "check_b", "kind": "emit", "parameters": { "data": { "check": "b" } }, "transitions": { "next": { "$node": "joined" } } },
+            { "id": "check_a", "kind": "output", "parameters": { "data": { "check": "a" } }, "transitions": { "next": { "$node": "joined" } } },
+            { "id": "check_b", "kind": "output", "parameters": { "data": { "check": "b" } }, "transitions": { "next": { "$node": "joined" } } },
             { "id": "joined", "kind": "join", "parameters": { "wait_for": [{ "$node": "check_a" }, { "$node": "check_b" }], "mode": "all" }, "transitions": { "next": { "$node": "guarded" } } },
             { "id": "guarded", "kind": "try", "parameters": { "body": { "$node": "body" }, "catch": { "$node": "catch" }, "finally": { "$node": "finally" } }, "transitions": { "next": { "$node": "done" } } },
-            { "id": "body", "kind": "emit", "parameters": { "data": "body" }, "transitions": { "next": { "$node": "guarded" } } },
-            { "id": "catch", "kind": "emit", "parameters": { "data": "catch" }, "transitions": { "next": { "$node": "guarded" } } },
-            { "id": "finally", "kind": "emit", "parameters": { "data": "finally" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "body", "kind": "output", "parameters": { "data": "body" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "catch", "kind": "output", "parameters": { "data": "catch" }, "transitions": { "next": { "$node": "guarded" } } },
+            { "id": "finally", "kind": "output", "parameters": { "data": "finally" }, "transitions": { "next": { "$node": "guarded" } } },
             { "id": "batch", "kind": "map", "parameters": { "items": [1, 2], "target": { "$node": "map_item" }, "concurrency": 1 }, "transitions": { "next": { "$node": "race" } } },
-            { "id": "map_item", "kind": "emit", "parameters": { "data": { "$ref": { "workflow": ["state", "map", "item"] } } }, "transitions": { "next": { "$node": "batch" } } },
+            { "id": "map_item", "kind": "output", "parameters": { "data": { "$ref": { "workflow": ["state", "map", "item"] } } }, "transitions": { "next": { "$node": "batch" } } },
             { "id": "race", "kind": "race", "parameters": { "branches": [{ "$node": "fast" }, { "$node": "slow" }], "winner": "first_success" }, "transitions": { "next": { "$node": "done" } } },
-            { "id": "fast", "kind": "emit", "parameters": { "data": "fast" }, "transitions": { "next": { "$node": "race" } } },
-            { "id": "slow", "kind": "emit", "parameters": { "data": "slow" }, "transitions": { "next": { "$node": "race" } } },
-            { "id": "emit", "kind": "emit", "parameters": { "event_type": "workflow.routed", "data": { "ok": true } }, "transitions": { "next": { "$node": "done" } } },
+            { "id": "fast", "kind": "output", "parameters": { "data": "fast" }, "transitions": { "next": { "$node": "race" } } },
+            { "id": "slow", "kind": "output", "parameters": { "data": "slow" }, "transitions": { "next": { "$node": "race" } } },
+            { "id": "output", "kind": "output", "parameters": { "event_type": "workflow.routed", "data": { "ok": true } }, "transitions": { "next": { "$node": "done" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -392,7 +392,7 @@ fn rejects_invalid_map_concurrency() {
         "nodes": [
             { "id": "start", "kind": "start", "transitions": { "next": { "$node": "batch" } } },
             { "id": "batch", "kind": "map", "parameters": { "items": [], "target": { "$node": "item" }, "concurrency": 0 } },
-            { "id": "item", "kind": "emit", "parameters": { "data": null }, "transitions": { "next": { "$node": "batch" } } },
+            { "id": "item", "kind": "output", "parameters": { "data": null }, "transitions": { "next": { "$node": "batch" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -413,7 +413,7 @@ fn validates_loop_body_returning_to_loop_node() {
                 "id": "for_each_ticket",
                 "kind": "loop",
                 "parameters": {
-                    "items": { "$ref": { "input": ["tickets"] } }
+                    "items": { "$ref": { "params": ["tickets"] } }
                 },
                 "max_iterations": 50,
                 "transitions": {
@@ -423,7 +423,7 @@ fn validates_loop_body_returning_to_loop_node() {
             },
             {
                 "id": "process_ticket",
-                "kind": "emit",
+                "kind": "output",
                 "parameters": {
                     "data": { "$ref": { "node": "for_each_ticket", "output": ["item", "key"] } }
                 },
@@ -539,7 +539,7 @@ fn evaluates_switch_cases_and_default() {
             "id": "route",
             "kind": "switch",
             "parameters": {
-                "value": { "$ref": { "input": ["mode"] } },
+                "value": { "$ref": { "params": ["mode"] } },
                 "cases": [
                     { "equals": "fast", "target": { "$node": "fast_path" } },
                     { "equals": "slow", "target": { "$node": "slow_path" } }
@@ -735,7 +735,7 @@ fn typed_workflow(
                 "action": {
                     "provider": "typed",
                     "function": "make",
-                    "configuration": { "name": { "$ref": { "input": ["name"] } } }
+                    "configuration": { "name": { "$ref": { "params": ["name"] } } }
                 },
                 "transitions": { "on_success": { "$node": "checked" } }
             },
@@ -761,7 +761,7 @@ fn typed_validation_requires_known_input_paths() {
         runinator_models::json!({
             "id": "checked",
             "kind": "config",
-            "parameters": { "name": { "$ref": { "input": ["missing"] } } },
+            "parameters": { "name": { "$ref": { "params": ["missing"] } } },
             "transitions": { "next": { "$node": "done" } }
         }),
     );
@@ -870,7 +870,7 @@ fn typed_validation_requires_map_items_to_be_array() {
                 "id": "map",
                 "kind": "map",
                 "parameters": {
-                    "items": { "$ref": { "input": ["name"] } },
+                    "items": { "$ref": { "params": ["name"] } },
                     "target": { "$node": "done" }
                 },
                 "transitions": { "on_success": { "$node": "done" } }
@@ -1054,7 +1054,7 @@ fn typed_validation_reports_nested_literal_errors_inside_dynamic_configs() {
         "config": {
             "env": {
                 "API_KEY": 1,
-                "TOKEN": { "$ref": { "input": ["token"] } }
+                "TOKEN": { "$ref": { "params": ["token"] } }
             }
         }
     }));
@@ -1078,7 +1078,7 @@ fn typed_validation_reports_nested_dynamic_expression_type_errors() {
     )]));
     let mut wf = action_workflow(runinator_models::json!({
         "config": {
-            "branch": { "$ref": { "input": ["count"] } }
+            "branch": { "$ref": { "params": ["count"] } }
         }
     }));
     wf.input_type = RuninatorType::typed_structure([(
@@ -1147,7 +1147,7 @@ fn typed_validation_types_unconfigured_config_refs_as_any() {
 fn typed_validation_keeps_optional_field_refs_presence_only() {
     let provider = check_provider(RuninatorType::String);
     let mut wf = action_workflow(runinator_models::json!({
-        "config": { "$ref": { "input": ["maybe_name"] } }
+        "config": { "$ref": { "params": ["maybe_name"] } }
     }));
     wf.input_type = RuninatorType::typed_structure([(
         "maybe_name",
@@ -1164,7 +1164,7 @@ fn typed_validation_accepts_explicit_coalesce_defaults() {
     let mut wf = action_workflow(runinator_models::json!({
         "config": {
             "$coalesce": [
-                { "$ref": { "input": ["maybe_name"] } },
+                { "$ref": { "params": ["maybe_name"] } },
                 "fallback"
             ]
         }
@@ -1215,8 +1215,8 @@ fn accepts_concurrent_map_with_multi_node_body() {
                 "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
                 "transitions": { "on_success": { "$node": "done" } }
             },
-            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
-            { "id": "b", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "a", "kind": "output", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "b", "kind": "output", "transitions": { "on_success": { "$node": "map" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -1236,9 +1236,9 @@ fn rejects_concurrent_map_when_body_entered_from_outside() {
                 "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
                 "transitions": { "on_success": { "$node": "done" } }
             },
-            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
-            { "id": "b", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
-            { "id": "intruder", "kind": "emit", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "a", "kind": "output", "transitions": { "on_success": { "$node": "b" } } },
+            { "id": "b", "kind": "output", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "intruder", "kind": "output", "transitions": { "on_success": { "$node": "b" } } },
             { "id": "done", "kind": "end" }
         ]
     }));
@@ -1261,10 +1261,10 @@ fn rejects_concurrent_map_when_body_output_read_outside() {
                 "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
                 "transitions": { "on_success": { "$node": "combine" } }
             },
-            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "a", "kind": "output", "transitions": { "on_success": { "$node": "map" } } },
             {
                 "id": "combine",
-                "kind": "emit",
+                "kind": "output",
                 "parameters": { "data": { "$ref": { "node": "a", "output": ["data"] } } },
                 "transitions": { "on_success": { "$node": "done" } }
             },
@@ -1290,7 +1290,7 @@ fn rejects_concurrent_map_with_terminal_node_in_body() {
                 "parameters": { "items": [1, 2], "target": { "$node": "a" }, "concurrency": 2 },
                 "transitions": { "on_success": { "$node": "done" } }
             },
-            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "stop" } } },
+            { "id": "a", "kind": "output", "transitions": { "on_success": { "$node": "stop" } } },
             { "id": "stop", "kind": "end" },
             { "id": "done", "kind": "end" }
         ]
@@ -1314,10 +1314,10 @@ fn serial_map_skips_isolation_guardrail() {
                 "parameters": { "items": [1, 2], "target": { "$node": "a" } },
                 "transitions": { "on_success": { "$node": "combine" } }
             },
-            { "id": "a", "kind": "emit", "transitions": { "on_success": { "$node": "map" } } },
+            { "id": "a", "kind": "output", "transitions": { "on_success": { "$node": "map" } } },
             {
                 "id": "combine",
-                "kind": "emit",
+                "kind": "output",
                 "parameters": { "data": { "$ref": { "node": "a", "output": ["data"] } } },
                 "transitions": { "on_success": { "$node": "done" } }
             },

@@ -216,8 +216,8 @@ impl Decompiler<'_> {
         let object = reference
             .as_object()
             .ok_or_else(|| WdlError::Decompile("invalid $ref".into()))?;
-        if let Some(path) = object.get("input") {
-            return Ok(self.dotted("input", path));
+        if let Some(path) = object.get("params") {
+            return Ok(self.dotted("params", path));
         }
         if let Some(path) = object.get("prev") {
             return Ok(self.dotted("prev", path));

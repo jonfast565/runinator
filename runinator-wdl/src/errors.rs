@@ -35,10 +35,10 @@ impl Span {
 /// render a span against the source as a rustc-style caret snippet:
 ///
 /// ```text
-/// error: unknown field 'b' on 'input'
+/// error: unknown field 'b' on 'params'
 ///  --> line 4, column 34
 ///   |
-/// 4 |     console.run(command: input.b)
+/// 4 |     console.run(command: params.b)
 ///   |                          ^^^^^^^
 /// ```
 pub(crate) fn render_snippet(src: &str, span: Span, label: &str, message: &str) -> String {

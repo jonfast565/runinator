@@ -35,7 +35,8 @@ pub(super) struct Decompiler<'a> {
     // declared `let <id>: <type>` annotations recovered from graph metadata, kept as rendered wdl
     // type text so declared type-name references survive the round trip.
     declared_types: HashMap<String, String>,
-    // surface-form overrides for top-level input fields that reference a declared type name.
+    // surface-form overrides for top-level workflow parameter fields that reference a declared
+    // type name.
     input_types: HashMap<String, String>,
     // header alias declarations recovered from graph metadata, in declaration order.
     alias_decls: Vec<(String, Vec<Value>)>,
@@ -101,7 +102,7 @@ pub fn decompile_definition(
         definition.version
     ));
     decompiler.indent += 1;
-    decompiler.emit_input(&definition.input_type)?;
+    decompiler.emit_params(&definition.input_type)?;
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
@@ -183,7 +184,7 @@ fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// recover surface-form overrides for top-level input fields at `/wdl/input_types`.
+/// recover surface-form overrides for top-level workflow parameter fields at `/wdl/input_types`.
 fn read_input_types(metadata: &Value) -> HashMap<String, String> {
     let mut overrides = HashMap::new();
     let Some(entries) = metadata
@@ -256,14 +257,14 @@ impl<'a> Decompiler<'a> {
         self.out.push('\n');
     }
 
-    fn emit_input(&mut self, input_type: &RuninatorType) -> Result<(), WdlError> {
+    fn emit_params(&mut self, input_type: &RuninatorType) -> Result<(), WdlError> {
         let RuninatorType::Struct { fields, additional } = input_type else {
             return Ok(());
         };
         if fields.is_empty() && additional.is_none() {
             return Ok(());
         }
-        self.line("input {");
+        self.line("params {");
         self.indent += 1;
         for (name, field) in fields {
             // prefer a recorded surface form (which preserves a declared type name) over the
@@ -409,7 +410,8 @@ impl<'a> Decompiler<'a> {
                 WorkflowNodeKind::Action
                 | WorkflowNodeKind::Subflow
                 | WorkflowNodeKind::Wait
-                | WorkflowNodeKind::Emit
+                | WorkflowNodeKind::Output
+                | WorkflowNodeKind::Input
                 | WorkflowNodeKind::Approval
                 | WorkflowNodeKind::Config => {
                     let success = self.emit_leaf(node, stop)?;
@@ -589,7 +591,7 @@ impl<'a> Decompiler<'a> {
         };
 
         let transitions = &node.transitions;
-        // the happy path lives in `on_success` (action/subflow/approval) or `next` (wait/emit/
+        // the happy path lives in `on_success` (action/subflow/approval) or `next` (wait/output/
         // config); the populated field also names the explicit arrow keyword.
         let (succ_kw, success) = match (transitions.on_success.as_ref(), transitions.next.as_ref())
         {
@@ -661,7 +663,8 @@ impl<'a> Decompiler<'a> {
             }
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
-            WorkflowNodeKind::Emit => Ok((self.emit_text(node)?, false)),
+            WorkflowNodeKind::Output => Ok((self.output_text(node)?, false)),
+            WorkflowNodeKind::Input => Ok((self.input_text(node)?, false)),
             WorkflowNodeKind::Approval => Ok((self.approval_text(node)?, false)),
             WorkflowNodeKind::Config => Ok((self.config_text(node)?, false)),
             other => Err(WdlError::Decompile(format!("unexpected leaf {other:?}"))),
@@ -836,8 +839,8 @@ impl<'a> Decompiler<'a> {
         Ok(text)
     }
 
-    fn emit_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
-        let mut text = "emit".to_string();
+    fn output_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let mut text = "output".to_string();
         let event = node.parameters.get("event_type").and_then(Value::as_str);
         if let Some(event_type) = event {
             text.push_str(&format!(" {}", quote(event_type)));
@@ -855,6 +858,17 @@ impl<'a> Decompiler<'a> {
                     text.push_str(&format!(" ({rendered})"));
                 }
             }
+        }
+        Ok(text)
+    }
+
+    fn input_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let mut text = "input".to_string();
+        if let Some(prompt) = node.parameters.get("prompt")
+            && !matches!(prompt, Value::Null)
+        {
+            text.push(' ');
+            text.push_str(&self.expr(prompt)?);
         }
         Ok(text)
     }
@@ -1425,7 +1439,8 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
     matches!(
         kind,
         WorkflowNodeKind::Wait
-            | WorkflowNodeKind::Emit
+            | WorkflowNodeKind::Output
+            | WorkflowNodeKind::Input
             | WorkflowNodeKind::Approval
             | WorkflowNodeKind::Config
     )

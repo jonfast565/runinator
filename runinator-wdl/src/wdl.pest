@@ -8,7 +8,7 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 document = { SOI ~ func_def* ~ workflow ~ func_def* ~ EOI }
 
 // a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
-// signature and a single-expression body. params reuse the input-field shape (`name: type` with an
+// signature and a single-expression body. params reuse the parameter-field shape (`name: type` with an
 // optional `?` or `= default`).
 func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ expr }
 fn_recursive = { "@recursive" ~ "(" ~ "max_depth" ~ ":" ~ integer ~ ")" }
@@ -23,16 +23,16 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ input_block? ~ trigger_decl* ~ alias_decl* ~ type_decl* ~ start_decl? ~ stmt* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ trigger_decl* ~ alias_decl* ~ type_decl* ~ start_decl? ~ stmt* ~ "}" }
 
-// named type declarations, reusable for input/let typing. a struct shorthand (`type Cart { ... }`)
+// named type declarations, reusable for parameter/let typing. a struct shorthand (`type Cart { ... }`)
 // or an alias (`type Ids = int[]`). render-only surface: declared names resolve to RuninatorType
 // during lowering and the declarations ride in metadata so decompile can re-emit them.
 type_decl = { "type" ~ type_named ~ ( type_struct | ("=" ~ type_expr) ) }
 version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 
 // header trigger declarations. a `trigger cron "<expr>"` schedules runs of this workflow on the
-// cron expression; an optional `with { ... }` object supplies the run input. triggers belong to
+// cron expression; an optional `with { ... }` object supplies the run parameters. triggers belong to
 // their workflow, so they are carried inside the compiled definition and materialized on import.
 trigger_decl = { "trigger" ~ "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
 trigger_option = { trigger_disabled | trigger_blackout }
@@ -49,13 +49,14 @@ alias_decl = { "alias" ~ ident ~ "=" ~ object }
 // names the entry node directly, surfacing the otherwise-synthetic `start` node.
 start_decl = { "start" ~ "->" ~ target }
 
-// input typing -------------------------------------------------------------
+// parameter typing ----------------------------------------------------------
 
-// top-level input fields may carry a default: `name: type = expr`. the default is an ordinary
-// expression (literal, `input.*`/`config.*`/`run.*` ref, `secret.*`, object/array) evaluated at
-// run start when the field is omitted. nested struct fields (`type_field`) never take a default.
-input_block = { "input" ~ "{" ~ input_field* ~ type_additional? ~ "}" }
-input_field  = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ field_default? ~ ","? }
+// top-level workflow parameters may carry a default: `name: type = expr`. the default is an
+// ordinary expression (literal, `params.*`/`config.*`/`run.*` ref, `secret.*`, object/array)
+// evaluated at run start when the field is omitted. nested struct fields (`type_field`) never
+// take a default.
+params_block = { "params" ~ "{" ~ params_field* ~ type_additional? ~ "}" }
+params_field  = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ field_default? ~ ","? }
 field_default = { "=" ~ expr }
 
 type_field   = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ ","? }
@@ -94,7 +95,8 @@ stmt_body = {
   | race_stmt
   | map_stmt
   | wait_stmt
-  | emit_stmt
+  | output_stmt
+  | input_stmt
   | approval_stmt
   | config_stmt
   | fail_stmt
@@ -141,15 +143,16 @@ subflow_as   = { "as" ~ expr }
 subflow_with = { "with" ~ object }
 
 wait_stmt   = { "wait" ~ wait_amount ~ wait_until? ~ wait_initial? }
-// a literal duration (`30s`) or an expression yielding seconds (`input.poll.interval`).
+// a literal duration (`30s`) or an expression yielding seconds (`params.poll.interval`).
 wait_amount = { duration | expr }
 wait_until  = { "until" ~ string }
 wait_initial = { "initial" ~ string }
 
 // the leading string is the event type; the trailing expression is the payload. an object
-// payload keeps its brace form (`emit "x" { a: 1 }`); other payloads are any expression, and
+// payload keeps its brace form (`output "x" { a: 1 }`); other payloads are any expression, and
 // the decompiler parenthesizes an event-less scalar so it is not mistaken for the event type.
-emit_stmt = { "emit" ~ string? ~ expr? }
+output_stmt = { "output" ~ string? ~ expr? }
+input_stmt = { "input" ~ expr? }
 
 approval_stmt = { "approve" ~ expr ~ approval_type? ~ object? }
 approval_type = { "type" ~ string }
@@ -203,7 +206,7 @@ block = { "{" ~ stmt* ~ "}" }
 transitions   = { outcome_arrow+ | single_arrow }
 single_arrow  = { "->" ~ target }
 outcome_arrow = { outcome ~ "->" ~ target }
-// `next` names the happy-path edge for next-based leaves (wait/emit/config) and control blocks,
+// `next` names the happy-path edge for next-based leaves (wait/output/config) and control blocks,
 // the named twin of the `-> target` single arrow; `ok` is the happy path for on_success leaves.
 outcome       = { "ok" | "next" | "fail" | "timeout" | "reject" }
 target        = { "done" | "fail" | ident }
@@ -257,7 +260,7 @@ neg_expr      = { "-" ~ unary_expr }
 //     like `xs.filter(p).map(g)` reads left-to-right (every stdlib intrinsic takes its subject first).
 //   - `.key` — field access. on a path it folds into the path (one `$ref`); on any other value it
 //     lowers to the `at` intrinsic.
-//   - `[expr]` — index access (same fold/`at` rule). the key may be dynamic (`items[input.i]`).
+//   - `[expr]` — index access (same fold/`at` rule). the key may be dynamic (`items[params.i]`).
 postfix_expr  = { primary ~ access* }
 access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") }
 

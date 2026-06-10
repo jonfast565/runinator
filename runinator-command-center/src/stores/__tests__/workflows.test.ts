@@ -243,12 +243,12 @@ describe("workflow run detail state", () => {
     workflows.selectedStepId = "start";
     const centroid = graphCentroid(workflows.graphNodes);
 
-    await workflows.addConnectedWorkflowNode("emit");
+    await workflows.addConnectedWorkflowNode("output");
 
-    const created = workflows.ensureWorkflowNodes().find((node) => node.kind === "emit" && node.id.startsWith("emit"));
+    const created = workflows.ensureWorkflowNodes().find((node) => node.kind === "output" && node.id.startsWith("output"));
     expect(created).toMatchObject({
-      kind: "emit",
-      parameters: { event_type: "workflow.event", data: {} },
+      kind: "output",
+      parameters: { event_type: "workflow.output", data: {} },
       transitions: {}
     });
     expect(workflows.workflowDraft.definition.ui?.layout?.nodes?.[created!.id]).toEqual(centroid);

@@ -70,9 +70,14 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_expr(amount, source_dir, paths)?;
             }
         }
-        StmtKind::Emit(emit) => {
-            if let Some(data) = &emit.data {
+        StmtKind::Output(output) => {
+            if let Some(data) = &output.data {
                 collect_expr(data, source_dir, paths)?;
+            }
+        }
+        StmtKind::Input(input) => {
+            if let Some(prompt) = &input.prompt {
+                collect_expr(prompt, source_dir, paths)?;
             }
         }
         StmtKind::Approval(approval) => {
