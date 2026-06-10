@@ -180,6 +180,7 @@ onBeforeUnmount(() => {
 
 function shouldStartCompletion(update: ViewUpdate): boolean {
   if (!update.docChanged) return false;
+  if (!update.transactions.some((transaction) => transaction.isUserEvent("input"))) return false;
   const head = update.state.selection.main.head;
   if (head <= 0) return false;
   const previous = update.state.sliceDoc(head - 1, head);
