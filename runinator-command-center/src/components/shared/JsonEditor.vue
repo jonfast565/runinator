@@ -1,5 +1,5 @@
 <template>
-  <section class="json-editor-shell">
+  <section class="json-editor-shell" @mousedown.stop @click.stop>
     <header v-if="title" class="json-editor-title">
       <span>{{ title }}</span>
       <button type="button" class="json-editor-copy" :title="copied ? 'Copied' : 'Copy JSON'" @click="copy">

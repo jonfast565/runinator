@@ -8,6 +8,8 @@ param(
     [switch]$Run,
     [switch]$SkipBuild,
     [switch]$DeployKube,
+    # Deploy only the command-center web resources.
+    [switch]$CommandCenterOnly,
 
     [ValidateSet("sqlite", "postgres", "mysql", "mariadb")]
     [string]$LocalDatabaseBackend = "sqlite",
@@ -137,11 +139,9 @@ function Invoke-Kubectl {
     return ($output -join "`n")
 }
 
-function Remove-K8sStatefulSetDocs {
+function Get-K8sRenderedYamlDocuments {
     param(
-        [Parameter(Mandatory)] [string]$RenderedYaml,
-        [switch]$SkipPostgres,
-        [switch]$SkipRabbitmq
+        [Parameter(Mandatory)] [string]$RenderedYaml
     )
 
     # split on lines that are exactly `---`. emit docs we want to keep.
@@ -156,9 +156,18 @@ function Remove-K8sStatefulSetDocs {
         }
     }
     $docs.Add($current.ToString()) | Out-Null
+    return $docs
+}
+
+function Remove-K8sStatefulSetDocs {
+    param(
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [switch]$SkipPostgres,
+        [switch]$SkipRabbitmq
+    )
 
     $result = New-Object System.Text.StringBuilder
-    foreach ($doc in $docs) {
+    foreach ($doc in Get-K8sRenderedYamlDocuments -RenderedYaml $RenderedYaml) {
         if ([string]::IsNullOrWhiteSpace($doc)) { continue }
         $isSts = $doc -match '(?m)^kind:\s*StatefulSet\s*$'
         if ($SkipPostgres -and $isSts -and ($doc -match '(?m)^\s\sname:\s*runinator-postgres\s*$')) { continue }
@@ -169,14 +178,40 @@ function Remove-K8sStatefulSetDocs {
     return $result.ToString()
 }
 
-function Invoke-KubectlApplyStdin {
+function Select-K8sDocsByName {
+    param(
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [Parameter(Mandatory)] [string[]]$Names
+    )
+
+    $escapedNames = @($Names | ForEach-Object { [Regex]::Escape($_) })
+    $namePattern = ($escapedNames -join '|')
+
+    $result = New-Object System.Text.StringBuilder
+    foreach ($doc in Get-K8sRenderedYamlDocuments -RenderedYaml $RenderedYaml) {
+        if ([string]::IsNullOrWhiteSpace($doc)) { continue }
+        if ($doc -match "(?m)^\s*name:\s*(?:$namePattern)\s*$") {
+            [void]$result.AppendLine('---')
+            [void]$result.Append($doc)
+        }
+    }
+    return $result.ToString()
+}
+
+function Invoke-KubectlWithStdin {
     param(
         [string[]]$KubeContextArgs = @(),
+        [Parameter(Mandatory)] [string]$Verb,
         [Parameter(Mandatory)] [string]$Stdin,
+        [switch]$IgnoreNotFound,
         [string]$WorkingDirectory
     )
 
-    $applyArgs = $KubeContextArgs + @('apply', '-f', '-')
+    $applyArgs = $KubeContextArgs + @($Verb)
+    if ($IgnoreNotFound) {
+        $applyArgs += '--ignore-not-found=true'
+    }
+    $applyArgs += @('-f', '-')
     Write-Host ">> kubectl $($applyArgs -join ' ')  (filtered manifest via stdin)"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'kubectl'
@@ -189,7 +224,7 @@ function Invoke-KubectlApplyStdin {
     $proc.StandardInput.Close()
     $proc.WaitForExit()
     if ($proc.ExitCode -ne 0) {
-        throw "kubectl apply -f - failed with exit code $($proc.ExitCode)."
+        throw "kubectl $Verb -f - failed with exit code $($proc.ExitCode)."
     }
 }
 
@@ -811,6 +846,7 @@ function Build-ContainerImages {
         [Parameter(Mandatory)]
         [string]$Tag,
 
+        [string[]]$ImageNames,
         [switch]$PushImages
     )
 
@@ -827,6 +863,19 @@ function Build-ContainerImages {
         @{ Name = 'runinator-migration'; Dockerfile = 'deploy/Dockerfile'; Target = 'migration' },
         @{ Name = 'runinator-command-center-web'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
     )
+
+    if ($ImageNames -and $ImageNames.Count -gt 0) {
+        $selectedImageNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($imageName in $ImageNames) {
+            [void]$selectedImageNames.Add($imageName)
+        }
+
+        $images = @($images | Where-Object { $selectedImageNames.Contains($_.Name) })
+    }
+
+    if (-not $images -or $images.Count -eq 0) {
+        throw 'No container images were selected for build.'
+    }
 
     $builtImages = @{}
     foreach ($image in $images) {
@@ -963,6 +1012,7 @@ function Deploy-KubernetesStack {
         [hashtable]$ImageMap,
 
         [switch]$Delete,
+        [switch]$CommandCenterOnly,
 
         [switch]$RecreateInfra
     )
@@ -999,18 +1049,38 @@ function Deploy-KubernetesStack {
     $verb = if ($Delete) { 'delete' } else { 'apply' }
     $flag = if ($isOverlay) { '-k' } else { '-f' }
 
-    Write-Step ("kubectl " + (($ctxArgs + @($verb, $flag, $applyPath)) -join ' '))
-    foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'job/runinator-pack-import', 'service/runinator-gossip')) {
-        $deleteStaleArgs = $ctxArgs + @(
-            'delete', $staleResource,
-            '--namespace', 'runinator',
-            '--ignore-not-found=true'
-        )
+    if ($CommandCenterOnly) {
+        $commandCenterResourceNames = @('runinator-command-center-web', 'runinator-command-center')
+        $renderedManifest = if ($isOverlay) {
+            Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
+        } else {
+            Get-Content -LiteralPath $applyPath -Raw
+        }
 
-        try {
-            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $deleteStaleArgs -WorkingDirectory $WorkspacePath
-        } catch {
-            Write-Warning "Pack-import cleanup skipped or failed for '$staleResource': $_"
+        $filteredManifest = Select-K8sDocsByName -RenderedYaml $renderedManifest -Names $commandCenterResourceNames
+        if ([string]::IsNullOrWhiteSpace($filteredManifest)) {
+            throw "No command-center web resources were found in $applyPath."
+        }
+
+        Write-Step ("kubectl " + (($ctxArgs + @($verb, '-f', '-')) -join ' '))
+        Invoke-KubectlWithStdin -KubeContextArgs $ctxArgs -Verb $verb -Stdin $filteredManifest -IgnoreNotFound:$Delete -WorkingDirectory $WorkspacePath
+        if ($Delete) {
+            return
+        }
+    } else {
+        Write-Step ("kubectl " + (($ctxArgs + @($verb, $flag, $applyPath)) -join ' '))
+        foreach ($staleResource in @('deployment/runinator-importer', 'job/runinator-importer', 'job/runinator-pack-import', 'service/runinator-gossip')) {
+            $deleteStaleArgs = $ctxArgs + @(
+                'delete', $staleResource,
+                '--namespace', 'runinator',
+                '--ignore-not-found=true'
+            )
+
+            try {
+                Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $deleteStaleArgs -WorkingDirectory $WorkspacePath
+            } catch {
+                Write-Warning "Pack-import cleanup skipped or failed for '$staleResource': $_"
+            }
         }
     }
 
@@ -1019,34 +1089,40 @@ function Deploy-KubernetesStack {
     # disturb the running database or broker.
     $skipPg = $false
     $skipMq = $false
-    if (-not $Delete -and -not $RecreateInfra -and $isOverlay) {
-        $skipPg = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-postgres' -Namespace 'runinator'
-        $skipMq = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-rabbitmq' -Namespace 'runinator'
-        if ($skipPg) { Write-Step 'Preserving existing statefulset/runinator-postgres (pass -KubeRecreateInfra to override)' }
-        if ($skipMq) { Write-Step 'Preserving existing statefulset/runinator-rabbitmq (pass -KubeRecreateInfra to override)' }
+    if (-not $CommandCenterOnly) {
+        if (-not $Delete -and -not $RecreateInfra -and $isOverlay) {
+            $skipPg = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-postgres' -Namespace 'runinator'
+            $skipMq = Test-K8sResourceExists -KubeContextArgs $ctxArgs -Kind 'statefulset' -Name 'runinator-rabbitmq' -Namespace 'runinator'
+            if ($skipPg) { Write-Step 'Preserving existing statefulset/runinator-postgres (pass -KubeRecreateInfra to override)' }
+            if ($skipMq) { Write-Step 'Preserving existing statefulset/runinator-rabbitmq (pass -KubeRecreateInfra to override)' }
+        }
+
+        if ($Delete) {
+            $applyArgs = $ctxArgs + @($verb, $flag, $applyPath, '--ignore-not-found=true')
+            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
+        } elseif (-not $skipPg -and -not $skipMq) {
+            $applyArgs = $ctxArgs + @($verb, $flag, $applyPath)
+            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
+        } else {
+            $rendered = Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
+            $filtered = Remove-K8sStatefulSetDocs -RenderedYaml $rendered -SkipPostgres:$skipPg -SkipRabbitmq:$skipMq
+            Invoke-KubectlWithStdin -KubeContextArgs $ctxArgs -Verb 'apply' -Stdin $filtered -WorkingDirectory $WorkspacePath
+        }
     }
 
-    if ($Delete) {
-        $applyArgs = $ctxArgs + @($verb, $flag, $applyPath, '--ignore-not-found=true')
-        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
-    } elseif (-not $skipPg -and -not $skipMq) {
-        $applyArgs = $ctxArgs + @($verb, $flag, $applyPath)
-        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $applyArgs -WorkingDirectory $WorkspacePath
+    $rolloutTargets = [System.Collections.Generic.List[string]]::new()
+    if ($CommandCenterOnly) {
+        [void]$rolloutTargets.Add('deployment/runinator-command-center-web')
     } else {
-        $rendered = Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
-        $filtered = Remove-K8sStatefulSetDocs -RenderedYaml $rendered -SkipPostgres:$skipPg -SkipRabbitmq:$skipMq
-        Invoke-KubectlApplyStdin -KubeContextArgs $ctxArgs -Stdin $filtered -WorkingDirectory $WorkspacePath
+        if (-not $skipPg) { [void]$rolloutTargets.Add('statefulset/runinator-postgres') }
+        if (-not $skipMq) { [void]$rolloutTargets.Add('statefulset/runinator-rabbitmq') }
+        foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-waker', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
+            [void]$rolloutTargets.Add($t)
+        }
     }
 
     if ($Delete) {
         return
-    }
-
-    $rolloutTargets = [System.Collections.Generic.List[string]]::new()
-    if (-not $skipPg) { [void]$rolloutTargets.Add('statefulset/runinator-postgres') }
-    if (-not $skipMq) { [void]$rolloutTargets.Add('statefulset/runinator-rabbitmq') }
-    foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-waker', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
-        [void]$rolloutTargets.Add($t)
     }
 
     foreach ($target in $rolloutTargets) {
@@ -1064,18 +1140,20 @@ function Deploy-KubernetesStack {
         }
     }
 
-    $jobWaitArgs = $ctxArgs + @(
-        'wait',
-        '--for=condition=complete',
-        'job/runinator-pack-import',
-        '--namespace', 'runinator',
-        '--timeout', "$($PackImportTimeoutSeconds)s"
-    )
+    if (-not $CommandCenterOnly) {
+        $jobWaitArgs = $ctxArgs + @(
+            'wait',
+            '--for=condition=complete',
+            'job/runinator-pack-import',
+            '--namespace', 'runinator',
+            '--timeout', "$($PackImportTimeoutSeconds)s"
+        )
 
-    try {
-        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $jobWaitArgs -WorkingDirectory $WorkspacePath
-    } catch {
-        Write-Warning "Pack-import Job did not complete within timeout: $_"
+        try {
+            Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $jobWaitArgs -WorkingDirectory $WorkspacePath
+        } catch {
+            Write-Warning "Pack-import Job did not complete within timeout: $_"
+        }
     }
 }
 
@@ -1088,6 +1166,10 @@ try {
     if ($DeployKube) {
         $Mode = 'Kubernetes'
         $Run = $true
+    }
+
+    if ($CommandCenterOnly -and -not $DeployKube) {
+        throw '-CommandCenterOnly requires -DeployKube.'
     }
 
     if ($Mode -eq 'Kubernetes') {
@@ -1172,10 +1254,12 @@ try {
             $imageMap = $null
             if (-not $KubeDelete) {
                 $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)
+                $imageNames = if ($CommandCenterOnly) { @('runinator-command-center-web') } else { $null }
                 $imageMap = Build-ContainerImages `
                     -WorkspacePath $workspacePath `
                     -Repository $ImageRepository `
                     -Tag $ImageTag `
+                    -ImageNames $imageNames `
                     -PushImages:$shouldPushImages
             }
 
@@ -1191,6 +1275,7 @@ try {
                 KubeContext   = $KubeContext
                 PackImportTimeoutSeconds = $KubePackImportTimeoutSeconds
                 ImageMap      = $imageMap
+                CommandCenterOnly = $CommandCenterOnly
             }
 
             if ($KubeDelete) {

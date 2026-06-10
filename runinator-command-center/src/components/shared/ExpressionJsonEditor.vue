@@ -1,5 +1,5 @@
 <template>
-  <section class="expression-editor-shell">
+  <section class="expression-editor-shell" @mousedown.stop @click.stop>
     <header class="expression-editor-title">
       <span>{{ title }}</span>
       <button

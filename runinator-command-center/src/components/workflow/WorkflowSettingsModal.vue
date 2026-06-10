@@ -73,8 +73,14 @@
             <label>Blackout End <input v-model="workflows.triggerDraft.blackout_end" type="datetime-local" /></label>
           </div>
           <div class="trigger-json-grid">
-            <label>Configuration <JsonEditor v-model="workflows.triggerJson.configuration" /></label>
-            <label>Metadata <JsonEditor v-model="workflows.triggerJson.metadata" /></label>
+            <div class="form-field">
+              <span class="form-field-label">Configuration</span>
+              <JsonEditor v-model="workflows.triggerJson.configuration" />
+            </div>
+            <div class="form-field">
+              <span class="form-field-label">Metadata</span>
+              <JsonEditor v-model="workflows.triggerJson.metadata" />
+            </div>
           </div>
           <p v-if="workflows.triggerEditorError" class="form-error">{{ workflows.triggerEditorError }}</p>
           <div class="modal-actions">

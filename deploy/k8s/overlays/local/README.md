@@ -44,6 +44,12 @@ registry reachable from the cluster:
 pwsh ./build.ps1 -DeployKube -LocalRegistry localhost:5000
 ```
 
+To refresh only the command-center web interface, use:
+
+```sh
+pwsh ./build.ps1 -DeployKube -CommandCenterOnly
+```
+
 Open the Tauri command center against the deployed local cluster with:
 
 ```sh

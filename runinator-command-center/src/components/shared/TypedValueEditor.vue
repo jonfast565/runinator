@@ -1,5 +1,5 @@
 <template>
-  <div class="typed-value-editor">
+  <div class="typed-value-editor" @mousedown.stop @click.stop>
     <div v-if="expressionsAllowed" class="value-mode-row">
       <button type="button" :class="{ active: !showExpressionEditor }" @click="setExpressionMode(false)">Value</button>
       <button type="button" :class="{ active: showExpressionEditor }" @click="setExpressionMode(true)">Expression</button>

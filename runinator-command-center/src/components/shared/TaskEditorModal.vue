@@ -23,7 +23,10 @@
 
       <section class="form-section">
         <h3>JSON</h3>
-        <label>Configuration <JsonEditor v-model="tasks.taskJson.configuration" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Configuration</span>
+          <JsonEditor v-model="tasks.taskJson.configuration" />
+        </div>
       </section>
 
       <p v-if="tasks.taskEditorError" class="form-error">{{ tasks.taskEditorError }}</p>

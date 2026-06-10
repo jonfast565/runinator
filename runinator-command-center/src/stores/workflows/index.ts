@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import {
   cancelWorkflowRun,
   compileWdl,
@@ -202,8 +202,34 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
 
   const isDirty = ref(false);
+  let workflowJsonSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowWdlSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowWdlRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowJsonWriteReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowWdlWriteReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  let stepEditorApplyTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowJsonWriteGuard = false;
+  let workflowWdlWriteGuard = false;
+  let stepEditorHydrating = false;
+  let stepEditorBaselineDefinition: JsonRecord | null = null;
 
   const app = useAppStore();
+  watch(workflowJson, () => {
+    if (workflowJsonWriteGuard || workflowEditorMode.value !== "json") return;
+    scheduleWorkflowJsonSync();
+  });
+  watch(workflowWdl, () => {
+    if (workflowWdlWriteGuard || workflowEditorMode.value !== "wdl") return;
+    scheduleWorkflowWdlSync();
+  });
+  watch(
+    stepEditor,
+    () => {
+      if (stepEditorHydrating || !stepEditorOpen.value) return;
+      scheduleStepEditorApply();
+    },
+    { deep: true }
+  );
   const selectedWorkflow = computed(() => workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) ?? null);
   const canRunWorkflow = computed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
   const selectedWorkflowInputType = computed<RuninatorType | null>(() => selectedWorkflow.value?.input_type ?? null);
@@ -338,7 +364,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (isDirty.value) return;
     selectedWorkflowId.value = null;
     Object.assign(workflowDraft, newWorkflowDraft());
-    workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
+    setWorkflowJsonSilently(pretty(workflowDraft.definition ?? { nodes: [] }));
+    setWorkflowWdlSilently("");
     selectedStepId.value = "";
     stepEditorOpen.value = false;
   }
@@ -364,7 +391,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedWorkflowId.value = workflow.id;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflow)));
     workflowConcurrency.value = Number(workflowDraft.definition?.concurrency ?? 1);
-    workflowJson.value = pretty(workflowDraft.definition ?? { nodes: [] });
+    setWorkflowJsonSilently(pretty(workflowDraft.definition ?? { nodes: [] }));
     if (isSwitch) {
       selectedStepId.value = "";
       clearWorkflowTriggerState();
@@ -374,6 +401,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     // graph and json derive from the draft, but the wdl text is decompiled lazily; refresh it so
     // the wdl tab reflects the newly selected workflow instead of the previous one.
     if (workflowEditorMode.value === "wdl") return refreshWorkflowWdl();
+    scheduleWorkflowWdlRefresh();
     return Promise.resolve();
   }
 
@@ -851,7 +879,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     else nodes.push(newNode);
     setGraphNodePosition(newNode.id, position);
     workflowDraft.definition.concurrency = workflowConcurrency.value;
-    workflowJson.value = pretty(workflowDraft.definition);
+    setWorkflowJsonSilently(pretty(workflowDraft.definition));
     isDirty.value = true;
     populateStepEditor(newNode.id);
     openStepEditor(newNode.id, true);
@@ -904,6 +932,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function applyStepEditor(): boolean {
+    if (stepEditorApplyTimer) {
+      clearTimeout(stepEditorApplyTimer);
+      stepEditorApplyTimer = null;
+    }
     stepEditorError.value = "";
     if (!selectedStepId.value) return false;
     const nodes = ensureWorkflowNodes();
@@ -1121,6 +1153,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function populateStepEditor(nodeId: string) {
     const node = ensureWorkflowNodes().find((item: JsonRecord) => item.id === nodeId);
     if (!node) return;
+    stepEditorHydrating = true;
+    if (stepEditorApplyTimer) {
+      clearTimeout(stepEditorApplyTimer);
+      stepEditorApplyTimer = null;
+    }
     selectedStepId.value = nodeId;
     stepEditor.id = nodeId;
     stepEditor.name = String(node.name ?? "");
@@ -1155,7 +1192,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.race_branches = nodeRefArray(node.parameters?.branches);
     stepEditor.race_winner = branchPolicyName(node.parameters?.winner, "first_success");
     stepEditor.output_event_type = String(node.parameters?.event_type ?? "workflow.output");
-    stepEditor.output_data_json = pretty(node.parameters?.data ?? {});
+    stepEditor.output_data_json = JSON.stringify(node.parameters?.data ?? null, null, 2);
     stepEditor.input_prompt = String(node.parameters?.prompt ?? "Provide input");
     stepEditor.subflow_id = String(node.subflow_id ?? "");
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
@@ -1172,6 +1209,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.transitions_json = pretty(node.transitions ?? {});
     workflowInspectorMode.value = "step";
     updateSelectedWorkflowNodeDetail();
+    setTimeout(() => {
+      stepEditorHydrating = false;
+    }, 0);
   }
 
   async function updateSelectedWorkflowNodeDetail() {
@@ -1313,6 +1353,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return true;
   }
 
+  function scheduleStepEditorApply() {
+    void applyStepEditor();
+  }
+
   function applyGraphEdgeSemantic(connection: any, optionId: string, previousEdgeId = ""): boolean {
     const { source, target, sourceHandle } = connection;
     if (!source || !target) return false;
@@ -1413,6 +1457,38 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     syncWorkflowDraftToJson();
   }
 
+  function scheduleWorkflowJsonSync() {
+    void syncWorkflowJson();
+  }
+
+  function scheduleWorkflowWdlSync() {
+    void syncWorkflowWdl();
+  }
+
+  function scheduleWorkflowWdlRefresh() {
+    void refreshWorkflowWdl();
+  }
+
+  function setWorkflowJsonSilently(next: string) {
+    if (workflowJsonWriteReleaseTimer) clearTimeout(workflowJsonWriteReleaseTimer);
+    workflowJsonWriteGuard = true;
+    workflowJson.value = next;
+    workflowJsonWriteReleaseTimer = setTimeout(() => {
+      workflowJsonWriteGuard = false;
+      workflowJsonWriteReleaseTimer = null;
+    }, 0);
+  }
+
+  function setWorkflowWdlSilently(next: string) {
+    if (workflowWdlWriteReleaseTimer) clearTimeout(workflowWdlWriteReleaseTimer);
+    workflowWdlWriteGuard = true;
+    workflowWdl.value = next;
+    workflowWdlWriteReleaseTimer = setTimeout(() => {
+      workflowWdlWriteGuard = false;
+      workflowWdlWriteReleaseTimer = null;
+    }, 0);
+  }
+
   function syncWorkflowJson(): boolean {
     const parsed = parseRequiredObject(workflowJson.value);
     if (!parsed) {
@@ -1427,15 +1503,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowDraft.definition = parsed;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
+    setWorkflowJsonSilently(pretty(workflowDraft.definition));
     isDirty.value = true;
+    scheduleWorkflowWdlRefresh();
     return true;
   }
 
   function syncWorkflowDraftToJson() {
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
-    workflowJson.value = pretty(workflowDraft.definition);
+    setWorkflowJsonSilently(pretty(workflowDraft.definition));
     isDirty.value = true;
+    scheduleWorkflowWdlRefresh();
   }
 
   // compile the wdl editor contents into the draft definition. mirrors syncWorkflowJson:
@@ -1456,7 +1535,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (previousUi) workflowDraft.definition.ui = previousUi;
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
-    workflowJson.value = pretty(workflowDraft.definition);
+    setWorkflowJsonSilently(pretty(workflowDraft.definition));
     isDirty.value = true;
     return true;
   }
@@ -1465,9 +1544,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   // recovered structurally, so on failure we drop back to the json view with a notice.
   async function refreshWorkflowWdl(): Promise<void> {
     try {
-      workflowWdl.value = await decompileToWdl(cloneJson(workflowDraft));
+      setWorkflowWdlSilently(await decompileToWdl(cloneJson(workflowDraft)));
     } catch (err) {
-      workflowWdl.value = "";
+      setWorkflowWdlSilently("");
       if (workflowEditorMode.value === "wdl") {
         workflowEditorMode.value = "json";
       }
@@ -1757,6 +1836,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function openStepEditor(nodeId: string, creating = false) {
+    stepEditorBaselineDefinition = creating ? null : cloneJson(workflowDraft.definition);
     populateStepEditor(nodeId);
     stepEditorCreating.value = creating;
     stepEditorCreatedNodeId.value = creating ? nodeId : "";
@@ -1783,9 +1863,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function closeStepEditor() {
+    if (stepEditorApplyTimer) {
+      clearTimeout(stepEditorApplyTimer);
+      stepEditorApplyTimer = null;
+    }
     if (stepEditorCreating.value && stepEditorCreatedNodeId.value) {
       const nodeId = stepEditorCreatedNodeId.value;
       workflowDraft.definition.nodes = ensureWorkflowNodes().filter((node: JsonRecord) => node.id !== nodeId);
+      syncWorkflowDraftToJson();
+    } else if (stepEditorBaselineDefinition) {
+      workflowDraft.definition = cloneJson(stepEditorBaselineDefinition);
       syncWorkflowDraftToJson();
     }
     selectedStepId.value = "";
@@ -1793,6 +1880,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditorCreating.value = false;
     stepEditorCreatedNodeId.value = "";
     stepEditorError.value = "";
+    stepEditorBaselineDefinition = null;
+    stepEditorHydrating = false;
   }
 
   function duplicateSelectedStep() {
@@ -1881,7 +1970,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(savedWorkflow)));
     workflowTriggers.value = saved.triggers.filter((trigger) => trigger.workflow_id === workflowDraft.id);
-    workflowJson.value = pretty(workflowDraft.definition);
+    setWorkflowJsonSilently(pretty(workflowDraft.definition));
+    scheduleWorkflowWdlRefresh();
     app.setStatus(`Workflow saved: ${savedWorkflow.name}`);
     isDirty.value = false;
     selectedWorkflowId.value = savedWorkflow.id;
@@ -1906,7 +1996,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       await selectWorkflow(workflows.value[0]);
     } else {
       Object.assign(workflowDraft, newWorkflowDraft());
-      workflowJson.value = pretty(workflowDraft.definition);
+      setWorkflowJsonSilently(pretty(workflowDraft.definition));
+      setWorkflowWdlSilently("");
       workflowRuns.value = [];
       workflowRunDetail.value = null;
       selectedWorkflowRunId.value = null;

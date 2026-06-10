@@ -76,7 +76,10 @@
           :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
           :expression-context="expressionContext"
         />
-        <label>Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'approval'" class="form-section">
@@ -90,7 +93,10 @@
       <section v-if="workflows.stepEditor.kind === 'condition'" class="form-section">
         <h3>Condition Branches</h3>
         <div v-for="(branch, index) in workflows.stepEditor.condition_branches" :key="index" class="condition-branch-row">
-          <label>When <ExpressionJsonEditor v-model="branch.when_json" :context="expressionContext" title="WDL Condition" /></label>
+          <div class="form-field">
+            <span class="form-field-label">When</span>
+            <ExpressionJsonEditor v-model="branch.when_json" :context="expressionContext" title="WDL Condition" />
+          </div>
           <label>
             Target
             <select v-model="branch.target">
@@ -117,7 +123,10 @@
           <label>Initial Status <input v-model="workflows.stepEditor.wait_initial_status" /></label>
           <label>Until Status <input v-model="workflows.stepEditor.wait_until_status" /></label>
         </div>
-        <label>Advanced Wait JSON <JsonEditor v-model="workflows.stepEditor.wait_json" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Wait JSON</span>
+          <JsonEditor v-model="workflows.stepEditor.wait_json" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'loop'" class="form-section">
@@ -132,13 +141,22 @@
           </label>
           <label>Max Iterations <input v-model.number="workflows.stepEditor.loop_max_iterations" type="number" min="1" /></label>
         </div>
-        <label>Items <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="WDL Items" /></label>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Items</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="WDL Items" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'switch'" class="form-section">
         <h3>Switch</h3>
-        <label>Value <ExpressionJsonEditor v-model="workflows.stepEditor.switch_value_json" :context="expressionContext" title="WDL Value" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Value</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.switch_value_json" :context="expressionContext" title="WDL Value" />
+        </div>
         <div v-for="(switchCase, index) in workflows.stepEditor.switch_cases" :key="index" class="condition-branch-row">
           <label>
             Match
@@ -149,7 +167,10 @@
               <option value="when">when</option>
             </select>
           </label>
-          <label>Value <ExpressionJsonEditor v-model="switchCase.match_json" :context="expressionContext" title="WDL Match" /></label>
+          <div class="form-field">
+            <span class="form-field-label">Value</span>
+            <ExpressionJsonEditor v-model="switchCase.match_json" :context="expressionContext" title="WDL Match" />
+          </div>
           <label>
             Target
             <select v-model="switchCase.target">
@@ -167,7 +188,10 @@
             <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
           </select>
         </label>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'parallel'" class="form-section">
@@ -183,7 +207,10 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.parallel_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.parallel_branches)">Add Branch</button>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'join'" class="form-section">
@@ -205,7 +232,10 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.join_wait_for, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.join_wait_for)">Add Dependency</button>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'try'" class="form-section">
@@ -233,7 +263,10 @@
             </select>
           </label>
         </div>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'map'" class="form-section">
@@ -248,8 +281,14 @@
           </label>
           <label>Concurrency <input v-model.number="workflows.stepEditor.map_concurrency" type="number" min="1" /></label>
         </div>
-        <label>Items <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="WDL Items" /></label>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Items</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="WDL Items" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'race'" class="form-section">
@@ -271,20 +310,32 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.race_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.race_branches)">Add Branch</button>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'output'" class="form-section">
         <h3>Output</h3>
         <label>Event Type <input v-model="workflows.stepEditor.output_event_type" /></label>
-        <label>Data <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="WDL Data" /></label>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Data</span>
+          <JsonEditor v-model="workflows.stepEditor.output_data_json" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'input'" class="form-section">
         <h3>Input</h3>
         <label>Prompt <input v-model="workflows.stepEditor.input_prompt" /></label>
-        <label>Advanced Parameters <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+        </div>
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'subflow'" class="form-section">
@@ -325,7 +376,10 @@
             </select>
           </label>
         </div>
-        <label>Transitions JSON <JsonEditor v-model="workflows.stepEditor.transitions_json" /></label>
+        <div class="form-field">
+          <span class="form-field-label">Transitions JSON</span>
+          <JsonEditor v-model="workflows.stepEditor.transitions_json" />
+        </div>
       </section>
 
       <section v-if="stepRefs.length" class="form-section">
@@ -355,7 +409,6 @@ import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import { buildSampleContext } from "../../utils/workflow-references";
 import JsonEditor from "../shared/JsonEditor.vue";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
-import TypedValueEditor from "../shared/TypedValueEditor.vue";
 import { workflowNodeActionConfig } from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();

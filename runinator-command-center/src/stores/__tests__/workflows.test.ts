@@ -6,6 +6,7 @@ import type { ProviderMetadata, WorkflowDefinition, WorkflowRunDetail, WorkflowT
 
 vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+  compileWdl: vi.fn(),
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
   patchWorkflowRunDebug: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   decompileToWdl: vi.fn()
 }));
 
-import { decompileToWdl, fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
+import { compileWdl, decompileToWdl, fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 const RUN_ID = "00000000-0000-0000-0000-000000000070";
@@ -256,6 +257,97 @@ describe("workflow run detail state", () => {
     expect(workflows.selectedStepId).toBe(created?.id);
   });
 
+  it("keeps output payloads as validated raw json", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "output payload"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "output-1",
+      kind: "output",
+      parameters: { event_type: "workflow.output", data: null },
+      transitions: {}
+    });
+
+    workflows.populateStepEditor("output-1");
+    expect(workflows.stepEditor.output_data_json).toBe("null");
+
+    workflows.stepEditor.output_data_json = JSON.stringify({
+      message: "hello",
+      retries: [1, 2],
+      nested: { ok: true }
+    }, null, 2);
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "output-1")?.parameters).toEqual({
+      event_type: "workflow.output",
+      data: {
+        message: "hello",
+        retries: [1, 2],
+        nested: { ok: true }
+      }
+    });
+
+    workflows.populateStepEditor("output-1");
+    workflows.stepEditor.output_data_json = "{ invalid json";
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("Output data must be valid JSON");
+  });
+
+  it("syncs json edits into the draft and wdl view", async () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "json sync"));
+    workflows.workflowEditorMode = "json";
+    vi.mocked(decompileToWdl).mockResolvedValue("workflow json_sync { start -> output }");
+
+    workflows.workflowJson = JSON.stringify({
+      start: "start",
+      nodes: [
+        { id: "start", kind: "start", transitions: { next: { "$node": "output-1" } } },
+        { id: "output-1", kind: "output", parameters: { event_type: "workflow.output", data: { message: "hello" } }, transitions: { next: { "$node": "end" } } },
+        { id: "end", kind: "end" },
+        { id: "fail", kind: "fail" }
+      ]
+    }, null, 2);
+
+    expect(workflows.syncWorkflowJson()).toBe(true);
+    await flushWorkflowSync();
+
+    expect(workflows.workflowDraft.definition.nodes.some((node: any) => node.id === "output-1")).toBe(true);
+    expect(workflows.workflowWdl).toBe("workflow json_sync { start -> output }");
+  });
+
+  it("syncs wdl edits into the draft and json view", async () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "wdl sync"));
+    workflows.workflowEditorMode = "wdl";
+    vi.mocked(compileWdl).mockResolvedValue({
+      id: WORKFLOW_ID,
+      name: "wdl sync",
+      version: "1.0.0",
+      enabled: true,
+      input_type: { type: "struct", fields: {} },
+      definition: {
+        start: "start",
+        nodes: [
+          { id: "start", kind: "start", transitions: { next: { "$node": "output-1" } } },
+          { id: "output-1", kind: "output", parameters: { event_type: "workflow.output", data: { message: "hello" } }, transitions: { next: { "$node": "end" } } },
+          { id: "end", kind: "end" },
+          { id: "fail", kind: "fail" }
+        ]
+      }
+    });
+
+    workflows.workflowWdl = "workflow wdl_sync { start -> output-1 }";
+
+    expect(await workflows.syncWorkflowWdl()).toBe(true);
+
+    expect(workflows.workflowDraft.definition.nodes.some((node: any) => node.id === "output-1")).toBe(true);
+    expect(JSON.parse(workflows.workflowJson)).toMatchObject({
+      start: "start",
+      nodes: expect.arrayContaining([expect.objectContaining({ id: "output-1" })])
+    });
+  });
+
   it("duplicates nodes without carrying their outgoing connections", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "duplicate node"));
@@ -367,6 +459,13 @@ function workflowDefinition(id: string, name: string): WorkflowDefinition {
       ]
     }
   };
+}
+
+async function flushWorkflowSync() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
 }
 
 function graphCentroid(nodes: Array<{ position?: { x: number; y: number } }>): { x: number; y: number } {

@@ -2,7 +2,7 @@
   <div class="typed-parameter-editor">
     <p v-if="parameters.length === 0" class="hint">This action does not publish typed parameters yet.</p>
     <div v-for="parameter in parameters" :key="parameter.name" class="parameter-row">
-      <label>
+      <div class="parameter-field">
         <span class="parameter-label">
           {{ parameter.label || parameter.name }}
           <strong v-if="parameter.required">*</strong>
@@ -30,7 +30,7 @@
           :expression-context="expressionContext"
           @update:model-value="setValue(parameter.name, $event)"
         />
-      </label>
+      </div>
       <p v-if="parameter.description" class="description">{{ parameter.description }}</p>
       <ul v-if="typeRows(parameter).length" class="type-rows">
         <li v-for="row in typeRows(parameter)" :key="row.path">
@@ -262,6 +262,12 @@ function isExpressionValue(value: unknown): boolean {
   flex-direction: column;
   gap: 4px;
 }
+
+.parameter-field {
+  display: grid;
+  gap: 4px;
+}
+
 .parameter-label {
   display: flex;
   justify-content: space-between;

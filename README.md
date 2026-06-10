@@ -324,6 +324,13 @@ Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
 configure a local registry and pass it as `-LocalRegistry localhost:5000` (or
 use `-ImageRepository` for any registry reachable by the cluster).
 
+To redeploy only the web interface, rebuild and apply just the
+`runinator-command-center-web` resources with:
+
+```bash
+pwsh ./build.ps1 -DeployKube -CommandCenterOnly
+```
+
 ### Production
 
 Edit `deploy/k8s/overlays/prod/storage-class-patch.yaml` to set your cluster's

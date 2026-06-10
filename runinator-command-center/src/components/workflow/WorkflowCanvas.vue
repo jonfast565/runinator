@@ -179,14 +179,12 @@
       class="workflow-wdl-editor"
       :providers="providersStore.providers"
       :settings="secretsStore.secrets"
-      @blur="workflows.syncWorkflowWdl"
     />
     <JsonEditor
       v-show="workflows.workflowEditorMode === 'json'"
       v-model="workflows.workflowJson"
       class="workflow-json-editor"
-      title="Compiled JSON (read-only)"
-      :readonly="true"
+      title="Workflow JSON"
     />
   </div>
 </template>

@@ -1,5 +1,5 @@
 <template>
-  <section class="wdl-editor-shell">
+  <section class="wdl-editor-shell" @mousedown.stop @click.stop>
     <header class="wdl-editor-title">
       <span>{{ title }}</span>
       <div class="wdl-editor-actions">

@@ -18,6 +18,20 @@
   font-size: 12px;
 }
 
+.form-field {
+  display: grid;
+  gap: 6px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.form-field-label {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .form-grid > label > span,
 .form-grid > label > strong {
   color: var(--text-subtle);
