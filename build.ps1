@@ -198,6 +198,73 @@ function Select-K8sDocsByName {
     return $result.ToString()
 }
 
+function Get-K8sRenderedWorkloadKind {
+    param(
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    $escapedName = [Regex]::Escape($Name)
+    foreach ($doc in Get-K8sRenderedYamlDocuments -RenderedYaml $RenderedYaml) {
+        if ([string]::IsNullOrWhiteSpace($doc)) { continue }
+        if ($doc -match '(?m)^kind:\s*(Deployment|StatefulSet)\s*$') {
+            $kind = $Matches[1]
+        } else {
+            continue
+        }
+        if ($doc -match "(?m)^\s\sname:\s*$escapedName\s*$") {
+            return $kind
+        }
+    }
+
+    return $null
+}
+
+function Get-K8sRolloutTarget {
+    param(
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$FallbackKind
+    )
+
+    $kind = Get-K8sRenderedWorkloadKind -RenderedYaml $RenderedYaml -Name $Name
+    if (-not $kind) {
+        $kind = $FallbackKind
+    }
+
+    return "$($kind.ToLowerInvariant())/$Name"
+}
+
+function Remove-K8sSupersededWorkloadControllers {
+    param(
+        [string[]]$KubeContextArgs = @(),
+        [Parameter(Mandatory)] [string]$RenderedYaml,
+        [Parameter(Mandatory)] [string]$WorkspacePath,
+        [string]$Namespace = 'runinator'
+    )
+
+    foreach ($name in @('runinator-worker', 'runinator-waker')) {
+        $desiredKind = Get-K8sRenderedWorkloadKind -RenderedYaml $RenderedYaml -Name $name
+        if (-not $desiredKind) {
+            Write-Warning "Could not determine desired workload kind for $name; skipping stale workload cleanup."
+            continue
+        }
+
+        $staleKind = if ($desiredKind -eq 'Deployment') { 'statefulset' } else { 'deployment' }
+        $staleResource = "$staleKind/$name"
+        $deleteArgs = $KubeContextArgs + @(
+            'delete', $staleResource,
+            '--namespace', $Namespace,
+            '--ignore-not-found=true',
+            '--wait=true',
+            '--timeout=120s'
+        )
+
+        Write-Step "Removing superseded $staleResource for desired $($desiredKind.ToLowerInvariant())/$name"
+        Invoke-ExternalCommand -FilePath 'kubectl' -Arguments $deleteArgs -WorkingDirectory $WorkspacePath
+    }
+}
+
 function Invoke-KubectlWithStdin {
     param(
         [string[]]$KubeContextArgs = @(),
@@ -1048,6 +1115,7 @@ function Deploy-KubernetesStack {
 
     $verb = if ($Delete) { 'delete' } else { 'apply' }
     $flag = if ($isOverlay) { '-k' } else { '-f' }
+    $renderedManifest = $null
 
     if ($CommandCenterOnly) {
         $commandCenterResourceNames = @('runinator-command-center-web', 'runinator-command-center')
@@ -1110,19 +1178,35 @@ function Deploy-KubernetesStack {
         }
     }
 
-    $rolloutTargets = [System.Collections.Generic.List[string]]::new()
-    if ($CommandCenterOnly) {
-        [void]$rolloutTargets.Add('deployment/runinator-command-center-web')
-    } else {
-        if (-not $skipPg) { [void]$rolloutTargets.Add('statefulset/runinator-postgres') }
-        if (-not $skipMq) { [void]$rolloutTargets.Add('statefulset/runinator-rabbitmq') }
-        foreach ($t in @('deployment/runinator-ws', 'deployment/runinator-waker', 'deployment/runinator-worker', 'deployment/runinator-command-center-web')) {
-            [void]$rolloutTargets.Add($t)
+    if ($Delete) {
+        return
+    }
+
+    if (-not $CommandCenterOnly -and -not $Delete) {
+        $renderedManifest = if ($isOverlay) {
+            Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
+        } else {
+            Get-Content -LiteralPath $applyPath -Raw
         }
     }
 
-    if ($Delete) {
-        return
+    $rolloutTargets = [System.Collections.Generic.List[string]]::new()
+    if ($CommandCenterOnly) {
+        [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center-web' -FallbackKind 'Deployment'))
+    } else {
+        if (-not $Delete) {
+            Remove-K8sSupersededWorkloadControllers -KubeContextArgs $ctxArgs -RenderedYaml $renderedManifest -WorkspacePath $WorkspacePath
+        }
+        if (-not $skipPg) { [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-postgres' -FallbackKind 'StatefulSet')) }
+        if (-not $skipMq) { [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-rabbitmq' -FallbackKind 'StatefulSet')) }
+        foreach ($t in @(
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-ws' -FallbackKind 'Deployment'),
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-waker' -FallbackKind 'Deployment'),
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-worker' -FallbackKind 'StatefulSet'),
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center-web' -FallbackKind 'Deployment')
+        )) {
+            [void]$rolloutTargets.Add($t)
+        }
     }
 
     foreach ($target in $rolloutTargets) {

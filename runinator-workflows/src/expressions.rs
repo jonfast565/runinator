@@ -817,7 +817,7 @@ pub(crate) fn parse_value_ref(value: &Value) -> Result<WorkflowValueRef, Workflo
     {
         return Err(WorkflowValidationError::InvalidValueRef(value.to_string()));
     }
-    if let Some(path) = object.get(REF_PARAMS) {
+    if let Some(path) = object.get(REF_PARAMS).or_else(|| object.get(REF_INPUT)) {
         return Ok(WorkflowValueRef {
             source: WorkflowRefSource::Input,
             path: parse_path(path)?,
