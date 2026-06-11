@@ -23,7 +23,7 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ trigger_decl* ~ alias_decl* ~ type_decl* ~ start_decl? ~ stmt* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (trigger_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 
 // named type declarations, reusable for parameter/let typing. a struct shorthand (`type Cart { ... }`)
 // or an alias (`type Ids = int[]`). render-only surface: declared names resolve to RuninatorType

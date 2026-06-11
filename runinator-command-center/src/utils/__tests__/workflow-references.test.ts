@@ -17,15 +17,42 @@ const providers: ProviderMetadata[] = [
   {
     name: "jira",
     actions: [
-      { function_name: "create_issue", parameters: [], results: [{ name: "key", ty: { type: "string" } }] }
+      {
+        function_name: "search",
+        parameters: [],
+        results: [
+          {
+            name: "issues",
+            ty: {
+              type: "array",
+              items: {
+                type: "struct",
+                fields: {
+                  key: { required: true, ty: { type: "string" } },
+                  fields: {
+                    required: true,
+                    ty: {
+                      type: "struct",
+                      fields: {
+                        summary: { required: true, ty: { type: "string" } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          { name: "total", ty: { type: "integer" } }
+        ]
+      }
     ],
     metadata: { credential_scopes: [] }
   }
 ];
 
 const nodes: JsonRecord[] = [
-  { id: "make_ticket", kind: "action", action: { provider: "jira", function: "create_issue" } },
-  { id: "current", kind: "action", action: { provider: "jira", function: "create_issue" } }
+  { id: "make_ticket", kind: "action", action: { provider: "jira", function: "search" } },
+  { id: "current", kind: "action", action: { provider: "jira", function: "search" } }
 ];
 
 describe("workflowReferenceGroups", () => {
@@ -47,9 +74,15 @@ describe("workflowReferenceGroups", () => {
   });
 
   it("groups prior node outputs and excludes the current node", () => {
-    expect(groups.find((group) => group.title === "Output of make_ticket")?.references[0]?.insert).toBe(
-      "make_ticket.key"
-    );
+    const references = groups.find((group) => group.title === "Output of make_ticket")?.references ?? [];
+    expect(references.map((reference) => reference.insert)).toEqual([
+      "make_ticket.issues",
+      "make_ticket.issues.0",
+      "make_ticket.issues.0.key",
+      "make_ticket.issues.0.fields",
+      "make_ticket.issues.0.fields.summary",
+      "make_ticket.total"
+    ]);
     expect(groups.some((group) => group.title === "Output of current")).toBe(false);
   });
 

@@ -66,7 +66,7 @@ const previewError = ref("");
 let view: EditorView | null = null;
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewToken = 0;
-const title = props.title ?? "WDL Expression";
+const title = computed(() => props.title ?? "WDL Expression");
 const loweredJson = computed(() => props.modelValue);
 const referenceGroups = computed(() => workflowReferenceGroups(props.context));
 // a preview is only meaningful when a prior run's data is available to resolve against.

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::types::RuninatorField;
 pub use crate::types::RuninatorType;
 use crate::value::{Map, Value};
 
@@ -55,6 +56,35 @@ impl ActionMetadata {
     pub fn with_results(mut self, results: Vec<ResultMetadata>) -> Self {
         self.results = results;
         self
+    }
+
+    /// the typed parameter environment for this action.
+    pub fn parameters_type(&self) -> RuninatorType {
+        RuninatorType::typed_structure(self.parameters.iter().map(|parameter| {
+            let field = if parameter.required {
+                RuninatorField::required(parameter.ty.clone())
+            } else {
+                RuninatorField::optional(parameter.ty.clone())
+            };
+            let field = match &parameter.default_value {
+                Some(default_value) => field.with_default(default_value.clone()),
+                None => field,
+            };
+            (parameter.name.clone(), field)
+        }))
+    }
+
+    /// the typed result environment for this action.
+    pub fn results_type(&self) -> RuninatorType {
+        RuninatorType::open_typed_structure(
+            self.results.iter().map(|result| {
+                (
+                    result.name.clone(),
+                    RuninatorField::optional(result.ty.clone()),
+                )
+            }),
+            RuninatorType::Any,
+        )
     }
 
     /// mark this function as pure (reducer-evaluable in-process).

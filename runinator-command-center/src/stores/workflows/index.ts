@@ -189,6 +189,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     output_event_type: "workflow.output",
     output_data_json: "{}",
     input_prompt: "Provide input",
+    config_name_json: "\"\"",
+    config_metadata_json: "{}",
     subflow_id: "",
     subflow_parameters_json: "{}",
     locked: false,
@@ -1126,6 +1128,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         prompt: stepEditor.input_prompt.trim() || "Provide input"
       };
     }
+    if (next.kind === "config") {
+      const name = parseStepJson("Config name", stepEditor.config_name_json);
+      if (!name.ok) return false;
+      const metadata = parseStepJson("Config metadata", stepEditor.config_metadata_json);
+      if (!metadata.ok) return false;
+      next.parameters = {
+        ...parameters,
+        name: name.value,
+        metadata: metadata.value
+      };
+    }
     if (next.kind === "subflow") {
       const subflowParameters = parseRequiredObject(stepEditor.subflow_parameters_json);
       if (!subflowParameters) {
@@ -1192,8 +1205,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.race_branches = nodeRefArray(node.parameters?.branches);
     stepEditor.race_winner = branchPolicyName(node.parameters?.winner, "first_success");
     stepEditor.output_event_type = String(node.parameters?.event_type ?? "workflow.output");
-    stepEditor.output_data_json = JSON.stringify(node.parameters?.data ?? null, null, 2);
+    stepEditor.output_data_json = stepEditorJson(node.parameters?.data ?? null);
     stepEditor.input_prompt = String(node.parameters?.prompt ?? "Provide input");
+    stepEditor.config_name_json = stepEditorJson(node.parameters?.name ?? "");
+    stepEditor.config_metadata_json = stepEditorJson(node.parameters?.metadata ?? {});
     stepEditor.subflow_id = String(node.subflow_id ?? "");
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
     stepEditor.locked = isLockedWorkflowNode(node);
@@ -1934,6 +1949,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (value !== null || text.trim() === "null") return { ok: true, value };
     setStepEditorError(`${label} must be valid JSON`);
     return { ok: false };
+  }
+
+  function stepEditorJson(value: unknown): string {
+    return JSON.stringify(value === undefined ? null : value, null, 2);
   }
 
   function isJsonObject(value: unknown): value is JsonRecord {

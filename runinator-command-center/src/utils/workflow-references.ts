@@ -61,11 +61,50 @@ export function nodeOutputReferences(context?: WorkflowExpressionEditorContext):
     const provider = providers.find((item) => item.name === config.provider);
     const action = provider?.actions.find((item) => item.function_name === config.action);
     for (const result of action?.results ?? []) {
-      const dotted = `${String(node.id)}.${result.name}`;
-      references.push({ node: String(node.id), label: dotted, insert: dotted, type: describeType(result.ty) });
+      collectTypedReferences(
+        String(node.id),
+        [String(node.id), result.name],
+        [String(node.id), result.name],
+        result.ty,
+        references
+      );
     }
   }
   return references;
+}
+
+function collectTypedReferences(
+  node: string,
+  labelPath: string[],
+  insertPath: string[],
+  ty: RuninatorType | undefined,
+  references: Array<WorkflowReference & { node: string }>
+) {
+  if (!ty) return;
+  const label = formatLabelPath(labelPath);
+  const insert = insertPath.join(".");
+  references.push({ node, label, insert, type: describeType(ty) });
+  if (ty.type === "struct") {
+    for (const [name, field] of Object.entries(ty.fields)) {
+      collectTypedReferences(node, [...labelPath, name], [...insertPath, name], field.ty, references);
+    }
+    return;
+  }
+  if (ty.type === "array") {
+    collectTypedReferences(node, [...labelPath, "[]"], [...insertPath, "0"], ty.items, references);
+  }
+}
+
+function formatLabelPath(parts: string[]): string {
+  let label = "";
+  for (const part of parts) {
+    if (part === "[]") {
+      label += "[]";
+      continue;
+    }
+    label = label ? `${label}.${part}` : part;
+  }
+  return label;
 }
 
 /// the full reference catalog for the picker, grouped by origin. empty groups are dropped.

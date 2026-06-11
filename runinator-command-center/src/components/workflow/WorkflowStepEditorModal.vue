@@ -78,7 +78,7 @@
         />
         <div class="form-field">
           <span class="form-field-label">Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Action parameters" />
         </div>
       </section>
 
@@ -95,7 +95,7 @@
         <div v-for="(branch, index) in workflows.stepEditor.condition_branches" :key="index" class="condition-branch-row">
           <div class="form-field">
             <span class="form-field-label">When</span>
-            <ExpressionJsonEditor v-model="branch.when_json" :context="expressionContext" title="WDL Condition" />
+            <ExpressionJsonEditor v-model="branch.when_json" :context="expressionContext" title="Condition branch" />
           </div>
           <label>
             Target
@@ -124,8 +124,8 @@
           <label>Until Status <input v-model="workflows.stepEditor.wait_until_status" /></label>
         </div>
         <div class="form-field">
-          <span class="form-field-label">Advanced Wait JSON</span>
-          <JsonEditor v-model="workflows.stepEditor.wait_json" />
+          <span class="form-field-label">Advanced Wait Settings</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.wait_json" :context="expressionContext" title="Wait settings" />
         </div>
       </section>
 
@@ -143,11 +143,11 @@
         </div>
         <div class="form-field">
           <span class="form-field-label">Items</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="WDL Items" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="Loop items" />
         </div>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Loop advanced parameters" />
         </div>
       </section>
 
@@ -155,7 +155,7 @@
         <h3>Switch</h3>
         <div class="form-field">
           <span class="form-field-label">Value</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.switch_value_json" :context="expressionContext" title="WDL Value" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.switch_value_json" :context="expressionContext" title="Switch value" />
         </div>
         <div v-for="(switchCase, index) in workflows.stepEditor.switch_cases" :key="index" class="condition-branch-row">
           <label>
@@ -169,7 +169,7 @@
           </label>
           <div class="form-field">
             <span class="form-field-label">Value</span>
-            <ExpressionJsonEditor v-model="switchCase.match_json" :context="expressionContext" title="WDL Match" />
+            <ExpressionJsonEditor v-model="switchCase.match_json" :context="expressionContext" title="Switch case match" />
           </div>
           <label>
             Target
@@ -190,7 +190,7 @@
         </label>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Switch advanced parameters" />
         </div>
       </section>
 
@@ -209,7 +209,7 @@
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.parallel_branches)">Add Branch</button>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Parallel advanced parameters" />
         </div>
       </section>
 
@@ -234,7 +234,7 @@
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.join_wait_for)">Add Dependency</button>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Join advanced parameters" />
         </div>
       </section>
 
@@ -265,7 +265,7 @@
         </div>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Try advanced parameters" />
         </div>
       </section>
 
@@ -283,11 +283,11 @@
         </div>
         <div class="form-field">
           <span class="form-field-label">Items</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="WDL Items" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="Map items" />
         </div>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Map advanced parameters" />
         </div>
       </section>
 
@@ -312,7 +312,7 @@
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.race_branches)">Add Branch</button>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Race advanced parameters" />
         </div>
       </section>
 
@@ -321,11 +321,11 @@
         <label>Event Type <input v-model="workflows.stepEditor.output_event_type" /></label>
         <div class="form-field">
           <span class="form-field-label">Data</span>
-          <JsonEditor v-model="workflows.stepEditor.output_data_json" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Output data" />
         </div>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Output advanced parameters" />
         </div>
       </section>
 
@@ -334,7 +334,23 @@
         <label>Prompt <input v-model="workflows.stepEditor.input_prompt" /></label>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Input advanced parameters" />
+        </div>
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'config'" class="form-section">
+        <h3>Config</h3>
+        <div class="form-field">
+          <span class="form-field-label">Name</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.config_name_json" :context="expressionContext" title="Config name" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Metadata</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.config_metadata_json" :context="expressionContext" title="Config metadata" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Advanced Parameters</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Config advanced parameters" />
         </div>
       </section>
 
@@ -361,7 +377,7 @@
         <p v-else class="hint">Select a workflow to configure its parameters, or use the advanced editor below.</p>
         <details class="advanced-params">
           <summary>Advanced WDL parameters</summary>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="WDL Parameters" />
+          <ExpressionJsonEditor v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="Subflow parameters" />
         </details>
       </section>
 

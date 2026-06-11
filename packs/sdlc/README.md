@@ -34,6 +34,12 @@ The workflows no longer thread shared settings through their `input` block. Inst
 That leaves the per-run inputs tiny: the driver takes none, and `Ticket Work` takes only the
 `ticket` payload plus the `parent_workflow_run_id`.
 
+The rewritten workflows lean on WDL's typed surface instead of anonymous blobs: `JiraIssue`
+captures the ticket payload, `PullRequest` carries the GitHub PR metadata, `CheckSummary`
+captures CI state, and the git/slack actions are bound to explicit result records. That keeps
+the workflow source close to the provider contracts and makes decompile output readable without
+guessing at shapes.
+
 Compiled JSON workflow packs are no longer checked in; WDL is the source of truth.
 
 Import the whole pack in one step. The manifest's `"settings": "settings.wdls"` entry means
@@ -66,7 +72,10 @@ emitted as explicit `-> label` arrows. `Ticket Work` round-trips compile → dec
 ```
 until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
     wait config.ci_poll.interval_seconds
-    let poll_checks = github.checks_summary(ref: create_pr.head.sha, ...)
+    let poll_checks: CheckSummary = github.checks_summary(
+        ...github_conn,
+        ref: create_pr.head.sha
+    )
 }
 ```
 

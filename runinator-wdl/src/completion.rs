@@ -547,12 +547,7 @@ fn provider_action_output_type(
         .actions
         .iter()
         .find(|action| action.function_name == action_name)?;
-    Some(RuninatorType::structure(
-        action
-            .results
-            .iter()
-            .map(|result| (result.name.clone(), result.ty.clone())),
-    ))
+    Some(action.results_type())
 }
 
 fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<RuninatorType> {

@@ -293,6 +293,61 @@ describe("workflow run detail state", () => {
     expect(workflows.stepEditorError).toBe("Output data must be valid JSON");
   });
 
+  it("keeps WDL-lowered output payload expressions valid", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "output expression"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "output-1",
+      kind: "output",
+      parameters: { event_type: "workflow.output", data: {} },
+      transitions: {}
+    });
+
+    workflows.populateStepEditor("output-1");
+    workflows.stepEditor.output_data_json = JSON.stringify({ "$ref": { params: ["message"] } });
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.stepEditorError).toBe("");
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "output-1")?.parameters?.data).toEqual({ "$ref": { params: ["message"] } });
+  });
+
+  it("applies config node WDL fields without validation errors", () => {
+    const workflows = useWorkflowsStore();
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "config editor"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "config-1",
+      kind: "config",
+      parameters: {
+        name: "release",
+        metadata: { owner: "platform" }
+      },
+      transitions: {}
+    });
+
+    workflows.populateStepEditor("config-1");
+    workflows.stepEditor.config_name_json = JSON.stringify({ "$ref": { params: ["release_name"] } });
+    workflows.stepEditor.config_metadata_json = JSON.stringify({
+      source: { "$ref": { prev: ["artifact"] } },
+      approved: true
+    });
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.stepEditorError).toBe("");
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "config-1")?.parameters).toEqual({
+      name: { "$ref": { params: ["release_name"] } },
+      metadata: {
+        source: { "$ref": { prev: ["artifact"] } },
+        approved: true
+      }
+    });
+
+    workflows.populateStepEditor("config-1");
+    workflows.stepEditor.config_metadata_json = "{ invalid json";
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("Config metadata must be valid JSON");
+  });
+
   it("syncs json edits into the draft and wdl view", async () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "json sync"));

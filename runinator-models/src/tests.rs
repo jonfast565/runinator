@@ -1,5 +1,8 @@
 use crate::{
-    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
+    providers::{
+        ActionMetadata, ParameterMetadata, ProviderMetadata, ResultMetadata,
+        validate_provider_metadata,
+    },
     types::{RuninatorField, RuninatorType},
     value::Value,
     workflow_state::{DebugFrame, DebugMode, WorkflowRunState},
@@ -272,6 +275,47 @@ fn provider_metadata_validation_rejects_bad_defaults_and_duplicates() {
     };
     let err = validate_provider_metadata(&duplicate).unwrap_err();
     assert!(err.contains("duplicate parameter 'name'"));
+}
+
+#[test]
+fn action_metadata_exposes_typed_parameter_and_result_environments() {
+    let action = ActionMetadata::new("run", "run")
+        .with_parameters(vec![
+            ParameterMetadata::required("name", RuninatorType::String),
+            ParameterMetadata::optional("count", RuninatorType::Integer)
+                .with_default(crate::json!(3)),
+        ])
+        .with_results(vec![ResultMetadata::new(
+            "output",
+            RuninatorType::typed_structure([
+                ("status", RuninatorField::required(RuninatorType::String)),
+                ("size", RuninatorField::optional(RuninatorType::Integer)),
+            ]),
+        )]);
+
+    assert_eq!(
+        action.parameters_type(),
+        RuninatorType::typed_structure([
+            ("name", RuninatorField::required(RuninatorType::String)),
+            (
+                "count",
+                RuninatorField::optional(RuninatorType::Integer).with_default(crate::json!(3)),
+            ),
+        ])
+    );
+    assert_eq!(
+        action.results_type(),
+        RuninatorType::open_typed_structure(
+            [(
+                "output",
+                RuninatorField::optional(RuninatorType::typed_structure([
+                    ("status", RuninatorField::required(RuninatorType::String)),
+                    ("size", RuninatorField::optional(RuninatorType::Integer)),
+                ])),
+            )],
+            RuninatorType::Any,
+        )
+    );
 }
 
 #[test]

@@ -606,11 +606,20 @@ fn round_trips_sdlc() {
 
 #[test]
 fn compiles_checked_in_sdlc_ticket_workflow() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/wdl/ticket-work.wdl");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/ticket-work.wdl");
     let src = fs::read_to_string(&path).expect("read sdlc ticket workflow");
     let definition = compile(&src);
     assert_eq!(definition.name, "Ticket Work");
+}
+
+#[test]
+fn compiles_checked_in_sdlc_pipeline_workflow() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../packs/sdlc/wdl/core-team-sdlc-pipeline.wdl");
+    let src = fs::read_to_string(&path).expect("read sdlc pipeline workflow");
+    let definition = compile(&src);
+    assert_eq!(definition.name, "Core Team SDLC Pipeline");
 }
 
 #[test]
@@ -2228,6 +2237,18 @@ fn round_trips_named_type_decls() {
         wdl.contains("cart: Cart"),
         "named parameter ref missing:\n{wdl}"
     );
+}
+
+#[test]
+fn round_trips_named_type_decls_with_aliases() {
+    let src = r#"
+        workflow "Typed" v1 {
+            type Payload = { response: any }
+            alias shared = { input: "hello" }
+            let probe: Payload = ai-command.execute(command: "echo", ...shared)
+        }
+    "#;
+    assert_round_trips(src);
 }
 
 #[test]

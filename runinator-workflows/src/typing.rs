@@ -113,12 +113,7 @@ fn static_node_output_type(
                         node.id, action.provider, action.function
                     ))
                 })?;
-            Ok(Some(WorkflowType::structure(
-                metadata
-                    .results
-                    .iter()
-                    .map(|result| (result.name.clone(), result.ty.clone())),
-            )))
+            Ok(Some(metadata.results_type()))
         }
         WorkflowNodeKind::Subflow => Ok(Some(WorkflowType::structure([
             ("subflow_run_id", WorkflowType::String),

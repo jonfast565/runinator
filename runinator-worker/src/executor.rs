@@ -2,9 +2,8 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use log::{error, info, warn};
-use runinator_models::providers::{ActionMetadata, RuninatorType};
+use runinator_models::providers::ActionMetadata;
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
-use runinator_models::types::RuninatorField;
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowAction;
 use runinator_plugin::cancel::CancellationToken;
@@ -216,7 +215,7 @@ fn validate_runtime_parameters(
     action: &WorkflowAction,
     parameters: &Value,
 ) -> Result<(), String> {
-    let expected = action_parameters_type(action_metadata);
+    let expected = action_metadata.parameters_type();
     expected.validate_value(parameters).map_err(|violation| {
         violation.message_with_label(&format!(
             "resolved action configuration '{}.{}'",
@@ -233,36 +232,13 @@ pub(crate) fn validate_execution_result(
     let Some(output) = result.output_json.as_ref() else {
         return Ok(());
     };
-    let expected = action_results_type(action_metadata);
+    let expected = action_metadata.results_type();
     expected.validate_value(output).map_err(|violation| {
         violation.message_with_label(&format!(
             "provider output '{}.{}'",
             action.provider, action.function
         ))
     })
-}
-
-fn action_parameters_type(action: &ActionMetadata) -> RuninatorType {
-    RuninatorType::typed_structure(action.parameters.iter().map(|parameter| {
-        let field = if parameter.required {
-            RuninatorField::required(parameter.ty.clone())
-        } else {
-            RuninatorField::optional(parameter.ty.clone())
-        };
-        (parameter.name.clone(), field)
-    }))
-}
-
-fn action_results_type(action: &ActionMetadata) -> RuninatorType {
-    RuninatorType::open_typed_structure(
-        action.results.iter().map(|result| {
-            (
-                result.name.clone(),
-                RuninatorField::optional(result.ty.clone()),
-            )
-        }),
-        RuninatorType::Any,
-    )
 }
 
 fn build_provider_request(
