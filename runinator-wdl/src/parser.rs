@@ -37,6 +37,43 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
     })
 }
 
+/// parse a standalone WDL expression fragment.
+pub fn parse_expression_fragment(src: &str) -> Result<Expr, WdlError> {
+    let pair = parse_fragment_rule(src, Rule::expr_document)?;
+    let expr = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::expr)
+        .ok_or_else(|| WdlError::Parse("missing expression".into()))?;
+    parse_expr(expr)
+}
+
+/// parse a standalone WDL condition fragment.
+pub fn parse_condition_fragment(src: &str) -> Result<Cond, WdlError> {
+    let pair = parse_fragment_rule(src, Rule::cond_document)?;
+    let cond = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::cond)
+        .ok_or_else(|| WdlError::Parse("missing condition".into()))?;
+    parse_cond(cond)
+}
+
+/// parse a standalone WDL compute block fragment, including the surrounding braces.
+pub fn parse_compute_fragment(src: &str) -> Result<Vec<ComputeLine>, WdlError> {
+    let pair = parse_fragment_rule(src, Rule::compute_document)?;
+    let block = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::compute_block)
+        .ok_or_else(|| WdlError::Parse("missing compute block".into()))?;
+    parse_compute_block(block)
+}
+
+fn parse_fragment_rule(src: &str, rule: Rule) -> Result<Pair<'_, Rule>, WdlError> {
+    WdlParser::parse(rule, src)
+        .map_err(|err| WdlError::Parse(err.to_string()))?
+        .next()
+        .ok_or_else(|| WdlError::Parse("empty input".into()))
+}
+
 fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, WdlError> {
     let span = span_of(&pair);
     let mut name = String::new();

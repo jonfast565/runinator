@@ -188,6 +188,33 @@ pub fn lower_document(
     })
 }
 
+pub(crate) fn lower_expression_fragment(
+    expr: &Expr,
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    let mut lowerer = Lowerer::new();
+    lowerer.source_dir = options.source_dir.clone();
+    lowerer.lower_expr(expr)
+}
+
+pub(crate) fn lower_condition_fragment(
+    cond: &Cond,
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    let mut lowerer = Lowerer::new();
+    lowerer.source_dir = options.source_dir.clone();
+    lowerer.lower_cond(cond)
+}
+
+pub(crate) fn lower_compute_fragment(
+    body: &[ComputeLine],
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    let mut lowerer = Lowerer::new();
+    lowerer.source_dir = options.source_dir.clone();
+    lowerer.lower_compute_fragment(body)
+}
+
 impl Lowerer {
     fn new() -> Self {
         let mut used_ids = HashSet::new();

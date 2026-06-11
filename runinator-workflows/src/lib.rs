@@ -22,11 +22,13 @@ pub use compute::{
     intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program, run_program,
     run_program_with,
 };
-pub use conditions::{evaluate_condition, evaluate_condition_with, next_transition};
+pub use conditions::{
+    evaluate_condition, evaluate_condition_with, next_transition, validate_condition_value,
+};
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::{
     apply_input_defaults, resolve_value_refs, resolve_value_refs_pure,
-    resolve_value_refs_with_functions,
+    resolve_value_refs_with_functions, validate_expression,
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use normalize::{normalize_definition, normalize_workflow};

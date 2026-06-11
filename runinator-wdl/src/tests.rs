@@ -1,7 +1,7 @@
 use crate::{
     CompileOptions, DecompileOptions, WdlCompletionRequest, WdlCompletionResponse, WdlError,
-    analyze_source, compile_str, compile_str_with_diagnostics, complete_source, decompile,
-    decompile_with, format_str, parse_document,
+    WdlFragmentKind, analyze_source, compile_str, compile_str_with_diagnostics, complete_source,
+    decompile, decompile_with, evaluate_fragment, format_str, parse_document, validate_fragment,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
@@ -3529,4 +3529,59 @@ fn function_definition_round_trips_through_formatter() {
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("fn double(x: integer)"), "{formatted}");
     assert!(formatted.contains("= x * 2"), "{formatted}");
+}
+
+#[test]
+fn validates_and_evaluates_expression_fragment() {
+    let context = Value::from(serde_json::json!({ "input": { "name": "Ada" } }));
+    let value = evaluate_fragment(
+        r#""hello " ++ params.name"#,
+        WdlFragmentKind::Expression,
+        &context,
+        &CompileOptions::default(),
+    )
+    .expect("evaluate expression");
+
+    assert_eq!(value, Value::from("hello Ada"));
+}
+
+#[test]
+fn validates_and_evaluates_condition_fragment() {
+    let context = Value::from(serde_json::json!({ "input": { "count": 3 } }));
+    let value = evaluate_fragment(
+        "params.count >= 3 && exists params.count",
+        WdlFragmentKind::Condition,
+        &context,
+        &CompileOptions::default(),
+    )
+    .expect("evaluate condition");
+
+    assert_eq!(value, Value::from(true));
+}
+
+#[test]
+fn validates_and_evaluates_compute_fragment() {
+    let context = Value::from(serde_json::json!({ "input": { "count": 3 } }));
+    let value = evaluate_fragment(
+        r#"{ let doubled = params.count * 2 return doubled + 1 }"#,
+        WdlFragmentKind::Compute,
+        &context,
+        &CompileOptions::default(),
+    )
+    .expect("evaluate compute");
+
+    assert_eq!(value.get("outcome").and_then(Value::as_str), Some("return"));
+    assert_eq!(value.get("value"), Some(&Value::from(7)));
+}
+
+#[test]
+fn fragment_validation_rejects_wrong_surface() {
+    let err = validate_fragment(
+        "workflow \"Not a fragment\" {}",
+        WdlFragmentKind::Expression,
+        &CompileOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("expected"), "{err}");
 }

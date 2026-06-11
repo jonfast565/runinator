@@ -4,7 +4,9 @@
 // is purely an author-time front end.
 
 use runinator_models::semver::SemVer;
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub mod ast;
@@ -24,7 +26,9 @@ pub mod sema;
 pub use decompile::DecompileOptions;
 pub use errors::{Span, WdlError};
 pub use includes::included_file_paths;
-pub use parser::parse_document;
+pub use parser::{
+    parse_compute_fragment, parse_condition_fragment, parse_document, parse_expression_fragment,
+};
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
 
@@ -40,6 +44,15 @@ pub struct CompileOptions {
     pub default_version: SemVer,
     /// directory used to resolve `file("...")` includes.
     pub source_dir: Option<PathBuf>,
+}
+
+/// the supported standalone WDL fragment surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WdlFragmentKind {
+    Expression,
+    Condition,
+    Compute,
 }
 
 impl Default for CompileOptions {
@@ -96,6 +109,98 @@ pub fn analyze_source(src: &str) -> Result<Vec<Diagnostic>, WdlError> {
 pub fn format_str(src: &str) -> Result<String, WdlError> {
     let document = parse_document(src)?;
     Ok(format::format_document(&document))
+}
+
+/// parse and lower a standalone WDL fragment into the runtime JSON expression/condition/program
+/// shape used by the reducer.
+pub fn lower_fragment(
+    src: &str,
+    kind: WdlFragmentKind,
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    match kind {
+        WdlFragmentKind::Expression => {
+            let expr = parse_expression_fragment(src)?;
+            lower::lower_expression_fragment(&expr, options)
+        }
+        WdlFragmentKind::Condition => {
+            let cond = parse_condition_fragment(src)?;
+            lower::lower_condition_fragment(&cond, options)
+        }
+        WdlFragmentKind::Compute => {
+            let body = parse_compute_fragment(src)?;
+            lower::lower_compute_fragment(&body, options)
+        }
+    }
+}
+
+/// validate a standalone WDL fragment after lowering, using the shared workflow runtime parsers.
+pub fn validate_fragment(
+    src: &str,
+    kind: WdlFragmentKind,
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    let lowered = lower_fragment(src, kind, options)?;
+    validate_lowered_fragment(&lowered, kind)?;
+    Ok(lowered)
+}
+
+/// evaluate a standalone WDL fragment against a sample runtime context.
+pub fn evaluate_fragment(
+    src: &str,
+    kind: WdlFragmentKind,
+    context: &Value,
+    options: &CompileOptions,
+) -> Result<Value, WdlError> {
+    let lowered = validate_fragment(src, kind, options)?;
+    match kind {
+        WdlFragmentKind::Expression => {
+            runinator_workflows::resolve_value_refs_pure(&lowered, context)
+                .map_err(|err| WdlError::Validation(err.to_string()))
+        }
+        WdlFragmentKind::Condition => runinator_workflows::evaluate_condition(&lowered, context)
+            .map(Value::Bool)
+            .map_err(|err| WdlError::Validation(err.to_string())),
+        WdlFragmentKind::Compute => {
+            let program = runinator_workflows::parse_program(&lowered)
+                .map_err(|err| WdlError::Validation(err.to_string()))?;
+            let outcome = runinator_workflows::run_program(
+                &program,
+                context,
+                &runinator_workflows::PureIntrinsics,
+            )
+            .map_err(|err| WdlError::Validation(err.to_string()))?;
+            Ok(compute_outcome_value(outcome))
+        }
+    }
+}
+
+fn validate_lowered_fragment(value: &Value, kind: WdlFragmentKind) -> Result<(), WdlError> {
+    match kind {
+        WdlFragmentKind::Expression => runinator_workflows::validate_expression(value),
+        WdlFragmentKind::Condition => runinator_workflows::validate_condition_value(value),
+        WdlFragmentKind::Compute => runinator_workflows::parse_program(value).map(|_| ()),
+    }
+    .map_err(|err| WdlError::Validation(err.to_string()))
+}
+
+fn compute_outcome_value(outcome: runinator_workflows::ComputeOutcome) -> Value {
+    let mut map = Map::new();
+    match outcome {
+        runinator_workflows::ComputeOutcome::Return(value) => {
+            map.insert("outcome".into(), Value::String("return".into()));
+            map.insert("value".into(), value);
+        }
+        runinator_workflows::ComputeOutcome::Goto(target) => {
+            map.insert("outcome".into(), Value::String("goto".into()));
+            map.insert("target".into(), Value::String(target));
+        }
+        runinator_workflows::ComputeOutcome::Fallthrough(value) => {
+            map.insert("outcome".into(), Value::String("fallthrough".into()));
+            map.insert("value".into(), value);
+        }
+    }
+    Value::Object(map)
 }
 
 /// compile without running the shared validator. useful for diagnostics tooling that

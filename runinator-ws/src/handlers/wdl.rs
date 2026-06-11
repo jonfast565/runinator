@@ -7,7 +7,7 @@ use runinator_models::{
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
-use runinator_wdl::{CompileOptions, Severity, WdlError};
+use runinator_wdl::{CompileOptions, Severity, WdlError, WdlFragmentKind};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{AppEvent, EventSender, emit};
@@ -31,6 +31,8 @@ pub(crate) struct CompileWdlRequest {
 #[derive(Deserialize)]
 pub(crate) struct WdlSourceRequest {
     pub source: String,
+    #[serde(default)]
+    pub fragment: Option<WdlFragmentKind>,
 }
 
 #[derive(Deserialize)]
@@ -40,7 +42,12 @@ pub(crate) struct DecompileWdlRequest {
 
 #[derive(Deserialize)]
 pub(crate) struct EvaluateExpressionRequest {
-    pub expression: Value,
+    #[serde(default)]
+    pub expression: Option<Value>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default = "default_fragment_kind")]
+    pub kind: WdlFragmentKind,
     #[serde(default)]
     pub context: Value,
 }
@@ -117,6 +124,12 @@ pub(crate) async fn analyze_wdl(
     Json(request): Json<WdlSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
     let source = request.source;
+    if let Some(kind) = request.fragment {
+        return match runinator_wdl::validate_fragment(&source, kind, &CompileOptions::default()) {
+            Ok(_) => Json(Vec::new()),
+            Err(err) => Json(vec![wdl_error_to_summary(err, &source)]),
+        };
+    }
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
     let diagnostics = match runinator_wdl::analyze_source(&source) {
         Ok(diagnostics) => diagnostics,
@@ -166,9 +179,79 @@ pub(crate) async fn decompile_to_wdl(
 pub(crate) async fn evaluate_expression(
     Json(request): Json<EvaluateExpressionRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    runinator_workflows::resolve_value_refs_pure(&request.expression, &request.context)
+    if let Some(source) = request.source {
+        return runinator_wdl::evaluate_fragment(
+            &source,
+            request.kind,
+            &request.context,
+            &CompileOptions::default(),
+        )
         .map(Json)
-        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()));
+    }
+    let Some(expression) = request.expression else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "request must include either expression or source".into(),
+        ));
+    };
+    evaluate_lowered_fragment(&expression, request.kind, &request.context)
+        .map(Json)
+        .map_err(|err| (StatusCode::BAD_REQUEST, err))
+}
+
+fn default_fragment_kind() -> WdlFragmentKind {
+    WdlFragmentKind::Expression
+}
+
+fn evaluate_lowered_fragment(
+    value: &Value,
+    kind: WdlFragmentKind,
+    context: &Value,
+) -> Result<Value, String> {
+    match kind {
+        WdlFragmentKind::Expression => {
+            runinator_workflows::validate_expression(value).map_err(|err| err.to_string())?;
+            runinator_workflows::resolve_value_refs_pure(value, context)
+                .map_err(|err| err.to_string())
+        }
+        WdlFragmentKind::Condition => {
+            runinator_workflows::validate_condition_value(value).map_err(|err| err.to_string())?;
+            runinator_workflows::evaluate_condition(value, context)
+                .map(Value::Bool)
+                .map_err(|err| err.to_string())
+        }
+        WdlFragmentKind::Compute => {
+            let program =
+                runinator_workflows::parse_program(value).map_err(|err| err.to_string())?;
+            let outcome = runinator_workflows::run_program(
+                &program,
+                context,
+                &runinator_workflows::PureIntrinsics,
+            )
+            .map_err(|err| err.to_string())?;
+            Ok(compute_outcome_value(outcome))
+        }
+    }
+}
+
+fn compute_outcome_value(outcome: runinator_workflows::ComputeOutcome) -> Value {
+    let mut map = runinator_models::value::Map::new();
+    match outcome {
+        runinator_workflows::ComputeOutcome::Return(value) => {
+            map.insert("outcome".into(), Value::String("return".into()));
+            map.insert("value".into(), value);
+        }
+        runinator_workflows::ComputeOutcome::Goto(target) => {
+            map.insert("outcome".into(), Value::String("goto".into()));
+            map.insert("target".into(), Value::String(target));
+        }
+        runinator_workflows::ComputeOutcome::Fallthrough(value) => {
+            map.insert("outcome".into(), Value::String("fallthrough".into()));
+            map.insert("value".into(), value);
+        }
+    }
+    Value::Object(map)
 }
 
 /// flatten a `WdlError` into a single error diagnostic anchored to its span when it has one.

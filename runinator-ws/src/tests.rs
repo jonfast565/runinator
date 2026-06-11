@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use axum::Json;
 use runinator_broker::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -20,6 +21,7 @@ use runinator_models::{
         WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
+use runinator_wdl::WdlFragmentKind;
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -73,6 +75,51 @@ fn workflow_run_request_accepts_debug_flag() {
         serde_json::from_value(json!({ "parameters": {}, "debug": true }).into()).unwrap();
 
     assert!(request.debug);
+}
+
+#[tokio::test]
+async fn wdl_evaluate_accepts_legacy_lowered_expression() {
+    let request = crate::handlers::wdl::EvaluateExpressionRequest {
+        expression: Some(json!({ "$concat": ["hello ", { "$ref": { "params": ["name"] } }] })),
+        source: None,
+        kind: WdlFragmentKind::Expression,
+        context: json!({ "input": { "name": "Ada" } }),
+    };
+
+    let Json(value) = crate::handlers::wdl::evaluate_expression(Json(request))
+        .await
+        .expect("evaluate");
+
+    assert_eq!(value, Value::from("hello Ada"));
+}
+
+#[tokio::test]
+async fn wdl_evaluate_accepts_source_fragments() {
+    let request = crate::handlers::wdl::EvaluateExpressionRequest {
+        expression: None,
+        source: Some("params.count >= 3 && exists params.count".into()),
+        kind: WdlFragmentKind::Condition,
+        context: json!({ "input": { "count": 3 } }),
+    };
+
+    let Json(value) = crate::handlers::wdl::evaluate_expression(Json(request))
+        .await
+        .expect("evaluate");
+
+    assert_eq!(value, Value::from(true));
+}
+
+#[tokio::test]
+async fn wdl_analyze_validates_source_fragments() {
+    let Json(diagnostics) =
+        crate::handlers::wdl::analyze_wdl(Json(crate::handlers::wdl::WdlSourceRequest {
+            source: "params.count >".into(),
+            fragment: Some(WdlFragmentKind::Condition),
+        }))
+        .await;
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].severity, "error");
 }
 
 #[tokio::test]

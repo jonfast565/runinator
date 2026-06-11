@@ -13,6 +13,15 @@ use crate::purity::block_is_effectful;
 use super::Lowerer;
 
 impl Lowerer {
+    pub(super) fn lower_compute_fragment(&self, body: &[ComputeLine]) -> Result<Value, WdlError> {
+        // collect every local name so fragment lowering matches normal compute-node lowering.
+        let previous_locals = self.compute_locals.replace(HashSet::new());
+        collect_locals(body, &mut self.compute_locals.borrow_mut());
+        let program = self.lower_program(body).map(Value::Array);
+        self.compute_locals.replace(previous_locals);
+        program
+    }
+
     pub(super) fn lower_compute(
         &mut self,
         compute: &ComputeStmt,

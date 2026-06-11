@@ -56,6 +56,11 @@ pub(crate) fn resolve_value_refs_with(
     evaluate_expression_with(&expression, context, env)
 }
 
+/// validate that a value is a well-formed workflow expression without resolving references.
+pub fn validate_expression(value: &Value) -> Result<(), WorkflowValidationError> {
+    parse_expression(value).map(|_| ())
+}
+
 /// like `resolve_value_refs`, but also resolving user-function calls from `functions`. used by the
 /// reducer when folding declarative expressions that may reference user-defined functions.
 pub fn resolve_value_refs_with_functions(

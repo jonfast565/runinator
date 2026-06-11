@@ -6,6 +6,9 @@ WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
 document = { SOI ~ func_def* ~ workflow ~ func_def* ~ EOI }
+expr_document = { SOI ~ expr ~ EOI }
+cond_document = { SOI ~ cond ~ EOI }
+compute_document = { SOI ~ compute_block ~ EOI }
 
 // a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
 // signature and a single-expression body. params reuse the parameter-field shape (`name: type` with an

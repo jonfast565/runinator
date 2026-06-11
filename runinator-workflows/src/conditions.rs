@@ -241,7 +241,7 @@ pub fn next_transition(
     Ok(target.map(|target| target.as_str().to_string()))
 }
 
-pub(crate) fn validate_condition(condition: &Value) -> Result<(), WorkflowValidationError> {
+pub fn validate_condition_value(condition: &Value) -> Result<(), WorkflowValidationError> {
     if condition.is_null() || condition.is_object() {
         Ok(())
     } else {
@@ -249,4 +249,8 @@ pub(crate) fn validate_condition(condition: &Value) -> Result<(), WorkflowValida
             "condition must be an object".into(),
         ))
     }
+}
+
+pub(crate) fn validate_condition(condition: &Value) -> Result<(), WorkflowValidationError> {
+    validate_condition_value(condition)
 }
