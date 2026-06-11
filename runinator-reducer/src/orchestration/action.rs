@@ -1,5 +1,5 @@
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
-use super::transitions::retry_or_transition;
+use super::transitions::{arm_node_timeout, retry_or_transition, time_out, timed_out};
 use super::*;
 use uuid::Uuid;
 
@@ -20,6 +20,19 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Running {
+            // a dispatched action otherwise waits on its worker result indefinitely; honor the
+            // node's timeout so a lost worker or dropped result cannot park the run forever.
+            if timed_out(node, node_run) {
+                return time_out(
+                    db,
+                    workflow_run,
+                    node,
+                    node_run,
+                    "Action node timed out",
+                    node_runs,
+                )
+                .await;
+            }
             return Ok(());
         }
         if node_run.status.is_terminal() {
@@ -53,8 +66,13 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     let parameters =
         build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
     let command = build_action_command(workflow_run.id, &node_run, action, parameters.clone());
-    db.enqueue_action_dispatch(format!("workflow-node-run:{}", node_run.id), command)
-        .await?;
+    // scope the dedupe key to the attempt: outbox rows persist after publish, so a retry reusing
+    // the node run's key would collide with the already-published row and never dispatch again.
+    db.enqueue_action_dispatch(
+        format!("workflow-node-run:{}:{attempt}", node_run.id),
+        command,
+    )
+    .await?;
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
@@ -73,7 +91,10 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         None,
         None,
     )
-    .await
+    .await?;
+    // no ready node is pending while the run awaits the worker, so a configured timeout must arm
+    // its own wake-up to be checked at the deadline.
+    arm_node_timeout(db, workflow_run.id, node).await
 }
 
 async fn build_node_parameters<T: DatabaseImpl>(

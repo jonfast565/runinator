@@ -125,8 +125,9 @@ const orderedNodes = computed(() => {
     if (Number.isFinite(leftCreated) && Number.isFinite(rightCreated) && leftCreated !== rightCreated) {
       return leftCreated - rightCreated;
     }
-    if (left.attempt !== right.attempt) return left.attempt - right.attempt;
-    return left.node_id.localeCompare(right.node_id);
+    // created_at has second precision, so same-second steps tie; the uuidv7 run id is
+    // time-ordered at finer precision and string-sorts chronologically.
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
   });
 });
 

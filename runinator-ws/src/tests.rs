@@ -581,6 +581,169 @@ async fn action_failure_schedules_retry_with_backoff() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn action_retry_republishes_dispatch_after_backoff() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "action-retry-redispatch",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+                {
+                    "id": "run",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute", "configuration": {} },
+                    "retry": { "max_attempts": 3 },
+                    "transitions": { "on_failure": { "$node": "failed" } }
+                },
+                { "id": "failed", "kind": "fail" },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    drain_ready_nodes(&db).await;
+    let dispatch = db.fetch_pending_action_dispatches(10).await.unwrap()[0].clone();
+    db.mark_action_dispatch_published(dispatch.id)
+        .await
+        .unwrap();
+    let event = WorkflowResultEvent::status(&dispatch.command, WorkflowStatus::Failed, None, None);
+    crate::repository::apply_workflow_result_event(&db, &event)
+        .await
+        .unwrap();
+    drain_ready_nodes(&db).await;
+
+    // wait out the first retry backoff, then drive the retry ready node to its re-dispatch.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    drain_ready_nodes(&db).await;
+
+    // the retried attempt must publish a fresh outbox row; reusing the first attempt's dedupe key
+    // would collide with the already-published row and park the run in `running` forever.
+    let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
+    assert_eq!(pending.len(), 1, "retry must enqueue a fresh dispatch");
+    assert_eq!(pending[0].command.attempt, 2);
+    assert_ne!(pending[0].dedupe_key, dispatch.dedupe_key);
+    let (run, _) = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, WorkflowStatus::Running);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn duplicate_terminal_result_event_still_enqueues_drive() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "duplicate-result-drive",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+                {
+                    "id": "run",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute", "configuration": {} },
+                    "transitions": { "next": { "$node": "end" } }
+                },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    drain_ready_nodes(&db).await;
+    let dispatch = db.fetch_pending_action_dispatches(10).await.unwrap()[0].clone();
+    db.mark_action_dispatch_published(dispatch.id)
+        .await
+        .unwrap();
+    let event = WorkflowResultEvent::status(
+        &dispatch.command,
+        WorkflowStatus::Succeeded,
+        Some(json!({ "ok": true })),
+        None,
+    );
+    assert!(
+        crate::repository::apply_workflow_result_event(&db, &event)
+            .await
+            .unwrap()
+    );
+    drain_ready_nodes(&db).await;
+    let (run, _) = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+
+    // a redelivered duplicate can follow a crash that lost the first drive enqueue; it must still
+    // enqueue a drive even though the event itself is not re-applied.
+    assert!(
+        !crate::repository::apply_workflow_result_event(&db, &event)
+            .await
+            .unwrap()
+    );
+    let pending = db
+        .fetch_pending_ready_nodes(chrono::Utc::now(), 10)
+        .await
+        .unwrap();
+    assert!(
+        pending
+            .iter()
+            .any(|node| node.workflow_run_id == run_id && node.node_id == "run")
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn action_node_timeout_recovers_parked_run() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "action-timeout",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+                {
+                    "id": "run",
+                    "kind": "action",
+                    "timeout_seconds": 1,
+                    "action": { "provider": "test", "function": "execute", "configuration": {} },
+                    "transitions": { "next": { "$node": "end" } }
+                },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    drain_ready_nodes(&db).await;
+    let dispatch = db.fetch_pending_action_dispatches(10).await.unwrap()[0].clone();
+    db.mark_action_dispatch_published(dispatch.id)
+        .await
+        .unwrap();
+
+    // no worker result ever arrives; the armed timeout wake must settle the parked node.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    drain_ready_nodes(&db).await;
+
+    let (run, nodes) = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let node_run = nodes.iter().find(|node| node.node_id == "run").unwrap();
+    assert_eq!(node_run.status, WorkflowStatus::TimedOut);
+    assert_eq!(run.status, WorkflowStatus::TimedOut);
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn merges_json_objects() {
     let defaults = json!({ "a": 1, "b": 2 });

@@ -89,9 +89,9 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     event: &WorkflowResultEvent,
 ) -> Result<bool, SendableError> {
     let applied = db.apply_workflow_result_event(event).await?;
-    if !applied {
-        return Ok(false);
-    }
+    // enqueue the drive even when the event is a duplicate: a redelivery usually means a prior
+    // attempt failed between persisting the event and enqueueing this ready node, and skipping it
+    // here would strand the run in `running` with no backstop. a spurious drive is harmless.
     if let WorkflowResultEventKind::Status { status, .. } = &event.kind
         && status.is_terminal()
     {
@@ -108,7 +108,7 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
         )
         .await?;
     }
-    Ok(true)
+    Ok(applied)
 }
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(
