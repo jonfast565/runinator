@@ -1,28 +1,15 @@
-# Workers run as a StatefulSet behind a headless Service so each pod keeps a stable ordinal identity
-# (runinator-worker-0, -1, ...) and DNS name across restarts/reschedules, rather than the random
-# hash + churning IP a Deployment hands out. The stable pod name feeds both the broker client id and
-# a deterministic worker id, so a restarted pod reclaims its prior replica identity instead of
-# leaving an orphan row (the ws replica reaper retires any that truly disappear on scale-down).
-apiVersion: v1
-kind: Service
-metadata:
-  name: runinator-worker
-  namespace: runinator
-spec:
-  clusterIP: None
-  publishNotReadyAddresses: true
-  selector:
-    app: runinator-worker
----
+# Workers run as a plain Deployment: they are stateless broker competing-consumers with no
+# persistent volumes (the plugins dir is an emptyDir repopulated by the init container each start),
+# and broker ack/redelivery handles failover regardless of pod identity. The pod name is still folded
+# into a deterministic worker id (Uuid::new_v5) so a pod keeps a coherent replica identity for its
+# lifetime; the ws replica reaper marks gone pods offline and purges long-stale rows.
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: runinator-worker
   namespace: runinator
 spec:
-  serviceName: runinator-worker
   replicas: 2
-  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: runinator-worker
@@ -58,8 +45,6 @@ spec:
             - "runinator-worker-$(POD_NAME)"
             - "--worker-id"
             - "$(POD_NAME)"
-            - "--advertise-host"
-            - "$(POD_NAME).runinator-worker.runinator.svc.cluster.local"
             - "--max-concurrent-actions"
             - "4"
             - "--api-base-url"

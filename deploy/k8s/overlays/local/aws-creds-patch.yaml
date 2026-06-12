@@ -1,9 +1,11 @@
 # Mount a node-local AWS config directory into each worker pod so aws sso
 # cache and profile files are visible at the default home-directory location.
 # Point the node path at the developer's real ~/.aws through the local cluster
-# driver's mount or symlink mechanism before applying this overlay.
+# driver's mount or symlink mechanism before applying this overlay. DirectoryOrCreate
+# lets the pod start with an empty dir when no such mount exists (e.g. a kind node
+# without extraMounts) instead of hanging on a failed hostPath type check.
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: runinator-worker
   namespace: runinator
@@ -20,4 +22,4 @@ spec:
         - name: aws-config
           hostPath:
             path: /var/runinator/aws
-            type: Directory
+            type: DirectoryOrCreate

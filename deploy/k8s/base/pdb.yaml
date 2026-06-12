@@ -37,10 +37,10 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: runinator-command-center-web
+  name: runinator-command-center
   namespace: runinator
 spec:
   maxUnavailable: 1
   selector:
     matchLabels:
-      app: runinator-command-center-web
+      app: runinator-command-center

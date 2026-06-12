@@ -1,0 +1,19 @@
+# Debugging-only direct access to postgres from outside the cluster. This is a separate Service from
+# the headless runinator-postgres used by the StatefulSet (a headless service cannot be a NodePort).
+# It ships only inside the optional direct-ingress component, so the database is exposed solely when
+# build.ps1 -ExposeDirectIngress opts in. Connect on <node-ip>:30432 with local-secrets.yaml creds.
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-postgres-debug
+  namespace: runinator
+spec:
+  type: NodePort
+  selector:
+    app: runinator-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      nodePort: 30432
+      protocol: TCP

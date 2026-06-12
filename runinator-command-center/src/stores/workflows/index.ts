@@ -2000,7 +2000,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   async function deleteSelectedWorkflow() {
     const workflow = selectedWorkflow.value;
     if (!workflow?.id) return;
-    if (!window.confirm(`Delete workflow "${workflow.name}"? This cannot be undone.`)) return;
+    if (
+      !window.confirm(
+        `Delete workflow "${workflow.name}"?\n\nThis permanently deletes the workflow along with ALL of its runs and their execution history. This cannot be undone.`,
+      )
+    )
+      return;
     const response = await app.runOperation(`Deleting workflow ${workflow.name}`, () => deleteWorkflow(workflow.id!));
     if (response.success === false) {
       app.setError(response.message || "Failed to delete workflow");

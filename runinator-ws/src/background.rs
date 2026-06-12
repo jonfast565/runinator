@@ -48,9 +48,10 @@ pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
     }
 }
 
-/// periodically mark replicas offline once they have gone quiet past the inactivity window. the
-/// reducer-facing views derive stale state per fetch; this loop is the durable cleanup that retires
-/// replicas that never sent an offline notice (e.g. crashed or evicted pods).
+/// periodically mark replicas offline once they have gone quiet past the inactivity window, then
+/// hard-delete rows that have stayed quiet far longer so offline replicas do not pile up forever.
+/// the reducer-facing views derive stale state per fetch; this loop is the durable cleanup that
+/// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
 pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("Replica reaper started");
     loop {
@@ -58,6 +59,11 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
             Ok(count) if count > 0 => info!("Reaped {} inactive replica(s) to offline", count),
             Ok(_) => {}
             Err(err) => error!("Replica reaper iteration failed: {}", err),
+        }
+        match repository::delete_expired_replicas(db.as_ref()).await {
+            Ok(count) if count > 0 => info!("Purged {} long-stale replica(s)", count),
+            Ok(_) => {}
+            Err(err) => error!("Replica purge iteration failed: {}", err),
         }
         tokio::select! {
             _ = shutdown.notified() => {

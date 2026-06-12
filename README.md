@@ -331,6 +331,21 @@ To redeploy only the web interface, rebuild and apply just the
 pwsh ./build.ps1 -DeployKube -CommandCenterOnly
 ```
 
+By default only the command-center is reachable from outside the cluster (it
+proxies `/api` and `/ws` to the web service). To additionally expose the web
+service API/websocket directly and open a debugging-only NodePort to Postgres,
+pass `-KubeExposeDirectIngress`:
+
+```bash
+pwsh ./build.ps1 -DeployKube -KubeExposeDirectIngress
+```
+
+This injects the `deploy/k8s/components/direct-ingress` component at render time
+(it is never wired into a base/overlay, so prod stays closed unless you opt in).
+It adds a host-based ingress for the web service at `api.runinator.local` and a
+`NodePort` Service reaching Postgres on `<node-ip>:30432`. Leave the flag off for
+any environment where the database must not be externally reachable.
+
 ### Production
 
 Edit `deploy/k8s/overlays/prod/storage-class-patch.yaml` to set your cluster's

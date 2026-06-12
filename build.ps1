@@ -41,6 +41,10 @@ param(
     # already exist in the cluster, so app rollouts do not touch the database
     # or broker. Pass this switch to apply (and potentially recreate) them.
     [switch]$KubeRecreateInfra,
+    # Opt in to direct external exposure: a host-based ingress to the web service
+    # API/websocket plus a debugging-only NodePort to postgres. Off by default so
+    # prod stays closed; injects the deploy/k8s/components/direct-ingress component.
+    [switch]$KubeExposeDirectIngress,
     [string]$LocalRegistry = "",
 
     [ValidateNotNullOrEmpty()]
@@ -928,7 +932,7 @@ function Build-ContainerImages {
         @{ Name = 'runinator-ctl';       Dockerfile = 'deploy/Dockerfile'; Target = 'ctl' },
         @{ Name = 'runinator-ws';        Dockerfile = 'deploy/Dockerfile'; Target = 'ws' },
         @{ Name = 'runinator-migration'; Dockerfile = 'deploy/Dockerfile'; Target = 'migration' },
-        @{ Name = 'runinator-command-center-web'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
+        @{ Name = 'runinator-command-center'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
     )
 
     if ($ImageNames -and $ImageNames.Count -gt 0) {
@@ -1063,6 +1067,52 @@ function Set-KustomizeOverlayImages {
     Set-Content -Path $kustomizationPath -Value $updated -Encoding utf8NoBOM
 }
 
+function Add-KustomizeComponent {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkspacePath,
+
+        [Parameter(Mandatory)]
+        [string]$OverlayPath,
+
+        [Parameter(Mandatory)]
+        [string]$ComponentRelPath
+    )
+
+    $kustomizationPath = Join-Path -Path $OverlayPath -ChildPath 'kustomization.yaml'
+    if (-not (Test-Path -LiteralPath $kustomizationPath)) {
+        throw "Kustomization file not found at $kustomizationPath"
+    }
+
+    # the render copy mirrors deploy/k8s under target/k8s-render/k8s; resolve the copied component there
+    # so the injected path is relative to the overlay and survives kustomize's no-absolute-path rule.
+    $copiedK8sRoot = Join-Path -Path $WorkspacePath -ChildPath 'target/k8s-render/k8s'
+    $componentAbs = [System.IO.Path]::GetFullPath((Join-Path -Path $copiedK8sRoot -ChildPath $ComponentRelPath))
+    if (-not (Test-Path -LiteralPath $componentAbs)) {
+        throw "Kustomize component not found at $componentAbs"
+    }
+
+    $relative = [System.IO.Path]::GetRelativePath($OverlayPath, $componentAbs).Replace('\', '/')
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.AddRange([string[]](Get-Content -LiteralPath $kustomizationPath))
+
+    # append under an existing components: block, or start a new one at the end.
+    $componentsIndex = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^components:\s*$') { $componentsIndex = $i; break }
+    }
+
+    if ($componentsIndex -ge 0) {
+        $lines.Insert($componentsIndex + 1, "  - $relative")
+    } else {
+        $lines.Add('components:')
+        $lines.Add("  - $relative")
+    }
+
+    Set-Content -Path $kustomizationPath -Value $lines -Encoding utf8NoBOM
+}
+
 function Deploy-KubernetesStack {
     param(
         [Parameter(Mandatory)]
@@ -1081,7 +1131,9 @@ function Deploy-KubernetesStack {
         [switch]$Delete,
         [switch]$CommandCenterOnly,
 
-        [switch]$RecreateInfra
+        [switch]$RecreateInfra,
+
+        [switch]$ExposeDirectIngress
     )
 
     Test-ToolAvailable -Name 'kubectl'
@@ -1101,11 +1153,19 @@ function Deploy-KubernetesStack {
 
     $applyPath = $resolvedPath
 
-    if ($ImageMap -and $isOverlay) {
-        # render from a copied overlay so image edits do not dirty the repo.
+    # render from a copied overlay so image edits and component opt-ins never dirty the repo.
+    if ($isOverlay -and ($ImageMap -or $ExposeDirectIngress)) {
         $applyPath = New-KustomizeRenderOverlay -WorkspacePath $WorkspacePath -OverlayPath $resolvedPath
-        Write-Step "Rendering image overrides into $applyPath"
-        Set-KustomizeOverlayImages -OverlayPath $applyPath -ImageMap $ImageMap
+        if ($ImageMap) {
+            Write-Step "Rendering image overrides into $applyPath"
+            Set-KustomizeOverlayImages -OverlayPath $applyPath -ImageMap $ImageMap
+        }
+        if ($ExposeDirectIngress) {
+            Write-Step "Enabling direct-ingress exposure (ws ingress + postgres debug NodePort)"
+            Add-KustomizeComponent -WorkspacePath $WorkspacePath -OverlayPath $applyPath -ComponentRelPath 'components/direct-ingress'
+        }
+    } elseif ($ExposeDirectIngress -and -not $isOverlay) {
+        Write-Warning '-KubeExposeDirectIngress only applies to kustomize overlays; ignoring for a raw manifest path.'
     }
 
     $ctxArgs = @()
@@ -1118,7 +1178,7 @@ function Deploy-KubernetesStack {
     $renderedManifest = $null
 
     if ($CommandCenterOnly) {
-        $commandCenterResourceNames = @('runinator-command-center-web', 'runinator-command-center')
+        $commandCenterResourceNames = @('runinator-command-center')
         $renderedManifest = if ($isOverlay) {
             Invoke-Kubectl -KubeContextArgs $ctxArgs -Arguments @('kustomize', $applyPath)
         } else {
@@ -1192,7 +1252,7 @@ function Deploy-KubernetesStack {
 
     $rolloutTargets = [System.Collections.Generic.List[string]]::new()
     if ($CommandCenterOnly) {
-        [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center-web' -FallbackKind 'Deployment'))
+        [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center' -FallbackKind 'Deployment'))
     } else {
         if (-not $Delete) {
             Remove-K8sSupersededWorkloadControllers -KubeContextArgs $ctxArgs -RenderedYaml $renderedManifest -WorkspacePath $WorkspacePath
@@ -1203,7 +1263,7 @@ function Deploy-KubernetesStack {
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-ws' -FallbackKind 'Deployment'),
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-waker' -FallbackKind 'Deployment'),
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-worker' -FallbackKind 'StatefulSet'),
-            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center-web' -FallbackKind 'Deployment')
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center' -FallbackKind 'Deployment')
         )) {
             [void]$rolloutTargets.Add($t)
         }
@@ -1338,7 +1398,7 @@ try {
             $imageMap = $null
             if (-not $KubeDelete) {
                 $shouldPushImages = -not [string]::IsNullOrWhiteSpace($ImageRepository)
-                $imageNames = if ($CommandCenterOnly) { @('runinator-command-center-web') } else { $null }
+                $imageNames = if ($CommandCenterOnly) { @('runinator-command-center') } else { $null }
                 $imageMap = Build-ContainerImages `
                     -WorkspacePath $workspacePath `
                     -Repository $ImageRepository `
@@ -1371,6 +1431,10 @@ try {
 
             if ($KubeRecreateInfra) {
                 $deployArgs['RecreateInfra'] = $true
+            }
+
+            if ($KubeExposeDirectIngress) {
+                $deployArgs['ExposeDirectIngress'] = $true
             }
 
             Deploy-KubernetesStack @deployArgs

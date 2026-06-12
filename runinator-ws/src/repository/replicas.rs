@@ -8,6 +8,8 @@ use uuid::Uuid;
 const REPLICA_STALE_SECONDS: i64 = 30;
 // inactivity window after which a stale replica is reaped to offline.
 pub(crate) const REPLICA_REAP_SECONDS: i64 = 600;
+// inactivity window after which an offline replica row is hard-deleted (60 minutes).
+pub(crate) const REPLICA_DELETE_SECONDS: i64 = 3600;
 
 pub async fn register_replica<T: DatabaseImpl>(
     db: &T,
@@ -37,6 +39,11 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
 pub async fn reap_inactive_replicas<T: DatabaseImpl>(db: &T) -> Result<u64, SendableError> {
     let cutoff = Utc::now() - Duration::seconds(REPLICA_REAP_SECONDS);
     db.reap_inactive_replicas(cutoff).await
+}
+
+pub async fn delete_expired_replicas<T: DatabaseImpl>(db: &T) -> Result<u64, SendableError> {
+    let cutoff = Utc::now() - Duration::seconds(REPLICA_DELETE_SECONDS);
+    db.delete_expired_replicas(cutoff).await
 }
 
 pub async fn fetch_replicas<T: DatabaseImpl>(

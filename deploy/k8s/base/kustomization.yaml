@@ -32,5 +32,5 @@ images:
     newTag: dev
   - name: runinator-migration
     newTag: dev
-  - name: runinator-command-center-web
+  - name: runinator-command-center
     newTag: dev

@@ -38,6 +38,6 @@ images:
   - name: runinator-migration
     newName: runinator-migration
     newTag: dev
-  - name: runinator-command-center-web
-    newName: runinator-command-center-web
+  - name: runinator-command-center
+    newName: runinator-command-center
     newTag: dev

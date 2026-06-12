@@ -29,7 +29,7 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: runinator-command-center-web
+  name: runinator-command-center
   namespace: runinator
 spec:
   minReplicas: 2

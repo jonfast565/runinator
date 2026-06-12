@@ -434,11 +434,34 @@ where
     }
 
     async fn delete_workflow(&self, workflow_id: Uuid) -> Result<(), SendableError> {
-        self.pool()
-            .execute(
-                sqlx::query(&self.render("DELETE FROM workflows WHERE id = ?")).bind(workflow_id),
-            )
-            .await?;
+        // cascade-delete the workflow's runs and every execution record before the workflow row, since
+        // workflow_runs.workflow_id is a restrict foreign key. ordered child-to-parent so each delete
+        // clears the rows that reference the next table; triggers and their firings cascade with the
+        // workflow row itself.
+        let run_filter = "workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?)";
+        let node_run_filter = "workflow_node_run_id IN (SELECT id FROM workflow_node_runs \
+             WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?))";
+
+        let mut tx = self.pool().begin().await?;
+        for sql in [
+            format!("DELETE FROM workflow_ready_nodes WHERE {run_filter}"),
+            format!("DELETE FROM workflow_orchestration_events WHERE {run_filter}"),
+            format!("DELETE FROM workflow_node_chunks WHERE {node_run_filter}"),
+            format!("DELETE FROM workflow_node_artifacts WHERE {node_run_filter}"),
+            format!("DELETE FROM workflow_result_events WHERE {run_filter}"),
+            format!("DELETE FROM workflow_trigger_firings WHERE {run_filter}"),
+            "DELETE FROM workflow_node_runs WHERE workflow_run_id IN \
+                 (SELECT id FROM workflow_runs WHERE workflow_id = ?)"
+                .to_string(),
+            "DELETE FROM workflow_runs WHERE workflow_id = ?".to_string(),
+            "DELETE FROM workflows WHERE id = ?".to_string(),
+        ] {
+            sqlx::query(&self.render(&sql))
+                .bind(workflow_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1990,6 +2013,44 @@ where
         .execute(self.pool())
         .await?;
         Ok(result.affected())
+    }
+
+    async fn delete_expired_replicas(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
+        // null the historical attribution pointers (restrict-mode foreign keys) before deleting so
+        // the delete does not error; provider registrations cascade. a replica still claimed as a node
+        // run's current executor is excluded from the delete and left until that run resolves.
+        let cutoff_ts = cutoff.timestamp();
+        let mut tx = self.pool().begin().await?;
+
+        sqlx::query(&self.render(
+            "UPDATE workflow_runs SET trigger_actor_replica_id = NULL
+             WHERE trigger_actor_replica_id IN
+                 (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
+        ))
+        .bind(cutoff_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&self.render(
+            "UPDATE workflow_node_runs SET last_executor_replica_id = NULL
+             WHERE last_executor_replica_id IN
+                 (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
+        ))
+        .bind(cutoff_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        let deleted = sqlx::query(&self.render(
+            "DELETE FROM replicas WHERE last_heartbeat_at <= ? AND replica_id NOT IN
+                 (SELECT current_executor_replica_id FROM workflow_node_runs
+                  WHERE current_executor_replica_id IS NOT NULL)",
+        ))
+        .bind(cutoff_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(deleted.affected())
     }
 
     async fn fetch_replicas(

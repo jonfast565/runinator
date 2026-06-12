@@ -446,6 +446,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         cutoff: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
+    /// Hard-delete replicas whose last heartbeat predates the cutoff, clearing historical attribution
+    /// pointers first so restrict-mode foreign keys do not block the delete. returns the count purged.
+    fn delete_expired_replicas(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
     fn fetch_replicas(
         &self,

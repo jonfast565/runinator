@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: runinator-command-center-web
+  name: runinator-command-center
   namespace: runinator
 spec:
   selector:
-    app: runinator-command-center-web
+    app: runinator-command-center
   ports:
     - name: http
       port: 80
@@ -15,22 +15,22 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runinator-command-center-web
+  name: runinator-command-center
   namespace: runinator
 spec:
   # stateless nginx; it proxies /api and /ws to the runinator-ws Service (kube-proxy load-balanced).
   replicas: 2
   selector:
     matchLabels:
-      app: runinator-command-center-web
+      app: runinator-command-center
   template:
     metadata:
       labels:
-        app: runinator-command-center-web
+        app: runinator-command-center
     spec:
       containers:
-        - name: web
-          image: runinator-command-center-web:dev
+        - name: command-center
+          image: runinator-command-center:dev
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -74,6 +74,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: runinator-command-center-web
+                name: runinator-command-center
                 port:
                   number: 80

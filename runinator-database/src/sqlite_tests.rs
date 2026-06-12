@@ -703,6 +703,78 @@ async fn action_dispatch_claims_respect_publisher_leases() {
     let _ = fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn delete_workflow_cascades_runs_and_execution_records() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-delete-cascade-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("cascade-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let node_run = db
+        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}))
+        .await
+        .unwrap();
+    // a chunk result event populates workflow_node_chunks + workflow_result_events.
+    let command = action_command(run.id, node_run.id, &node_run.node_id);
+    let chunk = WorkflowResultEvent::chunk(
+        &command,
+        NewRunChunk {
+            stream: "log".into(),
+            content: "hello".into(),
+        },
+    );
+    db.apply_workflow_result_event(&chunk).await.unwrap();
+    // a ready node populates workflow_orchestration_events + workflow_ready_nodes.
+    let event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("start".into()),
+        "workflow_run_created",
+        runinator_models::json!({}),
+    );
+    db.enqueue_ready_node(event, "start".into(), Utc::now())
+        .await
+        .unwrap();
+
+    db.delete_workflow(workflow_id).await.unwrap();
+
+    assert!(db.fetch_workflow(workflow_id).await.unwrap().is_none());
+    assert!(db.fetch_recent_workflow_runs().await.unwrap().is_empty());
+    assert!(
+        db.fetch_workflow_node_run(node_run.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.fetch_workflow_node_run_chunks(node_run.id, None, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,

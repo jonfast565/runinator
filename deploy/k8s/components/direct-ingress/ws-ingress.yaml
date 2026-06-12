@@ -1,0 +1,24 @@
+# Direct ingress to the web service API/websocket, separate from the command-center proxy. Host-based
+# so it does not collide with the command-center's catch-all "/" route on the same nginx controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: runinator-ws
+  namespace: runinator
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "256m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.runinator.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: runinator-ws
+                port:
+                  number: 8080
