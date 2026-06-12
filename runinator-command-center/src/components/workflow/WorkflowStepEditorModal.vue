@@ -321,8 +321,17 @@
         <label>Event Type <input v-model="workflows.stepEditor.output_event_type" /></label>
         <div class="form-field">
           <span class="form-field-label">Data</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Output data" />
+          <TypedValueEditor
+            :ty="outputDataType"
+            :model-value="outputData"
+            :expression-context="expressionContext"
+            @update:model-value="onOutputDataChange"
+          />
         </div>
+        <details class="advanced-params">
+          <summary>Advanced WDL data</summary>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Output data" />
+        </details>
         <div class="form-field">
           <span class="form-field-label">Advanced Parameters</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Output advanced parameters" />
@@ -392,18 +401,11 @@
             </select>
           </label>
         </div>
-        <div class="form-field">
-          <span class="form-field-label">Transitions JSON</span>
-          <JsonEditor v-model="workflows.stepEditor.transitions_json" :key-hints="[...directTransitionKeys, 'branches']" />
-        </div>
       </section>
 
-      <section v-if="stepRefs.length" class="form-section">
+      <section v-if="referenceGroups.length" class="form-section">
         <h3>Available References</h3>
-        <div class="ref-row" v-for="ref in stepRefs" :key="ref.template">
-          <code class="ref-template" @click="copyRef(ref.template)">{{ ref.template }}</code>
-          <span>{{ ref.label }} -> {{ ref.field }}</span>
-        </div>
+        <ReferenceChips :groups="referenceGroups" />
       </section>
 
       <p v-if="workflows.stepEditorError" class="error">{{ workflows.stepEditorError }}</p>
@@ -422,10 +424,11 @@ import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
-import { buildSampleContext } from "../../utils/workflow-references";
-import JsonEditor from "../shared/JsonEditor.vue";
+import ReferenceChips from "../shared/ReferenceChips.vue";
+import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflow-references";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
-import { directTransitionKeys, workflowNodeActionConfig } from "../../utils/workflows";
+import TypedValueEditor from "../shared/TypedValueEditor.vue";
+import type { RuninatorType } from "../../types/models";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -458,6 +461,9 @@ const expressionContext = computed(() => ({
   sampleContext: buildSampleContext(workflows.workflowRunDetail)
 }));
 
+// the references in scope at this node (params, prior node outputs, run roots) for the chip list.
+const referenceGroups = computed(() => workflowReferenceGroups(expressionContext.value));
+
 const availableSubflows = computed(() => {
   const currentId = workflows.selectedWorkflowId;
   return workflows.workflows.filter((w) => w.id !== currentId);
@@ -481,51 +487,21 @@ const selectedSubflowInputType = computed(() => {
 
 const subflowParameters = computed(() => parseObject(workflows.stepEditor.subflow_parameters_json, {}));
 
+// output data is an open "bag": no fixed fields, any number of named entries each holding any wdl value.
+const outputDataType: RuninatorType = { type: "struct", fields: {}, additional: { type: "any" } };
+const outputData = computed(() => parseObject(workflows.stepEditor.output_data_json, {}));
+
+// the bag editor and the raw-json fallback both write back to the same json string.
+function onOutputDataChange(value: unknown) {
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  workflows.stepEditor.output_data_json = pretty(object);
+}
+
 // the typed editor and the raw-json fallback both write back to the same json string.
 function onSubflowParametersChange(value: unknown) {
   const object = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   workflows.stepEditor.subflow_parameters_json = pretty(object);
 }
-
-interface StepRef {
-  template: string;
-  label: string;
-  field: string;
-}
-
-const prevStepId = computed<string | null>(() => {
-  const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
-  const currentId = workflows.selectedStepId;
-  if (!currentId) return null;
-  const predecessor = nodes.find((node: any) => {
-    const transitions = node.transitions ?? {};
-    return [transitions.next, transitions.on_success, transitions.on_failure, transitions.on_timeout]
-      .map((value) => value?.$node)
-      .includes(currentId);
-  });
-  return predecessor?.id ?? null;
-});
-
-const stepRefs = computed<StepRef[]>(() => {
-  const refs: StepRef[] = [];
-  const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
-  const currentId = workflows.selectedStepId;
-  const prev = prevStepId.value;
-  for (const node of nodes) {
-    if (node.kind !== "action" || node.id === currentId) continue;
-    const config = workflowNodeActionConfig(node);
-    const provider = providersStore.providers.find(p => p.name === config.provider);
-    const action = provider?.actions.find(a => a.function_name === config.action);
-    if (!action?.results?.length) continue;
-    for (const result of action.results) {
-      const template = node.id === prev
-        ? JSON.stringify({ "$ref": { prev: [result.name] } })
-        : JSON.stringify({ "$ref": { node: node.id, output: [result.name] } });
-      refs.push({ template, label: node.id === prev ? `prev (${node.id})` : node.id, field: `${result.name}: ${result.ty?.type ?? "any"}` });
-    }
-  }
-  return refs;
-});
 
 onMounted(() => {
   if (providersStore.providers.length === 0 && !providersStore.loading) providersStore.fetchProviders();
@@ -558,10 +534,6 @@ function applyParameterDefaults() {
   stepParameters.value = next;
 }
 
-function copyRef(template: string) {
-  navigator.clipboard.writeText(template).catch(() => {});
-}
-
 function onSubflowNameChange(event: Event) {
   const name = (event.target as HTMLSelectElement).value;
   const workflow = workflows.workflows.find(w => w.name === name);
@@ -580,8 +552,7 @@ function onSubflowNameChange(event: Event) {
 }
 
 .modal-header span,
-.result-metadata,
-.ref-row span {
+.result-metadata {
   color: #66717e;
   font-size: 12px;
 }
@@ -636,14 +607,9 @@ function onSubflowNameChange(event: Event) {
   align-items: end;
 }
 
-.result-metadata,
-.ref-row {
+.result-metadata {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.ref-template {
-  cursor: pointer;
 }
 </style>

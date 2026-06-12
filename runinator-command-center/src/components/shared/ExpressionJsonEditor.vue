@@ -41,6 +41,7 @@ import { EditorView, basicSetup } from "codemirror";
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
 import { workflowExpressionCompletionSource } from "../../utils/workflow-expression-completion";
 import { workflowReferenceGroups } from "../../utils/workflow-references";
+import { clearExpressionInsertTarget, setExpressionInsertTarget } from "../../utils/expression-insert-target";
 import { wdl } from "../../utils/codemirror-lang-wdl";
 import { pretty } from "../../utils/format";
 import { expressionJsonToWdl, parseWdlExpression } from "../../utils/wdl-expression";
@@ -144,6 +145,11 @@ onMounted(() => {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) updateLoweredJson(update.state.doc.toString());
         if (!props.readonly && shouldStartCompletion(update)) startCompletion(update.view);
+        // claim/release the dialog-level insert slot so the reference chips target this field.
+        if (update.focusChanged && !props.readonly) {
+          if (update.view.hasFocus) setExpressionInsertTarget(insertReference);
+          else clearExpressionInsertTarget(insertReference);
+        }
       }),
       EditorView.theme({
         "&": { height: "100%" },
@@ -175,6 +181,7 @@ watch(() => props.context?.sampleContext, schedulePreview);
 
 onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
+  clearExpressionInsertTarget(insertReference);
   view?.destroy();
 });
 
