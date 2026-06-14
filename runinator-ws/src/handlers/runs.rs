@@ -485,6 +485,13 @@ pub(crate) async fn rename_workflow_run<T: DatabaseImpl>(
     }
 }
 
+/// list workflow runs, optionally filtered by status.
+#[utoipa::path(
+    get,
+    path = "/workflow_runs",
+    tag = "Workflow Runs",
+    responses((status = 200, description = "workflow runs", body = serde_json::Value)),
+)]
 pub(crate) async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,

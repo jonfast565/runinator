@@ -5,7 +5,7 @@ use std::{
 
 use log::info;
 use runinator_broker::Broker;
-use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret};
+use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret, load_jwt_secret_previous};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
@@ -43,14 +43,19 @@ pub async fn run_webserver<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     seed_builtin_catalog(pool.as_ref()).await?;
     let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
+    let jwt_secret_previous = load_jwt_secret_previous(pool.as_ref()).await?;
     if auth.enabled {
         log::info!("HTTP API authentication is ENABLED");
     } else {
         log::warn!("HTTP API authentication is DISABLED");
     }
+    if jwt_secret_previous.is_some() {
+        log::info!("accepting a previous jwt signing secret (key rotation overlap window is open)");
+    }
     let auth_config = crate::auth::AuthConfig {
         enabled: auth.enabled,
         jwt_secret,
+        jwt_secret_previous,
         access_ttl_secs: auth.access_ttl_secs,
         refresh_ttl_secs: auth.refresh_ttl_secs,
     };

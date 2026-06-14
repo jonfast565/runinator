@@ -87,12 +87,31 @@ async fn issue_session<T: DatabaseImpl>(
 }
 
 /// public probe so clients can tell whether the api requires authentication.
+#[utoipa::path(
+    get,
+    path = "/auth/config",
+    tag = "Auth",
+    security(),
+    responses((status = 200, description = "whether auth is enforced", body = serde_json::Value)),
+)]
 pub(crate) async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -> Reply {
     ok_value(&serde_json::json!({ "enabled": config.enabled }))
 }
 
 // ---- auth flows ----
 
+/// exchange a username/password for an access + refresh token pair.
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "Auth",
+    security(),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "token pair and the authenticated user", body = serde_json::Value),
+        (status = 401, description = "invalid username or password", body = ApiError),
+    ),
+)]
 pub(crate) async fn login<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
@@ -154,6 +173,13 @@ pub(crate) async fn logout<T: DatabaseImpl>(
     task_response_success("Logged out")
 }
 
+/// the principal behind the presented credential (user record, or a service marker).
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    tag = "Auth",
+    responses((status = 200, description = "current principal", body = serde_json::Value)),
+)]
 pub(crate) async fn me<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,

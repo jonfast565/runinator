@@ -22,7 +22,12 @@ pub mod sqlite;
 #[derive(Debug, Clone, Default)]
 pub struct BootstrapOptions {
     pub auth_jwt_secret: Option<String>,
+    /// previous jwt signing secret accepted on verify during a rotation overlap window. an empty/None
+    /// value clears any persisted previous secret, retiring the old key.
+    pub auth_jwt_secret_previous: Option<String>,
     pub auth_bootstrap_admin: Option<String>,
+    /// reconcile (reset) the bootstrap admin password even when users already exist.
+    pub auth_bootstrap_admin_force: bool,
     pub auth_bootstrap_service_api_key: Option<String>,
     pub auth_bootstrap_service_api_key_name: Option<String>,
 }
@@ -35,8 +40,9 @@ pub async fn bootstrap_database(
     let scripts: Vec<String> = Vec::new();
     pool.run_init_scripts(&scripts).await?;
     ensure_jwt_secret(pool.as_ref(), options.auth_jwt_secret.clone()).await?;
+    ensure_jwt_secret_previous(pool.as_ref(), options.auth_jwt_secret_previous.clone()).await?;
     if let Some(spec) = options.auth_bootstrap_admin.as_deref() {
-        seed_bootstrap_admin(pool.as_ref(), spec).await?;
+        seed_bootstrap_admin(pool.as_ref(), spec, options.auth_bootstrap_admin_force).await?;
     }
     if let Some(raw_key) = options.auth_bootstrap_service_api_key.as_deref() {
         seed_bootstrap_service_api_key(
@@ -55,6 +61,7 @@ pub async fn bootstrap_database(
 /// settings-store coordinates for the persisted, replica-shared signing secret.
 const SECRET_SCOPE: &str = "auth";
 const SECRET_NAME: &str = "jwt_secret";
+const SECRET_NAME_PREVIOUS: &str = "jwt_secret_previous";
 const DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME: &str = "bootstrap-service";
 
 pub async fn ensure_jwt_secret<T: DatabaseImpl>(
@@ -106,23 +113,98 @@ pub async fn load_jwt_secret<T: DatabaseImpl>(db: &T) -> Result<Vec<u8>, Sendabl
     })
 }
 
+/// persist or clear the previous jwt signing secret. an explicit non-empty value is upserted; an
+/// empty/None value deletes the slot, which retires the old key after the rotation window closes.
+pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
+    db: &T,
+    explicit: Option<String>,
+) -> Result<(), SendableError> {
+    match explicit.filter(|secret| !secret.is_empty()) {
+        Some(secret) => {
+            db.upsert_setting(
+                SettingKind::Secret,
+                SECRET_SCOPE.into(),
+                SECRET_NAME_PREVIOUS.into(),
+                secret.into_bytes(),
+                Utc::now().timestamp(),
+            )
+            .await
+        }
+        None => {
+            db.delete_setting(
+                SettingKind::Secret,
+                SECRET_SCOPE.into(),
+                SECRET_NAME_PREVIOUS.into(),
+            )
+            .await
+        }
+    }
+}
+
+/// load the optional previous jwt signing secret accepted during a rotation overlap window.
+pub async fn load_jwt_secret_previous<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Option<Vec<u8>>, SendableError> {
+    Ok(db
+        .fetch_setting(
+            SettingKind::Secret,
+            SECRET_SCOPE.into(),
+            SECRET_NAME_PREVIOUS.into(),
+        )
+        .await?
+        .map(|record| record.value)
+        .filter(|value| !value.is_empty()))
+}
+
+/// seed the configured bootstrap admin. by default this only provisions the user into an empty user
+/// table; `force` reconciles an already-present admin (resetting its password and re-enabling admin),
+/// recovering operators locked out by a stale or unknown bootstrap password.
 pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
     db: &T,
     spec: &str,
+    force: bool,
 ) -> Result<(), SendableError> {
-    if db.count_users().await? > 0 {
-        return Ok(());
-    }
     let Some((username, password)) = spec.split_once(':') else {
         warn!("RUNINATOR_AUTH_BOOTSTRAP_ADMIN must be 'username:password'; skipping seed");
         return Ok(());
     };
-    let hash = runinator_auth::hash_password(password)
-        .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err)) })?;
-    db.create_user(username.to_string(), None, true, Some(hash))
-        .await?;
-    info!("Seeded bootstrap admin user '{username}'");
+
+    // an admin with this username already exists; leave operator-managed credentials alone unless forced.
+    if let Some(existing) = db.fetch_user_by_username(username.to_string()).await? {
+        if !force {
+            return Ok(());
+        }
+        let Some(user_id) = existing.id else {
+            warn!("bootstrap admin '{username}' has no id; skipping force reset");
+            return Ok(());
+        };
+        db.set_local_password(user_id, hash_admin_password(password)?)
+            .await?;
+        db.update_user(user_id, None, Some(true), Some(false))
+            .await?;
+        info!("Reset bootstrap admin '{username}' password (force).");
+        return Ok(());
+    }
+
+    // the bootstrap admin is absent. preserve the original guard: only seed into an empty user table,
+    // unless force is set, which provisions the admin even alongside existing users.
+    if !force && db.count_users().await? > 0 {
+        return Ok(());
+    }
+    db.create_user(
+        username.to_string(),
+        None,
+        true,
+        Some(hash_admin_password(password)?),
+    )
+    .await?;
+    info!("Seeded bootstrap admin user '{username}'.");
     Ok(())
+}
+
+fn hash_admin_password(password: &str) -> Result<String, SendableError> {
+    runinator_auth::hash_password(password)
+        .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err)) })
 }
 
 pub async fn seed_bootstrap_service_api_key<T: DatabaseImpl>(

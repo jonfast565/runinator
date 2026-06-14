@@ -57,7 +57,13 @@ impl<T: DatabaseImpl> runinator_auth::CredentialStore for AuthState<T> {
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/ready" | "/auth/config" | "/auth/login" | "/auth/refresh"
+        "/health"
+            | "/ready"
+            | "/openapi.json"
+            | "/docs"
+            | "/auth/config"
+            | "/auth/login"
+            | "/auth/refresh"
     )
 }
 

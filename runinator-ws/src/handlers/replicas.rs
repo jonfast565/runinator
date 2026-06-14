@@ -80,6 +80,13 @@ pub(crate) async fn mark_replica_offline<T: DatabaseImpl>(
     }
 }
 
+/// list service replicas in the cluster.
+#[utoipa::path(
+    get,
+    path = "/replicas",
+    tag = "Replicas",
+    responses((status = 200, description = "service replicas", body = serde_json::Value)),
+)]
 pub(crate) async fn get_replicas<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,

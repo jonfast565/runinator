@@ -13,6 +13,13 @@ use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
+/// list registered task providers and their action metadata.
+#[utoipa::path(
+    get,
+    path = "/providers",
+    tag = "Providers",
+    responses((status = 200, description = "registered providers", body = serde_json::Value)),
+)]
 pub(crate) async fn get_providers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,

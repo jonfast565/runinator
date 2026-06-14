@@ -19,6 +19,7 @@ uuid = { version = "1.18", features = ["v4"] }
 log-panics = "2.1"
 mime_guess = "2"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }

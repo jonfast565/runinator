@@ -27,7 +27,11 @@ pub struct AuthOptions {
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub enabled: bool,
+    /// primary signing secret: every freshly issued token is signed with this.
     pub jwt_secret: Vec<u8>,
+    /// optional previous signing secret accepted on verify during a rotation overlap window. tokens
+    /// are never signed with it; it only keeps pre-rotation tokens valid until they expire.
+    pub jwt_secret_previous: Option<Vec<u8>>,
     pub access_ttl_secs: i64,
     pub refresh_ttl_secs: i64,
 }
@@ -123,10 +127,22 @@ pub fn issue_access_token(
 }
 
 /// verify and decode an access token; `None` on any failure (bad signature, expired, malformed).
+/// during key rotation the primary secret is tried first, then the optional previous secret, so
+/// tokens signed before the rotation stay valid until they expire.
 pub fn verify_access_token(config: &AuthConfig, token: &str) -> Option<Claims> {
+    if let Some(claims) = verify_with_secret(&config.jwt_secret, token) {
+        return Some(claims);
+    }
+    config
+        .jwt_secret_previous
+        .as_deref()
+        .and_then(|previous| verify_with_secret(previous, token))
+}
+
+fn verify_with_secret(secret: &[u8], token: &str) -> Option<Claims> {
     decode::<Claims>(
         token,
-        &DecodingKey::from_secret(&config.jwt_secret),
+        &DecodingKey::from_secret(secret),
         &Validation::new(Algorithm::HS256),
     )
     .ok()
@@ -191,6 +207,7 @@ mod tests {
         AuthConfig {
             enabled: true,
             jwt_secret: b"test-secret-bytes".to_vec(),
+            jwt_secret_previous: None,
             access_ttl_secs: 3600,
             refresh_ttl_secs: 86400,
         }
@@ -221,6 +238,31 @@ mod tests {
             ..config()
         };
         assert!(verify_access_token(&other, &token).is_none());
+    }
+
+    #[test]
+    fn rotated_token_verifies_against_previous_secret() {
+        // a token minted before rotation (signed with the old secret).
+        let old = config();
+        let (token, _) = issue_access_token(&old, Uuid::new_v4(), false).expect("issue");
+
+        // after rotation the old secret moves to the previous slot; new tokens use a fresh primary.
+        let rotated = AuthConfig {
+            jwt_secret: b"new-primary-secret".to_vec(),
+            jwt_secret_previous: Some(old.jwt_secret.clone()),
+            ..config()
+        };
+        assert!(
+            verify_access_token(&rotated, &token).is_some(),
+            "pre-rotation token must stay valid during the overlap window"
+        );
+
+        // once the previous secret is dropped the old token is rejected.
+        let retired = AuthConfig {
+            jwt_secret_previous: None,
+            ..rotated
+        };
+        assert!(verify_access_token(&retired, &token).is_none());
     }
 
     #[test]

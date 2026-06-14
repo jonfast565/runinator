@@ -15,9 +15,7 @@ struct StoredConfig {
 }
 
 fn settings_cipher() -> SecretCipher {
-    let key = std::env::var("RUNINATOR_CREDENTIAL_KEY")
-        .unwrap_or_else(|_| "runinator-local-development-key".into());
-    SecretCipher::new(key)
+    SecretCipher::from_env()
 }
 
 /// the config reference tree `{ <scope>: { <name>: <value> } }`.
@@ -31,7 +29,10 @@ pub async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
         if entry.kind != SettingKind::Config {
             continue;
         }
-        let value = decode_config_value(&cipher.decrypt(&entry.value));
+        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
+            continue;
+        };
+        let value = decode_config_value(&plaintext);
         let scope = root
             .entry(entry.scope)
             .or_insert_with(|| Value::Object(Map::new()));
@@ -53,7 +54,10 @@ pub async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
         if entry.kind != SettingKind::Config {
             continue;
         }
-        let Some(ty) = stored_config_type(&cipher.decrypt(&entry.value)) else {
+        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
+            continue;
+        };
+        let Some(ty) = stored_config_type(&plaintext) else {
             continue;
         };
         scopes

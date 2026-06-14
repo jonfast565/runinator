@@ -20,12 +20,11 @@ use crate::settings::{
     decode_config_schema, decode_config_value, stored_config_type, validate_and_encode,
 };
 
-// the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY`. the value
-// column holds ciphertext; only the web service holds the key.
+// the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
+// rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
+// only the web service holds the keys.
 fn settings_cipher() -> SecretCipher {
-    let key = std::env::var("RUNINATOR_CREDENTIAL_KEY")
-        .unwrap_or_else(|_| "runinator-local-development-key".into());
-    SecretCipher::new(key)
+    SecretCipher::from_env()
 }
 
 // current time in unix seconds, used to stamp settings that arrive without their own timestamp.
@@ -49,7 +48,10 @@ pub(crate) async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
         if entry.kind != SettingKind::Config {
             continue;
         }
-        let Some(ty) = stored_config_type(&cipher.decrypt(&entry.value)) else {
+        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
+            continue;
+        };
+        let Some(ty) = stored_config_type(&plaintext) else {
             continue;
         };
         scopes
@@ -106,7 +108,11 @@ pub(crate) async fn get_credential<T: DatabaseImpl>(
     {
         // config is non-sensitive: return the parsed json value. secrets return the raw string.
         Ok(Some(record)) => {
-            let bytes = cipher.decrypt(&record.value);
+            let Some(bytes) = cipher.try_decrypt(&record.value) else {
+                return api_error(
+                    "stored credential could not be decrypted; the encryption key may be unavailable",
+                );
+            };
             let value = match query.kind {
                 SettingKind::Config => decode_config_value(&bytes),
                 SettingKind::Secret => Value::String(String::from_utf8_lossy(&bytes).into_owned()),
@@ -183,6 +189,56 @@ pub(crate) async fn put_credential<T: DatabaseImpl>(
         ),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+/// re-encrypt every stored setting with the current primary key. used to complete a credential-key
+/// rotation: run it while the old key is still configured as a secondary, then the old key can be
+/// retired. idempotent — values already tagged with the primary key are left untouched.
+pub(crate) async fn reencrypt_settings<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
+    let cipher = settings_cipher();
+    let entries = match db.list_settings().await {
+        Ok(entries) => entries,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let mut rewritten = 0usize;
+    let mut skipped = 0usize;
+    for entry in entries {
+        // values already sealed by the primary key need no work.
+        if !cipher.needs_reencrypt(&entry.value) {
+            continue;
+        }
+        // never clobber a value we cannot open with the configured keys.
+        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
+            skipped += 1;
+            continue;
+        };
+        if let Err(err) = db
+            .upsert_setting(
+                entry.kind,
+                entry.scope.clone(),
+                entry.name.clone(),
+                cipher.encrypt(&plaintext),
+                now_unix(),
+            )
+            .await
+        {
+            return api_error(err.to_string());
+        }
+        rewritten += 1;
+    }
+    (
+        StatusCode::OK,
+        Json(ApiResponse::JsonValue(runinator_models::json!({
+            "reencrypted": rewritten,
+            "skipped": skipped
+        }))),
+    )
 }
 
 pub(crate) async fn import_secret_bundle<T: DatabaseImpl>(
@@ -317,7 +373,9 @@ async fn config_stored_schema<T: DatabaseImpl>(
         .fetch_setting(kind, scope.to_string(), name.to_string())
         .await
         .map_err(|err| err.to_string())?;
-    Ok(record.and_then(|record| decode_config_schema(&cipher.decrypt(&record.value))))
+    Ok(record
+        .and_then(|record| cipher.try_decrypt(&record.value))
+        .and_then(|bytes| decode_config_schema(&bytes)))
 }
 
 // echo an imported entry without its value, preserving kind and modification time.

@@ -85,7 +85,7 @@ fn workflow_run_request_accepts_debug_flag() {
 async fn seed_bootstrap_admin_creates_local_admin_credentials() {
     let (db, path) = test_db().await;
 
-    seed_bootstrap_admin(&db, "admin:secret-pass")
+    seed_bootstrap_admin(&db, "admin:secret-pass", false)
         .await
         .unwrap();
 
@@ -119,7 +119,7 @@ async fn seed_bootstrap_admin_does_not_overwrite_existing_users() {
         .await
         .unwrap();
 
-    seed_bootstrap_admin(&db, "admin:secret-pass")
+    seed_bootstrap_admin(&db, "admin:secret-pass", false)
         .await
         .unwrap();
 
@@ -130,6 +130,71 @@ async fn seed_bootstrap_admin_does_not_overwrite_existing_users() {
             .unwrap()
             .is_none()
     );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn seed_bootstrap_admin_force_resets_existing_admin() {
+    let (db, path) = test_db().await;
+
+    seed_bootstrap_admin(&db, "admin:old-pass", false)
+        .await
+        .unwrap();
+    // a non-force re-seed must not touch the existing admin.
+    seed_bootstrap_admin(&db, "admin:new-pass", false)
+        .await
+        .unwrap();
+    let credential = db
+        .fetch_local_credential("admin".into())
+        .await
+        .unwrap()
+        .expect("credential");
+    assert!(crate::auth::verify_password(
+        "old-pass",
+        &credential.password_hash
+    ));
+
+    // force reconciles the stale password without creating a duplicate user.
+    seed_bootstrap_admin(&db, "admin:new-pass", true)
+        .await
+        .unwrap();
+    let credential = db
+        .fetch_local_credential("admin".into())
+        .await
+        .unwrap()
+        .expect("credential");
+    assert_eq!(db.count_users().await.unwrap(), 1);
+    assert!(crate::auth::verify_password(
+        "new-pass",
+        &credential.password_hash
+    ));
+    assert!(!crate::auth::verify_password(
+        "old-pass",
+        &credential.password_hash
+    ));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn seed_bootstrap_admin_force_provisions_alongside_existing_users() {
+    let (db, path) = test_db().await;
+
+    db.create_user("existing".into(), None, false, None)
+        .await
+        .unwrap();
+    seed_bootstrap_admin(&db, "admin:secret-pass", true)
+        .await
+        .unwrap();
+
+    let user = db
+        .fetch_user_by_username("admin".into())
+        .await
+        .unwrap()
+        .expect("seeded admin");
+    assert!(user.is_admin);
+    assert_eq!(db.count_users().await.unwrap(), 2);
 
     let _ = std::fs::remove_file(path);
 }
@@ -183,7 +248,9 @@ async fn bootstrap_database_persists_explicit_jwt_secret() {
         &db,
         &BootstrapOptions {
             auth_jwt_secret: Some("explicit-secret".into()),
+            auth_jwt_secret_previous: None,
             auth_bootstrap_admin: None,
+            auth_bootstrap_admin_force: false,
             auth_bootstrap_service_api_key: None,
             auth_bootstrap_service_api_key_name: None,
         },

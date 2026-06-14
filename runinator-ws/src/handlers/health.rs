@@ -3,26 +3,48 @@ use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use serde::Serialize;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::stability;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct HealthResponse {
-    status: &'static str,
+    status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct ReadinessResponse {
-    status: &'static str,
-    database: &'static str,
+    status: String,
+    database: String,
     broker_result_channels: bool,
     counters: stability::StabilityCounters,
 }
 
+/// liveness probe.
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Meta",
+    security(),
+    responses((status = 200, description = "service is up", body = HealthResponse)),
+)]
 pub(crate) async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+    Json(HealthResponse {
+        status: "ok".into(),
+    })
 }
 
+/// readiness probe: reports database and broker reachability.
+#[utoipa::path(
+    get,
+    path = "/ready",
+    tag = "Meta",
+    security(),
+    responses(
+        (status = 200, description = "service is ready", body = ReadinessResponse),
+        (status = 503, description = "a dependency is unavailable", body = ReadinessResponse),
+    ),
+)]
 pub(crate) async fn ready<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
@@ -38,8 +60,8 @@ pub(crate) async fn ready<T: DatabaseImpl>(
     (
         code,
         Json(ReadinessResponse {
-            status,
-            database: if database_ready { "ok" } else { "error" },
+            status: status.into(),
+            database: if database_ready { "ok" } else { "error" }.into(),
             broker_result_channels: broker.supports_workflow_result_channels(),
             counters: stability::snapshot(),
         }),

@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
+use utoipa::ToSchema;
 
 static RESULT_EVENTS_APPLIED: AtomicU64 = AtomicU64::new(0);
 static RESULT_EVENTS_DUPLICATE: AtomicU64 = AtomicU64::new(0);
@@ -8,7 +9,7 @@ static RESULT_EVENTS_RETRIED: AtomicU64 = AtomicU64::new(0);
 static RESULT_EVENTS_DEAD_LETTERED: AtomicU64 = AtomicU64::new(0);
 static RESULT_RECEIVE_ERRORS: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct StabilityCounters {
     pub result_events_applied: u64,
     pub result_events_duplicate: u64,

@@ -36,9 +36,22 @@ struct Cli {
     #[arg(long, env = "RUNINATOR_AUTH_JWT_SECRET")]
     auth_jwt_secret: Option<String>,
 
+    /// previous HS256 signing secret accepted on verify during a rotation overlap window. set it to
+    /// the pre-rotation secret while rotating; leave unset (or empty) to retire the old key.
+    #[arg(long, env = "RUNINATOR_AUTH_JWT_SECRET_PREVIOUS")]
+    auth_jwt_secret_previous: Option<String>,
+
     /// `username:password` seeded as an admin when the database has no users yet.
     #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_ADMIN")]
     auth_bootstrap_admin: Option<String>,
+
+    /// reconcile (reset) the bootstrap admin password even when users already exist.
+    #[arg(
+        long,
+        env = "RUNINATOR_AUTH_BOOTSTRAP_ADMIN_FORCE",
+        default_value_t = false
+    )]
+    auth_bootstrap_admin_force: bool,
 
     /// raw service api key (`<prefix>.<secret>`) seeded for non-interactive local/dev clients.
     #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY")]
@@ -78,7 +91,9 @@ async fn run() -> Result<(), SendableError> {
     let cli = Cli::parse();
     let bootstrap_options = BootstrapOptions {
         auth_jwt_secret: cli.auth_jwt_secret.clone(),
+        auth_jwt_secret_previous: cli.auth_jwt_secret_previous.clone(),
         auth_bootstrap_admin: cli.auth_bootstrap_admin.clone(),
+        auth_bootstrap_admin_force: cli.auth_bootstrap_admin_force,
         auth_bootstrap_service_api_key: cli.auth_bootstrap_service_api_key.clone(),
         auth_bootstrap_service_api_key_name: Some(cli.auth_bootstrap_service_api_key_name.clone()),
     };

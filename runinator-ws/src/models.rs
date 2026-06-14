@@ -14,9 +14,10 @@ use runinator_models::{
     },
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiError {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

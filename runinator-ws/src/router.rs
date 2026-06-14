@@ -42,7 +42,9 @@ use crate::handlers::{
         put_idempotency_key, reject_request,
     },
     catalog::{get_catalog_items, upsert_catalog_item},
-    credentials::{delete_credential, get_credential, import_secret_bundle, put_credential},
+    credentials::{
+        delete_credential, get_credential, import_secret_bundle, put_credential, reencrypt_settings,
+    },
     debug::{
         continue_debug_workflow_run, debug_command, rerun_debug_workflow_node,
         run_to_cursor_workflow_run, skip_debug_workflow_node, step_debug_workflow_run,
@@ -108,6 +110,8 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .route("/health", get(health))
         .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
+        .route("/openapi.json", get(crate::openapi::openapi_json))
+        .route("/docs", get(crate::openapi::openapi_docs))
         .route("/ws/events", get(ws_events))
         .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
         .route("/ws/run-stream/{id}", get(ws_run_stream::<T>))
@@ -457,6 +461,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/credentials/import",
             post(import_secret_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/credentials/reencrypt",
+            post(reencrypt_settings::<T>).layer(Extension(pool.clone())),
         )
         .route(
             API_PROVIDERS,

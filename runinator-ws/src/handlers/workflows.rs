@@ -62,6 +62,13 @@ pub(crate) struct WorkflowQuery {
     pub(crate) name: Option<String>,
 }
 
+/// list workflow definitions visible to the caller.
+#[utoipa::path(
+    get,
+    path = "/workflows",
+    tag = "Workflows",
+    responses((status = 200, description = "workflow definitions", body = serde_json::Value)),
+)]
 pub(crate) async fn get_workflows<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,

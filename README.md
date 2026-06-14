@@ -35,6 +35,20 @@ That script runs `cargo build --workspace`, starts the supervisor in daemon mode
 http://127.0.0.1:8080/
 ```
 
+### API reference (OpenAPI)
+
+The web service generates an OpenAPI 3.1 document automatically from `utoipa`
+annotations on its handlers and serves it at:
+
+- `http://127.0.0.1:8080/openapi.json` — the raw spec
+- `http://127.0.0.1:8080/docs` — an interactive Scalar reference
+
+Both are public (reachable without a credential). To document an endpoint, add a
+`#[utoipa::path(...)]` attribute to its handler and list the handler in the
+`paths(...)` set in `runinator-ws/src/openapi.rs`; derive `ToSchema` on any struct
+referenced by `body = ...`. Endpoints without an annotation still work — they are
+simply absent from the spec until annotated, so coverage can grow incrementally.
+
 Useful local commands:
 
 ```bash
@@ -337,7 +351,10 @@ worker images). The standalone `runinator-broker` binary is not deployed in K8s.
 
 Schema is applied by the `runinator-bootstrap` image, which runs the embedded
 SQL bootstrap from `runinator-database/migrations/` and can also seed the first
-admin account when `RUNINATOR_AUTH_BOOTSTRAP_ADMIN` is provided. The
+admin account when `RUNINATOR_AUTH_BOOTSTRAP_ADMIN` is provided. By default this
+only seeds into an empty user table; set `RUNINATOR_AUTH_BOOTSTRAP_ADMIN_FORCE=true`
+as a break-glass to reset that admin's password on the next bootstrap even when
+users already exist (recovers a locked-out admin), then unset it. The
 `runinator-ws` Deployment runs bootstrap from an initContainer on every pod
 start. `deploy/k8s/base/db-bootstrap-job.yaml` is kept as an optional
 out-of-band ops manifest; it is not part of the default kustomize base because
@@ -351,6 +368,24 @@ alongside `RUNINATOR_AUTH_BOOTSTRAP_ADMIN`.
 For non-Kubernetes environments, `runinator-bootstrap` also supports
 `--database mysql` / `--database mariadb` with a `mysql://...` connection string,
 in addition to the existing SQLite and Postgres modes.
+
+#### Key rotation (two-key overlap)
+
+Both at-rest keys support a primary + previous overlap so a key can be rotated
+without invalidating live tokens or stranding stored secrets:
+
+- **JWT signing secret.** New access tokens are always signed with
+  `RUNINATOR_AUTH_JWT_SECRET` (the primary); the web service also accepts tokens
+  signed with `RUNINATOR_AUTH_JWT_SECRET_PREVIOUS` on verify. To rotate: set the
+  new secret as the primary and the old one as `*_PREVIOUS`, redeploy so bootstrap
+  persists both, wait past the access-token TTL, then clear `*_PREVIOUS` (bootstrap
+  deletes the slot) and redeploy to retire the old key.
+- **Credential encryption key.** Stored settings are encrypted with
+  `RUNINATOR_CREDENTIAL_KEY` (the primary) and tagged with a short key id;
+  `RUNINATOR_CREDENTIAL_KEY_PREVIOUS` (comma-separated) lists prior keys still
+  accepted on decrypt. To rotate: set the new key as the primary and the old one
+  as `*_PREVIOUS`, redeploy ws, `POST /credentials/reencrypt` (admin) to re-tag
+  every stored value with the new key, then clear `*_PREVIOUS` and redeploy.
 
 ### Quick start (local cluster)
 

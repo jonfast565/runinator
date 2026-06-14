@@ -6,6 +6,7 @@ pub mod errors;
 mod events;
 mod handlers;
 mod models;
+mod openapi;
 pub mod orchestration {
     pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
 }
