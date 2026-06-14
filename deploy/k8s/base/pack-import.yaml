@@ -21,16 +21,29 @@ spec:
         - name: pack-import
           image: runinator-ctl:dev
           imagePullPolicy: IfNotPresent
-          command: ["runinatorctl"]
+          command: ["/bin/sh", "-lc"]
           args:
-            - "--api-base-url"
-            - "$(WS_API_BASE_URL)"
-            - "workflows"
-            - "apply"
-            - "/home/runinator/.runinator/workflows/sdlc.wdlp"
+            - >
+              runinatorctl --api-base-url "$WS_API_BASE_URL" login
+              --username "$RUNINATOR_BOOTSTRAP_ADMIN_USERNAME"
+              --password "$RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD"
+              &&
+              runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply
+              /home/runinator/.runinator/workflows/sdlc.wdlp
           envFrom:
             - configMapRef:
                 name: runinator-common
+          env:
+            - name: RUNINATOR_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_BOOTSTRAP_ADMIN_USERNAME
+            - name: RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD
           resources:
             requests:
               cpu: "50m"

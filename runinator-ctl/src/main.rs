@@ -1,3 +1,4 @@
+mod auth;
 mod banner;
 mod cli;
 mod commands;
@@ -5,9 +6,8 @@ mod output;
 mod params;
 
 use clap::Parser;
-use runinator_api::{AsyncApiClient, StaticLocator};
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> commands::Result<()> {
@@ -16,9 +16,14 @@ async fn main() -> commands::Result<()> {
     if !cli.json {
         banner::print();
     }
-    let client = AsyncApiClient::with_credentials(
-        StaticLocator::new(cli.api_base_url.clone()),
-        cli.api_key.clone(),
-    )?;
-    commands::run(&client, &cli).await
+    match &cli.command {
+        Commands::Login { username, password } => {
+            auth::login(&cli, username.clone(), password.clone()).await
+        }
+        Commands::Logout => auth::logout(&cli).await,
+        _ => {
+            let client = auth::build_authenticated_client(&cli).await?;
+            commands::run(&client, &cli).await
+        }
+    }
 }

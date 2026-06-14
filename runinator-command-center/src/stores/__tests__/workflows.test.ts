@@ -6,18 +6,22 @@ import type { ProviderMetadata, WorkflowDefinition, WorkflowRunDetail, WorkflowT
 
 vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+  closeGate: vi.fn(),
   compileWdl: vi.fn(),
+  fetchGates: vi.fn(),
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
+  openGate: vi.fn(),
   patchWorkflowRunDebug: vi.fn(),
   saveWorkflowWdl: vi.fn(),
   decompileToWdl: vi.fn()
 }));
 
-import { compileWdl, decompileToWdl, fetchWorkflowRun, fetchWorkflows, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
+import { closeGate, compileWdl, decompileToWdl, fetchGates, fetchWorkflowRun, fetchWorkflows, openGate, patchWorkflowRunDebug, saveWorkflowWdl } from "../../api/commandCenterApi";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 const RUN_ID = "00000000-0000-0000-0000-000000000070";
+const NODE_RUN_ID = "00000000-0000-0000-0000-000000000071";
 const TRIGGER_ID = "00000000-0000-0000-0000-000000000012";
 
 describe("workflow run detail state", () => {
@@ -28,6 +32,7 @@ describe("workflow run detail state", () => {
       setTimeout: () => 0
     });
     vi.clearAllMocks();
+    vi.mocked(fetchGates).mockResolvedValue([]);
   });
 
   it("does not let older HTTP fetches overwrite a WebSocket push", async () => {
@@ -69,6 +74,49 @@ describe("workflow run detail state", () => {
 
     expect(workflows.workflowRunDetail?.run.message).toBe("next ws");
     expect(workflows.currentBreakpoints).toEqual([]);
+  });
+
+  it("loads run gates for waiting gate nodes and refreshes after resolving them", async () => {
+    const workflows = useWorkflowsStore();
+    vi.mocked(fetchGates)
+      .mockResolvedValueOnce([{
+        id: "gate-1",
+        workflow_run_id: RUN_ID,
+        node_id: "gate-1",
+        kind: "manual",
+        status: "pending",
+        label: "Deploy window"
+      }])
+      .mockResolvedValueOnce([{
+        id: "gate-1",
+        workflow_run_id: RUN_ID,
+        node_id: "gate-1",
+        kind: "manual",
+        status: "open",
+        label: "Deploy window",
+        reason: "Window approved"
+      }]);
+    vi.mocked(openGate).mockResolvedValue({ message: "Gate opened" });
+    vi.mocked(closeGate).mockResolvedValue({ message: "Gate closed" });
+    vi.mocked(fetchWorkflowRun).mockResolvedValue(waitingGateWorkflowDetail());
+
+    workflows.setWorkflowRunDetail(waitingGateWorkflowDetail());
+    await flushWorkflowSync();
+
+    expect(fetchGates).toHaveBeenCalledWith(RUN_ID);
+    expect(workflows.workflowRunGates).toHaveLength(1);
+    expect(workflows.runGraphNodes.find((node) => node.id === "gate-1")?.data).toMatchObject({
+      gate: expect.objectContaining({ id: "gate-1", status: "pending" }),
+      allowGateResolution: true,
+      readOnly: true
+    });
+
+    await workflows.resolveWorkflowRunGate("gate-1", "open", "Window approved");
+
+    expect(openGate).toHaveBeenCalledWith("gate-1", "Window approved");
+    expect(closeGate).not.toHaveBeenCalled();
+    expect(fetchWorkflowRun).toHaveBeenCalledWith(RUN_ID);
+    expect(workflows.workflowRunGates[0]).toMatchObject({ id: "gate-1", status: "open", reason: "Window approved" });
   });
 
   it("saves workflow edits as wdl and reloads workflow triggers", async () => {
@@ -563,6 +611,51 @@ function workflowDetail(id: string, status: string, message: string, breakpoints
       message
     },
     nodes: []
+  };
+}
+
+function waitingGateWorkflowDetail(): WorkflowRunDetail {
+  return {
+    run: {
+      id: RUN_ID,
+      workflow_id: WORKFLOW_ID,
+      status: "waiting",
+      parameters: {},
+      state: {},
+      active_node_id: "gate-1",
+      created_at: "2026-01-01T00:00:00Z",
+      started_at: null,
+      finished_at: null,
+      message: "waiting on gate",
+      workflow_snapshot: {
+        id: WORKFLOW_ID,
+        name: "gate flow",
+        version: "1.0.0",
+        enabled: true,
+        input_type: { type: "struct", fields: {} },
+        definition: {
+          start: "start",
+          nodes: [
+            { id: "start", kind: "start", transitions: { next: { "$node": "gate-1" } } },
+            { id: "gate-1", kind: "gate", parameters: { kind: "manual", label: "Deploy window" }, transitions: { next: { "$node": "end" } } },
+            { id: "end", kind: "end" },
+            { id: "fail", kind: "fail" }
+          ]
+        }
+      }
+    },
+    nodes: [
+      {
+        id: NODE_RUN_ID,
+        workflow_run_id: RUN_ID,
+        node_id: "gate-1",
+        status: "waiting",
+        attempt: 1,
+        parameters: {},
+        state: { gate_id: "gate-1", poll_interval: 30 },
+        message: "waiting"
+      }
+    ]
   };
 }
 

@@ -56,6 +56,7 @@ pub fn err(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
 
 pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
     match &cli.command {
+        Commands::Login { .. } | Commands::Logout => unreachable!("handled in main"),
         Commands::Status => status(client, cli.json).await,
         Commands::Workflows { command } => workflows(client, command, cli.json).await,
         Commands::Runs { command } => runs(client, command, cli.json).await,

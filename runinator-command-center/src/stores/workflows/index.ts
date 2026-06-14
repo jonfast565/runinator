@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref, watch } from "vue";
 import {
   cancelWorkflowRun,
+  closeGate,
   compileWdl,
   continueWorkflowRun,
   createWorkflowRun,
@@ -11,12 +12,14 @@ import {
   duplicateWorkflow,
   downloadBlob,
   downloadTextFile,
+  fetchGates,
   fetchWorkflowNodeRunArtifacts,
   fetchWorkflowNodeRunChunks,
   fetchWorkflowRun,
   fetchWorkflowRuns,
   fetchWorkflowTriggers,
   fetchWorkflows,
+  openGate,
   patchWorkflowRunDebug,
   pauseWorkflowRun,
   renameWorkflowRun as renameWorkflowRunApi,
@@ -32,7 +35,7 @@ import {
   type WorkflowWdlSaveRequest
 } from "../../api/commandCenterApi";
 import type { Edge } from "@vue-flow/core";
-import type { JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
+import type { GateRecord, JsonRecord, RunArtifact, RunChunk, RunSummary, RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger, WorkflowTriggerKind, WorkflowValidationIssue } from "../../types/models";
 import { pretty } from "../../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
 import { isBlankValue } from "../../utils/values";
@@ -153,6 +156,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const latestWorkflowRunHttpRequest = new Map<string, number>();
   let nextWorkflowRunDetailVersion = 0;
   let nextWorkflowRunHttpRequestId = 0;
+  const workflowRunGates = ref<GateRecord[]>([]);
+  const workflowRunGateRunId = ref<string | null>(null);
+  const workflowRunGateFingerprint = ref("");
+  let nextWorkflowRunGateRequestId = 0;
   let nextBreakpointMutationId = 0;
   let pendingBreakpointPatch: { runId: string; breakpoints: string[]; mutationId: number } | null = null;
   const workflowNodeDetailExtra = ref("");
@@ -332,10 +339,22 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const workflowId = workflowRunDetail.value?.run.workflow_id ?? workflowRuns.value.find((run) => run.id === selectedWorkflowRunId.value)?.workflow_id;
     return workflows.value.find((workflow) => workflow.id === workflowId) ?? null;
   });
+  const workflowRunGatesByNodeId = computed(() => {
+    const gates = new Map<string, GateRecord>();
+    for (const gate of workflowRunGates.value) {
+      if (typeof gate.node_id === "string" && gate.node_id.length > 0) gates.set(gate.node_id, gate);
+    }
+    return gates;
+  });
   const runGraphNodes = computed(() => workflowRunWorkflow.value
     ? buildGraphNodes(workflowRunWorkflow.value, workflowRunDetail.value, subflowNames.value, useProvidersStore().providers).map((node) => ({
         ...node,
-        data: { ...(node.data as JsonRecord), readOnly: true }
+        data: {
+          ...(node.data as JsonRecord),
+          readOnly: true,
+          allowGateResolution: true,
+          gate: workflowRunGatesByNodeId.value.get(node.id) ?? null
+        }
       }))
     : []);
   const runGraphEdges = computed(() => workflowRunWorkflow.value ? buildGraphEdges(workflowRunWorkflow.value) : []);
@@ -374,6 +393,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedWorkflowRunId.value = null;
     selectedWorkflowRunNodeId.value = "";
     selectedWorkflowNodeRunId.value = null;
+    clearWorkflowRunGates();
     clearWorkflowTriggerState();
     if (isDirty.value) return;
     selectedWorkflowId.value = null;
@@ -752,6 +772,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowRunDetail.value = runDetailById.get(runId) ?? null;
     workflowNodeDetailExtra.value = "";
     selectedWorkflowRunNodeId.value = workflowRunDetail.value?.nodes[0]?.node_id ?? "";
+    if (workflowRunDetail.value) {
+      void syncWorkflowRunGatesForDetail(workflowRunDetail.value);
+    } else {
+      clearWorkflowRunGates();
+    }
     if (!runDetailById.get(runId)) {
       void fetchWorkflowRunDetail(runId, true);
     }
@@ -774,6 +799,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
         selectedWorkflowRunId.value = null;
         workflowRunDetail.value = null;
         selectedWorkflowRunNodeId.value = "";
+        clearWorkflowRunGates();
       }
     }
   }
@@ -797,6 +823,67 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function selectWorkflowRunNode(nodeId: string) {
     selectedWorkflowRunNodeId.value = nodeId;
     updateSelectedWorkflowNodeDetail();
+  }
+
+  function clearWorkflowRunGates() {
+    workflowRunGates.value = [];
+    workflowRunGateRunId.value = null;
+    workflowRunGateFingerprint.value = "";
+  }
+
+  function workflowRunGateIds(detail: WorkflowRunDetail | null): string[] {
+    if (!detail) return [];
+    const ids = detail.nodes
+      .map((node) => node.state?.gate_id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    return [...new Set(ids)].sort();
+  }
+
+  function workflowRunGateFingerprintForDetail(detail: WorkflowRunDetail | null): string {
+    return workflowRunGateIds(detail).join(",");
+  }
+
+  async function refreshWorkflowRunGates(runId: string, force = false) {
+    const activeDetail = runId === workflowRunDetail.value?.run.id
+      ? workflowRunDetail.value
+      : runDetailById.get(runId) ?? null;
+    const fingerprint = workflowRunGateFingerprintForDetail(activeDetail);
+    if (!force && workflowRunGateRunId.value === runId && workflowRunGateFingerprint.value === fingerprint) {
+      return;
+    }
+    const requestId = ++nextWorkflowRunGateRequestId;
+    const gates = await fetchGates(runId).catch(() => null);
+    if (requestId !== nextWorkflowRunGateRequestId) return;
+    if (selectedWorkflowRunId.value !== runId && workflowRunDetail.value?.run.id !== runId) return;
+    workflowRunGates.value = Array.isArray(gates) ? gates : [];
+    workflowRunGateRunId.value = runId;
+    workflowRunGateFingerprint.value = fingerprint;
+  }
+
+  async function syncWorkflowRunGatesForDetail(detail: WorkflowRunDetail | null, force = false) {
+    if (!detail) {
+      clearWorkflowRunGates();
+      return;
+    }
+    await refreshWorkflowRunGates(detail.run.id, force);
+  }
+
+  async function resolveWorkflowRunGate(gateId: string, action: "open" | "close", reason?: string) {
+    const runId = workflowRunDetail.value?.run.id ?? selectedWorkflowRunId.value;
+    if (!runId) {
+      app.setError("No workflow run selected");
+      return;
+    }
+    const trimmed = reason?.trim() || undefined;
+    const response = await app.runOperation(
+      action === "open" ? "Opening gate" : "Closing gate",
+      () => (action === "open" ? openGate(gateId, trimmed) : closeGate(gateId, trimmed))
+    );
+    app.setStatus(response?.message || `Gate ${action === "open" ? "opened" : "closed"}`);
+    await Promise.all([
+      fetchWorkflowRunDetail(runId, true),
+      refreshWorkflowRunGates(runId, true)
+    ]);
   }
 
   function applyWorkflowRunDetail(detail: WorkflowRunDetail | null, metadata: { source: "http"; requestStartedVersion: number; requestId: number } | { source: "ws" } = { source: "ws" }) {
@@ -827,6 +914,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       workflowNodeDetailExtra.value = "";
       if (!detail?.nodes.some((node) => node.node_id === selectedWorkflowRunNodeId.value)) {
         selectedWorkflowRunNodeId.value = detail?.nodes[0]?.node_id ?? "";
+      }
+      if (detail) {
+        void syncWorkflowRunGatesForDetail(detail);
+      } else {
+        clearWorkflowRunGates();
       }
     }
     if (detail) {
@@ -2112,6 +2204,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowLayoutVersion,
     selectedWorkflowRunId,
     workflowRunDetail,
+    workflowRunGates,
     workflowNodeDetailExtra,
     selectedStepId,
     selectedWorkflowRunNodeId,
@@ -2189,6 +2282,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     fetchRecentWorkflowRuns,
     selectWorkflowRun,
     fetchWorkflowRunDetail,
+    refreshWorkflowRunGates,
+    resolveWorkflowRunGate,
     setWorkflowRunDetail,
     selectWorkflowRunNode,
     addWorkflowStep,

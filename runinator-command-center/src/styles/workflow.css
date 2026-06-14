@@ -483,6 +483,12 @@
   border-color: #f1c40f;
 }
 
+.vue-flow__node.node-waiting,
+.workflow-node-content.node-waiting {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+}
+
 .vue-flow__node.node-active,
 .workflow-node-content.node-active {
   background: #e1efff;

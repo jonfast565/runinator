@@ -11,6 +11,8 @@ describe("status utils", () => {
     expect(statusBadgeClass("running")).toBe("status-running");
     expect(statusBadgeClass("queued")).toBe("status-waiting");
     expect(statusBadgeClass("debug_paused")).toBe("status-waiting");
+    expect(statusClassForNode("waiting")).toBe("node-waiting");
+    expect(statusClassForNode("approval_required")).toBe("node-waiting");
     expect(statusClassForNode("debug_paused")).toBe("node-warning");
   });
 

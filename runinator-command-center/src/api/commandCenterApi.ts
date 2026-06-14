@@ -7,6 +7,7 @@ import type {
   DevPackApplyResult,
   DevPackInspectResult,
   DevPackTextFile,
+  GateRecord,
   Notification,
   ProviderMetadata,
   ReplicaListResponse,
@@ -481,8 +482,12 @@ export async function rejectApproval(approvalId: string) {
   return command<any>("reject_approval", { approvalId });
 }
 
-export async function fetchGates() {
-  return command<JsonRecord[]>("fetch_resource_records", { endpoint: "gates" });
+export async function fetchGates(workflowRunId?: string, status?: string) {
+  const query = new URLSearchParams();
+  if (workflowRunId?.trim()) query.set("workflow_run_id", workflowRunId.trim());
+  if (status?.trim()) query.set("status", status.trim());
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return command<GateRecord[]>("fetch_resource_records", { endpoint: `gates${suffix}` });
 }
 
 export async function openGate(gateId: string, reason?: string) {

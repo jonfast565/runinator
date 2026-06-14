@@ -834,6 +834,34 @@ describe("workflow graph utils", () => {
     expect(nodes.find((node) => node.id === "b")?.class).toBe("node-warning");
   });
 
+  it("renders waiting workflow nodes with the waiting state", () => {
+    const nodes = buildGraphNodes(workflow, {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "waiting",
+        active_node_id: "b",
+        created_at: "",
+        started_at: null,
+        finished_at: null
+      },
+      nodes: [
+        {
+          id: NODE_RUN_ID,
+          workflow_run_id: RUN_ID,
+          node_id: "b",
+          status: "waiting",
+          attempt: 1,
+          parameters: {},
+          message: null
+        }
+      ]
+    });
+
+    expect(nodes.find((node) => node.id === "b")?.data.status).toBe("waiting");
+    expect(nodes.find((node) => node.id === "b")?.class).toBe("node-waiting");
+  });
+
   it("builds workflow run search text with workflow identity", () => {
     expect(workflowRunSearchText({
       id: SEARCH_RUN_ID,

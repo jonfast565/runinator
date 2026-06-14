@@ -69,6 +69,15 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Store a local authenticated session for auth-enabled servers.
+    Login {
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Revoke the stored session for the selected server and remove it locally.
+    Logout,
     /// Show API, supervisor, and active-run health.
     Status,
     /// Inspect and run workflow definitions.

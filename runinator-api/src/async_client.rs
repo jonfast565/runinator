@@ -14,14 +14,16 @@ use runinator_models::{
         api_workflow_node_run_release, api_workflow_run, api_workflow_run_command,
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_runs, api_workflow_trigger, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS,
-        API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
-        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
-        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
-        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS,
-        API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_APPROVALS, API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH,
+        API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS,
+        API_RUNS, API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
+        API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
+        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
+        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
+        API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
+    auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
@@ -84,6 +86,56 @@ where
     /// Construct a client using a preconfigured HTTP client instance.
     pub fn with_client(locator: L, client: Client) -> Self {
         Self { client, locator }
+    }
+
+    pub async fn fetch_auth_config(&self) -> Result<AuthConfigResponse> {
+        let url = self.build_url(API_AUTH_CONFIG).await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<AuthConfigResponse>().await?)
+    }
+
+    pub async fn login(&self, username: &str, password: &str) -> Result<LoginResponse> {
+        let url = self.build_url(API_AUTH_LOGIN).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&LoginRequest {
+                username: username.to_owned(),
+                password: password.to_owned(),
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<LoginResponse>().await?)
+    }
+
+    pub async fn refresh_session(&self, refresh_token: &str) -> Result<LoginResponse> {
+        let url = self.build_url(API_AUTH_REFRESH).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&RefreshRequest {
+                refresh_token: refresh_token.to_owned(),
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<LoginResponse>().await?)
+    }
+
+    pub async fn logout(&self, refresh_token: &str) -> Result<TaskResponse> {
+        let url = self.build_url(API_AUTH_LOGOUT).await?;
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&RefreshRequest {
+                refresh_token: refresh_token.to_owned(),
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     /// Fetch provider/action metadata for task authoring.

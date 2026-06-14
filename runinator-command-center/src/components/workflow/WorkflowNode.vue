@@ -1,5 +1,5 @@
 <template>
-  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaiting, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint, 'node-skipped': data.skipped }]">
+  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaitingState, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint, 'node-skipped': data.skipped }]">
     <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
     <span v-if="data.locked" class="lock-dot" title="Locked node"><Icon name="lock" :size="11" /></span>
     <span v-if="data.skipped" class="skip-dot" :class="{ shifted: data.locked }" title="Skipped node"><Icon name="skip" :size="11" /></span>
@@ -9,6 +9,9 @@
         <span>{{ data.kind }}</span>
       </span>
       <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
+      <span v-if="isWaitingState" class="node-waiting-icon" title="Waiting">
+        <Icon name="hourglass" :size="12" />
+      </span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
       <span v-if="executionCount > 1" class="node-execution-count" :title="`Executed ${executionCount} times`">{{ executionCount }}</span>
       <span
@@ -40,6 +43,14 @@
       <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
     </template>
     <div v-if="isWaiting && (data.approvalPrompt || data.inputPrompt)" class="node-prompt">{{ data.approvalPrompt || data.inputPrompt }}</div>
+    <div v-if="gateStateText" class="node-gate-state">
+      <div class="node-gate-line">
+        <span class="node-gate-kind">{{ gateKindLabel }}</span>
+        <span class="node-gate-status">{{ gateStatusLabel }}</span>
+      </div>
+      <div v-if="gateReasonText" class="node-gate-reason">{{ gateReasonText }}</div>
+      <div v-else-if="isConditionGate" class="node-gate-reason">Condition gates are reducer-controlled.</div>
+    </div>
     <div v-if="isNodeRunning" class="node-loader">
       <div class="spinner"></div>
     </div>
@@ -63,6 +74,14 @@
         <button class="node-btn approve" type="submit">Submit</button>
       </div>
       <div v-if="inputError" class="node-input-error">{{ inputError }}</div>
+    </form>
+
+    <form v-else-if="canResolveGate && !submitting" class="node-gate-form" @submit.prevent @click.stop>
+      <input v-model="gateReasonDraft" class="node-gate-input" type="text" placeholder="Gate reason (optional)" />
+      <div class="node-actions">
+        <button class="node-btn approve" type="button" @click.stop="onResolveGate('open')">Open gate</button>
+        <button class="node-btn reject" type="button" @click.stop="onResolveGate('close')">Close gate</button>
+      </div>
     </form>
 
     <div v-if="submitting" class="node-loader">
@@ -105,7 +124,7 @@ import { isInputWaitingStatus } from "../../utils/inputs";
 import { statusClassForNode } from "../../utils/status";
 import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
 import { deliverSignal, resolveWorkflowInput } from "../../api/commandCenterApi";
-import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
+import type { GateRecord, WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
 
@@ -132,6 +151,8 @@ const props = defineProps<{
     locked?: boolean;
     skipped?: boolean;
     readOnly?: boolean;
+    allowGateResolution?: boolean;
+    gate?: GateRecord | null;
     debugBreakpoint?: boolean;
   };
 }>();
@@ -146,6 +167,7 @@ const inputDraft = ref("{}");
 const inputError = ref("");
 const signalPayloadDraft = ref("{}");
 const signalError = ref("");
+const gateReasonDraft = ref("");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
@@ -153,8 +175,23 @@ const kindDescription = computed(() => workflowNodeKindDescription(props.data.ki
 const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
 const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
 const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
+const isWaitingState = computed(() => ["waiting", "approval_required", "approval-required", "input_required", "pending"].includes(props.data.status ?? ""));
 // a parked signal node shares the generic `waiting` status with wait nodes; disambiguate by kind.
 const isSignalPending = computed(() => props.data.kind === "signal" && props.data.status === "waiting");
+const gate = computed(() => props.data.gate ?? null);
+const gateKind = computed(() => String(gate.value?.kind ?? ""));
+const gateStatus = computed(() => String(gate.value?.status ?? ""));
+const gateKindLabel = computed(() => gateKind.value ? `${gateKind.value} gate` : "gate");
+const gateStatusLabel = computed(() => gateStatus.value || "waiting");
+const gateReasonText = computed(() => String(gate.value?.reason ?? "").trim());
+const gateStateText = computed(() => props.data.kind === "gate" && Boolean(gate.value));
+const isConditionGate = computed(() => gateKind.value === "condition");
+const canResolveGate = computed(() => {
+  if (props.data.kind !== "gate") return false;
+  if (!props.data.allowGateResolution || !gate.value?.id) return false;
+  if (!["manual", "external"].includes(gateKind.value)) return false;
+  return ["pending", "closed"].includes(gateStatus.value);
+});
 
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
@@ -187,6 +224,10 @@ const validationTitle = computed(() => (props.data.validationIssues ?? []).map((
 watch(() => [props.id, props.data.inlineEdit?.value], () => {
   inlineId.value = props.id;
   inlineValue.value = props.data.inlineEdit?.value ?? "";
+});
+
+watch(() => gate.value?.id, () => {
+  gateReasonDraft.value = "";
 });
 
 watch(
@@ -298,6 +339,18 @@ async function onSubmitInput() {
   try {
     await app.runOperation(`Submitting input for ${props.id}`, () => resolveWorkflowInput(nodeRun.id, parsed, undefined, "Input submitted"));
     await workflows.fetchWorkflowRunDetail(detail.run.id);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function onResolveGate(action: "open" | "close") {
+  const gateId = String(gate.value?.id ?? "");
+  if (!gateId) return app.setError(`No gate found for workflow node ${props.id}`);
+  submitting.value = true;
+  try {
+    await workflows.resolveWorkflowRunGate(gateId, action, gateReasonDraft.value);
+    gateReasonDraft.value = "";
   } finally {
     submitting.value = false;
   }
@@ -462,6 +515,12 @@ function formatInputDraft(value: unknown): string {
   gap: 4px;
 }
 
+.node-waiting-icon {
+  display: inline-grid;
+  place-items: center;
+  color: #0f6e9f;
+}
+
 .node-kind-icon {
   color: #3498db;
 }
@@ -549,6 +608,42 @@ function formatInputDraft(value: unknown): string {
   color: #8a5a00;
 }
 
+.node-gate-state {
+  width: 100%;
+  margin-top: 4px;
+  padding: 5px 6px;
+  border: 1px solid rgba(14, 116, 144, 0.16);
+  border-radius: 5px;
+  background: rgba(224, 242, 254, 0.6);
+  color: #155e75;
+  font-size: 10px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.node-gate-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  text-transform: uppercase;
+}
+
+.node-gate-kind {
+  font-weight: 700;
+}
+
+.node-gate-status {
+  color: #0f766e;
+}
+
+.node-gate-reason {
+  margin-top: 3px;
+  color: #0f172a;
+  text-transform: none;
+  word-break: break-word;
+}
+
 .node-loader {
   position: absolute;
   top: 5px;
@@ -581,6 +676,24 @@ function formatInputDraft(value: unknown): string {
 .node-input-error {
   color: #b91c1c;
   font-size: 11px;
+}
+
+.node-gate-form {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.node-gate-input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #9bd4ea;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 11px;
+  background: rgba(240, 249, 255, 0.95);
 }
 
 .node-btn {

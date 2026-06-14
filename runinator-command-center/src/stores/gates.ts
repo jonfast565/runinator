@@ -1,14 +1,14 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { closeGate, fetchGates, openGate } from "../api/commandCenterApi";
-import type { JsonRecord } from "../types/models";
+import type { GateRecord } from "../types/models";
 import { useAppStore } from "./app";
 
 // dedicated store for the gates view. unlike the generic resources store, gates carry their own
 // open/close actions (a gate blocks a workflow node until it is opened).
 export const useGatesStore = defineStore("gates", () => {
-  const gates = ref<JsonRecord[]>([]);
-  const selectedGate = ref<JsonRecord | null>(null);
+  const gates = ref<GateRecord[]>([]);
+  const selectedGate = ref<GateRecord | null>(null);
   const app = useAppStore();
 
   const filteredGates = computed(() => {

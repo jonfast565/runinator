@@ -227,6 +227,12 @@
       <circle cx="12" cy="12" r="9" />
       <polyline points="12,7 12,12 16,14" />
     </template>
+    <template v-else-if="name === 'hourglass'">
+      <path d="M7 3h10" />
+      <path d="M7 21h10" />
+      <path d="M8 4c0 4 4 4.5 4 8s-4 4-4 8" />
+      <path d="M16 4c0 4-4 4.5-4 8s4 4 4 8" />
+    </template>
     <template v-else-if="name === 'branch'">
       <path d="M12 3l9 9-9 9-9-9z" />
     </template>
@@ -291,7 +297,7 @@ export type IconName =
   | "approve" | "reject" | "arrow-up" | "arrow-down" | "chevron-left" | "chevron-right"
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
   | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
-  | "bolt" | "clock" | "branch" | "switch" | "loop" | "parallel" | "join"
+  | "bolt" | "clock" | "hourglass" | "branch" | "switch" | "loop" | "parallel" | "join"
   | "shield" | "grid" | "race" | "emit" | "output";
 
 const props = withDefaults(

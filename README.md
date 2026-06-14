@@ -66,6 +66,18 @@ password: admin
 
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
+When auth is enabled, store a local CLI session with:
+
+```bash
+runinatorctl login
+```
+
+`runinatorctl` will refresh that session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session or `--api-key` is available. Remove the stored session with:
+
+```bash
+runinatorctl logout
+```
+
 The local supervisor path runs `runinator-bootstrap` before `runinator-ws`, so
 schema/auth bootstrap stays outside the web-service binary even in local
 development.
@@ -313,6 +325,11 @@ admin account when `RUNINATOR_AUTH_BOOTSTRAP_ADMIN` is provided. The
 start. `deploy/k8s/base/db-bootstrap-job.yaml` is kept as an optional
 out-of-band ops manifest; it is not part of the default kustomize base because
 Kubernetes Job pod templates are immutable across image tag changes.
+
+The bundled pack-import Job now logs in with the bootstrap-admin credentials
+before it runs `workflows apply`, so `runinator-app-secret` must carry
+`RUNINATOR_BOOTSTRAP_ADMIN_USERNAME` and `RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD`
+alongside `RUNINATOR_AUTH_BOOTSTRAP_ADMIN`.
 
 For non-Kubernetes environments, `runinator-bootstrap` also supports
 `--database mysql` / `--database mariadb` with a `mysql://...` connection string,

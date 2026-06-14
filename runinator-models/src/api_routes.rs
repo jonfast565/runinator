@@ -1,6 +1,10 @@
 use uuid::Uuid;
 
 pub const API_PROVIDERS: &str = "/providers";
+pub const API_AUTH_CONFIG: &str = "/auth/config";
+pub const API_AUTH_LOGIN: &str = "/auth/login";
+pub const API_AUTH_REFRESH: &str = "/auth/refresh";
+pub const API_AUTH_LOGOUT: &str = "/auth/logout";
 pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";

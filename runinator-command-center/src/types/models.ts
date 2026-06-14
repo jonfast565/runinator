@@ -318,6 +318,22 @@ export interface WorkflowTrigger {
   updated_at?: string | null;
 }
 
+export interface GateRecord {
+  id?: string | null;
+  workflow_run_id: string;
+  node_id: string;
+  kind: "manual" | "condition" | "external" | string;
+  status: string;
+  label?: string | null;
+  condition?: JsonRecord | unknown;
+  reason?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+  metadata?: JsonRecord;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface WorkflowNodeRun {
   id: string;
   workflow_run_id: string;
