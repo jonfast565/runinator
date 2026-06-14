@@ -64,6 +64,11 @@ spec:
             - "rabbitmq"
             - "--broker-endpoint"
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
+          env:
+            # gate the HTTP API behind login + api keys. the jwt signing secret is managed in the db
+            # (load_jwt_secret) and shared across replicas; only the toggle lives here.
+            - name: RUNINATOR_AUTH_ENABLED
+              value: "true"
           envFrom:
             - configMapRef:
                 name: runinator-common

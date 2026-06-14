@@ -8,6 +8,7 @@
       :initial-first-pct="58"
       :min-first="360"
       :min-second="360"
+      collapsible-second
     >
       <template #first>
         <div class="workflow-graph-pane">

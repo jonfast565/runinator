@@ -5,6 +5,10 @@
   outline: none;
 }
 
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
 .sidebar {
   display: flex;
   min-width: 0;
@@ -224,6 +228,39 @@ main {
   cursor: row-resize;
 }
 
+.split-pane-collapsed > .split-handle {
+  cursor: default;
+}
+
+.split-collapse-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(23, 32, 42, 0.12);
+}
+
+.split-pane-vertical > .split-handle > .split-collapse-btn {
+  width: 28px;
+  height: 20px;
+}
+
+.split-collapse-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .split-handle::before {
   position: absolute;
   top: 8px;
@@ -396,7 +433,8 @@ main {
 }
 
 @media (max-width: 760px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }

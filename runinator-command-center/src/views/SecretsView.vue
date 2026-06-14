@@ -1,6 +1,6 @@
 <template>
   <section class="pane secrets-pane">
-    <SplitPane class="split" storage-key="command-center.secrets.split" :initial-first-pct="55" :min-first="360" :min-second="360">
+    <SplitPane class="split" storage-key="command-center.secrets.split" :initial-first-pct="55" :min-first="360" :min-second="360" collapsible-second>
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">

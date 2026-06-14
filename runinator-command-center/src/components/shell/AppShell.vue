@@ -1,5 +1,5 @@
 <template>
-  <div class="app-shell" @keydown="handleKeydown" tabindex="0">
+  <div class="app-shell" :class="{ 'sidebar-collapsed': app.sidebarCollapsed }" @keydown="handleKeydown" tabindex="0">
     <SidebarNav />
     <section class="workspace">
       <TopToolbar @refresh="refreshActive" />

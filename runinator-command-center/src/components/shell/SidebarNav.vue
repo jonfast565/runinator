@@ -1,8 +1,16 @@
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
     <div class="brand">
       <span class="brand-mark">R</span>
-      <span>Command Center</span>
+      <span class="brand-text">Command Center</span>
+      <button
+        class="sidebar-toggle"
+        :title="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        :aria-label="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        @click="app.toggleSidebar()"
+      >
+        <Icon :name="app.sidebarCollapsed ? 'chevron-right' : 'chevron-left'" :size="16" />
+      </button>
     </div>
     <nav class="nav-list">
       <template v-for="section in sections" :key="section.label">
@@ -12,6 +20,7 @@
           :key="item.tab"
           :class="{ active: app.activeTab === item.tab }"
           :disabled="app.serviceBlocked"
+          :title="app.sidebarCollapsed ? item.label : undefined"
           @click="app.activeTab = item.tab"
         >
           <span class="nav-row">
@@ -81,5 +90,49 @@ function resourceEndpointFor(tab: AppTab): string | undefined {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-inverse-muted);
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: var(--surface-inverse-hover);
+  color: var(--text-inverse);
+}
+
+/* collapsed: icon rail only. */
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .nav-section-label,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-count {
+  display: none;
+}
+
+.sidebar.collapsed .brand {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+.sidebar.collapsed :deep(.nav-list button) {
+  justify-content: center;
+}
+
+.sidebar.collapsed .nav-row {
+  gap: 0;
 }
 </style>

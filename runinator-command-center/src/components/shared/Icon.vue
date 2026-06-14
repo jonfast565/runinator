@@ -145,6 +145,12 @@
       <line x1="12" y1="5" x2="12" y2="19" />
       <polyline points="19,12 12,19 5,12" />
     </template>
+    <template v-else-if="name === 'chevron-left'">
+      <polyline points="15,6 9,12 15,18" />
+    </template>
+    <template v-else-if="name === 'chevron-right'">
+      <polyline points="9,6 15,12 9,18" />
+    </template>
     <template v-else-if="name === 'workflow'">
       <circle cx="6" cy="6" r="3" />
       <circle cx="18" cy="6" r="3" />
@@ -282,7 +288,7 @@ export type IconName =
   | "download" | "upload" | "check"
   | "alert" | "info" | "search"
   | "file" | "folder" | "bell" | "settings" | "refresh" | "debug" | "mail"
-  | "approve" | "reject" | "arrow-up" | "arrow-down"
+  | "approve" | "reject" | "arrow-up" | "arrow-down" | "chevron-left" | "chevron-right"
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
   | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
   | "bolt" | "clock" | "branch" | "switch" | "loop" | "parallel" | "join"

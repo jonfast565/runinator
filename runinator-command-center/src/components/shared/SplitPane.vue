@@ -1,9 +1,32 @@
 <template>
-  <div ref="container" class="split-pane" :class="orientationClass" :style="splitStyle">
+  <div ref="container" class="split-pane" :class="[orientationClass, { 'split-pane-collapsed': collapsedSide }]" :style="splitStyle">
     <div class="split-section split-section-first">
       <slot name="first" />
     </div>
-    <div class="split-handle" role="separator" :aria-orientation="separatorOrientation" tabindex="0" @pointerdown="startDrag" @keydown="onHandleKeydown" />
+    <div class="split-handle" role="separator" :aria-orientation="separatorOrientation" tabindex="0" @pointerdown="startDrag" @keydown="onHandleKeydown">
+      <button
+        v-if="collapsibleFirst"
+        type="button"
+        class="split-collapse-btn"
+        :title="collapsedSide === 'first' ? 'Show panel' : 'Hide panel'"
+        :aria-label="collapsedSide === 'first' ? 'Show panel' : 'Hide panel'"
+        @pointerdown.stop.prevent
+        @click="toggleCollapsed('first')"
+      >
+        <Icon :name="firstToggleIcon" :size="14" />
+      </button>
+      <button
+        v-if="collapsibleSecond"
+        type="button"
+        class="split-collapse-btn"
+        :title="collapsedSide === 'second' ? 'Show panel' : 'Hide panel'"
+        :aria-label="collapsedSide === 'second' ? 'Show panel' : 'Hide panel'"
+        @pointerdown.stop.prevent
+        @click="toggleCollapsed('second')"
+      >
+        <Icon :name="secondToggleIcon" :size="14" />
+      </button>
+    </div>
     <div class="split-section split-section-second">
       <slot name="second" />
     </div>
@@ -12,6 +35,9 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import Icon from "./Icon.vue";
+
+type CollapsedSide = "first" | "second" | "";
 
 const props = withDefaults(
   defineProps<{
@@ -20,28 +46,55 @@ const props = withDefaults(
     minFirst?: number;
     minSecond?: number;
     storageKey?: string;
+    collapsibleFirst?: boolean;
+    collapsibleSecond?: boolean;
   }>(),
   {
     orientation: "horizontal",
     initialFirstPct: 50,
     minFirst: 260,
     minSecond: 320,
-    storageKey: ""
+    storageKey: "",
+    collapsibleFirst: false,
+    collapsibleSecond: false
   }
 );
 
 const container = ref<HTMLElement | null>(null);
 const firstSize = ref(0);
+const collapsedSide = ref<CollapsedSide>("");
 let observer: ResizeObserver | undefined;
 
 const orientationClass = computed(() => `split-pane-${props.orientation}`);
 const separatorOrientation = computed(() => (props.orientation === "vertical" ? "horizontal" : "vertical"));
-const splitStyle = computed(() => props.orientation === "vertical"
-  ? { gridTemplateRows: `${firstSize.value}px 10px minmax(${props.minSecond}px, 1fr)` }
-  : { gridTemplateColumns: `${firstSize.value}px 10px minmax(${props.minSecond}px, 1fr)` }
-);
+// chevron points toward the pane it collapses; once hidden it points back to reveal it.
+const firstToggleIcon = computed(() => {
+  if (props.orientation === "vertical") return collapsedSide.value === "first" ? "arrow-down" : "arrow-up";
+  return collapsedSide.value === "first" ? "chevron-right" : "chevron-left";
+});
+const secondToggleIcon = computed(() => {
+  if (props.orientation === "vertical") return collapsedSide.value === "second" ? "arrow-up" : "arrow-down";
+  return collapsedSide.value === "second" ? "chevron-left" : "chevron-right";
+});
+const collapsedKey = computed(() => (props.storageKey ? `${props.storageKey}::collapsed` : ""));
+const splitStyle = computed(() => {
+  const dimension = props.orientation === "vertical" ? "gridTemplateRows" : "gridTemplateColumns";
+  let tracks: string;
+  if (collapsedSide.value === "first") tracks = `0px 10px minmax(0, 1fr)`;
+  else if (collapsedSide.value === "second") tracks = `minmax(0, 1fr) 10px 0px`;
+  else tracks = `${firstSize.value}px 10px minmax(${props.minSecond}px, 1fr)`;
+  return { [dimension]: tracks };
+});
+
+function toggleCollapsed(side: "first" | "second") {
+  collapsedSide.value = collapsedSide.value === side ? "" : side;
+  if (collapsedKey.value) window.localStorage.setItem(collapsedKey.value, collapsedSide.value);
+}
 
 onMounted(() => {
+  const savedSide = collapsedKey.value ? window.localStorage.getItem(collapsedKey.value) : null;
+  if (savedSide === "first" && props.collapsibleFirst) collapsedSide.value = "first";
+  else if (savedSide === "second" && props.collapsibleSecond) collapsedSide.value = "second";
   const saved = props.storageKey ? Number(window.localStorage.getItem(props.storageKey)) : 0;
   firstSize.value = saved > 0 ? saved : initialSize();
   observer = new ResizeObserver(() => {
@@ -57,6 +110,7 @@ onBeforeUnmount(() => {
 });
 
 function startDrag(event: PointerEvent) {
+  if (collapsedSide.value) return;
   event.preventDefault();
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   window.addEventListener("pointermove", onPointerMove);
@@ -75,6 +129,7 @@ function stopDrag() {
 }
 
 function onHandleKeydown(event: KeyboardEvent) {
+  if (collapsedSide.value) return;
   const step = event.shiftKey ? 60 : 20;
   if (event.key === decrementKey()) {
     event.preventDefault();

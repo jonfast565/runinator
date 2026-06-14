@@ -1,6 +1,6 @@
 <template>
   <section class="pane workflows-pane">
-    <SplitPane class="workflow-layout" storage-key="command-center.workflows.list-split" :initial-first-pct="20" :min-first="240" :min-second="720">
+    <SplitPane class="workflow-layout" storage-key="command-center.workflows.list-split" :initial-first-pct="20" :min-first="240" :min-second="720" collapsible-first>
       <template #first>
         <div class="panel workflow-list">
           <div class="panel-toolbar">
@@ -55,7 +55,7 @@
       </template>
 
       <template #second>
-        <SplitPane class="workflow-main-split" storage-key="command-center.workflows.inspector-split" :initial-first-pct="64" :min-first="360" :min-second="320">
+        <SplitPane class="workflow-main-split" storage-key="command-center.workflows.inspector-split" :initial-first-pct="64" :min-first="360" :min-second="320" collapsible-second>
           <template #first>
             <WorkflowCanvas />
           </template>

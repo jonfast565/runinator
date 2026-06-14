@@ -70,8 +70,19 @@ export function isResourceTab(tab: AppTab): boolean {
 }
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 
+const SIDEBAR_COLLAPSED_KEY = "command-center.sidebar.collapsed";
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export const useAppStore = defineStore("app", () => {
   const activeTab = ref<AppTab>("Workflows");
+  const sidebarCollapsed = ref(readSidebarCollapsed());
   const serviceUrl = ref<string | null>(null);
   const backendReachable = ref(false);
   const initialLoading = ref(true);
@@ -112,6 +123,15 @@ export const useAppStore = defineStore("app", () => {
   });
   const liveReplicaCount = computed(() => replicas.value.filter((replica) => replica.status === "live").length);
   const hasReplicaState = computed(() => replicas.value.length > 0);
+
+  function toggleSidebar() {
+    sidebarCollapsed.value = !sidebarCollapsed.value;
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
+    } catch {
+      /* storage unavailable; collapse state is then memory-only */
+    }
+  }
 
   function setStatus(text: string) {
     statusText.value = text;
@@ -195,6 +215,8 @@ export const useAppStore = defineStore("app", () => {
 
   return {
     activeTab,
+    sidebarCollapsed,
+    toggleSidebar,
     serviceUrl,
     backendReachable,
     initialLoading,

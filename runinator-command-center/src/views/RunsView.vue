@@ -1,6 +1,6 @@
 <template>
   <section class="pane runs-pane">
-    <SplitPane class="runs-layout" storage-key="command-center.runs.split" :initial-first-pct="28" :min-first="340" :min-second="720">
+    <SplitPane class="runs-layout" storage-key="command-center.runs.split" :initial-first-pct="28" :min-first="340" :min-second="720" collapsible-first>
       <template #first>
         <div class="panel runs-list-panel">
           <div class="panel-toolbar">
@@ -47,6 +47,7 @@
           :initial-first-pct="55"
           :min-first="260"
           :min-second="320"
+          collapsible-second
         >
           <template #first>
             <WorkflowRunGraph />
