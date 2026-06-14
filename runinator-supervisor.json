@@ -14,7 +14,9 @@
       "name": "web-service",
       "command": "bash",
       "env": {
-        "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin"
+        "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin",
+        "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY": "localdev.runinator-local-dev-service-key",
+        "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME": "local-supervisor"
       },
       "args": [
         "scripts/start-local-web-service.sh",
@@ -41,6 +43,9 @@
     {
       "name": "waker",
       "command": "./target/debug/runinator-waker",
+      "env": {
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+      },
       "args": [
         "--waker-id",
         "runinator-waker-local",
@@ -57,6 +62,9 @@
     {
       "name": "worker",
       "command": "./target/debug/runinator-worker",
+      "env": {
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+      },
       "args": [
         "--worker-id",
         "runinator-worker-local",
@@ -75,6 +83,9 @@
     {
       "name": "pack-import",
       "command": "./target/debug/runinatorctl",
+      "env": {
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+      },
       "args": [
         "--api-base-url",
         "http://127.0.0.1:8080/",

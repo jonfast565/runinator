@@ -724,6 +724,8 @@ function Write-LocalSupervisorConfig {
     $localReplicaHost = '127.0.0.1'
     $localWakerId = 'runinator-waker-local'
     $localWorkerId = 'runinator-worker-local'
+    $localBootstrapAdmin = 'admin:admin'
+    $localServiceApiKey = 'localdev.runinator-local-dev-service-key'
 
     $pluginFileName = Get-PluginLibraryName
     $pluginPath = Join-Path -Path (Join-Path -Path $ArtifactsDir -ChildPath 'plugins') -ChildPath $pluginFileName
@@ -766,11 +768,19 @@ function Write-LocalSupervisorConfig {
         }
         [ordered]@{
             name = 'Runinator Web Service'
-            command = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-ws'))
+            command = 'pwsh'
             cwd = $WorkspacePath
-            args = $webServiceArgs
+            args = @(
+                '-NoProfile',
+                '-File', (Join-Path -Path $WorkspacePath -ChildPath 'scripts/start-local-web-service.ps1')
+            ) + $webServiceArgs
             env = @{
-                RUST_LOG = 'info'
+                RUST_LOG                                 = 'info'
+                RUNINATOR_BOOTSTRAP_BIN                  = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-bootstrap'))
+                RUNINATOR_WS_BIN                         = (Join-Path -Path $ArtifactsDir -ChildPath (Get-ExecutableName -Name 'runinator-ws'))
+                RUNINATOR_AUTH_BOOTSTRAP_ADMIN           = $localBootstrapAdmin
+                RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY = $localServiceApiKey
+                RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME = 'local-artifacts'
             }
         }
         [ordered]@{
@@ -785,7 +795,8 @@ function Write-LocalSupervisorConfig {
                 '--advertise-host', $localReplicaHost
             )
             env = @{
-                RUST_LOG = 'info'
+                RUST_LOG          = 'info'
+                RUNINATOR_API_KEY = $localServiceApiKey
             }
         }
         [ordered]@{
@@ -797,12 +808,12 @@ function Write-LocalSupervisorConfig {
                 '--worker-id', $localWorkerId,
                 '--broker-backend', 'http',
                 '--broker-endpoint', 'http://127.0.0.1:7070/',
-                '--broker-poll-timeout-seconds', '5',
                 '--api-base-url', 'http://127.0.0.1:8080/',
                 '--advertise-host', $localReplicaHost
             )
             env = @{
-                RUST_LOG = 'info'
+                RUST_LOG          = 'info'
+                RUNINATOR_API_KEY = $localServiceApiKey
             }
         }
         [ordered]@{
@@ -814,7 +825,8 @@ function Write-LocalSupervisorConfig {
                 'workflows', 'apply', $WorkflowsFile
             )
             env = @{
-                RUST_LOG = 'info'
+                RUST_LOG          = 'info'
+                RUNINATOR_API_KEY = $localServiceApiKey
             }
             restart_on_failure = $false
         }

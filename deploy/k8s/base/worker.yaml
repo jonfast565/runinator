@@ -55,6 +55,11 @@ spec:
             - secretRef:
                 name: runinator-rabbitmq-secret
           env:
+            - name: RUNINATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: runinator-app-secret
+                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
             - name: POD_NAME
               valueFrom:
                 fieldRef:

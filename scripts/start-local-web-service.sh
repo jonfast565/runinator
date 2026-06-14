@@ -58,6 +58,12 @@ fi
 if [[ -n "${RUNINATOR_AUTH_BOOTSTRAP_ADMIN:-}" ]]; then
   bootstrap_args+=(--auth-bootstrap-admin "$RUNINATOR_AUTH_BOOTSTRAP_ADMIN")
 fi
+if [[ -n "${RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY:-}" ]]; then
+  bootstrap_args+=(--auth-bootstrap-service-api-key "$RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY")
+fi
+if [[ -n "${RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME:-}" ]]; then
+  bootstrap_args+=(--auth-bootstrap-service-api-key-name "$RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME")
+fi
 
 "$BOOTSTRAP_BIN" "${bootstrap_args[@]}"
 exec "$WS_BIN" "$@"

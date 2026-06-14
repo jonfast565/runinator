@@ -39,6 +39,18 @@ struct Cli {
     /// `username:password` seeded as an admin when the database has no users yet.
     #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_ADMIN")]
     auth_bootstrap_admin: Option<String>,
+
+    /// raw service api key (`<prefix>.<secret>`) seeded for non-interactive local/dev clients.
+    #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY")]
+    auth_bootstrap_service_api_key: Option<String>,
+
+    /// display name attached to the seeded bootstrap service api key.
+    #[arg(
+        long,
+        env = "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME",
+        default_value = "bootstrap-service"
+    )]
+    auth_bootstrap_service_api_key_name: String,
 }
 
 #[tokio::main]
@@ -67,6 +79,8 @@ async fn run() -> Result<(), SendableError> {
     let bootstrap_options = BootstrapOptions {
         auth_jwt_secret: cli.auth_jwt_secret.clone(),
         auth_bootstrap_admin: cli.auth_bootstrap_admin.clone(),
+        auth_bootstrap_service_api_key: cli.auth_bootstrap_service_api_key.clone(),
+        auth_bootstrap_service_api_key_name: Some(cli.auth_bootstrap_service_api_key_name.clone()),
     };
     let url = cli
         .database_url

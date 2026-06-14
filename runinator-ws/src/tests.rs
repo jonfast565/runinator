@@ -13,7 +13,7 @@ use runinator_broker::{
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{
     BootstrapOptions, bootstrap_database, interfaces::DatabaseImpl, load_jwt_secret,
-    seed_bootstrap_admin, sqlite::SqliteDb,
+    seed_bootstrap_admin, seed_bootstrap_service_api_key, sqlite::SqliteDb,
 };
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -135,6 +135,46 @@ async fn seed_bootstrap_admin_does_not_overwrite_existing_users() {
 }
 
 #[tokio::test]
+async fn seed_bootstrap_service_api_key_creates_admin_service_key() {
+    let (db, path) = test_db().await;
+    let raw_key = "localdev.runinator-local-dev-service-key";
+
+    seed_bootstrap_service_api_key(&db, "local-dev", raw_key)
+        .await
+        .unwrap();
+
+    let record = db
+        .fetch_api_key_by_prefix("localdev".into())
+        .await
+        .unwrap()
+        .expect("seeded api key");
+
+    assert_eq!(record.key.name, "local-dev");
+    assert!(record.key.is_service);
+    assert!(record.is_admin);
+    assert_eq!(record.key_hash, crate::auth::hash_secret(raw_key));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn seed_bootstrap_service_api_key_is_idempotent_for_existing_prefix() {
+    let (db, path) = test_db().await;
+    let raw_key = "localdev.runinator-local-dev-service-key";
+
+    seed_bootstrap_service_api_key(&db, "local-dev", raw_key)
+        .await
+        .unwrap();
+    seed_bootstrap_service_api_key(&db, "local-dev", raw_key)
+        .await
+        .unwrap();
+
+    assert_eq!(db.list_api_keys(None).await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn bootstrap_database_persists_explicit_jwt_secret() {
     let (db, path) = test_db().await;
 
@@ -144,6 +184,8 @@ async fn bootstrap_database_persists_explicit_jwt_secret() {
         &BootstrapOptions {
             auth_jwt_secret: Some("explicit-secret".into()),
             auth_bootstrap_admin: None,
+            auth_bootstrap_service_api_key: None,
+            auth_bootstrap_service_api_key_name: None,
         },
     )
     .await

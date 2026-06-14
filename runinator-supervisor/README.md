@@ -67,4 +67,7 @@ restart. The local web-service command runs `runinator-bootstrap` first, then
 execs `runinator-ws`; the checked-in config passes
 `RUNINATOR_AUTH_BOOTSTRAP_ADMIN=admin:admin` into that bootstrap step so the
 admin account is seeded into an empty local database on first start without
-enabling auth by default.
+enabling auth by default. It also seeds a dev-only bootstrap service API key
+and passes that key to the local waker, worker, and one-shot pack import so the
+same checked-in config works against both auth-disabled and auth-enabled local
+web-service runs.

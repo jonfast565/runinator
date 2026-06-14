@@ -4,10 +4,11 @@ metadata:
   name: runinator-pack-import
   namespace: runinator
 spec:
-  # runinatorctl runs a one-shot pack import that fails hard if runinator-ws is
-  # not yet serving. ws waits on its own db-bootstrap init container and postgres,
-  # so it can take ~30s+ to come up. a higher backoffLimit lets the OnFailure
-  # restart loop absorb that startup race; activeDeadlineSeconds bounds total runtime.
+  # runinatorctl runs a one-shot authenticated pack import that fails hard if
+  # runinator-ws is not yet serving. ws waits on its own db-bootstrap init
+  # container and postgres, so it can take ~30s+ to come up. a higher
+  # backoffLimit lets the OnFailure restart loop absorb that startup race;
+  # activeDeadlineSeconds bounds total runtime.
   backoffLimit: 12
   activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 3600
@@ -24,26 +25,17 @@ spec:
           command: ["/bin/sh", "-lc"]
           args:
             - >
-              runinatorctl --api-base-url "$WS_API_BASE_URL" login
-              --username "$RUNINATOR_BOOTSTRAP_ADMIN_USERNAME"
-              --password "$RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD"
-              &&
               runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply
               /home/runinator/.runinator/workflows/sdlc.wdlp
           envFrom:
             - configMapRef:
                 name: runinator-common
           env:
-            - name: RUNINATOR_BOOTSTRAP_ADMIN_USERNAME
+            - name: RUNINATOR_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: runinator-app-secret
-                  key: RUNINATOR_BOOTSTRAP_ADMIN_USERNAME
-            - name: RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: runinator-app-secret
-                  key: RUNINATOR_BOOTSTRAP_ADMIN_PASSWORD
+                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
           resources:
             requests:
               cpu: "50m"

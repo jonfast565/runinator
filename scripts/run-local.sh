@@ -10,6 +10,7 @@ SMOKE_WORKFLOW="${RUNINATOR_SMOKE_WORKFLOW:-Hello World Test}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 API_BASE_URL="${RUNINATOR_API_BASE_URL:-http://127.0.0.1:8080/}"
+LOCAL_SERVICE_API_KEY_DEFAULT="${RUNINATOR_LOCAL_SERVICE_API_KEY:-localdev.runinator-local-dev-service-key}"
 DEV_ARGS=()
 
 if [[ $# -gt 0 ]]; then
@@ -59,7 +60,11 @@ ensure_workflow_dir() {
 
 sync_import() {
   ensure_workflow_dir
-  cargo run -p runinator-ctl -- \
+  local ctl_api_key="${RUNINATOR_API_KEY:-}"
+  if [[ -z "$ctl_api_key" && "$API_BASE_URL" == "http://127.0.0.1:8080/" ]]; then
+    ctl_api_key="$LOCAL_SERVICE_API_KEY_DEFAULT"
+  fi
+  RUNINATOR_API_KEY="$ctl_api_key" cargo run -p runinator-ctl -- \
     --api-base-url "$API_BASE_URL" \
     workflows apply "$WORKFLOWS_FILE"
 }
@@ -69,7 +74,12 @@ smoke_sync() {
   sync_import
 
   local output
-  output="$(cargo run -p runinator-ctl -- \
+  local ctl_api_key="${RUNINATOR_API_KEY:-}"
+  if [[ -z "$ctl_api_key" && "$API_BASE_URL" == "http://127.0.0.1:8080/" ]]; then
+    ctl_api_key="$LOCAL_SERVICE_API_KEY_DEFAULT"
+  fi
+
+  output="$(RUNINATOR_API_KEY="$ctl_api_key" cargo run -p runinator-ctl -- \
     --api-base-url "$API_BASE_URL" \
     workflows run "$SMOKE_WORKFLOW" \
     --name "hello-world-smoke")"
@@ -82,13 +92,13 @@ smoke_sync() {
     exit 1
   fi
 
-  cargo run -p runinator-ctl -- \
+  RUNINATOR_API_KEY="$ctl_api_key" cargo run -p runinator-ctl -- \
     --api-base-url "$API_BASE_URL" \
     runs watch "$run_id" \
     --interval-seconds 1
 
   local summary
-  summary="$(cargo run -p runinator-ctl -- \
+  summary="$(RUNINATOR_API_KEY="$ctl_api_key" cargo run -p runinator-ctl -- \
     --api-base-url "$API_BASE_URL" \
     runs show "$run_id")"
   printf '%s\n' "$summary"
@@ -162,7 +172,11 @@ MSG
     ;;
   dev)
     ensure_workflow_dir
-    cargo run -p runinator-ctl -- \
+    ctl_api_key="${RUNINATOR_API_KEY:-}"
+    if [[ -z "$ctl_api_key" && "$API_BASE_URL" == "http://127.0.0.1:8080/" ]]; then
+      ctl_api_key="$LOCAL_SERVICE_API_KEY_DEFAULT"
+    fi
+    RUNINATOR_API_KEY="$ctl_api_key" cargo run -p runinator-ctl -- \
       --api-base-url "$API_BASE_URL" \
       workflows dev "$WORKFLOWS_FILE" \
       "${DEV_ARGS[@]}"

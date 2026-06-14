@@ -33,8 +33,11 @@ async fn main() -> Result<(), SendableError> {
 
     let broker = build_broker(&config).await?;
     let notify = Arc::new(Notify::new());
-    let api_client = AsyncApiClient::new(StaticLocator::new(config.api_base_url.clone()))
-        .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
+    let api_client = AsyncApiClient::with_credentials(
+        StaticLocator::new(config.api_base_url.clone()),
+        config.api_key.clone(),
+    )
+    .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
     let _heartbeat = match register_replica_session(
         &api_client,
         ReplicaServiceConfig {

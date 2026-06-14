@@ -66,6 +66,13 @@ password: admin
 
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
+The same bootstrap step also seeds a dev-only service API key and feeds it to
+the checked-in local worker, waker, one-shot `runinatorctl workflows apply`,
+and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the
+default local stack continues to work unchanged with auth off, and starts
+working against an auth-enabled local web service without hand-editing
+`runinator-supervisor.json` or exporting extra env vars.
+
 When auth is enabled, store a local CLI session with:
 
 ```bash
@@ -189,6 +196,10 @@ PowerShell can build and run a local artifact layout:
 
 This publishes binaries under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state still goes under `~/.runinator/` by default. The default workflow import is `packs/sdlc/sdlc.wdlp`, and any referenced `.wdl` files are copied into `target/artifacts/workflows/` with the manifest. Stop it with `Ctrl+C`.
 
+That generated local supervisor config now uses the same bootstrap-admin and
+bootstrap service API-key flow as the checked-in shell path, so turning on
+`RUNINATOR_AUTH_ENABLED=true` does not require hand-editing the artifact config.
+
 To run that same local artifact flow against MariaDB, select the backend and
 pass a MySQL-compatible URL:
 
@@ -228,6 +239,12 @@ compiled zip upload in a watch loop. It watches the pack manifest, referenced
 `.wdl` files, adjacent settings, and an optional `--json-file`. When `--run` is
 provided, it starts that workflow after each successful import and refreshes the
 run detail until the run reaches a terminal state.
+
+For the checked-in local stack only, `bash scripts/run-local.sh sync`, `dev`,
+and `smoke-sync` will default `RUNINATOR_API_KEY` to the same seeded dev
+service key when talking to `http://127.0.0.1:8080/` and no explicit
+`RUNINATOR_API_KEY` is already set. Pointing those helpers at another stack
+still requires that stack's own credentials.
 
 For a minimal smoke import, use `./packs/hello-world/hello-world.wdlp`. It
 contains one WDL workflow that runs a single built-in console action and is wired

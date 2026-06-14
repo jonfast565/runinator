@@ -3,8 +3,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use interfaces::DatabaseImpl;
 use log::{info, warn};
+use runinator_models::auth::{ApiKey, ApiKeyRecord};
 use runinator_models::errors::SendableError;
 use runinator_models::settings::SettingKind;
+use uuid::Uuid;
 
 pub mod backend;
 mod common;
@@ -21,6 +23,8 @@ pub mod sqlite;
 pub struct BootstrapOptions {
     pub auth_jwt_secret: Option<String>,
     pub auth_bootstrap_admin: Option<String>,
+    pub auth_bootstrap_service_api_key: Option<String>,
+    pub auth_bootstrap_service_api_key_name: Option<String>,
 }
 
 pub async fn bootstrap_database(
@@ -34,12 +38,24 @@ pub async fn bootstrap_database(
     if let Some(spec) = options.auth_bootstrap_admin.as_deref() {
         seed_bootstrap_admin(pool.as_ref(), spec).await?;
     }
+    if let Some(raw_key) = options.auth_bootstrap_service_api_key.as_deref() {
+        seed_bootstrap_service_api_key(
+            pool.as_ref(),
+            options
+                .auth_bootstrap_service_api_key_name
+                .as_deref()
+                .unwrap_or(DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME),
+            raw_key,
+        )
+        .await?;
+    }
     Ok(())
 }
 
 /// settings-store coordinates for the persisted, replica-shared signing secret.
 const SECRET_SCOPE: &str = "auth";
 const SECRET_NAME: &str = "jwt_secret";
+const DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME: &str = "bootstrap-service";
 
 pub async fn ensure_jwt_secret<T: DatabaseImpl>(
     db: &T,
@@ -106,5 +122,50 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
     db.create_user(username.to_string(), None, true, Some(hash))
         .await?;
     info!("Seeded bootstrap admin user '{username}'");
+    Ok(())
+}
+
+pub async fn seed_bootstrap_service_api_key<T: DatabaseImpl>(
+    db: &T,
+    name: &str,
+    raw_key: &str,
+) -> Result<(), SendableError> {
+    let Some((prefix, _)) = raw_key.split_once('.') else {
+        warn!(
+            "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY must be '<prefix>.<secret>'; skipping seed"
+        );
+        return Ok(());
+    };
+    if prefix.is_empty() {
+        warn!(
+            "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY must include a non-empty prefix; skipping seed"
+        );
+        return Ok(());
+    }
+    if db
+        .fetch_api_key_by_prefix(prefix.to_string())
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let record = ApiKeyRecord {
+        key: ApiKey {
+            id: Some(Uuid::now_v7()),
+            name: name.to_string(),
+            user_id: None,
+            is_service: true,
+            key_prefix: prefix.to_string(),
+            last_used_at: None,
+            expires_at: None,
+            disabled: false,
+            created_at: Utc::now(),
+        },
+        is_admin: true,
+        key_hash: runinator_auth::hash_secret(raw_key),
+    };
+    db.create_api_key(record).await?;
+    info!("Seeded bootstrap service api key '{name}'");
     Ok(())
 }
