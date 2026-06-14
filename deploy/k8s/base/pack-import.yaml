@@ -5,7 +5,7 @@ metadata:
   namespace: runinator
 spec:
   # runinatorctl runs a one-shot pack import that fails hard if runinator-ws is
-  # not yet serving. ws waits on its own db-migrate init container and postgres,
+  # not yet serving. ws waits on its own db-bootstrap init container and postgres,
   # so it can take ~30s+ to come up. a higher backoffLimit lets the OnFailure
   # restart loop absorb that startup race; activeDeadlineSeconds bounds total runtime.
   backoffLimit: 12

@@ -20,8 +20,7 @@ export const navSections: NavSection[] = [
     label: "Inbox",
     items: [
       { tab: "Approvals", label: "Approvals", icon: "approve", endpoint: "approvals" },
-      { tab: "Notifications", label: "Notifications", icon: "bell", endpoint: "notifications" },
-      { tab: "Feedback", label: "Feedback", icon: "message", endpoint: "feedback" }
+      { tab: "Notifications", label: "Notifications", icon: "bell", endpoint: "notifications" }
     ]
   },
   {
@@ -35,9 +34,7 @@ export const navSections: NavSection[] = [
   {
     label: "Other",
     items: [
-      { tab: "ChangeSets", label: "Change Sets", icon: "list", endpoint: "change_sets" },
-      { tab: "Workspaces", label: "Workspaces", icon: "folder", endpoint: "workspaces" },
-      { tab: "Gates", label: "Gates", icon: "gate", endpoint: "gates" },
+      { tab: "Gates", label: "Gates", icon: "gate" },
       { tab: "Secrets", label: "Config & Secrets", icon: "key" }
     ]
   }

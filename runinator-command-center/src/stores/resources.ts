@@ -9,12 +9,7 @@ import { useAppStore } from "./app";
 
 export const resources: ResourceEndpoint[] = [
   { label: "External Items", endpoint: "external_items" },
-  { label: "Resources", endpoint: "external_resources" },
-  { label: "Feedback", endpoint: "feedback" },
   { label: "Approvals", endpoint: "approvals" },
-  { label: "Gates", endpoint: "gates" },
-  { label: "Workspaces", endpoint: "workspaces" },
-  { label: "Change Sets", endpoint: "change_sets" },
   { label: "Events", endpoint: "automation_events" }
 ];
 

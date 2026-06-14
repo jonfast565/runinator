@@ -3,6 +3,7 @@ use crate::interfaces::DatabaseImpl;
 use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
+    auth::{Grant, Permission, PrincipalType, ResourceType},
     runs::NewRunChunk,
     settings::SettingKind,
     workflows::{
@@ -837,4 +838,101 @@ fn action_command(
         attempt: 1,
         parameters: runinator_models::json!({}),
     }
+}
+
+#[tokio::test]
+async fn users_grants_and_teams_round_trip() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-authz-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    // a user with a local password is resolvable by username, carrying its stored hash.
+    let user = db
+        .create_user(
+            "alice".into(),
+            Some("a@x.io".into()),
+            false,
+            Some("argon-hash".into()),
+        )
+        .await
+        .unwrap();
+    let user_id = user.id.unwrap();
+    let credential = db
+        .fetch_local_credential("alice".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(credential.password_hash, "argon-hash");
+    assert_eq!(db.count_users().await.unwrap(), 1);
+
+    // a direct user grant on a workflow is listed for the resource and for the user.
+    let workflow_id = Uuid::now_v7();
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: workflow_id,
+        principal_type: PrincipalType::User,
+        principal_id: user_id,
+        permission: Permission::Edit,
+        created_at: Utc::now(),
+    })
+    .await
+    .unwrap();
+    let grants = db
+        .list_grants("workflow".into(), workflow_id)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].permission, Permission::Edit);
+    let user_grants = db
+        .list_user_grants("workflow".into(), user_id)
+        .await
+        .unwrap();
+    assert_eq!(user_grants.len(), 1);
+
+    // upsert: re-granting the same (resource, principal) updates the permission in place.
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: workflow_id,
+        principal_type: PrincipalType::User,
+        principal_id: user_id,
+        permission: Permission::Own,
+        created_at: Utc::now(),
+    })
+    .await
+    .unwrap();
+    let grants = db
+        .list_grants("workflow".into(), workflow_id)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].permission, Permission::Own);
+
+    // teams: membership feeds team-scoped grants.
+    let team = db.create_team("ops".into()).await.unwrap();
+    let team_id = team.id.unwrap();
+    db.add_team_member(team_id, user_id).await.unwrap();
+    db.add_team_member(team_id, user_id).await.unwrap(); // idempotent
+    assert_eq!(db.list_user_team_ids(user_id).await.unwrap(), vec![team_id]);
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: workflow_id,
+        principal_type: PrincipalType::Team,
+        principal_id: team_id,
+        permission: Permission::Run,
+        created_at: Utc::now(),
+    })
+    .await
+    .unwrap();
+    let team_grants = db
+        .list_team_grants("workflow".into(), team_id)
+        .await
+        .unwrap();
+    assert_eq!(team_grants.len(), 1);
+    assert_eq!(team_grants[0].permission, Permission::Run);
 }

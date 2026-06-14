@@ -11,10 +11,14 @@ use runinator_broker::{
     WakeDelivery, WakeMessage, in_memory::InMemoryBroker,
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
-use runinator_database::{interfaces::DatabaseImpl, sqlite::SqliteDb};
+use runinator_database::{
+    BootstrapOptions, bootstrap_database, interfaces::DatabaseImpl, load_jwt_secret,
+    seed_bootstrap_admin, sqlite::SqliteDb,
+};
 use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
+    auth::{AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType},
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
         WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
@@ -75,6 +79,161 @@ fn workflow_run_request_accepts_debug_flag() {
         serde_json::from_value(json!({ "parameters": {}, "debug": true }).into()).unwrap();
 
     assert!(request.debug);
+}
+
+#[tokio::test]
+async fn seed_bootstrap_admin_creates_local_admin_credentials() {
+    let (db, path) = test_db().await;
+
+    seed_bootstrap_admin(&db, "admin:secret-pass")
+        .await
+        .unwrap();
+
+    let user = db
+        .fetch_user_by_username("admin".into())
+        .await
+        .unwrap()
+        .expect("seeded user");
+    let credential = db
+        .fetch_local_credential("admin".into())
+        .await
+        .unwrap()
+        .expect("seeded credential");
+
+    assert!(user.is_admin);
+    assert_eq!(db.count_users().await.unwrap(), 1);
+    assert_eq!(credential.user.id, user.id);
+    assert!(crate::auth::verify_password(
+        "secret-pass",
+        &credential.password_hash
+    ));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn seed_bootstrap_admin_does_not_overwrite_existing_users() {
+    let (db, path) = test_db().await;
+
+    db.create_user("existing".into(), None, false, None)
+        .await
+        .unwrap();
+
+    seed_bootstrap_admin(&db, "admin:secret-pass")
+        .await
+        .unwrap();
+
+    assert_eq!(db.count_users().await.unwrap(), 1);
+    assert!(
+        db.fetch_user_by_username("admin".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn bootstrap_database_persists_explicit_jwt_secret() {
+    let (db, path) = test_db().await;
+
+    let db = Arc::new(db);
+    bootstrap_database(
+        &db,
+        &BootstrapOptions {
+            auth_jwt_secret: Some("explicit-secret".into()),
+            auth_bootstrap_admin: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        load_jwt_secret(db.as_ref()).await.unwrap(),
+        b"explicit-secret".to_vec()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn bootstrap_database_generates_jwt_secret_once() {
+    let (db, path) = test_db().await;
+
+    let db = Arc::new(db);
+    bootstrap_database(&db, &BootstrapOptions::default())
+        .await
+        .unwrap();
+    let first = load_jwt_secret(db.as_ref()).await.unwrap();
+
+    bootstrap_database(&db, &BootstrapOptions::default())
+        .await
+        .unwrap();
+    let second = load_jwt_secret(db.as_ref()).await.unwrap();
+
+    assert!(!first.is_empty());
+    assert_eq!(first, second);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn visible_workflow_ids_include_direct_and_team_grants() {
+    let (db, path) = test_db().await;
+    let direct = crate::repository::upsert_workflow(&db, &workflow(None, "direct"))
+        .await
+        .unwrap();
+    let team = crate::repository::upsert_workflow(&db, &workflow(None, "team"))
+        .await
+        .unwrap();
+    let user = db
+        .create_user("member".into(), None, false, None)
+        .await
+        .unwrap();
+    let user_id = user.id.expect("user id");
+    let team_record = db.create_team("ops".into()).await.unwrap();
+    let team_id = team_record.id.expect("team id");
+    db.add_team_member(team_id, user_id).await.unwrap();
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: direct.id.expect("workflow id"),
+        principal_type: PrincipalType::User,
+        principal_id: user_id,
+        permission: Permission::View,
+        created_at: chrono::Utc::now(),
+    })
+    .await
+    .unwrap();
+    db.create_grant(Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: team.id.expect("workflow id"),
+        principal_type: PrincipalType::Team,
+        principal_id: team_id,
+        permission: Permission::Run,
+        created_at: chrono::Utc::now(),
+    })
+    .await
+    .unwrap();
+
+    let visible = crate::authz::visible_workflow_ids(
+        &db,
+        &AuthContext {
+            principal_id: Some(user_id),
+            is_admin: false,
+            kind: PrincipalKind::User,
+        },
+    )
+    .await
+    .expect("scoped set");
+
+    assert_eq!(visible.len(), 2);
+    assert!(visible.contains(&direct.id.unwrap()));
+    assert!(visible.contains(&team.id.unwrap()));
+
+    let _ = std::fs::remove_file(path);
 }
 
 #[tokio::test]

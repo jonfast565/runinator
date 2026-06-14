@@ -84,6 +84,15 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
             collect_expr(&approval.prompt, source_dir, paths)?;
             collect_entries(&approval.metadata, source_dir, paths)?;
         }
+        StmtKind::Gate(gate) => {
+            if let Some(when) = &gate.when {
+                collect_cond(when, source_dir, paths)?;
+            }
+            collect_entries(&gate.metadata, source_dir, paths)?;
+        }
+        StmtKind::Signal(signal) => {
+            collect_entries(&signal.metadata, source_dir, paths)?;
+        }
         StmtKind::Config(config) => {
             if let Some(name) = &config.name {
                 collect_expr(name, source_dir, paths)?;

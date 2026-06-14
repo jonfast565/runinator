@@ -279,6 +279,19 @@ fn validate_node_types(
             }
             Ok(())
         }
+        WorkflowNodeKind::Gate => {
+            // condition gates carry a `when` condition the reducer auto-evaluates; type-check it.
+            if let Some(when) = node.parameters.get("when") {
+                validate_condition_types(when, context)?;
+            }
+            Ok(())
+        }
+        WorkflowNodeKind::Signal => {
+            if let Some(name) = node.parameters.get("name") {
+                expect_value_type(name, context, &WorkflowType::String, "signal.name")?;
+            }
+            Ok(())
+        }
         _ => {
             infer_value_type(&node.parameters, context)?;
             Ok(())

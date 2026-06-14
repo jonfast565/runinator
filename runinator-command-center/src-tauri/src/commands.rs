@@ -17,7 +17,7 @@ use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::{
-    client::{build_state_url, get_json, handle_response, post_empty},
+    client::{build_state_url, get_json, handle_response, post_empty, post_json},
     discovery::start_discovery_thread,
     error::{CommandError, CommandResult},
     state::CommandCenterState,
@@ -54,6 +54,112 @@ pub fn start_service_discovery(app: AppHandle, state: State<'_, CommandCenterSta
     start_discovery_thread(app, state.inner().clone());
 }
 
+// ---- auth ----
+
+#[tauri::command]
+pub async fn auth_config(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "auth/config").await
+}
+
+#[tauri::command]
+pub async fn auth_me(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "auth/me").await
+}
+
+#[tauri::command]
+pub async fn login(
+    state: State<'_, CommandCenterState>,
+    username: String,
+    password: String,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        "auth/login",
+        &json!({ "username": username, "password": password }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn refresh_session(
+    state: State<'_, CommandCenterState>,
+    refresh_token: String,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        "auth/refresh",
+        &json!({ "refresh_token": refresh_token }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn logout(
+    state: State<'_, CommandCenterState>,
+    refresh_token: String,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        "auth/logout",
+        &json!({ "refresh_token": refresh_token }),
+    )
+    .await
+}
+
+/// store the access token so subsequent requests carry it (desktop side of the credential).
+#[tauri::command]
+pub async fn set_access_token(
+    state: State<'_, CommandCenterState>,
+    token: Option<String>,
+) -> CommandResult<()> {
+    state.set_access_token(token).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_workflow_grants(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, &format!("workflows/{workflow_id}/grants")).await
+}
+
+#[tauri::command]
+pub async fn create_workflow_grant(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    principal_type: String,
+    principal_id: Uuid,
+    permission: String,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("workflows/{workflow_id}/grants"),
+        &json!({
+            "principal_type": principal_type,
+            "principal_id": principal_id,
+            "permission": permission,
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn revoke_workflow_grant(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    grant_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(
+        &state,
+        &format!("workflows/{workflow_id}/grants/{grant_id}"),
+    )
+    .await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
 #[tauri::command]
 pub async fn fetch_workflows(
     state: State<'_, CommandCenterState>,
@@ -82,6 +188,8 @@ pub async fn save_workflow_bundle(
     );
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .header(
             WORKFLOW_JSON_IMPORT_RISK_HEADER,
@@ -108,7 +216,14 @@ pub async fn save_workflow_wdl(
     request: WorkflowWdlSaveRequest,
 ) -> CommandResult<WorkflowBundle> {
     let url = build_state_url(&state, "wdl/import").await?;
-    let response = state.client.post(url.clone()).json(&request).send().await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&request)
+        .send()
+        .await?;
     let response = handle_response(url, response).await?;
     let result = response.json::<WorkflowBundle>().await?;
     let Some(workflow_id) = result.workflows.first().and_then(|workflow| workflow.id) else {
@@ -215,7 +330,7 @@ pub async fn delete_workflow(
     workflow_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflows/{workflow_id}")).await?;
-    let response = state.client.delete(url.clone()).send().await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<TaskResponse>().await?)
 }
@@ -232,7 +347,7 @@ pub async fn duplicate_workflow(
         &format!("workflows/{workflow_id}/duplicate?bump={bump}"),
     )
     .await?;
-    let response = state.client.post(url.clone()).send().await?;
+    let response = state.client.read().await.post(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<WorkflowDefinition>().await?)
 }
@@ -261,10 +376,19 @@ pub async fn save_workflow_trigger(
     };
     let url = build_state_url(&state, &path).await?;
     let response = if creating {
-        state.client.post(url.clone()).json(&trigger).send().await?
+        state
+            .client
+            .read()
+            .await
+            .post(url.clone())
+            .json(&trigger)
+            .send()
+            .await?
     } else {
         state
             .client
+            .read()
+            .await
             .patch(url.clone())
             .json(&trigger)
             .send()
@@ -280,7 +404,7 @@ pub async fn delete_workflow_trigger(
     trigger_id: Uuid,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_triggers/{trigger_id}")).await?;
-    let response = state.client.delete(url.clone()).send().await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<TaskResponse>().await?)
 }
@@ -337,6 +461,8 @@ async fn save_workflow_to_service(
     let response = if workflow.id.is_some() {
         state
             .client
+            .read()
+            .await
             .patch(url.clone())
             .json(&workflow)
             .send()
@@ -344,6 +470,8 @@ async fn save_workflow_to_service(
     } else {
         state
             .client
+            .read()
+            .await
             .post(url.clone())
             .json(&workflow)
             .send()
@@ -363,6 +491,8 @@ pub async fn create_workflow_run(
     let url = build_state_url(&state, &format!("workflows/{workflow_id}/runs")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({
             "debug": debug.unwrap_or(false),
@@ -393,6 +523,8 @@ pub async fn step_workflow_run(
     .await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()
@@ -413,6 +545,8 @@ pub async fn continue_workflow_run(
     .await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()
@@ -429,6 +563,8 @@ pub async fn cancel_workflow_run(
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/cancel")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()
@@ -445,6 +581,8 @@ pub async fn pause_workflow_run(
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/pause")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()
@@ -461,6 +599,8 @@ pub async fn resume_workflow_run(
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/resume")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()
@@ -476,7 +616,14 @@ pub async fn patch_workflow_run_debug(
     patch: Value,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/debug")).await?;
-    let response = state.client.patch(url.clone()).json(&patch).send().await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&patch)
+        .send()
+        .await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<TaskResponse>().await?)
 }
@@ -494,6 +641,8 @@ pub async fn run_to_cursor_workflow_run(
     .await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({ "node_id": node_id }))
         .send()
@@ -516,6 +665,8 @@ pub async fn skip_workflow_node(
     .await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({ "output_json": output_json, "message": message }))
         .send()
@@ -535,6 +686,8 @@ pub async fn resolve_workflow_input(
     let url = build_state_url(&state, &format!("workflow_node_runs/{node_run_id}/input")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({
             "output_json": output_json,
@@ -560,6 +713,8 @@ pub async fn rerun_workflow_node(
     .await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({ "parameters": parameters }))
         .send()
@@ -571,7 +726,7 @@ pub async fn rerun_workflow_node(
 #[tauri::command]
 pub async fn fetch_supervisor_status(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
     let url = build_state_url(&state, "supervisor/status").await?;
-    let response = state.client.get(url.clone()).send().await?;
+    let response = state.client.read().await.get(url.clone()).send().await?;
     // accept both 200 (with snapshot) and 404 (configured: false) — both return JSON.
     if response.status().as_u16() == 404 {
         return Ok(response.json::<Value>().await?);
@@ -589,6 +744,8 @@ pub async fn replay_workflow_run(
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/replay")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({ "from_step_id": from_step_id }))
         .send()
@@ -613,6 +770,8 @@ pub async fn rename_workflow_run(
     let url = build_state_url(&state, &format!("workflow_runs/{workflow_run_id}/rename")).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({ "name": name }))
         .send()
@@ -686,7 +845,14 @@ pub async fn save_credential(
     request: CredentialPutRequest,
 ) -> CommandResult<Value> {
     let url = build_state_url(&state, "credentials").await?;
-    let response = state.client.post(url.clone()).json(&request).send().await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&request)
+        .send()
+        .await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<Value>().await?)
 }
@@ -703,7 +869,7 @@ pub async fn delete_credential(
         .append_pair("scope", &scope)
         .append_pair("name", &name)
         .append_pair("kind", kind.as_deref().unwrap_or("secret"));
-    let response = state.client.delete(url.clone()).send().await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<Value>().await?)
 }
@@ -722,6 +888,49 @@ pub async fn reject_approval(
     approval_id: Uuid,
 ) -> CommandResult<Value> {
     post_empty(&state, &format!("approvals/{approval_id}/reject")).await
+}
+
+#[tauri::command]
+pub async fn open_gate(
+    state: State<'_, CommandCenterState>,
+    gate_id: Uuid,
+    reason: Option<String>,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("gates/{gate_id}/open"),
+        &json!({ "reason": reason }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn close_gate(
+    state: State<'_, CommandCenterState>,
+    gate_id: Uuid,
+    reason: Option<String>,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("gates/{gate_id}/close"),
+        &json!({ "reason": reason }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn deliver_signal(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    name: String,
+    payload: Value,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/signals"),
+        &json!({ "name": name, "payload": payload }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -785,6 +994,8 @@ pub async fn upload_artifact(
 
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .multipart(form)
         .send()
@@ -824,7 +1035,7 @@ pub async fn download_artifact(
     };
 
     let url = build_state_url(&state, &format!("artifacts/{artifact_id}/download")).await?;
-    let response = state.client.get(url.clone()).send().await?;
+    let response = state.client.read().await.get(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     let bytes = response.bytes().await?;
     tokio::fs::write(&target, bytes)
@@ -867,6 +1078,8 @@ pub async fn mark_all_notifications_read(
     let url = build_state_url(&state, "notifications/mark_all_read").await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
         .send()

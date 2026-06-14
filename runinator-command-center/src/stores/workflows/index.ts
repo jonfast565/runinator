@@ -104,6 +104,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const workflowDraft = reactive<WorkflowDefinition>(newWorkflowDraft());
   const workflowJson = ref("{}");
   const workflowWdl = ref("");
+  // populated when the current draft cannot be decompiled to wdl; the wdl pane goes read-only and
+  // shows this message so an incomplete graph never compiles empty wdl back over the definition.
+  const workflowWdlError = ref("");
   const workflowConcurrency = ref(1);
   const workflowSettingsOpen = ref(false);
   const runInputOpen = ref(false);
@@ -163,6 +166,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     kind: "action" as WorkflowNodeKind,
     approval_type: "generic",
     approval_prompt: "Approval required",
+    gate_kind: "manual",
+    gate_when_json: "{}",
+    gate_poll_interval: 30,
+    gate_timeout: 0,
+    gate_label: "",
+    signal_name: "signal",
     condition_fallback: "",
     condition_branches: [] as Array<{ when_json: string; target: string }>,
     wait_seconds: 60,
@@ -221,7 +230,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     scheduleWorkflowJsonSync();
   });
   watch(workflowWdl, () => {
-    if (workflowWdlWriteGuard || workflowEditorMode.value !== "wdl") return;
+    // the graph and wdl panes are live side by side; a user wdl edit always compiles into the draft.
+    // a silent programmatic write (guard) or a non-representable draft (error) must not.
+    if (workflowWdlWriteGuard || workflowWdlError.value) return;
+    workflowEditorMode.value = "wdl";
     scheduleWorkflowWdlSync();
   });
   watch(
@@ -368,6 +380,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     Object.assign(workflowDraft, newWorkflowDraft());
     setWorkflowJsonSilently(pretty(workflowDraft.definition ?? { nodes: [] }));
     setWorkflowWdlSilently("");
+    workflowWdlError.value = "";
     selectedStepId.value = "";
     stepEditorOpen.value = false;
   }
@@ -399,12 +412,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       clearWorkflowTriggerState();
       stepEditorOpen.value = false;
     }
+    workflowEditorMode.value = "graph";
     isDirty.value = false;
-    // graph and json derive from the draft, but the wdl text is decompiled lazily; refresh it so
-    // the wdl tab reflects the newly selected workflow instead of the previous one.
-    if (workflowEditorMode.value === "wdl") return refreshWorkflowWdl();
-    scheduleWorkflowWdlRefresh();
-    return Promise.resolve();
+    // the graph derives from the draft; the wdl pane is decompiled, so refresh it for the newly
+    // selected workflow since both panes are visible at once.
+    return refreshWorkflowWdl();
   }
 
   function addWorkflow() {
@@ -880,9 +892,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (endIndex >= 0) nodes.splice(endIndex, 0, newNode);
     else nodes.push(newNode);
     setGraphNodePosition(newNode.id, position);
-    workflowDraft.definition.concurrency = workflowConcurrency.value;
-    setWorkflowJsonSilently(pretty(workflowDraft.definition));
-    isDirty.value = true;
+    syncWorkflowDraftToJson();
     populateStepEditor(newNode.id);
     openStepEditor(newNode.id, true);
   }
@@ -1004,6 +1014,31 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     next.transitions = transitions;
     if (next.kind === "approval") {
       next.parameters = { ...parameters, approval_type: stepEditor.approval_type || "generic", prompt: stepEditor.approval_prompt || "Approval required" };
+    }
+    if (next.kind === "gate") {
+      next.parameters = { ...parameters, kind: stepEditor.gate_kind || "manual" };
+      if (stepEditor.gate_kind === "condition") {
+        const when = parseRequiredObject(stepEditor.gate_when_json);
+        if (!when) {
+          stepEditorError.value = "Gate condition must be a JSON object";
+          app.setError(stepEditorError.value);
+          return false;
+        }
+        next.parameters.when = when;
+      } else {
+        delete next.parameters.when;
+      }
+      const pollInterval = Number(stepEditor.gate_poll_interval ?? 0);
+      if (pollInterval > 0) next.parameters.poll_interval = pollInterval;
+      else delete next.parameters.poll_interval;
+      const timeout = Number(stepEditor.gate_timeout ?? 0);
+      if (timeout > 0) next.parameters.timeout = timeout;
+      else delete next.parameters.timeout;
+      if (stepEditor.gate_label.trim()) next.parameters.label = stepEditor.gate_label.trim();
+      else delete next.parameters.label;
+    }
+    if (next.kind === "signal") {
+      next.parameters = { ...parameters, name: stepEditor.signal_name.trim() || "signal" };
     }
     if (next.kind === "condition") {
       next.transitions = { ...transitions, branches: [] };
@@ -1177,6 +1212,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.kind = node.kind ?? "action";
     stepEditor.approval_type = String(node.parameters?.approval_type ?? "generic");
     stepEditor.approval_prompt = String(node.parameters?.prompt ?? "Approval required");
+    stepEditor.gate_kind = String(node.parameters?.kind ?? "manual");
+    stepEditor.gate_when_json = pretty(node.parameters?.when ?? {});
+    stepEditor.gate_poll_interval = Number(node.parameters?.poll_interval ?? 30);
+    stepEditor.gate_timeout = Number(node.parameters?.timeout ?? 0);
+    stepEditor.gate_label = String(node.parameters?.label ?? "");
+    stepEditor.signal_name = String(node.parameters?.name ?? "signal");
     stepEditor.condition_fallback = nodeRefId(node.transitions?.next) ?? "";
     stepEditor.condition_branches = Array.isArray(node.transitions?.branches)
       ? node.transitions.branches.map((branch: JsonRecord) => ({ when_json: pretty(branch.when ?? {}), target: nodeRefId(branch.target) ?? "" }))
@@ -1525,6 +1566,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function syncWorkflowDraftToJson() {
+    // a graph edit is now the source of truth, so save should serialize the draft, not recompile wdl.
+    workflowEditorMode.value = "graph";
     workflowDraft.definition.concurrency = workflowConcurrency.value;
     Object.assign(workflowDraft, normalizeWorkflowDefinition(cloneJson(workflowDraft)));
     setWorkflowJsonSilently(pretty(workflowDraft.definition));
@@ -1555,25 +1598,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return true;
   }
 
-  // decompile the current draft into wdl text for the editor. some control shapes cannot be
-  // recovered structurally, so on failure we drop back to the json view with a notice.
+  // decompile the current draft into wdl text for the wdl pane. some control shapes cannot be
+  // recovered structurally (e.g. an incomplete graph); on failure the pane goes read-only and shows
+  // the reason via workflowWdlError so editing it never compiles empty wdl back over the draft.
   async function refreshWorkflowWdl(): Promise<void> {
     try {
       setWorkflowWdlSilently(await decompileToWdl(cloneJson(workflowDraft)));
+      workflowWdlError.value = "";
     } catch (err) {
       setWorkflowWdlSilently("");
-      if (workflowEditorMode.value === "wdl") {
-        workflowEditorMode.value = "json";
-      }
-      app.setError(`Could not render WDL for this workflow (${errorMessage(err)}); showing JSON.`);
-    }
-  }
-
-  // switch to the wdl tab, decompiling the current draft so the editor reflects it.
-  async function enterWdlMode(): Promise<void> {
-    await refreshWorkflowWdl();
-    if (workflowEditorMode.value !== "json") {
-      workflowEditorMode.value = "wdl";
+      workflowWdlError.value = errorMessage(err);
     }
   }
 
@@ -2022,6 +2056,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       Object.assign(workflowDraft, newWorkflowDraft());
       setWorkflowJsonSilently(pretty(workflowDraft.definition));
       setWorkflowWdlSilently("");
+      workflowWdlError.value = "";
       workflowRuns.value = [];
       workflowRunDetail.value = null;
       selectedWorkflowRunId.value = null;
@@ -2058,6 +2093,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowDraft,
     workflowJson,
     workflowWdl,
+    workflowWdlError,
     workflowConcurrency,
     workflowSettingsOpen,
     workflowTriggers,
@@ -2190,7 +2226,6 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     syncWorkflowJson,
     syncWorkflowDraftToJson,
     syncWorkflowWdl,
-    enterWdlMode,
     exportWorkflowWdl,
     exportWorkflowPack,
     ensureWorkflowNodes,

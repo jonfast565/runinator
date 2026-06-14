@@ -55,6 +55,11 @@ pub struct Cli {
     )]
     pub api_base_url: String,
 
+    /// API key or access token presented as `Authorization: Bearer …` (needed when the web
+    /// service has auth enabled).
+    #[arg(long, global = true, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
     #[arg(long, global = true)]
     pub json: bool,
 

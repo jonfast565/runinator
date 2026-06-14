@@ -30,7 +30,7 @@ images:
     newTag: dev
   - name: runinator-ctl
     newTag: dev
-  - name: runinator-migration
+  - name: runinator-bootstrap
     newTag: dev
   - name: runinator-command-center
     newTag: dev

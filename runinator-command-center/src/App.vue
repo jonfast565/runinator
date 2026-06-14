@@ -1,5 +1,6 @@
 <template>
-  <AppShell>
+  <LoginView v-if="auth.required && !auth.authenticated" />
+  <AppShell v-else>
     <DevView v-if="app.activeTab === 'Dev' && isDesktop" />
     <section v-else-if="app.activeTab === 'Dev'" class="pane">
       <div class="dev-unavailable">
@@ -13,11 +14,8 @@
     <ApprovalsView v-if="app.activeTab === 'Approvals'" />
     <ArtifactsView v-if="app.activeTab === 'Artifacts'" />
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
-    <FeedbackView v-if="app.activeTab === 'Feedback'" />
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
-    <ChangeSetsView v-if="app.activeTab === 'ChangeSets'" />
-    <WorkspacesView v-if="app.activeTab === 'Workspaces'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SecretsView v-show="app.activeTab === 'Secrets'" />
   </AppShell>
@@ -31,6 +29,8 @@ import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useEventStream } from "./composables/useEventStream";
 import { endpointForTab, isResourceTab, useAppStore } from "./stores/app";
+import { useAuthStore } from "./stores/auth";
+import LoginView from "./views/LoginView.vue";
 import { useArtifactsStore } from "./stores/artifacts";
 import { useNotificationsStore } from "./stores/notifications";
 import { useResourcesStore } from "./stores/resources";
@@ -45,15 +45,13 @@ import WorkflowsView from "./views/WorkflowsView.vue";
 import ApprovalsView from "./views/ApprovalsView.vue";
 import ArtifactsView from "./views/ArtifactsView.vue";
 import NotificationsView from "./views/NotificationsView.vue";
-import FeedbackView from "./views/FeedbackView.vue";
 import EventsView from "./views/EventsView.vue";
 import ExternalItemsView from "./views/ExternalItemsView.vue";
-import ChangeSetsView from "./views/ChangeSetsView.vue";
-import WorkspacesView from "./views/WorkspacesView.vue";
 import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 
 const app = useAppStore();
+const auth = useAuthStore();
 const isDesktop = isTauriRuntime();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
@@ -81,10 +79,13 @@ onMounted(async () => {
     const baseUrl = wsBaseUrl();
     app.setServiceUrl(baseUrl || null);
     if (baseUrl) {
-      try {
-        await refreshBackendState(true);
-      } catch (err) {
-        app.setError(String(err));
+      await auth.init();
+      if (auth.authenticated) {
+        try {
+          await refreshBackendState(true);
+        } catch (err) {
+          app.setError(String(err));
+        }
       }
     } else {
       app.setError("No service URL configured. Set VITE_RUNINATOR_WS_URL or serve the SPA from the runinator-command-center-web pod.");
@@ -101,7 +102,10 @@ onMounted(async () => {
       await waitForConcreteServiceUrl();
     }
     if (app.serviceUrl) {
-      await refreshBackendState(true);
+      await auth.init();
+      if (auth.authenticated) {
+        await refreshBackendState(true);
+      }
     } else {
       app.setError("No Runinator service discovered. Ensure the web service is running and accessible.");
       clearBackendState();
@@ -117,6 +121,16 @@ onMounted(async () => {
     void app.refreshReplicas().catch(() => {});
   }, 15000);
 });
+
+// after a successful login, hydrate the backend state that was skipped while unauthenticated.
+watch(
+  () => auth.authenticated,
+  (authenticated) => {
+    if (authenticated && app.serviceUrl) {
+      void refreshBackendState(true);
+    }
+  }
+);
 
 watch(
   () => app.activeTab,

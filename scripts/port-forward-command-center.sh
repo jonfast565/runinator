@@ -14,7 +14,7 @@ set -euo pipefail
 local_port=8080
 namespace="runinator"
 context=""
-service="runinator-command-center-web"
+service="runinator-command-center"
 remote_port=80
 
 while [[ $# -gt 0 ]]; do

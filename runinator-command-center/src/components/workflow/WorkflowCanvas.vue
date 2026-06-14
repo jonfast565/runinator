@@ -1,64 +1,85 @@
 <template>
   <div class="panel workflow-canvas-panel" @pointermove="trackPointer">
     <WorkflowToolbar />
-    <div class="workflow-mode-tabs">
-      <button :class="{ active: workflows.workflowEditorMode === 'graph' }" @click="workflows.workflowEditorMode = 'graph'">Graph</button>
-      <button :class="{ active: workflows.workflowEditorMode === 'wdl' }" @click="workflows.enterWdlMode()">WDL</button>
-      <button :class="{ active: workflows.workflowEditorMode === 'json' }" @click="workflows.workflowEditorMode = 'json'">JSON</button>
-    </div>
-    <VueFlow
-      v-show="workflows.workflowEditorMode === 'graph'"
-      class="workflow-graph"
-      :nodes="workflows.graphNodes"
-      :edges="workflows.graphEdges"
-      @node-click="workflows.onGraphNodeClick"
-      @node-double-click="workflows.onGraphNodeDoubleClick"
-      @node-context-menu="openNodeMenu"
-      @node-drag-stop="workflows.onGraphNodeDragStop"
-      @nodes-change="workflows.onGraphNodesChange"
-      @connect="openConnectMenu"
-      @edge-update="workflows.onGraphEdgeUpdate"
-      @edge-click="openEdgeEditorFromEvent"
-      @edge-context-menu="openEdgeMenu"
-      @edge-double-click="openEdgeEditorFromEvent"
-      @edges-change="workflows.onGraphEdgesChange"
-      @pane-click="closeOverlaysAndSelection"
-      @pane-context-menu="closeOverlaysAndSelection"
-      :edges-updatable="true"
-      delete-key-code="Delete"
-      :snap-to-grid="true"
-      :snap-grid="[15, 15]"
+    <SplitPane
+      class="workflow-editor-split"
+      orientation="horizontal"
+      storage-key="command-center.workflows.editor-split"
+      :initial-first-pct="58"
+      :min-first="360"
+      :min-second="360"
     >
-      <template #node-workflow="nodeProps">
-        <WorkflowNode v-bind="nodeProps" />
+      <template #first>
+        <div class="workflow-graph-pane">
+          <VueFlow
+            class="workflow-graph"
+            :nodes="workflows.graphNodes"
+            :edges="workflows.graphEdges"
+            @node-click="workflows.onGraphNodeClick"
+            @node-double-click="workflows.onGraphNodeDoubleClick"
+            @node-context-menu="openNodeMenu"
+            @node-drag-stop="workflows.onGraphNodeDragStop"
+            @nodes-change="workflows.onGraphNodesChange"
+            @connect="openConnectMenu"
+            @edge-update="workflows.onGraphEdgeUpdate"
+            @edge-click="openEdgeEditorFromEvent"
+            @edge-context-menu="openEdgeMenu"
+            @edge-double-click="openEdgeEditorFromEvent"
+            @edges-change="workflows.onGraphEdgesChange"
+            @pane-click="closeOverlaysAndSelection"
+            @pane-context-menu="closeOverlaysAndSelection"
+            :edges-updatable="true"
+            delete-key-code="Delete"
+            :snap-to-grid="true"
+            :snap-grid="[15, 15]"
+          >
+            <template #node-workflow="nodeProps">
+              <WorkflowNode v-bind="nodeProps" />
+            </template>
+            <template #edge-workflow="edgeProps">
+              <WorkflowEdge v-bind="edgeProps" />
+            </template>
+          </VueFlow>
+          <div class="workflow-issues-panel">
+            <header class="workflow-issues-header">
+              <span>Diagnostics</span>
+              <span :class="['workflow-issues-summary', issueSummaryClass]">{{ issueSummary }}</span>
+            </header>
+            <table v-if="issueRows.length" class="workflow-issues-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>What</th>
+                  <th>Node</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in issueRows" :key="index" :class="row.severity" @click="focusIssueNode(row.nodeId)">
+                  <td><span :class="['workflow-issue-severity', row.severity]">{{ row.severity }}</span></td>
+                  <td>{{ row.message }}</td>
+                  <td class="workflow-issue-node-cell">{{ row.title }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="workflow-issues-empty">No graph diagnostics.</div>
+          </div>
+        </div>
       </template>
-      <template #edge-workflow="edgeProps">
-        <WorkflowEdge v-bind="edgeProps" />
+      <template #second>
+        <div class="workflow-wdl-pane">
+          <p v-if="workflows.workflowWdlError" class="workflow-wdl-error">
+            This workflow can't be shown as WDL yet ({{ workflows.workflowWdlError }}). Edit it in the graph until it is well-formed.
+          </p>
+          <WdlEditor
+            v-model="workflows.workflowWdl"
+            class="workflow-wdl-editor"
+            :readonly="Boolean(workflows.workflowWdlError)"
+            :providers="providersStore.providers"
+            :settings="secretsStore.secrets"
+          />
+        </div>
       </template>
-    </VueFlow>
-    <div v-if="workflows.workflowEditorMode === 'graph'" class="workflow-issues-panel">
-      <header class="workflow-issues-header">
-        <span>Diagnostics</span>
-        <span :class="['workflow-issues-summary', issueSummaryClass]">{{ issueSummary }}</span>
-      </header>
-      <table v-if="issueRows.length" class="workflow-issues-table">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>What</th>
-            <th>Node</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, index) in issueRows" :key="index" :class="row.severity" @click="focusIssueNode(row.nodeId)">
-            <td><span :class="['workflow-issue-severity', row.severity]">{{ row.severity }}</span></td>
-            <td>{{ row.message }}</td>
-            <td class="workflow-issue-node-cell">{{ row.title }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="workflow-issues-empty">No graph diagnostics.</div>
-    </div>
+    </SplitPane>
     <div v-if="showCommandBar" class="workflow-command-bar">
       <template v-if="workflows.selectedGraphEdge">
         <button @click="editSelectedEdge">Edit</button>
@@ -146,8 +167,8 @@
         <input v-model="edgeEditor.label" placeholder="Uses default label when empty" />
       </label>
       <label v-if="edgeEditorIsConditionBranch">
-        When JSON
-        <JsonEditor v-model="edgeEditor.whenJson" class="workflow-edge-json" />
+        When
+        <ExpressionJsonEditor v-model="edgeEditor.whenJson" :context="edgeExpressionContext" class="workflow-edge-json" title="When" />
       </label>
       <template v-if="edgeEditorIsSwitchCase">
         <label>
@@ -160,8 +181,8 @@
           </select>
         </label>
         <label>
-          Match JSON
-          <JsonEditor v-model="edgeEditor.matchJson" class="workflow-edge-json" />
+          Match
+          <ExpressionJsonEditor v-model="edgeEditor.matchJson" :context="edgeExpressionContext" class="workflow-edge-json" title="Match" />
         </label>
       </template>
       <div v-if="edgeEditorCanMove" class="workflow-edge-editor-actions">
@@ -173,19 +194,6 @@
         <button type="button" @click="closeEdgeEditor">Cancel</button>
       </div>
     </form>
-    <WdlEditor
-      v-show="workflows.workflowEditorMode === 'wdl'"
-      v-model="workflows.workflowWdl"
-      class="workflow-wdl-editor"
-      :providers="providersStore.providers"
-      :settings="secretsStore.secrets"
-    />
-    <JsonEditor
-      v-show="workflows.workflowEditorMode === 'json'"
-      v-model="workflows.workflowJson"
-      class="workflow-json-editor"
-      title="Workflow JSON"
-    />
   </div>
 </template>
 
@@ -197,7 +205,9 @@ import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
 import { useSecretsStore } from "../../stores/secrets";
 import { optionIdForSourceHandle } from "../../utils/workflows";
-import JsonEditor from "../shared/JsonEditor.vue";
+import { buildSampleContext } from "../../utils/workflow-references";
+import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import SplitPane from "../shared/SplitPane.vue";
 import WdlEditor from "../shared/WdlEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
@@ -228,6 +238,14 @@ const workflowNodeIds = computed(() => {
   const nodes = workflows.workflowDraft.definition?.nodes;
   return Array.isArray(nodes) ? nodes.map((node: any) => String(node.id ?? "")).filter(Boolean) : [];
 });
+// references in scope for the edge's condition/match expressions, anchored at the edge source node.
+const edgeExpressionContext = computed(() => ({
+  workflowInputType: workflows.workflowDraft.input_type ?? null,
+  nodes: workflows.workflowDraft.definition?.nodes ?? [],
+  currentNodeId: edgeEditor.value?.source ?? "",
+  providers: providersStore.providers,
+  sampleContext: buildSampleContext(workflows.workflowRunDetail)
+}));
 const edgeEditorOptions = computed(() => edgeEditor.value ? workflows.workflowEdgeOptions(edgeEditor.value.source) : []);
 const edgeEditorIsConditionBranch = computed(() => edgeEditor.value?.optionId.startsWith("branch:") ?? false);
 const edgeEditorIsSwitchCase = computed(() => edgeEditor.value?.optionId.startsWith("control:cases:") ?? false);

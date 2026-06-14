@@ -10,6 +10,7 @@ use runinator_comm::{
 };
 use runinator_models::value::Value;
 use runinator_models::{
+    auth::{ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Team, User},
     errors::SendableError,
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
@@ -2350,6 +2351,141 @@ where
         Ok(row.map(|row| mappers::row_to_automation_record(&row)))
     }
 
+    async fn create_gate(&self, record: Value) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
+        let columns = "id, data, created_at, updated_at";
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO gates (id, workflow_run_id, node_id, kind, status, label, reason, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(id)
+            .bind(json_opt_uuid(&record, "workflow_run_id"))
+            .bind(json_str(&record, "node_id"))
+            .bind(json_str(&record, "kind"))
+            .bind(json_str(&record, "status"))
+            .bind(json_opt_str(&record, "label"))
+            .bind(json_opt_str(&record, "reason"))
+            .bind(json_opt_str(&record, "resolved_by"))
+            .bind(json_opt_i64(&record, "resolved_at"))
+            .bind(json_metadata(&record))
+            .bind(record.to_string())
+            .bind(now)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            let row =
+                sqlx::query(&self.render(&format!("SELECT {columns} FROM gates WHERE id = ?")))
+                    .bind(id)
+                    .fetch_one(&mut *conn)
+                    .await?;
+            return Ok(mappers::row_to_gate(&row));
+        }
+        let row = sqlx::query(&self.render(
+            "INSERT INTO gates (id, workflow_run_id, node_id, kind, status, label, reason, resolved_by, resolved_at, metadata, data, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING id, data, created_at, updated_at",
+        ))
+        .bind(id)
+        .bind(json_opt_uuid(&record, "workflow_run_id"))
+        .bind(json_str(&record, "node_id"))
+        .bind(json_str(&record, "kind"))
+        .bind(json_str(&record, "status"))
+        .bind(json_opt_str(&record, "label"))
+        .bind(json_opt_str(&record, "reason"))
+        .bind(json_opt_str(&record, "resolved_by"))
+        .bind(json_opt_i64(&record, "resolved_at"))
+        .bind(json_metadata(&record))
+        .bind(record.to_string())
+        .bind(now)
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_gate(&row))
+    }
+
+    async fn update_gate(&self, gate_id: Uuid, record: Value) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let columns = "id, data, created_at, updated_at";
+        if self.dialect() == SqlDialect::MySql {
+            sqlx::query(&self.render(
+                "UPDATE gates SET node_id = ?, kind = ?, status = ?, label = ?, reason = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ?",
+            ))
+            .bind(json_str(&record, "node_id"))
+            .bind(json_str(&record, "kind"))
+            .bind(json_str(&record, "status"))
+            .bind(json_opt_str(&record, "label"))
+            .bind(json_opt_str(&record, "reason"))
+            .bind(json_opt_str(&record, "resolved_by"))
+            .bind(json_opt_i64(&record, "resolved_at"))
+            .bind(json_metadata(&record))
+            .bind(record.to_string())
+            .bind(now)
+            .bind(gate_id)
+            .execute(self.pool())
+            .await?;
+            let row =
+                sqlx::query(&self.render(&format!("SELECT {columns} FROM gates WHERE id = ?")))
+                    .bind(gate_id)
+                    .fetch_one(self.pool())
+                    .await?;
+            return Ok(mappers::row_to_gate(&row));
+        }
+        let row = sqlx::query(&self.render(
+            "UPDATE gates SET node_id = ?, kind = ?, status = ?, label = ?, reason = ?, resolved_by = ?, resolved_at = ?, metadata = ?, data = ?, updated_at = ? WHERE id = ? RETURNING id, data, created_at, updated_at",
+        ))
+        .bind(json_str(&record, "node_id"))
+        .bind(json_str(&record, "kind"))
+        .bind(json_str(&record, "status"))
+        .bind(json_opt_str(&record, "label"))
+        .bind(json_opt_str(&record, "reason"))
+        .bind(json_opt_str(&record, "resolved_by"))
+        .bind(json_opt_i64(&record, "resolved_at"))
+        .bind(json_metadata(&record))
+        .bind(record.to_string())
+        .bind(now)
+        .bind(gate_id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_gate(&row))
+    }
+
+    async fn fetch_gates(
+        &self,
+        workflow_run_id: Option<Uuid>,
+        status: Option<String>,
+    ) -> Result<Vec<Value>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, data, created_at, updated_at FROM gates ORDER BY created_at DESC, id DESC",
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_gate)
+            .filter(|record| {
+                workflow_run_id.is_none_or(|id| {
+                    record.get("workflow_run_id").and_then(Value::as_str)
+                        == Some(id.to_string().as_str())
+                }) && status.as_deref().is_none_or(|status| {
+                    record.get("status").and_then(Value::as_str) == Some(status)
+                })
+            })
+            .collect())
+    }
+
+    async fn fetch_gate(&self, gate_id: Uuid) -> Result<Option<Value>, SendableError> {
+        let row = sqlx::query(
+            &self.render("SELECT id, data, created_at, updated_at FROM gates WHERE id = ?"),
+        )
+        .bind(gate_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_gate(&row)))
+    }
+
     async fn put_idempotency_key(
         &self,
         scope: String,
@@ -2767,5 +2903,484 @@ where
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_setting).collect())
+    }
+
+    async fn create_user(
+        &self,
+        username: String,
+        email: Option<String>,
+        is_admin: bool,
+        password_hash: Option<String>,
+    ) -> Result<User, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "INSERT INTO users (id, username, email, is_admin, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(id)
+        .bind(&username)
+        .bind(&email)
+        .bind(is_admin)
+        .bind(false)
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        if let Some(hash) = password_hash {
+            sqlx::query(&self.render(
+                "INSERT INTO user_identities (id, user_id, provider, subject, password_hash, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
+            ))
+            .bind(Uuid::now_v7())
+            .bind(id)
+            .bind(&username)
+            .bind(&hash)
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+        }
+        let at = DateTime::<Utc>::from_timestamp(now, 0).unwrap_or_else(Utc::now);
+        Ok(User {
+            id: Some(id),
+            username,
+            email,
+            is_admin,
+            disabled: false,
+            created_at: at,
+            updated_at: at,
+        })
+    }
+
+    async fn fetch_user(&self, id: Uuid) -> Result<Option<User>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, username, email, is_admin, disabled, created_at, updated_at FROM users WHERE id = ?",
+        ))
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_user(&row)))
+    }
+
+    async fn fetch_user_by_username(
+        &self,
+        username: String,
+    ) -> Result<Option<User>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, username, email, is_admin, disabled, created_at, updated_at FROM users WHERE username = ?",
+        ))
+        .bind(username)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_user(&row)))
+    }
+
+    async fn fetch_local_credential(
+        &self,
+        username: String,
+    ) -> Result<Option<LocalCredential>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT u.id, u.username, u.email, u.is_admin, u.disabled, u.created_at, u.updated_at, i.password_hash \
+             FROM users u JOIN user_identities i ON i.user_id = u.id \
+             WHERE i.provider = 'local' AND i.subject = ? AND i.password_hash IS NOT NULL",
+        ))
+        .bind(username)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_local_credential(&row)))
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, username, email, is_admin, disabled, created_at, updated_at FROM users ORDER BY username",
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_user).collect())
+    }
+
+    async fn count_users(&self) -> Result<i64, SendableError> {
+        let row = sqlx::query(&self.render("SELECT COUNT(*) AS user_count FROM users"))
+            .fetch_one(self.pool())
+            .await?;
+        Ok(row.get::<i64, _>("user_count"))
+    }
+
+    async fn update_user(
+        &self,
+        id: Uuid,
+        email: Option<String>,
+        is_admin: Option<bool>,
+        disabled: Option<bool>,
+    ) -> Result<User, SendableError> {
+        let Some(current) = self.fetch_user(id).await? else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("User {id} not found"),
+            )));
+        };
+        let email = email.or(current.email);
+        let is_admin = is_admin.unwrap_or(current.is_admin);
+        let disabled = disabled.unwrap_or(current.disabled);
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE users SET email = ?, is_admin = ?, disabled = ?, updated_at = ? WHERE id = ?",
+        ))
+        .bind(&email)
+        .bind(is_admin)
+        .bind(disabled)
+        .bind(now)
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        Ok(User {
+            id: Some(id),
+            username: current.username,
+            email,
+            is_admin,
+            disabled,
+            created_at: current.created_at,
+            updated_at: DateTime::<Utc>::from_timestamp(now, 0).unwrap_or_else(Utc::now),
+        })
+    }
+
+    async fn set_local_password(
+        &self,
+        user_id: Uuid,
+        password_hash: String,
+    ) -> Result<(), SendableError> {
+        let Some(user) = self.fetch_user(user_id).await? else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("User {user_id} not found"),
+            )));
+        };
+        // replace any existing local identity so the row stays unique on (provider, subject).
+        sqlx::query(
+            &self.render("DELETE FROM user_identities WHERE user_id = ? AND provider = 'local'"),
+        )
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        sqlx::query(&self.render(
+            "INSERT INTO user_identities (id, user_id, provider, subject, password_hash, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
+        ))
+        .bind(Uuid::now_v7())
+        .bind(user_id)
+        .bind(&user.username)
+        .bind(&password_hash)
+        .bind(Utc::now().timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_user(&self, id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM auth_sessions WHERE user_id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        sqlx::query(&self.render("DELETE FROM user_identities WHERE user_id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        sqlx::query(&self.render("DELETE FROM users WHERE id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn create_api_key(&self, record: ApiKeyRecord) -> Result<ApiKey, SendableError> {
+        let id = record.key.id.unwrap_or_else(Uuid::now_v7);
+        let created = record.key.created_at.timestamp();
+        let last_used = record.key.last_used_at.map(|t| t.timestamp());
+        let expires = record.key.expires_at.map(|t| t.timestamp());
+        sqlx::query(&self.render(
+            "INSERT INTO api_keys (id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(id)
+        .bind(&record.key.name)
+        .bind(record.key.user_id)
+        .bind(record.key.is_service)
+        .bind(record.is_admin)
+        .bind(&record.key.key_prefix)
+        .bind(&record.key_hash)
+        .bind(last_used)
+        .bind(expires)
+        .bind(record.key.disabled)
+        .bind(created)
+        .execute(self.pool())
+        .await?;
+        let mut stored = record.key;
+        stored.id = Some(id);
+        Ok(stored)
+    }
+
+    async fn fetch_api_key_by_prefix(
+        &self,
+        prefix: String,
+    ) -> Result<Option<ApiKeyRecord>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE key_prefix = ?",
+        ))
+        .bind(prefix)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_api_key_record(&row)))
+    }
+
+    async fn list_api_keys(&self, user_id: Option<Uuid>) -> Result<Vec<ApiKey>, SendableError> {
+        let columns = "id, name, user_id, is_service, key_prefix, last_used_at, expires_at, disabled, created_at";
+        let rows = match user_id {
+            Some(uid) => {
+                sqlx::query(&self.render(&format!(
+                    "SELECT {columns} FROM api_keys WHERE user_id = ? ORDER BY created_at DESC"
+                )))
+                .bind(uid)
+                .fetch_all(self.pool())
+                .await?
+            }
+            None => {
+                sqlx::query(&self.render(&format!(
+                    "SELECT {columns} FROM api_keys ORDER BY created_at DESC"
+                )))
+                .fetch_all(self.pool())
+                .await?
+            }
+        };
+        Ok(rows.iter().map(mappers::row_to_api_key).collect())
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE api_keys SET disabled = ? WHERE id = ?"))
+            .bind(true)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn touch_api_key(&self, id: Uuid, last_used_at: i64) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE api_keys SET last_used_at = ? WHERE id = ?"))
+            .bind(last_used_at)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn create_session(&self, session: AuthSession) -> Result<(), SendableError> {
+        sqlx::query(&self.render(
+            "INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(session.id)
+        .bind(session.user_id)
+        .bind(&session.refresh_token_hash)
+        .bind(session.expires_at.timestamp())
+        .bind(session.revoked)
+        .bind(Utc::now().timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn fetch_session_by_hash(
+        &self,
+        refresh_token_hash: String,
+    ) -> Result<Option<AuthSession>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked FROM auth_sessions WHERE refresh_token_hash = ? AND revoked = ?",
+        ))
+        .bind(refresh_token_hash)
+        .bind(false)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_auth_session(&row)))
+    }
+
+    async fn revoke_session(&self, id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE auth_sessions SET revoked = ? WHERE id = ?"))
+            .bind(true)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn revoke_user_sessions(&self, user_id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE auth_sessions SET revoked = ? WHERE user_id = ?"))
+            .bind(true)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn create_team(&self, name: String) -> Result<Team, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render("INSERT INTO teams (id, name, created_at) VALUES (?, ?, ?)"))
+            .bind(id)
+            .bind(&name)
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+        Ok(Team {
+            id: Some(id),
+            name,
+            created_at: DateTime::<Utc>::from_timestamp(now, 0).unwrap_or_else(Utc::now),
+        })
+    }
+
+    async fn list_teams(&self) -> Result<Vec<Team>, SendableError> {
+        let rows =
+            sqlx::query(&self.render("SELECT id, name, created_at FROM teams ORDER BY name"))
+                .fetch_all(self.pool())
+                .await?;
+        Ok(rows.iter().map(mappers::row_to_team).collect())
+    }
+
+    async fn delete_team(&self, id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM resource_grants WHERE principal_type = 'team' AND principal_id = ?",
+        ))
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        sqlx::query(&self.render("DELETE FROM teams WHERE id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn add_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
+        // delete-then-insert keeps the (team, user) pair idempotent without a dialect-specific upsert.
+        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
+            .bind(team_id)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        sqlx::query(&self.render("INSERT INTO team_members (team_id, user_id) VALUES (?, ?)"))
+            .bind(team_id)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn remove_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
+            .bind(team_id)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn list_user_team_ids(&self, user_id: Uuid) -> Result<Vec<Uuid>, SendableError> {
+        let rows = sqlx::query(&self.render("SELECT team_id FROM team_members WHERE user_id = ?"))
+            .bind(user_id)
+            .fetch_all(self.pool())
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| row.get::<Uuid, _>("team_id"))
+            .collect())
+    }
+
+    async fn create_grant(&self, grant: Grant) -> Result<Grant, SendableError> {
+        let id = grant.id.unwrap_or_else(Uuid::now_v7);
+        let now = Utc::now().timestamp();
+        let conflict = queries::on_conflict_update(
+            self.dialect(),
+            "resource_type, resource_id, principal_type, principal_id",
+            &["permission"],
+        );
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO resource_grants (id, resource_type, resource_id, principal_type, principal_id, permission, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) {conflict}",
+        )))
+        .bind(id)
+        .bind(grant.resource_type.as_str())
+        .bind(grant.resource_id)
+        .bind(grant.principal_type.as_str())
+        .bind(grant.principal_id)
+        .bind(grant.permission.as_str())
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        // read back the canonical row (an upsert keeps the original id).
+        let row = sqlx::query(&self.render(
+            "SELECT id, resource_type, resource_id, principal_type, principal_id, permission, created_at \
+             FROM resource_grants WHERE resource_type = ? AND resource_id = ? AND principal_type = ? AND principal_id = ?",
+        ))
+        .bind(grant.resource_type.as_str())
+        .bind(grant.resource_id)
+        .bind(grant.principal_type.as_str())
+        .bind(grant.principal_id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_grant(&row))
+    }
+
+    async fn revoke_grant(&self, grant_id: Uuid) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM resource_grants WHERE id = ?"))
+            .bind(grant_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn list_grants(
+        &self,
+        resource_type: String,
+        resource_id: Uuid,
+    ) -> Result<Vec<Grant>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, resource_type, resource_id, principal_type, principal_id, permission, created_at \
+             FROM resource_grants WHERE resource_type = ? AND resource_id = ? ORDER BY created_at",
+        ))
+        .bind(resource_type)
+        .bind(resource_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_grant).collect())
+    }
+
+    async fn list_user_grants(
+        &self,
+        resource_type: String,
+        user_id: Uuid,
+    ) -> Result<Vec<Grant>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, resource_type, resource_id, principal_type, principal_id, permission, created_at \
+             FROM resource_grants WHERE resource_type = ? AND principal_type = 'user' AND principal_id = ?",
+        ))
+        .bind(resource_type)
+        .bind(user_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_grant).collect())
+    }
+
+    async fn list_team_grants(
+        &self,
+        resource_type: String,
+        team_id: Uuid,
+    ) -> Result<Vec<Grant>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, resource_type, resource_id, principal_type, principal_id, permission, created_at \
+             FROM resource_grants WHERE resource_type = ? AND principal_type = 'team' AND principal_id = ?",
+        ))
+        .bind(resource_type)
+        .bind(team_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_grant).collect())
     }
 }

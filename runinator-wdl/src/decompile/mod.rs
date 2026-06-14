@@ -413,6 +413,8 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Output
                 | WorkflowNodeKind::Input
                 | WorkflowNodeKind::Approval
+                | WorkflowNodeKind::Gate
+                | WorkflowNodeKind::Signal
                 | WorkflowNodeKind::Config => {
                     let success = self.emit_leaf(node, stop)?;
                     match success {
@@ -666,6 +668,8 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Output => Ok((self.output_text(node)?, false)),
             WorkflowNodeKind::Input => Ok((self.input_text(node)?, false)),
             WorkflowNodeKind::Approval => Ok((self.approval_text(node)?, false)),
+            WorkflowNodeKind::Gate => Ok((self.gate_text(node)?, false)),
+            WorkflowNodeKind::Signal => Ok((self.signal_text(node)?, false)),
             WorkflowNodeKind::Config => Ok((self.config_text(node)?, false)),
             other => Err(WdlError::Decompile(format!("unexpected leaf {other:?}"))),
         }
@@ -897,6 +901,65 @@ impl<'a> Decompiler<'a> {
                     continue;
                 }
                 parts.push(format!("{name}: {}", self.expr(value)?));
+            }
+            if !parts.is_empty() {
+                text.push_str(&format!(" {{ {} }}", parts.join(", ")));
+            }
+        }
+        Ok(text)
+    }
+
+    fn gate_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let kind = node
+            .parameters
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("manual");
+        let mut text = format!("gate {kind}");
+        if let Some(when) = node.parameters.get("when") {
+            text.push_str(&format!(" when {}", self.cond(when)?));
+        }
+        if let Some(poll) = node.parameters.get("poll_interval").and_then(Value::as_i64) {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = node.parameters.get("timeout").and_then(Value::as_i64) {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        // remaining params (label + extras) render as the trailing metadata object.
+        if let Some(segs) = self.spreads.get(&node.id) {
+            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+        } else if let Value::Object(params) = node.parameters.as_value() {
+            let mut parts = Vec::new();
+            for (name, value) in params {
+                if matches!(name.as_str(), "kind" | "when" | "poll_interval" | "timeout") {
+                    continue;
+                }
+                parts.push(format!("{name}: {}", self.expr(value)?));
+            }
+            if !parts.is_empty() {
+                text.push_str(&format!(" {{ {} }}", parts.join(", ")));
+            }
+        }
+        Ok(text)
+    }
+
+    fn signal_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let mut text = format!("signal {}", quote(name));
+        // remaining params render as the trailing metadata object.
+        if let Some(segs) = self.spreads.get(&node.id) {
+            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+        } else if let Value::Object(params) = node.parameters.as_value() {
+            let mut parts = Vec::new();
+            for (key, value) in params {
+                if key == "name" {
+                    continue;
+                }
+                parts.push(format!("{key}: {}", self.expr(value)?));
             }
             if !parts.is_empty() {
                 text.push_str(&format!(" {{ {} }}", parts.join(", ")));
@@ -1442,6 +1505,8 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
             | WorkflowNodeKind::Output
             | WorkflowNodeKind::Input
             | WorkflowNodeKind::Approval
+            | WorkflowNodeKind::Gate
+            | WorkflowNodeKind::Signal
             | WorkflowNodeKind::Config
     )
 }

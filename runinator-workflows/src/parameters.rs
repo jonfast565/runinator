@@ -8,10 +8,12 @@ use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_value_ref;
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
-    ApprovalParameters, BranchPolicy, InputParameters, JoinParameters, LoopParameters,
-    MapParameters, OutputParameters, ParallelParameters, RaceParameters, SwitchCase,
-    SwitchParameters, TryParameters, WaitParameters, WorkflowValueRef,
+    ApprovalParameters, BranchPolicy, GateParameters, InputParameters, JoinParameters,
+    LoopParameters, MapParameters, OutputParameters, ParallelParameters, RaceParameters,
+    SignalParameters, SwitchCase, SwitchParameters, TryParameters, WaitParameters,
+    WorkflowValueRef,
 };
+use runinator_models::orchestration::GateKind;
 
 pub fn parse_switch_parameters(
     node: &WorkflowNode,
@@ -193,6 +195,55 @@ pub fn parse_approval_parameters(node: &WorkflowNode) -> ApprovalParameters {
     ApprovalParameters {
         approval_type,
         prompt,
+        metadata: node.parameters.clone().into(),
+    }
+}
+
+/// parse a signal node's parameters. `name` is the signal the node parks on.
+pub fn parse_signal_parameters(node: &WorkflowNode) -> SignalParameters {
+    let name = node
+        .parameters
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    SignalParameters { name }
+}
+
+/// default seconds between gate re-checks while it stays closed.
+const DEFAULT_GATE_POLL_SECONDS: i64 = 30;
+
+/// parse a gate node's parameters. `kind` selects the resolver (manual/condition/external);
+/// `when` holds the condition for condition gates; `poll_interval`/`timeout` tune the poll loop.
+pub fn parse_gate_parameters(node: &WorkflowNode) -> GateParameters {
+    let kind = match node.parameters.get("kind").and_then(Value::as_str) {
+        Some("condition") => GateKind::Condition,
+        Some("external") => GateKind::External,
+        _ => GateKind::Manual,
+    };
+    let condition = node.parameters.get("when").cloned().unwrap_or(Value::Null);
+    let poll_interval_seconds = node
+        .parameters
+        .get("poll_interval")
+        .and_then(Value::as_i64)
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_GATE_POLL_SECONDS);
+    let deadline_seconds = node
+        .parameters
+        .get("timeout")
+        .and_then(Value::as_i64)
+        .filter(|seconds| *seconds > 0);
+    let label = node
+        .parameters
+        .get("label")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    GateParameters {
+        kind,
+        condition,
+        poll_interval_seconds,
+        deadline_seconds,
+        label,
         metadata: node.parameters.clone().into(),
     }
 }

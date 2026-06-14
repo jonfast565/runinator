@@ -63,6 +63,24 @@ where
         Ok(Self { client, locator })
     }
 
+    /// Construct a client that presents `token` as `Authorization: Bearer …` on every request. A
+    /// `None`/empty token yields an unauthenticated client (for stacks with auth disabled). Both
+    /// JWTs and api keys are accepted as bearer tokens by the web service.
+    pub fn with_credentials(locator: L, token: Option<String>) -> reqwest::Result<Self> {
+        let mut builder = Client::builder();
+        if let Some(token) = token.filter(|t| !t.is_empty()) {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                builder = builder.default_headers(headers);
+            }
+        }
+        Ok(Self {
+            client: builder.build()?,
+            locator,
+        })
+    }
+
     /// Construct a client using a preconfigured HTTP client instance.
     pub fn with_client(locator: L, client: Client) -> Self {
         Self { client, locator }

@@ -186,7 +186,8 @@ fn build_api_client(
     config: &config::Config,
 ) -> Result<AsyncApiClient<StaticLocator>, SendableError> {
     let locator = StaticLocator::new(config.api_base_url.clone());
-    AsyncApiClient::new(locator).map_err(|err| errors::API_CLIENT.error(err))
+    AsyncApiClient::with_credentials(locator, config.api_key.clone())
+        .map_err(|err| errors::API_CLIENT.error(err))
 }
 
 // register the built-in providers with the web service on startup. best-effort: a failure here

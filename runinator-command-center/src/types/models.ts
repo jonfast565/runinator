@@ -7,6 +7,8 @@ export type WorkflowNodeKind =
   | "condition"
   | "switch"
   | "approval"
+  | "gate"
+  | "signal"
   | "loop"
   | "parallel"
   | "join"

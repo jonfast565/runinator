@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::auth::AuthContext;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
@@ -67,8 +68,12 @@ pub(crate) async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
 
 pub(crate) async fn get_credential<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     let cipher = settings_cipher();
     if query.scope.is_none() && query.name.is_none() {
         return match db.list_settings().await {
@@ -125,8 +130,12 @@ pub(crate) async fn get_credential<T: DatabaseImpl>(
 
 pub(crate) async fn put_credential<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CredentialPutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     let cipher = settings_cipher();
     // reuse the schema pinned by a prior write of this config slot, if any.
     let stored_schema = match config_stored_schema(
@@ -178,8 +187,12 @@ pub(crate) async fn put_credential<T: DatabaseImpl>(
 
 pub(crate) async fn import_secret_bundle<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<SecretBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     match import_secret_entries(db.as_ref(), &bundle).await {
         Ok(imported) => (
             StatusCode::OK,
@@ -321,8 +334,12 @@ fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
 
 pub(crate) async fn delete_credential<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     let (Some(scope), Some(name)) = (query.scope, query.name) else {
         return bad_request("credential deletion requires both scope and name");
     };

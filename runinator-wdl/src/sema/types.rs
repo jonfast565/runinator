@@ -80,6 +80,19 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(value, env, diagnostics);
             }
         }
+        StmtKind::Gate(gate) => {
+            if let Some(when) = &gate.when {
+                check_cond(when, env, diagnostics);
+            }
+            for (_, value) in &gate.metadata {
+                check_expr(value, env, diagnostics);
+            }
+        }
+        StmtKind::Signal(signal) => {
+            for (_, value) in &signal.metadata {
+                check_expr(value, env, diagnostics);
+            }
+        }
         StmtKind::Config(config) => {
             if let Some(name) = &config.name {
                 check_expr(name, env, diagnostics);

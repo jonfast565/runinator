@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::auth::AuthContext;
 
 use crate::events::{EventSender, emit_workflow_run};
 use crate::models::{ApiResponse, WebhookWakeRequest};
@@ -12,8 +13,12 @@ use crate::websocket::merge_json;
 pub(crate) async fn webhook_wake<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WebhookWakeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     let workflow_run =
         match repository::fetch_workflow_run(db.as_ref(), request.workflow_run_id).await {
             Ok(Some(workflow_run)) => workflow_run,

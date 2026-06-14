@@ -4,12 +4,14 @@ use uuid::Uuid;
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
+    auth::{AuthContext, Permission},
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
 use runinator_wdl::{CompileOptions, Severity, WdlError, WdlFragmentKind};
 use serde::{Deserialize, Serialize};
 
+use crate::authz;
 use crate::events::{AppEvent, EventSender, emit};
 use crate::models::ApiResponse;
 use crate::repository;
@@ -91,8 +93,16 @@ pub(crate) async fn compile_wdl(
 pub(crate) async fn import_wdl<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ImportWdlRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    // saving over an existing workflow requires edit; a brand-new one is owned by its creator.
+    let is_create = request.workflow_id.is_none();
+    if let Some(id) = request.workflow_id {
+        if let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Edit).await {
+            return reply;
+        }
+    }
     let options = CompileOptions {
         enabled: request.enabled,
         ..CompileOptions::default()
@@ -113,6 +123,13 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
     };
     match repository::import_workflow_bundle(db.as_ref(), bundle).await {
         Ok(saved) => {
+            if is_create {
+                for workflow in &saved.workflows {
+                    if let Some(id) = workflow.id {
+                        authz::grant_owner(db.as_ref(), &ctx, id).await;
+                    }
+                }
+            }
             emit(&events, AppEvent::WorkflowsChanged);
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(saved)))
         }

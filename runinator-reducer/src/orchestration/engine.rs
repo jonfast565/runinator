@@ -315,6 +315,14 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
             approval::process_approval_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
                 .await?;
         }
+        runinator_models::workflows::WorkflowNodeKind::Gate => {
+            return gate::process_gate_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
+                .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Signal => {
+            signal::process_signal_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
+                .await?;
+        }
         runinator_models::workflows::WorkflowNodeKind::Subflow => {
             if let Err(err) =
                 subflow::process_subflow_node(db, &workflow_run, node, latest.as_ref(), &node_runs)

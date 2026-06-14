@@ -365,6 +365,73 @@ fn explicit_round_trips_control_flow() {
 }
 
 #[test]
+fn gate_node_round_trips_each_kind() {
+    let src = r#"
+        workflow "Gated" v1 {
+            let build = console.run(command: "build")
+            gate condition when build.status == "ready" every 15s timeout 300s
+            gate manual { label: "release" }
+            gate external every 60s
+            let report = console.run(command: "report")
+        }
+    "#;
+    let definition = compile(src);
+    let gates: Vec<_> = definition
+        .definition
+        .nodes
+        .iter()
+        .filter(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Gate)
+        .collect();
+    assert_eq!(gates.len(), 3, "expected three gate nodes");
+    let condition_gate = gates
+        .iter()
+        .find(|node| node.parameters.get("kind").and_then(Value::as_str) == Some("condition"))
+        .expect("condition gate");
+    assert!(
+        condition_gate.parameters.get("when").is_some(),
+        "condition gate keeps its when"
+    );
+    assert_eq!(
+        condition_gate
+            .parameters
+            .get("poll_interval")
+            .and_then(Value::as_i64),
+        Some(15)
+    );
+    assert_eq!(
+        condition_gate
+            .parameters
+            .get("timeout")
+            .and_then(Value::as_i64),
+        Some(300)
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn signal_node_round_trips() {
+    let src = r#"
+        workflow "Signalled" v1 {
+            let build = console.run(command: "build")
+            signal "deploy-approved" { source: "ops" }
+            let ship = console.run(command: "ship")
+        }
+    "#;
+    let definition = compile(src);
+    let signal = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Signal)
+        .expect("signal node");
+    assert_eq!(
+        signal.parameters.get("name").and_then(Value::as_str),
+        Some("deploy-approved")
+    );
+    assert_round_trips(src);
+}
+
+#[test]
 fn decompile_renders_back_edge_as_arrow_without_panicking() {
     use runinator_models::workflows::WorkflowDefinition;
     // a linear workflow whose graph we mutate to add a back-edge from `b` to `a`.

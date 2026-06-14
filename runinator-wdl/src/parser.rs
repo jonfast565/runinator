@@ -514,6 +514,8 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::output_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
         Rule::input_stmt => Ok(StmtKind::Input(parse_input(inner)?)),
         Rule::approval_stmt => Ok(StmtKind::Approval(parse_approval(inner)?)),
+        Rule::gate_stmt => Ok(StmtKind::Gate(parse_gate(inner)?)),
+        Rule::signal_stmt => Ok(StmtKind::Signal(parse_signal(inner)?)),
         Rule::config_stmt => Ok(StmtKind::Config(parse_config(inner)?)),
         Rule::fail_stmt => Ok(StmtKind::Fail(parse_fail(inner)?)),
         Rule::if_stmt => Ok(StmtKind::If(parse_if(inner)?)),
@@ -916,6 +918,50 @@ fn parse_approval(pair: Pair<Rule>) -> Result<ApprovalStmt, WdlError> {
         prompt,
         metadata,
     })
+}
+
+fn parse_gate(pair: Pair<Rule>) -> Result<GateStmt, WdlError> {
+    let mut kind = "manual".to_string();
+    let mut when = None;
+    let mut poll_interval = None;
+    let mut timeout = None;
+    let mut metadata = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::gate_kind => kind = inner.as_str().trim().to_string(),
+            Rule::gate_when => when = Some(parse_cond(first_inner(inner)?)?),
+            Rule::gate_every => {
+                let value = first_inner(inner)?;
+                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::gate_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::object => metadata = parse_object_entries(inner)?,
+            _ => {}
+        }
+    }
+    Ok(GateStmt {
+        kind,
+        when,
+        poll_interval,
+        timeout,
+        metadata,
+    })
+}
+
+fn parse_signal(pair: Pair<Rule>) -> Result<SignalStmt, WdlError> {
+    let mut name = String::new();
+    let mut metadata = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::object => metadata = parse_object_entries(inner)?,
+            _ => {}
+        }
+    }
+    Ok(SignalStmt { name, metadata })
 }
 
 fn parse_config(pair: Pair<Rule>) -> Result<ConfigStmt, WdlError> {

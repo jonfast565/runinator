@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::orchestration::GateKind;
 use crate::value::{Map, Value};
 
 use crate::workflows::WorkflowNodeKind;
@@ -280,6 +281,23 @@ pub struct ApprovalState {
     pub approval_id: Option<Uuid>,
 }
 
+/// gate node-run state. `deadline_unix` is the optional max-wait cutoff; `poll_interval` is how
+/// often the reducer re-checks while the gate stays closed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateState {
+    pub gate_id: Option<Uuid>,
+    #[serde(default)]
+    pub deadline_unix: Option<i64>,
+    pub poll_interval: i64,
+}
+
+/// signal node-run state. carries the signal name the node is parked on so an inbound delivery can
+/// match the right waiting node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalState {
+    pub name: String,
+}
+
 // node output payloads (serialized into the output_json carrier).
 
 /// loop node iteration output.
@@ -385,5 +403,19 @@ pub struct ApprovalRecord {
     pub provider: String,
     pub resource_type: String,
     pub external_id: String,
+    pub metadata: Value,
+}
+
+/// gate row payload the reducer inserts when a gate node first parks a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateRecord {
+    pub workflow_run_id: Uuid,
+    pub node_id: String,
+    pub kind: GateKind,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub condition: Value,
     pub metadata: Value,
 }

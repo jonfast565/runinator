@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
 
 use crate::events::{AppEvent, EventSender, emit};
@@ -18,8 +19,12 @@ use crate::responses::{api_error, bad_request};
 
 pub(crate) async fn get_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
         Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
         Err(err) => api_error(err.to_string()),
@@ -28,9 +33,13 @@ pub(crate) async fn get_run_artifacts<T: DatabaseImpl>(
 
 pub(crate) async fn add_run_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
         Ok(artifact) => (
             StatusCode::ACCEPTED,
@@ -42,7 +51,11 @@ pub(crate) async fn add_run_artifact<T: DatabaseImpl>(
 
 pub(crate) async fn list_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::fetch_all_artifacts(db.as_ref()).await {
         Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
         Err(err) => api_error(err.to_string()),
@@ -52,8 +65,12 @@ pub(crate) async fn list_artifacts<T: DatabaseImpl>(
 pub(crate) async fn upload_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     let mut run_id: Option<Uuid> = None;
     let mut node_run_id: Option<Uuid> = None;
     let mut name: Option<String> = None;
@@ -155,8 +172,12 @@ pub(crate) async fn upload_artifact<T: DatabaseImpl>(
 
 pub(crate) async fn download_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> Response {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply.into_response();
+    }
     let artifact = match db.fetch_artifact(artifact_id).await {
         Ok(Some(artifact)) => artifact,
         Ok(None) => {

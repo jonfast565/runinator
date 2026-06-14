@@ -156,6 +156,13 @@ pub struct WorkflowRunRenameRequest {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SignalDeliveryRequest {
+    pub name: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct WorkflowRunReplayRequest {
     #[serde(default)]
@@ -234,6 +241,22 @@ pub struct ApprovalResolutionRequest {
     pub message: Option<String>,
     #[serde(default)]
     pub output_json: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GateQuery {
+    #[serde(default)]
+    pub workflow_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GateResolutionRequest {
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

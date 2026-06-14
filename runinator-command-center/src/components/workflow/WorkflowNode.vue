@@ -49,6 +49,14 @@
       <button class="node-btn reject" @click.stop="onReject">Reject</button>
     </div>
 
+    <form v-if="isSignalPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSendSignal" @click.stop>
+      <JsonEditor class="node-input-json" :model-value="signalPayloadDraft" title="" @update:model-value="onSignalPayloadChange" />
+      <div class="node-actions">
+        <button class="node-btn approve" type="submit">Send signal</button>
+      </div>
+      <div v-if="signalError" class="node-input-error">{{ signalError }}</div>
+    </form>
+
     <form v-else-if="isWaiting && isInputPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSubmitInput">
       <JsonEditor class="node-input-json" :model-value="inputDraft" title="" @update:model-value="onInputDraftChange" />
       <div class="node-actions">
@@ -96,7 +104,7 @@ import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approv
 import { isInputWaitingStatus } from "../../utils/inputs";
 import { statusClassForNode } from "../../utils/status";
 import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
-import { resolveWorkflowInput } from "../../api/commandCenterApi";
+import { deliverSignal, resolveWorkflowInput } from "../../api/commandCenterApi";
 import type { WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
@@ -136,6 +144,8 @@ const inlineId = ref(props.id);
 const inlineValue = ref(props.data.inlineEdit?.value ?? "");
 const inputDraft = ref("{}");
 const inputError = ref("");
+const signalPayloadDraft = ref("{}");
+const signalError = ref("");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
@@ -143,6 +153,8 @@ const kindDescription = computed(() => workflowNodeKindDescription(props.data.ki
 const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
 const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
 const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
+// a parked signal node shares the generic `waiting` status with wait nodes; disambiguate by kind.
+const isSignalPending = computed(() => props.data.kind === "signal" && props.data.status === "waiting");
 
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
@@ -233,6 +245,36 @@ async function resolveApproval(action: ApprovalAction) {
   submitting.value = true;
   try {
     await resources.resolveWorkflowApproval(detail.run.id, props.id, nodeRun, action);
+    await workflows.fetchWorkflowRunDetail(detail.run.id);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function onSignalPayloadChange(value: string) {
+  signalPayloadDraft.value = value;
+  signalError.value = "";
+}
+
+async function onSendSignal() {
+  const detail = workflows.workflowRunDetail;
+  if (!detail) return app.setError("No workflow run selected");
+  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && node.status === "waiting").at(-1);
+  if (!nodeRun) return app.setError(`No waiting signal found for node ${props.id}`);
+  const name = String(nodeRun.state?.name ?? "");
+  if (!name) return app.setError(`Signal node ${props.id} has no signal name`);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(signalPayloadDraft.value || "{}");
+    signalError.value = "";
+  } catch (err) {
+    signalError.value = String(err);
+    return;
+  }
+
+  submitting.value = true;
+  try {
+    await app.runOperation(`Sending signal '${name}'`, () => deliverSignal(detail.run.id, name, payload));
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;

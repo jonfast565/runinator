@@ -1,3 +1,4 @@
+use runinator_models::orchestration::GateKind;
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowNodeRef;
 
@@ -144,6 +145,21 @@ pub struct WaitParameters {
 pub struct ApprovalParameters {
     pub approval_type: String,
     pub prompt: String,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalParameters {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GateParameters {
+    pub kind: GateKind,
+    pub condition: Value,
+    pub poll_interval_seconds: i64,
+    pub deadline_seconds: Option<i64>,
+    pub label: Option<String>,
     pub metadata: Value,
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "runinator-migration"
+name = "runinator-bootstrap"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,5 +13,5 @@ runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
 
 [[bin]]
-name = "runinator-migration"
+name = "runinator-bootstrap"
 path = "src/main.rs"

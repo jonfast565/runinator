@@ -98,6 +98,15 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
             expand_expr(&mut approval.prompt, aliases)?;
             expand_entries(&mut approval.metadata, aliases)?;
         }
+        StmtKind::Gate(gate) => {
+            if let Some(when) = gate.when.as_mut() {
+                expand_cond(when, aliases)?;
+            }
+            expand_entries(&mut gate.metadata, aliases)?;
+        }
+        StmtKind::Signal(signal) => {
+            expand_entries(&mut signal.metadata, aliases)?;
+        }
         StmtKind::Config(config) => {
             if let Some(name) = config.name.as_mut() {
                 expand_expr(name, aliases)?;

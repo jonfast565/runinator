@@ -301,6 +301,66 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     })
 }
 
+/// deliver a named signal to a run: find the latest node parked on that signal, stamp it
+/// `Succeeded` with the payload, and wake the reducer so it follows the success edge.
+pub async fn deliver_signal<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    name: String,
+    payload: Value,
+) -> Result<TaskResponse, SendableError> {
+    let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
+    let target = node_runs
+        .iter()
+        .filter(|run| run.status == WorkflowStatus::Waiting)
+        .filter(|run| {
+            serde_json::from_value::<runinator_models::workflow_state::SignalState>(
+                run.state.clone().into(),
+            )
+            .map(|state| state.name == name)
+            .unwrap_or(false)
+        })
+        .max_by_key(|run| run.created_at);
+    let Some(node_run) = target else {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!("No node is waiting for signal '{name}' in run {workflow_run_id}"),
+        });
+    };
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Succeeded,
+        None,
+        None,
+        Some(runinator_models::json!({ "signal": name, "payload": payload })),
+        None,
+        Some("signal_received".into()),
+        None,
+    )
+    .await?;
+    db.update_workflow_run_status(
+        workflow_run_id,
+        WorkflowStatus::Running,
+        Some(node_run.node_id.clone()),
+        None,
+        None,
+    )
+    .await?;
+    support::enqueue_node_ready(
+        db,
+        workflow_run_id,
+        node_run.node_id.clone(),
+        "signal_received",
+        Utc::now(),
+        runinator_models::json!({ "signal": name }),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Signal '{name}' delivered"),
+    })
+}
+
 pub async fn set_workflow_run_name<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

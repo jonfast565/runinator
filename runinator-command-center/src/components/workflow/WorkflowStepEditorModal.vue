@@ -76,10 +76,7 @@
           :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
           :expression-context="expressionContext"
         />
-        <div class="form-field">
-          <span class="form-field-label">Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Action parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'approval'" class="form-section">
@@ -88,6 +85,38 @@
           <label>Approval Type <input v-model="workflows.stepEditor.approval_type" /></label>
           <label>Prompt <textarea v-model="workflows.stepEditor.approval_prompt"></textarea></label>
         </div>
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'gate'" class="form-section">
+        <h3>Gate</h3>
+        <div class="form-grid">
+          <label>
+            Kind
+            <select v-model="workflows.stepEditor.gate_kind">
+              <option value="manual">manual</option>
+              <option value="condition">condition</option>
+              <option value="external">external</option>
+            </select>
+          </label>
+          <label>Label <input v-model="workflows.stepEditor.gate_label" placeholder="Shown in the Gates view" /></label>
+          <label>Poll Interval (seconds) <input v-model.number="workflows.stepEditor.gate_poll_interval" type="number" min="1" /></label>
+          <label>Timeout (seconds, 0 = none) <input v-model.number="workflows.stepEditor.gate_timeout" type="number" min="0" /></label>
+        </div>
+        <p class="hint">{{ gateKindHint }}</p>
+        <div v-if="workflows.stepEditor.gate_kind === 'condition'" class="form-field">
+          <span class="form-field-label">When (passes once true)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.gate_when_json" :context="expressionContext" title="Gate condition" />
+        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'signal'" class="form-section">
+        <h3>Signal</h3>
+        <div class="form-grid">
+          <label>Signal Name <input v-model="workflows.stepEditor.signal_name" placeholder="Name delivered to POST /workflow_runs/{id}/signals" /></label>
+        </div>
+        <p class="hint">Pauses the run until this named signal is delivered. Set a node timeout to bound the wait.</p>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'condition'" class="form-section">
@@ -145,10 +174,7 @@
           <span class="form-field-label">Items</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="Loop items" />
         </div>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Loop advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'switch'" class="form-section">
@@ -188,10 +214,7 @@
             <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
           </select>
         </label>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Switch advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'parallel'" class="form-section">
@@ -207,10 +230,7 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.parallel_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.parallel_branches)">Add Branch</button>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Parallel advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'join'" class="form-section">
@@ -232,10 +252,7 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.join_wait_for, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.join_wait_for)">Add Dependency</button>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Join advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'try'" class="form-section">
@@ -263,10 +280,7 @@
             </select>
           </label>
         </div>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Try advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'map'" class="form-section">
@@ -285,10 +299,7 @@
           <span class="form-field-label">Items</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="Map items" />
         </div>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Map advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'race'" class="form-section">
@@ -310,10 +321,7 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.race_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.race_branches)">Add Branch</button>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Race advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'output'" class="form-section">
@@ -328,23 +336,14 @@
             @update:model-value="onOutputDataChange"
           />
         </div>
-        <details class="advanced-params">
-          <summary>Advanced WDL data</summary>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Output data" />
-        </details>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Output advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Advanced WDL data" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'input'" class="form-section">
         <h3>Input</h3>
         <label>Prompt <input v-model="workflows.stepEditor.input_prompt" /></label>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Input advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'config'" class="form-section">
@@ -357,10 +356,7 @@
           <span class="form-field-label">Metadata</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.config_metadata_json" :context="expressionContext" title="Config metadata" />
         </div>
-        <div class="form-field">
-          <span class="form-field-label">Advanced Parameters</span>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Config advanced parameters" />
-        </div>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'subflow'" class="form-section">
@@ -384,10 +380,7 @@
           @update:model-value="onSubflowParametersChange"
         />
         <p v-else class="hint">Select a workflow to configure its parameters, or use the advanced editor below.</p>
-        <details class="advanced-params">
-          <summary>Advanced WDL parameters</summary>
-          <ExpressionJsonEditor v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="Subflow parameters" />
-        </details>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" />
       </section>
 
       <section class="form-section">
@@ -424,6 +417,7 @@ import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflow-references";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
@@ -448,6 +442,16 @@ const stepParameters = computed({
   }
 });
 const isProtectedNode = computed(() => ["start", "end", "fail"].includes(workflows.selectedNode?.kind ?? ""));
+const gateKindHint = computed(() => {
+  switch (workflows.stepEditor.gate_kind) {
+    case "condition":
+      return "The reducer auto-evaluates the condition each poll; the gate passes once it is true.";
+    case "external":
+      return "Stays closed until an external system opens it via POST /gates/{id}/open.";
+    default:
+      return "Stays closed until a human opens it from the Gates view.";
+  }
+});
 const targetNodes = computed(() => {
   const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
   return nodes.filter((node) => node.id !== workflows.selectedStepId);
@@ -569,16 +573,6 @@ function onSubflowNameChange(event: Event) {
 }
 
 .hint {
-  color: #66717e;
-  font-size: 12px;
-}
-
-.advanced-params {
-  margin-top: 8px;
-}
-
-.advanced-params summary {
-  cursor: pointer;
   color: #66717e;
   font-size: 12px;
 }

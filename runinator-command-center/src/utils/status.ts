@@ -3,7 +3,7 @@ export function isBadStatus(status?: string) {
 }
 
 export function isGoodStatus(status?: string) {
-  return ["approved", "succeeded", "passed"].includes(status ?? "");
+  return ["approved", "succeeded", "passed", "open"].includes(status ?? "");
 }
 
 export function isTerminalWorkflowRunStatus(status?: string) {
@@ -14,7 +14,7 @@ export function statusBadgeClass(status?: string) {
   if (isBadStatus(status)) return "status-failed";
   if (isGoodStatus(status)) return "status-succeeded";
   if (status === "running") return "status-running";
-  if (["queued", "waiting", "approval_required", "input_required", "debug_paused", "paused"].includes(status ?? "")) return "status-waiting";
+  if (["queued", "waiting", "approval_required", "input_required", "debug_paused", "paused", "pending"].includes(status ?? "")) return "status-waiting";
   return "status-muted";
 }
 

@@ -931,7 +931,7 @@ function Build-ContainerImages {
         @{ Name = 'runinator-worker';    Dockerfile = 'deploy/Dockerfile'; Target = 'worker' },
         @{ Name = 'runinator-ctl';       Dockerfile = 'deploy/Dockerfile'; Target = 'ctl' },
         @{ Name = 'runinator-ws';        Dockerfile = 'deploy/Dockerfile'; Target = 'ws' },
-        @{ Name = 'runinator-migration'; Dockerfile = 'deploy/Dockerfile'; Target = 'migration' },
+        @{ Name = 'runinator-bootstrap'; Dockerfile = 'deploy/Dockerfile'; Target = 'bootstrap' },
         @{ Name = 'runinator-command-center'; Dockerfile = 'runinator-command-center/Dockerfile'; Context = 'runinator-command-center' }
     )
 

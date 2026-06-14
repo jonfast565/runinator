@@ -30,6 +30,8 @@ import { isBlankValue } from "../values";
 export const workflowNodeKinds: WorkflowNodeKind[] = [
   "action",
   "approval",
+  "gate",
+  "signal",
   "loop",
   "condition",
   "wait",
@@ -58,6 +60,8 @@ export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo
   condition: { icon: "branch", description: "Routes down a branch based on a boolean expression." },
   switch: { icon: "switch", description: "Routes to one of several cases by matching a value." },
   approval: { icon: "approve", description: "Halts until a human approves or rejects." },
+  gate: { icon: "shield", description: "Blocks until an automated/policy check or manual gate opens." },
+  signal: { icon: "bell", description: "Pauses until a named external signal is delivered to the run." },
   loop: { icon: "loop", description: "Repeats its target node while a condition holds." },
   parallel: { icon: "parallel", description: "Fans out into branches that run concurrently." },
   join: { icon: "join", description: "Waits for upstream branches to finish before continuing." },
@@ -803,6 +807,14 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
     case "approval":
       node.parameters = { approval_type: "generic", prompt: "Approval required" };
       node.transitions = { on_success: nodeRef("end"), on_reject: nodeRef("end") };
+      break;
+    case "gate":
+      node.parameters = { kind: "manual", poll_interval: 30 };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "signal":
+      node.parameters = { name: "signal" };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
       break;
     case "loop":
       node.parameters = { items: [], target: nodeRef("end") };

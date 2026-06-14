@@ -21,9 +21,20 @@ use crate::responses::api_error;
 pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        runinator_models::auth::Permission::Run,
+    )
+    .await
+    {
+        return reply;
+    }
     match repository::create_workflow_node_run(
         db.as_ref(),
         workflow_run_id,
@@ -46,9 +57,13 @@ pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
 pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::update_workflow_node_run(
         db.as_ref(),
         node_run_id,
@@ -73,9 +88,20 @@ pub(crate) async fn update_workflow_node_run<T: DatabaseImpl>(
 pub(crate) async fn resolve_workflow_input<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunInputRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_node_run_workflow(
+        db.as_ref(),
+        &ctx,
+        node_run_id,
+        runinator_models::auth::Permission::Run,
+    )
+    .await
+    {
+        return reply;
+    }
     match repository::resolve_workflow_input(
         db.as_ref(),
         node_run_id,
@@ -96,9 +122,13 @@ pub(crate) async fn resolve_workflow_input<T: DatabaseImpl>(
 pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::claim_workflow_node_run_executor(
         db.as_ref(),
         node_run_id,
@@ -118,9 +148,13 @@ pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
 pub(crate) async fn release_workflow_node_run_executor<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::release_workflow_node_run_executor(
         db.as_ref(),
         node_run_id,
@@ -139,9 +173,20 @@ pub(crate) async fn release_workflow_node_run_executor<T: DatabaseImpl>(
 
 pub(crate) async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Query(query): Query<ChunkQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_node_run_workflow(
+        db.as_ref(),
+        &ctx,
+        node_run_id,
+        runinator_models::auth::Permission::View,
+    )
+    .await
+    {
+        return reply;
+    }
     match repository::fetch_workflow_node_run_chunks(
         db.as_ref(),
         node_run_id,
@@ -161,9 +206,13 @@ pub(crate) async fn get_workflow_node_run_chunks<T: DatabaseImpl>(
 pub(crate) async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
         Ok(chunk) => {
             emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
@@ -178,8 +227,19 @@ pub(crate) async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
 
 pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_node_run_workflow(
+        db.as_ref(),
+        &ctx,
+        node_run_id,
+        runinator_models::auth::Permission::View,
+    )
+    .await
+    {
+        return reply;
+    }
     match repository::fetch_workflow_node_run_artifacts(db.as_ref(), node_run_id).await {
         Ok(artifacts) => (
             StatusCode::OK,
@@ -192,9 +252,13 @@ pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
 pub(crate) async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(node_run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {
         Ok(artifact) => {
             emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;

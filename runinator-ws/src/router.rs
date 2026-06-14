@@ -3,7 +3,8 @@ use std::sync::Arc;
 use axum::{
     Extension, Router,
     extract::DefaultBodyLimit,
-    routing::{get, patch, post},
+    middleware::from_fn_with_state,
+    routing::{delete, get, patch, post},
 };
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
@@ -18,6 +19,7 @@ use runinator_models::api_routes::{
 };
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     action_dispatches::{
@@ -27,12 +29,17 @@ use crate::handlers::{
     artifacts::{
         add_run_artifact, download_artifact, get_run_artifacts, list_artifacts, upload_artifact,
     },
+    auth::{
+        add_team_member, auth_config, create_api_key, create_team, create_user,
+        create_workflow_grant, delete_team, delete_user, list_api_keys, list_teams, list_users,
+        list_workflow_grants, login, logout, me, refresh, remove_team_member, revoke_api_key,
+        revoke_workflow_grant, update_user,
+    },
     automation::{
-        approve_request, create_approval, create_automation_event, create_change_set,
-        create_external_item, create_external_resource, create_feedback, create_gate,
-        create_workspace, get_approvals, get_automation_events, get_change_sets,
-        get_external_items, get_external_resources, get_feedback, get_gates, get_idempotency_key,
-        get_workspaces, put_idempotency_key, reject_request,
+        approve_request, close_gate, create_approval, create_automation_event,
+        create_external_item, create_gate, get_approvals, get_automation_events,
+        get_external_items, get_gate, get_gates, get_idempotency_key, open_gate,
+        put_idempotency_key, reject_request,
     },
     catalog::{get_catalog_items, upsert_catalog_item},
     credentials::{delete_credential, get_credential, import_secret_bundle, put_credential},
@@ -61,8 +68,8 @@ use crate::handlers::{
     runs::{
         append_run_chunk, cancel_workflow_run, claim_ready_nodes,
         claim_workflow_runs_for_scheduler, create_workflow_run, create_workflow_trigger_run,
-        get_run_chunks, get_runs, get_workflow_run, get_workflow_runs, pause_workflow_run,
-        process_ready_node, release_workflow_run_claim, rename_workflow_run,
+        deliver_signal, get_run_chunks, get_runs, get_workflow_run, get_workflow_runs,
+        pause_workflow_run, process_ready_node, release_workflow_run_claim, rename_workflow_run,
         renew_workflow_run_claim, replay_workflow_run, resume_workflow_run, update_run,
         update_workflow_run,
     },
@@ -88,7 +95,9 @@ pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
     events: EventSender,
     broker: Arc<dyn Broker>,
+    auth: AuthConfig,
 ) -> Router {
+    let auth_config_arc = Arc::new(auth);
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -326,6 +335,10 @@ pub fn build_router<T: DatabaseImpl>(
             post(resume_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_runs/{id}/signals",
+            post(deliver_signal::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_runs/{id}/debug/run_to_cursor",
             post(run_to_cursor_workflow_run::<T>).layer(Extension(pool.clone())),
         )
@@ -391,34 +404,22 @@ pub fn build_router<T: DatabaseImpl>(
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/external_resources",
-            get(get_external_resources::<T>)
-                .post(create_external_resource::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/feedback",
-            get(get_feedback::<T>)
-                .post(create_feedback::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
             "/gates",
             get(get_gates::<T>)
                 .post(create_gate::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/workspaces",
-            get(get_workspaces::<T>)
-                .post(create_workspace::<T>)
-                .layer(Extension(pool.clone())),
+            "/gates/{id}",
+            get(get_gate::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/change_sets",
-            get(get_change_sets::<T>)
-                .post(create_change_set::<T>)
-                .layer(Extension(pool.clone())),
+            "/gates/{id}/open",
+            post(open_gate::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates/{id}/close",
+            post(close_gate::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/automation_events",
@@ -471,7 +472,79 @@ pub fn build_router<T: DatabaseImpl>(
             "/webhooks/wake",
             post(webhook_wake::<T>).layer(Extension(pool.clone())),
         )
+        .route("/auth/config", get(auth_config))
+        .route(
+            "/auth/login",
+            post(login::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/refresh",
+            post(refresh::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/logout",
+            post(logout::<T>).layer(Extension(pool.clone())),
+        )
+        .route("/auth/me", get(me::<T>).layer(Extension(pool.clone())))
+        .route(
+            "/users",
+            get(list_users::<T>)
+                .post(create_user::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/users/{id}",
+            patch(update_user::<T>)
+                .delete(delete_user::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys",
+            get(list_api_keys::<T>)
+                .post(create_api_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys/{id}",
+            delete(revoke_api_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/grants",
+            get(list_workflow_grants::<T>)
+                .post(create_workflow_grant::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/grants/{grant_id}",
+            delete(revoke_workflow_grant::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams",
+            get(list_teams::<T>)
+                .post(create_team::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}",
+            delete(delete_team::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}/members",
+            post(add_team_member::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}/members/{user_id}",
+            delete(remove_team_member::<T>).layer(Extension(pool.clone())),
+        )
         .layer(Extension(events))
         .layer(Extension(broker))
+        .layer(Extension(auth_config_arc.clone()))
+        .layer(from_fn_with_state(
+            AuthState {
+                config: auth_config_arc,
+                db: pool.clone(),
+            },
+            auth_middleware::<T>,
+        ))
         .layer(cors)
 }

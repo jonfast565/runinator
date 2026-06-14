@@ -30,8 +30,8 @@ spec:
         app: runinator-ws
     spec:
       initContainers:
-        - name: db-migrate
-          image: runinator-migration:dev
+        - name: db-bootstrap
+          image: runinator-bootstrap:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--database"
@@ -43,6 +43,8 @@ spec:
                 name: runinator-common
             - secretRef:
                 name: runinator-postgres-secret
+            - secretRef:
+                name: runinator-app-secret
       containers:
         - name: ws
           image: runinator-ws:dev

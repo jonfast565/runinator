@@ -12,8 +12,12 @@
     },
     {
       "name": "web-service",
-      "command": "./target/debug/runinator-ws",
+      "command": "bash",
+      "env": {
+        "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin"
+      },
       "args": [
+        "scripts/start-local-web-service.sh",
         "--port",
         "8080",
         "--gossip-bind",

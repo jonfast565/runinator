@@ -3,11 +3,7 @@ import type { JsonRecord } from "../types/models";
 export function genericRecordType(record: JsonRecord, endpoint: string): string {
   const explicit =
     record.resource_type ??
-    record.feedback_type ??
     record.approval_type ??
-    record.gate_type ??
-    record.workspace_type ??
-    record.change_type ??
     record.event_type;
   if (explicit) return String(explicit);
   if (endpoint === "external_items") return "external_item";

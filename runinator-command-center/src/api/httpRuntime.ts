@@ -23,6 +23,18 @@ type HttpDescriptor = {
 const WORKFLOW_JSON_IMPORT_RISK_HEADER = "x-runinator-json-workflow-risk";
 const WORKFLOW_JSON_IMPORT_RISK_ACK = "system-breakage-possible";
 
+// access token presented as `Authorization: Bearer …` in web mode; also appended to WS urls.
+let authToken: string | null = null;
+export function setHttpAuthToken(token: string | null): void {
+  authToken = token && token.length > 0 ? token : null;
+}
+export function httpAuthToken(): string | null {
+  return authToken;
+}
+function authHeaders(): Record<string, string> {
+  return authToken ? { authorization: `Bearer ${authToken}` } : {};
+}
+
 function arg<T = unknown>(args: CommandArgs, key: string): T {
   if (!args || !(key in args)) {
     throw new Error(`Missing argument '${key}'`);
@@ -40,6 +52,41 @@ function escape(part: string | number): string {
 }
 
 const REGISTRY: Record<string, HttpDescriptor> = {
+  auth_config: { method: "GET", path: () => "auth/config" },
+  auth_me: { method: "GET", path: () => "auth/me" },
+  login: {
+    method: "POST",
+    path: () => "auth/login",
+    body: (args) => ({ username: arg(args, "username"), password: arg(args, "password") })
+  },
+  refresh_session: {
+    method: "POST",
+    path: () => "auth/refresh",
+    body: (args) => ({ refresh_token: arg(args, "refreshToken") })
+  },
+  logout: {
+    method: "POST",
+    path: () => "auth/logout",
+    body: (args) => ({ refresh_token: arg(args, "refreshToken") })
+  },
+  list_workflow_grants: {
+    method: "GET",
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}/grants`
+  },
+  create_workflow_grant: {
+    method: "POST",
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}/grants`,
+    body: (args) => ({
+      principal_type: arg(args, "principalType"),
+      principal_id: arg(args, "principalId"),
+      permission: arg(args, "permission")
+    })
+  },
+  revoke_workflow_grant: {
+    method: "DELETE",
+    path: (args) =>
+      `workflows/${escape(arg<string>(args, "workflowId"))}/grants/${escape(arg<string>(args, "grantId"))}`
+  },
   fetch_workflows: { method: "GET", path: () => "workflows" },
   save_workflow: {
     method: (args) => (arg<{ id?: string | null }>(args, "workflow").id != null ? "PATCH" : "POST"),
@@ -312,6 +359,10 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   if (name === "start_service_discovery") {
     return undefined as unknown as T;
   }
+  if (name === "set_access_token") {
+    setHttpAuthToken((args?.token as string | undefined) ?? null);
+    return undefined as unknown as T;
+  }
   if (name === "upload_artifact" || name === "download_artifact") {
     throw new Error(`${name} is not available in web mode; use uploadArtifactBlob/downloadArtifactBlob instead`);
   }
@@ -326,7 +377,7 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   const url = `${base}/${path}`;
   const method = typeof descriptor.method === "function" ? descriptor.method(args) : descriptor.method;
   const init: RequestInit = { method };
-  const headers: Record<string, string> = descriptor.headers ? descriptor.headers(args) : {};
+  const headers: Record<string, string> = { ...authHeaders(), ...(descriptor.headers ? descriptor.headers(args) : {}) };
   if (descriptor.body) {
     headers["content-type"] = "application/json";
     init.body = JSON.stringify(descriptor.body(args));
@@ -352,7 +403,7 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
     const saved = raw as { workflows?: Array<{ id?: string | null }> };
     const id = saved.workflows?.[0]?.id;
     if (id == null) return saved as unknown as T;
-    const exportResp = await fetch(`${base}/workflows/${escape(id)}/export`);
+    const exportResp = await fetch(`${base}/workflows/${escape(id)}/export`, { headers: authHeaders() });
     if (!exportResp.ok) {
       const text = await exportResp.text().catch(() => "");
       throw new Error(`GET workflows/${id}/export -> ${exportResp.status}: ${text}`);

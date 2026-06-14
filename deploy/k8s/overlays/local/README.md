@@ -31,6 +31,14 @@ Each worker pod also mounts a node-local AWS config directory at
 worker process. Point that node path at your real `~/.aws` using your local
 cluster driver's mount or symlink support before applying the overlay.
 
+The ws, waker, and worker pods also mount a node-local Claude config directory
+at `/var/runinator/claude`, exposed inside each container as
+`/home/runinator/.claude`, so the `claude` binary invoked by the AI command
+(`runinator-provider-ai`) finds its config and credentials. It is mounted
+read-write because Claude Code writes session/project state and refreshes its
+OAuth token there. Point that node path at your real `~/.claude` using your
+local cluster driver's mount or symlink support before applying the overlay.
+
 The preferred end-to-end command is:
 
 ```sh

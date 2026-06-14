@@ -425,6 +425,8 @@ impl Lowerer {
             StmtKind::Output(_) => "output",
             StmtKind::Input(_) => "input",
             StmtKind::Approval(_) => "approval",
+            StmtKind::Gate(_) => "gate",
+            StmtKind::Signal(_) => "signal",
             StmtKind::Config(_) => "config",
             StmtKind::Fail(_) => "fail_node",
             StmtKind::If(_) => "if",
@@ -448,6 +450,8 @@ impl Lowerer {
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
             StmtKind::Input(input) => self.lower_input(input, stmt, id, next),
             StmtKind::Approval(approval) => self.lower_approval(approval, stmt, id, next),
+            StmtKind::Gate(gate) => self.lower_gate(gate, stmt, id, next),
+            StmtKind::Signal(signal) => self.lower_signal(signal, stmt, id, next),
             StmtKind::Config(config) => self.lower_config(config, stmt, id, next),
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
             StmtKind::If(if_stmt) => {
@@ -702,6 +706,67 @@ impl Lowerer {
         ];
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "approval", fields));
+        Ok(())
+    }
+
+    fn lower_gate(
+        &mut self,
+        gate: &GateStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("kind".into(), Value::String(gate.kind.clone()));
+        if let Some(when) = &gate.when {
+            params.insert("when".into(), self.lower_cond(when)?);
+        }
+        if let Some(poll) = gate.poll_interval {
+            params.insert("poll_interval".into(), Value::from(poll));
+        }
+        if let Some(timeout) = gate.timeout {
+            params.insert("timeout".into(), Value::from(timeout));
+        }
+        let flat = crate::desugar::flatten_entries(&gate.metadata, &self.aliases)?;
+        for (name, value) in &flat {
+            params.insert(name.clone(), self.lower_expr(value)?);
+        }
+        self.record_spreads(id, &gate.metadata)?;
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "on_success", next),
+            ),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "gate", fields));
+        Ok(())
+    }
+
+    fn lower_signal(
+        &mut self,
+        signal: &SignalStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(signal.name.clone()));
+        let flat = crate::desugar::flatten_entries(&signal.metadata, &self.aliases)?;
+        for (name, value) in &flat {
+            params.insert(name.clone(), self.lower_expr(value)?);
+        }
+        self.record_spreads(id, &signal.metadata)?;
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "on_success", next),
+            ),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "signal", fields));
         Ok(())
     }
 

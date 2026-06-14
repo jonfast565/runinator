@@ -31,8 +31,8 @@ impl MySqlDb {
         Ok(Self { pool })
     }
 
-    pub async fn run_migrations(&self) -> Result<(), SendableError> {
-        info!("Running embedded MySQL/MariaDB migrations");
+    pub async fn bootstrap(&self) -> Result<(), SendableError> {
+        info!("Running embedded MySQL/MariaDB bootstrap");
         MYSQL_MIGRATOR
             .run(&self.pool)
             .await
@@ -78,7 +78,7 @@ impl SqlBackend for MySqlDb {
     }
 
     async fn init(&self, paths: &[String]) -> Result<(), SendableError> {
-        self.run_migrations().await?;
+        self.bootstrap().await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {

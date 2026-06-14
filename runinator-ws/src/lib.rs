@@ -1,3 +1,5 @@
+mod auth;
+mod authz;
 mod background;
 mod config;
 pub mod errors;
@@ -20,6 +22,7 @@ mod stability;
 mod tests;
 mod websocket;
 
+pub use auth::AuthOptions;
 pub use events::{AppEvent, EventSender};
 pub use router::build_router;
 pub use server::{ReplicaAdvertisement, run_webserver};

@@ -20,6 +20,7 @@ log-panics = "2.1"
 mime_guess = "2"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 
+runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }

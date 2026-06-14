@@ -6,14 +6,14 @@ use runinator_comm::{ActionCommand, WireCodec};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     errors::SendableError,
-    orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
+    orchestration::{GateKind, NewOrchestrationEvent, ReadyNodeRecord},
     value::Value,
     workflow_state::{
-        ApprovalRecord, ApprovalState, ConfigSummary, InputState, JoinOutput, LoopFrame,
-        LoopOutput, MapChild, MapChildState, MapFrame, MapOutput, OutputPayload, ParallelFrame,
-        ParallelOutput, RaceFrame, RaceOutput, SkippedOutput, SubflowOutcome, SubflowState,
-        SwitchOutput, TryFrame, WaitElapsedOutput, WaitState, WorkflowContextHeader,
-        WorkflowRunState,
+        ApprovalRecord, ApprovalState, ConfigSummary, GateRecord, GateState, InputState,
+        JoinOutput, LoopFrame, LoopOutput, MapChild, MapChildState, MapFrame, MapOutput,
+        OutputPayload, ParallelFrame, ParallelOutput, RaceFrame, RaceOutput, SignalState,
+        SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame, WaitElapsedOutput,
+        WaitState, WorkflowContextHeader, WorkflowRunState,
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowRun,
@@ -36,9 +36,11 @@ mod compute;
 mod context;
 mod control_flow;
 mod engine;
+mod gate;
 mod input;
 mod map;
 mod output;
+mod signal;
 mod subflow;
 mod transitions;
 mod wait;

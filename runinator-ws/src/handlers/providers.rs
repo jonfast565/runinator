@@ -4,6 +4,7 @@ use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
+    auth::AuthContext,
     bundles::ProviderBundle,
     providers::{ProviderMetadata, validate_provider_metadata},
 };
@@ -14,6 +15,7 @@ use crate::responses::{api_error, bad_request};
 
 pub(crate) async fn get_providers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(_ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let items = match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into()))
         .await
@@ -30,8 +32,12 @@ pub(crate) async fn get_providers<T: DatabaseImpl>(
 
 pub(crate) async fn upsert_provider<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     if let Err(err) = validate_provider_metadata(&provider) {
         return bad_request(err);
     }
@@ -49,8 +55,12 @@ pub(crate) async fn upsert_provider<T: DatabaseImpl>(
 
 pub(crate) async fn import_provider_bundle<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<ProviderBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
     let mut imported = Vec::with_capacity(bundle.providers.len());
     for provider in &bundle.providers {
         if let Err(err) = validate_provider_metadata(provider) {

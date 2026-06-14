@@ -7,8 +7,11 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
 };
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::bundles::{PackImportResult, SecretBundle};
 use runinator_models::workflows::WorkflowBundle;
+use runinator_models::{
+    auth::AuthContext,
+    bundles::{PackImportResult, SecretBundle},
+};
 use serde::Deserialize;
 
 use crate::events::{AppEvent, EventSender, emit};
@@ -33,10 +36,14 @@ pub(crate) struct PackImportParams {
 pub(crate) async fn import_pack<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Query(params): Query<PackImportParams>,
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     let overwrite = params.overwrite;
     if is_json_content_type(&headers) {
         if !json_workflow_import_risk_acknowledged(&headers) {

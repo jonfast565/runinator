@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
 import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
@@ -73,6 +73,8 @@ const emit = defineEmits<{
 
 const editorContainer = ref<HTMLElement | null>(null);
 const diagnostics = ref<WdlDiagnostic[]>([]);
+// editability is reconfigurable so a readonly toggle after mount takes effect live.
+const editableCompartment = new Compartment();
 let view: EditorView | null = null;
 const title = props.title ?? "WDL";
 const app = useAppStore();
@@ -169,7 +171,7 @@ onMounted(() => {
       basicSetup,
       wdl(wdlProviderCompletionSource(() => props.providers ?? [], settingRefs)),
       wdlLinter,
-      EditorView.editable.of(!props.readonly),
+      editableCompartment.of(EditorView.editable.of(!props.readonly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit('update:modelValue', update.state.doc.toString());
@@ -194,6 +196,10 @@ watch(() => props.modelValue, (newValue) => {
       changes: { from: 0, to: view.state.doc.length, insert: newValue }
     });
   }
+});
+
+watch(() => props.readonly, (readonly) => {
+  view?.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(!readonly)) });
 });
 
 onBeforeUnmount(() => {

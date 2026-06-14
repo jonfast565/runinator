@@ -190,6 +190,19 @@ fn resolve_stmt(
                 resolve_expr(value, symbols, scope, ctx, diagnostics);
             }
         }
+        StmtKind::Gate(gate) => {
+            if let Some(when) = &gate.when {
+                resolve_cond(when, symbols, scope, ctx, diagnostics);
+            }
+            for (_, value) in &gate.metadata {
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::Signal(signal) => {
+            for (_, value) in &signal.metadata {
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
+            }
+        }
         StmtKind::Config(config) => {
             if let Some(name) = &config.name {
                 resolve_expr(name, symbols, scope, ctx, diagnostics);

@@ -164,3 +164,72 @@ pub async fn resolve_approval<T: DatabaseImpl>(
 
     Ok(updated)
 }
+
+pub async fn fetch_gates<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Option<Uuid>,
+    status: Option<String>,
+) -> Result<Vec<Value>, SendableError> {
+    db.fetch_gates(workflow_run_id, status).await
+}
+
+pub async fn fetch_gate<T: DatabaseImpl>(
+    db: &T,
+    gate_id: Uuid,
+) -> Result<Option<Value>, SendableError> {
+    db.fetch_gate(gate_id).await
+}
+
+pub async fn create_gate<T: DatabaseImpl>(db: &T, record: Value) -> Result<Value, SendableError> {
+    db.create_gate(record).await
+}
+
+/// open or close a gate from outside the reducer (manual ui action or an external system). on open
+/// we wake the reducer so the parked gate node re-checks immediately instead of on the next poll.
+pub async fn resolve_gate<T: DatabaseImpl>(
+    db: &T,
+    gate_id: Uuid,
+    open: bool,
+    reason: Option<String>,
+    resolved_by: Option<String>,
+) -> Result<Value, SendableError> {
+    let Some(mut gate) = db.fetch_gate(gate_id).await? else {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Gate {gate_id} not found"),
+        )));
+    };
+    let now = Utc::now().timestamp();
+    if let Some(object) = gate.as_object_mut() {
+        object.insert("status".into(), if open { "open" } else { "closed" }.into());
+        object.insert("resolved_at".into(), now.into());
+        if let Some(resolved_by) = resolved_by {
+            object.insert("resolved_by".into(), resolved_by.into());
+        }
+        if let Some(reason) = reason {
+            object.insert("reason".into(), reason.into());
+        }
+    }
+    let updated = db.update_gate(gate_id, gate.clone()).await?;
+
+    if open {
+        if let (Some(workflow_run_id), Some(node_id)) = (
+            gate.get("workflow_run_id")
+                .and_then(Value::as_str)
+                .and_then(|raw| raw.parse::<Uuid>().ok()),
+            gate.get("node_id").and_then(Value::as_str),
+        ) {
+            support::enqueue_node_ready(
+                db,
+                workflow_run_id,
+                node_id.to_string(),
+                "gate_opened",
+                Utc::now(),
+                runinator_models::json!({ "gate_id": gate_id }),
+            )
+            .await?;
+        }
+    }
+
+    Ok(updated)
+}

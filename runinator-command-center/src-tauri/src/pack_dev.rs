@@ -133,6 +133,8 @@ pub async fn apply_dev_pack(
     url.set_query(Some("overwrite=true"));
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .header(reqwest::header::CONTENT_TYPE, "application/zip")
         .body(body)

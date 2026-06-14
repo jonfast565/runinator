@@ -91,4 +91,24 @@ pub(crate) struct CliArgs {
     /// name so it stays resolvable across IP churn.
     #[arg(long, default_value = "")]
     pub advertise_host: String,
+
+    /// Require authentication on the HTTP API. Off by default so the local/dev stack runs unchanged.
+    #[arg(long, env = "RUNINATOR_AUTH_ENABLED", default_value_t = false)]
+    pub auth_enabled: bool,
+
+    /// Access-token lifetime in seconds (default 1 hour).
+    #[arg(
+        long,
+        env = "RUNINATOR_AUTH_ACCESS_TTL_SECONDS",
+        default_value_t = 3600
+    )]
+    pub auth_access_ttl_seconds: i64,
+
+    /// Refresh-token lifetime in seconds (default 14 days).
+    #[arg(
+        long,
+        env = "RUNINATOR_AUTH_REFRESH_TTL_SECONDS",
+        default_value_t = 1_209_600
+    )]
+    pub auth_refresh_ttl_seconds: i64,
 }

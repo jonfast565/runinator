@@ -454,6 +454,8 @@ pub enum WorkflowNodeKind {
     Condition,
     Switch,
     Approval,
+    Gate,
+    Signal,
     Loop,
     Parallel,
     Join,

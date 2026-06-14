@@ -37,6 +37,10 @@ use uuid::Uuid;
 struct Args {
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     api_base_url: String,
+
+    /// API key/token presented as `Authorization: Bearer …` when the web service has auth enabled.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    api_key: Option<String>,
 }
 
 struct McpServer {
@@ -46,9 +50,24 @@ struct McpServer {
 
 impl McpServer {
     fn new(api_base_url: String) -> Result<Self, reqwest::Error> {
+        Self::with_credentials(api_base_url, None)
+    }
+
+    fn with_credentials(
+        api_base_url: String,
+        api_key: Option<String>,
+    ) -> Result<Self, reqwest::Error> {
+        let mut builder = Client::builder();
+        if let Some(token) = api_key.filter(|t| !t.is_empty()) {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                builder = builder.default_headers(headers);
+            }
+        }
         Ok(Self {
             api_base_url,
-            client: Client::builder().build()?,
+            client: builder.build()?,
         })
     }
 
@@ -515,7 +534,7 @@ fn arguments_are_json_workflow_bundle(arguments: &Value) -> bool {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let server = McpServer::new(args.api_base_url)?;
+    let server = McpServer::with_credentials(args.api_base_url, args.api_key)?;
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 

@@ -30,8 +30,8 @@ impl SqliteDb {
         Ok(SqliteDb { pool: connection })
     }
 
-    pub async fn run_migrations(&self) -> Result<(), SendableError> {
-        info!("Running embedded SQLite migrations");
+    pub async fn bootstrap(&self) -> Result<(), SendableError> {
+        info!("Running embedded SQLite bootstrap");
         SQLITE_MIGRATOR
             .run(&self.pool)
             .await
@@ -79,7 +79,7 @@ impl SqlBackend for SqliteDb {
     }
 
     async fn init(&self, paths: &[String]) -> Result<(), SendableError> {
-        self.run_migrations().await?;
+        self.bootstrap().await?;
         for path in paths.iter() {
             let path_info = PathBuf::from(path);
             if path_info.extension().and_then(|ext| ext.to_str()) == Some("sql") {

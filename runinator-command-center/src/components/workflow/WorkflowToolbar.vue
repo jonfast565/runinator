@@ -9,6 +9,10 @@
         <Icon name="settings" />
         <span>Settings</span>
       </button>
+      <button v-if="workflows.selectedWorkflowId" class="btn" @click="shareOpen = true">
+        <Icon name="approve" />
+        <span>Share</span>
+      </button>
       <div class="toolbar-menu">
         <button
           type="button"
@@ -111,6 +115,11 @@
       </button>
     </div>
     <WorkflowSettingsModal v-if="workflows.workflowSettingsOpen" />
+    <ShareWorkflowModal
+      v-if="shareOpen && workflows.selectedWorkflowId"
+      :workflow-id="workflows.selectedWorkflowId || ''"
+      @close="shareOpen = false"
+    />
   </div>
 </template>
 
@@ -121,10 +130,12 @@ import { useWorkflowsStore } from "../../stores/workflows";
 import { workflowNodeKindInfo } from "../../utils/workflows";
 import Icon from "../shared/Icon.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
+import ShareWorkflowModal from "./ShareWorkflowModal.vue";
 
 const workflows = useWorkflowsStore();
 const toolbarRef = ref<HTMLElement | null>(null);
 const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
+const shareOpen = ref(false);
 
 const isActiveDebugRun = computed(() => {
   if (!workflows.isDebugRun) return false;

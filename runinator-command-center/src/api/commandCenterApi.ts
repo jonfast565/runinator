@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./tauriRuntime";
-import { apiBaseUrl, invokeViaHttp } from "./httpRuntime";
+import { apiBaseUrl, invokeViaHttp, setHttpAuthToken } from "./httpRuntime";
 import type {
   JsonRecord,
   CredentialSummary,
@@ -39,6 +39,65 @@ export interface WorkflowWdlSaveRequest {
 function command<T>(name: string, args?: Record<string, unknown>) {
   if (isTauriRuntime()) return invoke<T>(name, args);
   return invokeViaHttp<T>(name, args);
+}
+
+export interface AuthConfigResponse {
+  enabled: boolean;
+}
+
+export interface LoginResult {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  user: JsonRecord;
+}
+
+export async function fetchAuthConfig() {
+  return command<AuthConfigResponse>("auth_config");
+}
+
+export async function fetchAuthMe() {
+  return command<JsonRecord>("auth_me");
+}
+
+export async function login(username: string, password: string) {
+  return command<LoginResult>("login", { username, password });
+}
+
+export async function refreshSession(refreshToken: string) {
+  return command<LoginResult>("refresh_session", { refreshToken });
+}
+
+export async function logout(refreshToken: string) {
+  return command<TaskResponse>("logout", { refreshToken });
+}
+
+// push the access token to both runtimes: the web fetch layer and (on desktop) the tauri client.
+export async function setAccessToken(token: string | null) {
+  setHttpAuthToken(token);
+  if (isTauriRuntime()) await command<void>("set_access_token", { token });
+}
+
+export async function listWorkflowGrants(workflowId: string) {
+  return command<JsonRecord[]>("list_workflow_grants", { workflowId });
+}
+
+export async function createWorkflowGrant(
+  workflowId: string,
+  principalType: "user" | "team",
+  principalId: string,
+  permission: "view" | "run" | "edit" | "own"
+) {
+  return command<JsonRecord>("create_workflow_grant", {
+    workflowId,
+    principalType,
+    principalId,
+    permission
+  });
+}
+
+export async function revokeWorkflowGrant(workflowId: string, grantId: string) {
+  return command<any>("revoke_workflow_grant", { workflowId, grantId });
 }
 
 export async function getServiceStatus() {
@@ -420,4 +479,20 @@ export async function approveApproval(approvalId: string) {
 
 export async function rejectApproval(approvalId: string) {
   return command<any>("reject_approval", { approvalId });
+}
+
+export async function fetchGates() {
+  return command<JsonRecord[]>("fetch_resource_records", { endpoint: "gates" });
+}
+
+export async function openGate(gateId: string, reason?: string) {
+  return command<any>("open_gate", { gateId, reason: reason ?? null });
+}
+
+export async function closeGate(gateId: string, reason?: string) {
+  return command<any>("close_gate", { gateId, reason: reason ?? null });
+}
+
+export async function deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {
+  return command<any>("deliver_signal", { workflowRunId, name, payload });
 }

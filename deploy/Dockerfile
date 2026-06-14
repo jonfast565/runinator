@@ -9,7 +9,7 @@
 #   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
 #   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
 #   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
-#   docker build -f deploy/Dockerfile --target migration -t runinator-migration:dev .
+#   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
 #
 # with BuildKit (the default) the builder stage is cached across these target
 # builds, so the expensive compile runs once for the whole set.
@@ -25,7 +25,7 @@ RUN rustup install 1.91.1 && \
         -p runinator-worker \
         -p runinator-waker \
         -p runinator-ctl \
-        -p runinator-migration \
+        -p runinator-bootstrap \
         -p runinator-plugin-console \
         --features runinator-ws/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq
 
@@ -83,9 +83,9 @@ USER runinator
 ENTRYPOINT ["/usr/local/bin/runinatorctl"]
 CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/sdlc.wdlp"]
 
-# ---- migration ----
-FROM runtime-base AS migration
-COPY --from=builder /workspace/target/release/runinator-migration /usr/local/bin/runinator-migration
-RUN chmod 755 /usr/local/bin/runinator-migration
+# ---- bootstrap ----
+FROM runtime-base AS bootstrap
+COPY --from=builder /workspace/target/release/runinator-bootstrap /usr/local/bin/runinator-bootstrap
+RUN chmod 755 /usr/local/bin/runinator-bootstrap
 USER runinator
-ENTRYPOINT ["/usr/local/bin/runinator-migration"]
+ENTRYPOINT ["/usr/local/bin/runinator-bootstrap"]

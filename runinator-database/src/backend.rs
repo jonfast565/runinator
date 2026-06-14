@@ -55,9 +55,9 @@ pub trait SqlBackend: Send + Sync + 'static {
         queries::render(self.dialect(), sql)
     }
 
-    /// run embedded migrations and any extra init scripts.
+    /// run embedded bootstrap work and any extra init scripts.
     ///
-    /// migrations are embedded per backend (the `sqlx::migrate!` macro is dir-specific), so this
-    /// stays backend-owned rather than living in the generic operations blanket impl.
+    /// sql bootstrap files are embedded per backend (the `sqlx::migrate!` macro is dir-specific),
+    /// so this stays backend-owned rather than living in the generic operations blanket impl.
     fn init(&self, paths: &[String]) -> impl Future<Output = Result<(), SendableError>> + Send;
 }

@@ -16,6 +16,9 @@ async fn main() -> commands::Result<()> {
     if !cli.json {
         banner::print();
     }
-    let client = AsyncApiClient::new(StaticLocator::new(cli.api_base_url.clone()))?;
+    let client = AsyncApiClient::with_credentials(
+        StaticLocator::new(cli.api_base_url.clone()),
+        cli.api_key.clone(),
+    )?;
     commands::run(&client, &cli).await
 }

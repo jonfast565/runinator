@@ -4,11 +4,12 @@ resolver = "2"
 members = [
     "runinator-command-center/src-tauri",
     "runinator-models",
+    "runinator-auth",
     "runinator-pack",
     "runinator-lsp",
     "runinator-reducer",
     "runinator-database",
-    "runinator-migration",
+    "runinator-bootstrap",
     "runinator-waker",
     "runinator-ws",
     "runinator-worker",

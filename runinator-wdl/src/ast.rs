@@ -115,6 +115,8 @@ pub enum StmtKind {
     Output(OutputStmt),
     Input(InputStmt),
     Approval(ApprovalStmt),
+    Gate(GateStmt),
+    Signal(SignalStmt),
     Config(ConfigStmt),
     Fail(Option<Expr>),
     If(IfStmt),
@@ -244,6 +246,21 @@ pub struct InputStmt {
 pub struct ApprovalStmt {
     pub approval_type: Option<String>,
     pub prompt: Expr,
+    pub metadata: Vec<(String, Expr)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GateStmt {
+    pub kind: String,
+    pub when: Option<Cond>,
+    pub poll_interval: Option<i64>,
+    pub timeout: Option<i64>,
+    pub metadata: Vec<(String, Expr)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalStmt {
+    pub name: String,
     pub metadata: Vec<(String, Expr)>,
 }
 

@@ -5,7 +5,7 @@ use std::{
 
 use log::info;
 use runinator_broker::Broker;
-use runinator_database::{initialize_database, interfaces::DatabaseImpl};
+use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
@@ -39,9 +39,21 @@ pub async fn run_webserver<T: DatabaseImpl>(
     port: u16,
     broker: Arc<dyn Broker>,
     advertisement: ReplicaAdvertisement,
+    auth: crate::auth::AuthOptions,
 ) -> Result<(), SendableError> {
-    initialize_database(&pool).await?;
     seed_builtin_catalog(pool.as_ref()).await?;
+    let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
+    if auth.enabled {
+        log::info!("HTTP API authentication is ENABLED");
+    } else {
+        log::warn!("HTTP API authentication is DISABLED");
+    }
+    let auth_config = crate::auth::AuthConfig {
+        enabled: auth.enabled,
+        jwt_secret,
+        access_ttl_secs: auth.access_ttl_secs,
+        refresh_ttl_secs: auth.refresh_ttl_secs,
+    };
     let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
     let instance = instance_id();
     let runtime_id = Uuid::new_v4().to_string();
@@ -140,7 +152,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         )),
         tokio::spawn(run_replica_reaper(pool.clone(), notify.clone())),
     ];
-    let app = build_router(pool, bus, broker);
+    let app = build_router(pool, bus, broker, auth_config);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(

@@ -11,7 +11,7 @@ where
     T: serde::de::DeserializeOwned,
 {
     let url = build_state_url(state, path).await?;
-    let response = state.client.get(url.clone()).send().await?;
+    let response = state.client.read().await.get(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<T>().await?)
 }
@@ -20,8 +20,28 @@ pub async fn post_empty(state: &CommandCenterState, path: &str) -> CommandResult
     let url = build_state_url(state, path).await?;
     let response = state
         .client
+        .read()
+        .await
         .post(url.clone())
         .json(&json!({}))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+pub async fn post_json(
+    state: &CommandCenterState,
+    path: &str,
+    body: &Value,
+) -> CommandResult<Value> {
+    let url = build_state_url(state, path).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(body)
         .send()
         .await?;
     let response = handle_response(url, response).await?;

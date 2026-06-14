@@ -19,6 +19,7 @@ patches:
   - path: resources-patch.yaml
   - path: autoscaling-patch.yaml
   - path: aws-creds-patch.yaml
+  - path: claude-creds-patch.yaml
 
 # Default image refs are local dev tags. build.ps1 -DeployKube renders matching
 # tags into a copied overlay under target/k8s-render before applying.
@@ -35,8 +36,8 @@ images:
   - name: runinator-ctl
     newName: runinator-ctl
     newTag: dev
-  - name: runinator-migration
-    newName: runinator-migration
+  - name: runinator-bootstrap
+    newName: runinator-bootstrap
     newTag: dev
   - name: runinator-command-center
     newName: runinator-command-center

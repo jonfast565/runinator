@@ -21,41 +21,6 @@ pub struct ExternalItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExternalResource {
-    pub id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub external_item_id: Option<Uuid>,
-    pub provider: String,
-    pub resource_type: String,
-    pub external_id: String,
-    pub status: String,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeedbackItem {
-    pub id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    pub provider: String,
-    pub resource_type: String,
-    pub external_id: String,
-    pub status: String,
-    pub body: String,
-    #[serde(default)]
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub id: Option<Uuid>,
     pub workflow_run_id: Uuid,
@@ -73,43 +38,35 @@ pub struct ApprovalRequest {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Workspace {
-    pub id: Option<Uuid>,
-    pub workflow_run_id: Uuid,
-    pub provider: String,
-    pub resource_type: String,
-    pub external_id: String,
-    pub status: String,
-    pub path: String,
-    #[serde(default)]
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+/// how a gate is resolved: `manual` (opened/closed from the ui), `condition` (the reducer
+/// auto-evaluates a wdl boolean), or `external` (status set via the api by an outside system).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateKind {
+    Manual,
+    Condition,
+    External,
 }
 
+/// a per-run, per-node gate: a workflow blocks on it until its status reaches `open`/`passed`.
+/// distinct from an `ApprovalRequest` (a human decision) — a gate is an automated/policy check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChangeSet {
+pub struct Gate {
     pub id: Option<Uuid>,
     pub workflow_run_id: Uuid,
-    pub provider: String,
-    pub resource_type: String,
-    pub external_id: String,
+    pub node_id: String,
+    pub kind: GateKind,
     pub status: String,
     #[serde(default)]
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateStatus {
-    pub id: Option<Uuid>,
-    pub workflow_run_id: Uuid,
-    pub provider: String,
-    pub resource_type: String,
-    pub external_id: String,
-    pub status: String,
+    pub label: Option<String>,
+    #[serde(default)]
+    pub condition: Value,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+    #[serde(default)]
+    pub resolved_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub metadata: Value,
     pub created_at: DateTime<Utc>,

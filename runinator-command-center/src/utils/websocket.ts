@@ -1,3 +1,5 @@
+import { httpAuthToken } from "../api/httpRuntime";
+
 export function buildWebSocketUrl(serviceUrl: string, routePath: string) {
   const url = new URL(serviceUrl);
   if (url.protocol === "http:") url.protocol = "ws:";
@@ -11,5 +13,8 @@ export function buildWebSocketUrl(serviceUrl: string, routePath: string) {
   url.pathname = `${basePath}/${route}`.replace(/\/{2,}/g, "/");
   url.search = "";
   url.hash = "";
+  // browsers can't set headers on a WebSocket upgrade, so the access token rides as a query param.
+  const token = httpAuthToken();
+  if (token) url.searchParams.set("token", token);
   return url.toString();
 }

@@ -7,11 +7,8 @@ export type AppTab =
   | "Approvals"
   | "Artifacts"
   | "Notifications"
-  | "Feedback"
   | "Events"
   | "ExternalItems"
-  | "ChangeSets"
-  | "Workspaces"
   | "Gates"
   | "Secrets";
 

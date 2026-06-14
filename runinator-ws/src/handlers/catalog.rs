@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -12,6 +13,7 @@ use crate::responses::{api_error, not_found};
 
 pub(crate) async fn get_catalog_items<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<CatalogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(uri) = query.uri {
@@ -29,8 +31,12 @@ pub(crate) async fn get_catalog_items<T: DatabaseImpl>(
 
 pub(crate) async fn upsert_catalog_item<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Json(item): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_admin(&ctx) {
+        return reply;
+    }
     match repository::upsert_catalog_item(db.as_ref(), item).await {
         Ok(item) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
         Err(err) => api_error(err.to_string()),

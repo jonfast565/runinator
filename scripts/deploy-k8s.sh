@@ -19,7 +19,7 @@
 #   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
 #   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
 #   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
-#   docker build -f deploy/Dockerfile --target migration -t runinator-migration:dev .
+#   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
 
 set -euo pipefail
 

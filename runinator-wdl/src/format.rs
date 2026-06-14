@@ -258,6 +258,8 @@ impl Formatter {
             StmtKind::Output(output) => self.output(output),
             StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
+            StmtKind::Gate(gate) => self.gate(gate),
+            StmtKind::Signal(signal) => self.signal(signal),
             StmtKind::Config(config) => self.config(config),
             StmtKind::Fail(expr) => match expr {
                 Some(expr) => format!("fail {}", format_expr(expr)),
@@ -485,6 +487,37 @@ impl Formatter {
             text.push_str(&format!(
                 " {}",
                 format_object_entries_multiline(&approval.metadata, self.indent)
+            ));
+        }
+        text
+    }
+
+    fn gate(&self, gate: &GateStmt) -> String {
+        let mut text = format!("gate {}", gate.kind);
+        if let Some(when) = &gate.when {
+            text.push_str(&format!(" when {}", format_cond(when)));
+        }
+        if let Some(poll) = gate.poll_interval {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = gate.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        if !gate.metadata.is_empty() {
+            text.push_str(&format!(
+                " {}",
+                format_object_entries_multiline(&gate.metadata, self.indent)
+            ));
+        }
+        text
+    }
+
+    fn signal(&self, signal: &SignalStmt) -> String {
+        let mut text = format!("signal {}", quote(&signal.name));
+        if !signal.metadata.is_empty() {
+            text.push_str(&format!(
+                " {}",
+                format_object_entries_multiline(&signal.metadata, self.indent)
             ));
         }
         text

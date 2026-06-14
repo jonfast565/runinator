@@ -63,4 +63,8 @@ uses `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files during
 import. It also passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a
-restart.
+restart. The local web-service command runs `runinator-bootstrap` first, then
+execs `runinator-ws`; the checked-in config passes
+`RUNINATOR_AUTH_BOOTSTRAP_ADMIN=admin:admin` into that bootstrap step so the
+admin account is seeded into an empty local database on first start without
+enabling auth by default.

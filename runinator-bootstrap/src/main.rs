@@ -2,7 +2,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use log::{error, info};
-use runinator_database::{mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb};
+use runinator_database::{
+    BootstrapOptions, bootstrap_database, mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb,
+};
 use runinator_models::errors::SendableError;
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
@@ -15,11 +17,11 @@ enum Backend {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "runinator-migration",
-    about = "Apply Runinator database migrations and exit."
+    name = "runinator-bootstrap",
+    about = "Apply Runinator database bootstrap and exit."
 )]
 struct Cli {
-    /// Backend to migrate. Also reads RUNINATOR_DATABASE.
+    /// Backend to bootstrap. Also reads RUNINATOR_DATABASE.
     #[arg(long, env = "RUNINATOR_DATABASE", value_enum)]
     database: Backend,
 
@@ -29,6 +31,14 @@ struct Cli {
     /// falls back to DATABASE_URL when not set.
     #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     database_url: Option<String>,
+
+    /// HS256 signing secret to persist for web-service replicas. When unset, bootstrap generates one.
+    #[arg(long, env = "RUNINATOR_AUTH_JWT_SECRET")]
+    auth_jwt_secret: Option<String>,
+
+    /// `username:password` seeded as an admin when the database has no users yet.
+    #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_ADMIN")]
+    auth_bootstrap_admin: Option<String>,
 }
 
 #[tokio::main]
@@ -42,11 +52,11 @@ async fn main() -> ExitCode {
 
     match run().await {
         Ok(()) => {
-            info!("Migrations applied successfully.");
+            info!("Bootstrap completed successfully.");
             ExitCode::SUCCESS
         }
         Err(err) => {
-            error!("Migration failed: {err}");
+            error!("Bootstrap failed: {err}");
             ExitCode::FAILURE
         }
     }
@@ -54,6 +64,10 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), SendableError> {
     let cli = Cli::parse();
+    let bootstrap_options = BootstrapOptions {
+        auth_jwt_secret: cli.auth_jwt_secret.clone(),
+        auth_bootstrap_admin: cli.auth_bootstrap_admin.clone(),
+    };
     let url = cli
         .database_url
         .or_else(|| std::env::var("DATABASE_URL").ok())
@@ -64,18 +78,18 @@ async fn run() -> Result<(), SendableError> {
     match cli.database {
         Backend::Sqlite => {
             info!("Connecting to sqlite at {url}");
-            let db = SqliteDb::new(&url).await?;
-            db.run_migrations().await?;
+            let db = std::sync::Arc::new(SqliteDb::new(&url).await?);
+            bootstrap_database(&db, &bootstrap_options).await?;
         }
         Backend::Postgres => {
             info!("Connecting to postgres");
-            let db = PostgresDb::new(&url).await?;
-            db.run_migrations().await?;
+            let db = std::sync::Arc::new(PostgresDb::new(&url).await?);
+            bootstrap_database(&db, &bootstrap_options).await?;
         }
         Backend::Mysql => {
             info!("Connecting to mysql/mariadb");
-            let db = MySqlDb::new(&url).await?;
-            db.run_migrations().await?;
+            let db = std::sync::Arc::new(MySqlDb::new(&url).await?);
+            bootstrap_database(&db, &bootstrap_options).await?;
         }
     }
     Ok(())

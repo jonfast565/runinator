@@ -101,6 +101,8 @@ stmt_body = {
   | output_stmt
   | input_stmt
   | approval_stmt
+  | gate_stmt
+  | signal_stmt
   | config_stmt
   | fail_stmt
   | subflow_stmt
@@ -159,6 +161,19 @@ input_stmt = { "input" ~ expr? }
 
 approval_stmt = { "approve" ~ expr ~ approval_type? ~ object? }
 approval_type = { "type" ~ string }
+
+// an automated/policy block. `kind` selects the resolver; `when` carries a condition gate's
+// boolean; `every` tunes the poll interval; `timeout` sets the max-wait deadline; the trailing
+// object holds the label and any extra metadata.
+gate_stmt    = { "gate" ~ gate_kind ~ gate_when? ~ gate_every? ~ gate_timeout? ~ object? }
+gate_kind    = { "manual" | "condition" | "external" }
+gate_when    = { "when" ~ cond }
+gate_every   = { "every" ~ duration }
+gate_timeout = { "timeout" ~ duration }
+
+// pause until a named external signal is delivered to the run. the trailing object holds optional
+// metadata; the node timeout (via annotation) bounds the wait.
+signal_stmt  = { "signal" ~ string ~ object? }
 
 config_stmt = { "set" ~ (config_name | config_meta) }
 config_name = { "name" ~ "=" ~ expr }
