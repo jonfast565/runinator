@@ -381,6 +381,40 @@ function Join-HostSubPath {
     return "$cleanRoot/$cleanChild"
 }
 
+function Build-ClaudeKeyRefresh {
+    # macOS-only host helper that mirrors the Claude Code Keychain login into a
+    # file. Built here purely to compile-check it; it is never containerized.
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkspacePath,
+
+        [string]$Configuration = 'release'
+    )
+
+    $toolPath = Join-Path -Path $WorkspacePath -ChildPath 'tools/claude-key-refresh'
+    if (-not (Test-Path -LiteralPath (Join-Path -Path $toolPath -ChildPath 'Package.swift'))) {
+        return
+    }
+
+    $isMac = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+    if (-not $isMac) {
+        Write-Step 'Skipping claude-key-refresh build (macOS-only Keychain helper).'
+        return
+    }
+
+    if (-not (Get-Command -Name 'swift' -ErrorAction SilentlyContinue)) {
+        Write-Warning 'swift toolchain not found on PATH; skipping claude-key-refresh build.'
+        return
+    }
+
+    Write-Step "Building claude-key-refresh (Swift Keychain helper, $Configuration)"
+    try {
+        Invoke-ExternalCommand -FilePath 'swift' -Arguments @('build', '-c', $Configuration) -WorkingDirectory $toolPath
+    } catch {
+        Write-Warning "claude-key-refresh build failed: $_"
+    }
+}
+
 function Publish-Binaries {
     param(
         [Parameter(Mandatory)]
@@ -1348,6 +1382,11 @@ try {
         Write-Step 'Skipping cargo build as requested.'
     } else {
         Write-Step 'Skipping local cargo build; Kubernetes container images build artifacts internally.'
+    }
+
+    # build the macOS-only Keychain helper alongside the workspace (never containerized).
+    if (-not $SkipBuild) {
+        Build-ClaudeKeyRefresh -WorkspacePath $workspacePath
     }
 
     if ($Mode -eq 'Local') {
