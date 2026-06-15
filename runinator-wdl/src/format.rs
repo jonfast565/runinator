@@ -229,24 +229,32 @@ impl Formatter {
     }
 
     fn stmt_with_transitions(&mut self, text: &str, transitions: &TransitionClause) {
-        if let Some(target) = &transitions.next {
-            self.line(&format!("{text} -> {}", format_target(target)));
-            return;
-        }
-
-        self.line(text);
-        self.indent += 1;
+        // gather every outgoing edge into one `edges { … }` section under the statement, matching
+        // the decompiler's canonical shape so formatting never reflows the arrows differently.
+        let mut edges: Vec<(&str, &Target)> = Vec::new();
         for (outcome, target) in [
+            ("next", &transitions.next),
             ("ok", &transitions.on_success),
             ("fail", &transitions.on_failure),
             ("timeout", &transitions.on_timeout),
             ("reject", &transitions.on_reject),
         ] {
             if let Some(target) = target {
-                self.line(&format!("{outcome} -> {}", format_target(target)));
+                edges.push((outcome, target));
             }
         }
+
+        self.line(text);
+        if edges.is_empty() {
+            return;
+        }
+        self.line("edges {");
+        self.indent += 1;
+        for (outcome, target) in edges {
+            self.line(&format!("{outcome} -> {}", format_target(target)));
+        }
         self.indent -= 1;
+        self.line("}");
     }
 
     fn stmt_kind(&mut self, kind: &StmtKind) -> String {

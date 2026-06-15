@@ -629,25 +629,27 @@ impl<'a> Decompiler<'a> {
             _ => None,
         };
 
-        // put each outcome on its own line when there are failure arrows, or in the explicit form
-        // whenever a success arrow is shown; otherwise keep the terse inline `text -> label`.
-        let multiline = !arrows.is_empty() || (self.explicit && success_arrow.is_some());
-        if !multiline {
-            match &success_arrow {
-                Some(label) => self.line(&format!("{prefix}{text} -> {label}")),
-                None => self.line(&format!("{prefix}{text}")),
-            }
-        } else {
-            self.line(&format!("{prefix}{text}"));
+        // gather every rendered outgoing edge into one `edges { … }` section under the statement.
+        // the pure linear successor stays implicit (success_arrow is None), so most nodes emit no
+        // block; only explicit jumps and failure arrows surface a section.
+        let mut edges: Vec<(String, String)> = Vec::new();
+        if let Some(label) = &success_arrow {
+            let kw = if self.explicit { succ_kw } else { "ok" };
+            edges.push((kw.to_string(), label.clone()));
+        }
+        for (outcome, label) in &arrows {
+            edges.push((outcome.clone(), label.clone()));
+        }
+
+        self.line(&format!("{prefix}{text}"));
+        if !edges.is_empty() {
+            self.line("edges {");
             self.indent += 1;
-            if let Some(label) = &success_arrow {
-                let kw = if self.explicit { succ_kw } else { "ok" };
-                self.line(&format!("{kw} -> {label}"));
-            }
-            for (outcome, label) in &arrows {
+            for (outcome, label) in &edges {
                 self.line(&format!("{outcome} -> {label}"));
             }
             self.indent -= 1;
+            self.line("}");
         }
 
         Ok(success)
@@ -685,12 +687,14 @@ impl<'a> Decompiler<'a> {
         out.push_str(&"    ".repeat(base));
         out.push('}');
         if let Some(action) = &node.action {
+            let mut modifiers = Vec::new();
             if self.explicit || action.timeout_seconds != 60 {
-                out.push_str(&format!(".timeout({}s)", action.timeout_seconds));
+                modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
             }
             if self.explicit || node.retry.max_attempts > 1 {
-                out.push_str(&format!(".retry({})", node.retry.max_attempts));
+                modifiers.push(format!(".retry({})", node.retry.max_attempts));
             }
+            out.push_str(&self.modifier_suffix(base, &modifiers));
         }
         Ok(out)
     }
@@ -743,6 +747,61 @@ impl<'a> Decompiler<'a> {
         Ok(())
     }
 
+    // lay out call arguments as a parenthesized list with one argument per line, indented under
+    // `base`. an empty list renders inline as `()`.
+    fn call_args(&self, parts: &[String], base: usize) -> String {
+        if parts.is_empty() {
+            return "()".to_string();
+        }
+        let inner = "    ".repeat(base + 1);
+        let mut out = String::from("(\n");
+        for (index, part) in parts.iter().enumerate() {
+            out.push_str(&inner);
+            out.push_str(part);
+            if index + 1 < parts.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push(')');
+        out
+    }
+
+    // lay out pre-rendered `key: value` / `...alias` parts as a brace object, one per line. used
+    // for the trailing metadata objects (spreads and subflow/approval/gate/signal params).
+    fn parts_object(&self, parts: &[String], base: usize) -> String {
+        if parts.is_empty() {
+            return "{}".to_string();
+        }
+        let inner = "    ".repeat(base + 1);
+        let mut out = String::from("{\n");
+        for (index, part) in parts.iter().enumerate() {
+            out.push_str(&inner);
+            out.push_str(part);
+            if index + 1 < parts.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        out
+    }
+
+    // append modifier calls (`.timeout(…)`, `.retry(…)`, …), each on its own line indented one
+    // level under `base` so the chain reads as a section tied beneath the call.
+    fn modifier_suffix(&self, base: usize, modifiers: &[String]) -> String {
+        let pad = "    ".repeat(base + 1);
+        let mut out = String::new();
+        for modifier in modifiers {
+            out.push('\n');
+            out.push_str(&pad);
+            out.push_str(modifier);
+        }
+        out
+    }
+
     fn action_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
         let action = node
             .action
@@ -754,8 +813,9 @@ impl<'a> Decompiler<'a> {
         // which is equivalent under the same merge.
         // a recorded spread recipe re-emits the authored `...alias` argument list; otherwise the
         // arguments come straight from the flat configuration/parameters.
-        let args = if let Some(segs) = self.spreads.get(&node.id) {
-            self.render_segs(segs)?
+        let base = self.indent;
+        let arg_parts = if let Some(segs) = self.spreads.get(&node.id) {
+            self.render_seg_parts(segs)?
         } else {
             let mut merged = Map::new();
             if let Value::Object(config) = action.configuration.as_value() {
@@ -770,16 +830,22 @@ impl<'a> Decompiler<'a> {
             }
             let mut args = Vec::new();
             for (name, value) in &merged {
-                args.push(format!("{name}: {}", self.expr(value)?));
+                args.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
             }
-            args.join(", ")
+            args
         };
-        let mut text = format!("{}.{}({})", action.provider, action.function, args);
+        let mut text = format!(
+            "{}.{}{}",
+            action.provider,
+            action.function,
+            self.call_args(&arg_parts, base)
+        );
+        let mut modifiers = Vec::new();
         if self.explicit || action.timeout_seconds != 60 {
-            text.push_str(&format!(".timeout({}s)", action.timeout_seconds));
+            modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
         }
         if self.explicit || node.retry.max_attempts > 1 {
-            text.push_str(&format!(".retry({})", node.retry.max_attempts));
+            modifiers.push(format!(".retry({})", node.retry.max_attempts));
         }
         if !action.tags.is_empty() {
             let tags = action
@@ -788,14 +854,15 @@ impl<'a> Decompiler<'a> {
                 .map(|tag| quote(tag))
                 .collect::<Vec<_>>()
                 .join(", ");
-            text.push_str(&format!(".tags({tags})"));
+            modifiers.push(format!(".tags({tags})"));
         }
         if action.mcp_enabled {
-            text.push_str(".mcp()");
+            modifiers.push(".mcp()".to_string());
         }
         if node.reentry.enabled {
-            text.push_str(&format!(".reentry({})", node.reentry.max_visits));
+            modifiers.push(format!(".reentry({})", node.reentry.max_visits));
         }
+        text.push_str(&self.modifier_suffix(base, &modifiers));
         Ok(text)
     }
 
@@ -813,15 +880,17 @@ impl<'a> Decompiler<'a> {
         if let Some(run_name) = &subflow.run_name {
             text.push_str(&format!(" as {}", self.expr(run_name)?));
         }
+        let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
-            text.push_str(&format!(" with {{ {} }}", self.render_segs(segs)?));
+            let parts = self.render_seg_parts(segs)?;
+            text.push_str(&format!(" with {}", self.parts_object(&parts, base)));
         } else if let Value::Object(params) = node.parameters.as_value() {
             if !params.is_empty() {
                 let mut parts = Vec::new();
                 for (name, value) in params {
-                    parts.push(format!("{name}: {}", self.expr(value)?));
+                    parts.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
                 }
-                text.push_str(&format!(" with {{ {} }}", parts.join(", ")));
+                text.push_str(&format!(" with {}", self.parts_object(&parts, base)));
             }
         }
         Ok(text)
@@ -851,7 +920,9 @@ impl<'a> Decompiler<'a> {
         }
         match node.parameters.get("data") {
             None | Some(Value::Null) => text.push_str(" {}"),
-            Some(data @ Value::Object(_)) => text.push_str(&format!(" {}", self.expr(data)?)),
+            Some(data @ Value::Object(_)) => {
+                text.push_str(&format!(" {}", self.expr_multiline(data, self.indent)?))
+            }
             Some(other) => {
                 // scalar/array payloads render as expressions. without a preceding event type a
                 // bare string or concat would be parsed as the event, so wrap it in parens.
@@ -892,18 +963,18 @@ impl<'a> Decompiler<'a> {
         if self.explicit || kind != "generic" {
             text.push_str(&format!(" type {}", quote(kind)));
         }
+        let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
-            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+            let parts = self.render_seg_parts(segs)?;
+            text.push_str(&format!(" {}", self.parts_object(&parts, base)));
         } else if let Value::Object(params) = node.parameters.as_value() {
-            let mut parts = Vec::new();
-            for (name, value) in params {
-                if name == "prompt" || name == "approval_type" {
-                    continue;
-                }
-                parts.push(format!("{name}: {}", self.expr(value)?));
-            }
-            if !parts.is_empty() {
-                text.push_str(&format!(" {{ {} }}", parts.join(", ")));
+            let entries: Vec<(&str, &Value)> = params
+                .iter()
+                .filter(|(name, _)| name.as_str() != "prompt" && name.as_str() != "approval_type")
+                .map(|(name, value)| (name.as_str(), value))
+                .collect();
+            if !entries.is_empty() {
+                text.push_str(&format!(" {}", self.entries_object(&entries, base)?));
             }
         }
         Ok(text)
@@ -926,18 +997,20 @@ impl<'a> Decompiler<'a> {
             text.push_str(&format!(" timeout {timeout}s"));
         }
         // remaining params (label + extras) render as the trailing metadata object.
+        let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
-            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+            let parts = self.render_seg_parts(segs)?;
+            text.push_str(&format!(" {}", self.parts_object(&parts, base)));
         } else if let Value::Object(params) = node.parameters.as_value() {
-            let mut parts = Vec::new();
-            for (name, value) in params {
-                if matches!(name.as_str(), "kind" | "when" | "poll_interval" | "timeout") {
-                    continue;
-                }
-                parts.push(format!("{name}: {}", self.expr(value)?));
-            }
-            if !parts.is_empty() {
-                text.push_str(&format!(" {{ {} }}", parts.join(", ")));
+            let entries: Vec<(&str, &Value)> = params
+                .iter()
+                .filter(|(name, _)| {
+                    !matches!(name.as_str(), "kind" | "when" | "poll_interval" | "timeout")
+                })
+                .map(|(name, value)| (name.as_str(), value))
+                .collect();
+            if !entries.is_empty() {
+                text.push_str(&format!(" {}", self.entries_object(&entries, base)?));
             }
         }
         Ok(text)
@@ -951,18 +1024,18 @@ impl<'a> Decompiler<'a> {
             .unwrap_or_default();
         let mut text = format!("signal {}", quote(name));
         // remaining params render as the trailing metadata object.
+        let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
-            text.push_str(&format!(" {{ {} }}", self.render_segs(segs)?));
+            let parts = self.render_seg_parts(segs)?;
+            text.push_str(&format!(" {}", self.parts_object(&parts, base)));
         } else if let Value::Object(params) = node.parameters.as_value() {
-            let mut parts = Vec::new();
-            for (key, value) in params {
-                if key == "name" {
-                    continue;
-                }
-                parts.push(format!("{key}: {}", self.expr(value)?));
-            }
-            if !parts.is_empty() {
-                text.push_str(&format!(" {{ {} }}", parts.join(", ")));
+            let entries: Vec<(&str, &Value)> = params
+                .iter()
+                .filter(|(key, _)| key.as_str() != "name")
+                .map(|(key, value)| (key.as_str(), value))
+                .collect();
+            if !entries.is_empty() {
+                text.push_str(&format!(" {}", self.entries_object(&entries, base)?));
             }
         }
         Ok(text)
@@ -973,7 +1046,10 @@ impl<'a> Decompiler<'a> {
             return Ok(format!("set name = {}", self.expr(name)?));
         }
         if let Some(metadata) = node.parameters.get("metadata") {
-            return Ok(format!("set meta {}", self.expr(metadata)?));
+            return Ok(format!(
+                "set meta {}",
+                self.expr_multiline(metadata, self.indent)?
+            ));
         }
         Ok("set meta {}".to_string())
     }

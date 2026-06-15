@@ -1221,36 +1221,47 @@ fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, WdlError> {
                 let target = parse_target(first_inner(inner)?)?;
                 clause.next = Some(target);
             }
-            Rule::outcome_arrow => {
-                let arrow_span = span_of(&inner);
-                let mut outcome = String::new();
-                let mut target = None;
-                for part in inner.into_inner() {
-                    match part.as_rule() {
-                        Rule::outcome => outcome = part.as_str().to_string(),
-                        Rule::target => target = Some(parse_target(part)?),
-                        _ => {}
-                    }
-                }
-                let target = target.ok_or_else(|| WdlError::lower("arrow missing target"))?;
-                match outcome.as_str() {
-                    "next" => clause.next = Some(target),
-                    "ok" => clause.on_success = Some(target),
-                    "fail" => clause.on_failure = Some(target),
-                    "timeout" => clause.on_timeout = Some(target),
-                    "reject" => clause.on_reject = Some(target),
-                    other => {
-                        return Err(WdlError::syntax(
-                            arrow_span,
-                            format!("unknown outcome '{other}'"),
-                        ));
+            // an `edges { … }` block is just a delimited group of outcome arrows.
+            Rule::edges_block => {
+                for arrow in inner.into_inner() {
+                    if arrow.as_rule() == Rule::outcome_arrow {
+                        apply_outcome_arrow(&mut clause, arrow)?;
                     }
                 }
             }
+            Rule::outcome_arrow => apply_outcome_arrow(&mut clause, inner)?,
             _ => {}
         }
     }
     Ok(clause)
+}
+
+fn apply_outcome_arrow(clause: &mut TransitionClause, pair: Pair<Rule>) -> Result<(), WdlError> {
+    let arrow_span = span_of(&pair);
+    let mut outcome = String::new();
+    let mut target = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::outcome => outcome = part.as_str().to_string(),
+            Rule::target => target = Some(parse_target(part)?),
+            _ => {}
+        }
+    }
+    let target = target.ok_or_else(|| WdlError::lower("arrow missing target"))?;
+    match outcome.as_str() {
+        "next" => clause.next = Some(target),
+        "ok" => clause.on_success = Some(target),
+        "fail" => clause.on_failure = Some(target),
+        "timeout" => clause.on_timeout = Some(target),
+        "reject" => clause.on_reject = Some(target),
+        other => {
+            return Err(WdlError::syntax(
+                arrow_span,
+                format!("unknown outcome '{other}'"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_target(pair: Pair<Rule>) -> Result<Target, WdlError> {

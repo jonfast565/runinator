@@ -221,7 +221,10 @@ block = { "{" ~ stmt* ~ "}" }
 
 // transitions --------------------------------------------------------------
 
-transitions   = { outcome_arrow+ | single_arrow }
+transitions   = { edges_block | outcome_arrow+ | single_arrow }
+// the canonical emitted form: every outgoing edge gathered into one delimited section under the
+// node statement. the bare arrow forms remain accepted for terse hand-written source.
+edges_block   = { "edges" ~ "{" ~ outcome_arrow+ ~ "}" }
 single_arrow  = { "->" ~ target }
 outcome_arrow = { outcome ~ "->" ~ target }
 // `next` names the happy-path edge for next-based leaves (wait/output/config) and control blocks,

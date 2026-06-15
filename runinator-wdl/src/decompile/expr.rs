@@ -23,82 +23,10 @@ impl Decompiler<'_> {
                 Ok(format!("[{}]", parts.join(", ")))
             }
             Value::Object(map) => {
-                // a library call carries two keys ($call + args), so handle it before the
-                // single-key forms.
-                if let Some(name) = map.get("$call").and_then(Value::as_str) {
-                    let args = map
-                        .get("args")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    // re-sugar an `at(base, key)` into `base.key` / `base[index]` access syntax.
-                    if name == "at"
-                        && args.len() == 2
-                        && let Some(text) = self.access(&args[0], &args[1])?
-                    {
-                        return Ok(text);
-                    }
-                    let rendered = args
-                        .iter()
-                        .map(|arg| self.expr(arg))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    return Ok(format!("{name}({})", rendered.join(", ")));
+                if let Some(special) = self.special_form(map)? {
+                    return Ok(special);
                 }
-                if map.len() == 1 {
-                    if let Some(spec) = map.get("$lambda").and_then(Value::as_object) {
-                        let params = spec
-                            .get("params")
-                            .and_then(Value::as_array)
-                            .map(|items| {
-                                items
-                                    .iter()
-                                    .filter_map(Value::as_str)
-                                    .map(str::to_string)
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default();
-                        let body = spec
-                            .get("body")
-                            .ok_or_else(|| WdlError::Decompile("$lambda missing body".into()))?;
-                        // a single param renders bare (`x => …`); zero or many parenthesize.
-                        let head = if params.len() == 1 {
-                            params[0].clone()
-                        } else {
-                            format!("({})", params.join(", "))
-                        };
-                        return Ok(format!("{head} => {}", self.expr(body)?));
-                    }
-                    if let Some(reference) = map.get("$ref") {
-                        return self.reference(reference);
-                    }
-                    if let Some(items) = map.get("$concat").and_then(Value::as_array) {
-                        return self.join_binary(items, " ++ ");
-                    }
-                    if let Some(items) = map.get("$coalesce").and_then(Value::as_array) {
-                        return self.join_binary(items, " ?? ");
-                    }
-                    if let Some(inner) = map.get("$to_string") {
-                        return Ok(format!("string({})", self.expr(inner)?));
-                    }
-                    if let Some(inner) = map.get("$to_json_string") {
-                        return Ok(format!("json({})", self.expr(inner)?));
-                    }
-                    if let Some(inner) = map.get("$neg") {
-                        return Ok(format!("-{}", self.arith_operand(inner, ARITH_UNARY)?));
-                    }
-                    for (key, op, prec) in [
-                        ("$add", " + ", ARITH_SUM),
-                        ("$sub", " - ", ARITH_SUM),
-                        ("$mul", " * ", ARITH_PRODUCT),
-                        ("$div", " / ", ARITH_PRODUCT),
-                        ("$mod", " % ", ARITH_PRODUCT),
-                    ] {
-                        if let Some(items) = map.get(key).and_then(Value::as_array) {
-                            return self.arith(items, op, prec);
-                        }
-                    }
-                }
-                // plain object literal.
+                // plain object literal, single line.
                 let mut parts = Vec::new();
                 for (key, value) in map {
                     parts.push(format!("{}: {}", key, self.expr(value)?));
@@ -108,9 +36,162 @@ impl Decompiler<'_> {
         }
     }
 
+    /// like `expr`, but plain object/array literals break onto one entry per line, indented under
+    /// `base`. special forms (refs, calls, operators) render inline via `expr`. this is the
+    /// canonical emitted shape for statement-level values.
+    pub(super) fn expr_multiline(&self, value: &Value, base: usize) -> Result<String, WdlError> {
+        match value {
+            Value::Object(map) => {
+                if let Some(special) = self.special_form(map)? {
+                    return Ok(special);
+                }
+                self.object_multiline(map, base)
+            }
+            Value::Array(items) if !items.is_empty() => {
+                let parts = items
+                    .iter()
+                    .map(|item| self.expr_multiline(item, base))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("[{}]", parts.join(", ")))
+            }
+            _ => self.expr(value),
+        }
+    }
+
+    fn object_multiline(
+        &self,
+        map: &runinator_models::value::Map,
+        base: usize,
+    ) -> Result<String, WdlError> {
+        let entries: Vec<(&str, &Value)> = map
+            .iter()
+            .map(|(key, value)| (key.as_str(), value))
+            .collect();
+        self.entries_object(&entries, base)
+    }
+
+    /// render `key: value` entries as a brace object with one entry per line, indented under
+    /// `base`. shared by object literals and the statement-level metadata objects so they all
+    /// break their fields onto separate lines. an empty entry list renders inline as `{}`.
+    pub(super) fn entries_object(
+        &self,
+        entries: &[(&str, &Value)],
+        base: usize,
+    ) -> Result<String, WdlError> {
+        if entries.is_empty() {
+            return Ok("{}".to_string());
+        }
+        let inner = "    ".repeat(base + 1);
+        let mut out = String::from("{\n");
+        for (index, (key, value)) in entries.iter().enumerate() {
+            out.push_str(&inner);
+            out.push_str(&format!(
+                "{}: {}",
+                key,
+                self.expr_multiline(value, base + 1)?
+            ));
+            if index + 1 < entries.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        Ok(out)
+    }
+
+    /// recognize a lowered special form (call/lambda/ref/operator/coercion) and render it inline,
+    /// or `None` for a plain object literal the caller renders as an object.
+    fn special_form(&self, map: &runinator_models::value::Map) -> Result<Option<String>, WdlError> {
+        // a library call carries two keys ($call + args), so handle it before the single-key forms.
+        if let Some(name) = map.get("$call").and_then(Value::as_str) {
+            let args = map
+                .get("args")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            // re-sugar an `at(base, key)` into `base.key` / `base[index]` access syntax.
+            if name == "at"
+                && args.len() == 2
+                && let Some(text) = self.access(&args[0], &args[1])?
+            {
+                return Ok(Some(text));
+            }
+            let rendered = args
+                .iter()
+                .map(|arg| self.expr(arg))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Some(format!("{name}({})", rendered.join(", "))));
+        }
+        if map.len() == 1 {
+            if let Some(spec) = map.get("$lambda").and_then(Value::as_object) {
+                let params = spec
+                    .get("params")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let body = spec
+                    .get("body")
+                    .ok_or_else(|| WdlError::Decompile("$lambda missing body".into()))?;
+                // a single param renders bare (`x => …`); zero or many parenthesize.
+                let head = if params.len() == 1 {
+                    params[0].clone()
+                } else {
+                    format!("({})", params.join(", "))
+                };
+                return Ok(Some(format!("{head} => {}", self.expr(body)?)));
+            }
+            if let Some(reference) = map.get("$ref") {
+                return Ok(Some(self.reference(reference)?));
+            }
+            if let Some(items) = map.get("$concat").and_then(Value::as_array) {
+                return Ok(Some(self.join_binary(items, " ++ ")?));
+            }
+            if let Some(items) = map.get("$coalesce").and_then(Value::as_array) {
+                return Ok(Some(self.join_binary(items, " ?? ")?));
+            }
+            if let Some(inner) = map.get("$to_string") {
+                return Ok(Some(format!("string({})", self.expr(inner)?)));
+            }
+            if let Some(inner) = map.get("$to_json_string") {
+                return Ok(Some(format!("json({})", self.expr(inner)?)));
+            }
+            if let Some(inner) = map.get("$neg") {
+                return Ok(Some(format!(
+                    "-{}",
+                    self.arith_operand(inner, ARITH_UNARY)?
+                )));
+            }
+            for (key, op, prec) in [
+                ("$add", " + ", ARITH_SUM),
+                ("$sub", " - ", ARITH_SUM),
+                ("$mul", " * ", ARITH_PRODUCT),
+                ("$div", " / ", ARITH_PRODUCT),
+                ("$mod", " % ", ARITH_PRODUCT),
+            ] {
+                if let Some(items) = map.get(key).and_then(Value::as_array) {
+                    return Ok(Some(self.arith(items, op, prec)?));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// render `...alias` spread recipe segments (recovered from the metadata sidecar) as a
     /// comma-separated argument/object body: `...alias` for a spread, `key: value` otherwise.
     pub(super) fn render_segs(&self, segs: &[Value]) -> Result<String, WdlError> {
+        Ok(self.render_seg_parts(segs)?.join(", "))
+    }
+
+    /// the individual `...alias` / `key: value` segments of a spread recipe, for callers that lay
+    /// them out one per line.
+    pub(super) fn render_seg_parts(&self, segs: &[Value]) -> Result<Vec<String>, WdlError> {
         let mut parts = Vec::with_capacity(segs.len());
         for seg in segs {
             if let Some(name) = seg.get("spread").and_then(Value::as_str) {
@@ -126,7 +207,7 @@ impl Decompiler<'_> {
                 .ok_or_else(|| WdlError::Decompile("spread recipe segment missing value".into()))?;
             parts.push(format!("{key}: {}", self.render_recipe_value(value)?));
         }
-        Ok(parts.join(", "))
+        Ok(parts)
     }
 
     // render a recipe value: a `plain` value goes through the normal expr path; `object`/`array`

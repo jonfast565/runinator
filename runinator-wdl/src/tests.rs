@@ -126,6 +126,15 @@ fn expect_semantic_error(src: &str) -> String {
     }
 }
 
+/// whether `first` and `second` both appear in `text` with `first` preceding `second`. used by
+/// layout-tolerant assertions now that arguments lay out one per line.
+fn ordered(text: &str, first: &str, second: &str) -> bool {
+    match (text.find(first), text.find(second)) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    }
+}
+
 /// compile -> decompile -> compile and assert the normalized graphs match.
 fn assert_round_trips(src: &str) {
     let first = compile(src);
@@ -509,8 +518,10 @@ jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.
         .retry(2)
         .tags("ci", "fmt")
         .mcp()
+    edges {
         fail -> cleanup
         timeout -> fail
+    }
     if params.enabled == true && exists first.output {
         output "ready" {
             value: first.output
@@ -3097,7 +3108,8 @@ fn resugars_subflow_with_spread() {
         "#,
     );
     assert!(wdl.contains("alias conn = {"), "{wdl}");
-    assert!(wdl.contains("with { ...conn"), "{wdl}");
+    assert!(wdl.contains("with {"), "{wdl}");
+    assert!(wdl.contains("...conn"), "{wdl}");
 }
 
 #[test]
@@ -3156,8 +3168,9 @@ fn resugars_override_keeping_authored_order() {
         }
         "#,
     );
+    // arguments now lay out one per line; the override still follows the spread in source order.
     assert!(
-        first.contains(r#"...conn, base_url: "explicit""#),
+        ordered(&first, "...conn", r#"base_url: "explicit""#),
         "{first}"
     );
 
@@ -3170,7 +3183,7 @@ fn resugars_override_keeping_authored_order() {
         }
         "#,
     );
-    assert!(second.contains(r#"x: "from-arg", ...conn"#), "{second}");
+    assert!(ordered(&second, r#"x: "from-arg""#, "...conn"), "{second}");
 }
 
 // parameter defaults --------------------------------------------------------
