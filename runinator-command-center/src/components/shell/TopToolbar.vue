@@ -27,6 +27,7 @@
         <Icon name="play" />
         <span>Run Workflow</span>
       </button>
+      <UserMenu v-if="auth.user" />
     </div>
   </header>
 </template>
@@ -35,7 +36,9 @@
 import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
+import UserMenu from "./UserMenu.vue";
 import { navItemForTab, useAppStore } from "../../stores/app";
+import { useAuthStore } from "../../stores/auth";
 import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";
@@ -44,6 +47,7 @@ import type { AppTab } from "../../types/app";
 defineEmits<{ refresh: [] }>();
 
 const app = useAppStore();
+const auth = useAuthStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();

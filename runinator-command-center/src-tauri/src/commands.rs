@@ -8,7 +8,7 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowTrigger,
+        WorkflowRun, WorkflowRunDeliverable, WorkflowTrigger,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -445,6 +445,18 @@ pub async fn fetch_workflow_node_run_artifacts(
     get_json(
         &state,
         &format!("workflow_node_runs/{node_run_id}/artifacts"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_run_deliverables(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<WorkflowRunDeliverable>> {
+    get_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/deliverables"),
     )
     .await
 }

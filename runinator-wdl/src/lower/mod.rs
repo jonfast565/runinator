@@ -179,6 +179,7 @@ pub fn lower_document(
     Ok(WorkflowDefinition {
         id: None,
         name: workflow.name.clone(),
+        namespace: workflow.namespace.clone(),
         version: workflow.version.unwrap_or(options.default_version),
         enabled: options.enabled,
         input_type,
@@ -423,6 +424,7 @@ impl Lowerer {
             StmtKind::Subflow(_) => "subflow",
             StmtKind::Wait(_) => "wait",
             StmtKind::Output(_) => "output",
+            StmtKind::Deliverable(_) => "deliverable",
             StmtKind::Input(_) => "input",
             StmtKind::Approval(_) => "approval",
             StmtKind::Gate(_) => "gate",
@@ -448,6 +450,9 @@ impl Lowerer {
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
+            StmtKind::Deliverable(deliverable) => {
+                self.lower_deliverable(deliverable, stmt, id, next)
+            }
             StmtKind::Input(input) => self.lower_input(input, stmt, id, next),
             StmtKind::Approval(approval) => self.lower_approval(approval, stmt, id, next),
             StmtKind::Gate(gate) => self.lower_gate(gate, stmt, id, next),
@@ -535,7 +540,7 @@ impl Lowerer {
             ("action", Value::Object(action_obj)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_modifier_fields(&mut fields, &action.modifiers);
@@ -584,7 +589,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -615,7 +620,7 @@ impl Lowerer {
             ("wait", Value::Object(wait_obj)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "next", next),
+                self.leaf_transitions(&stmt.transitions, "next", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -643,11 +648,39 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "next", next),
+                self.leaf_transitions(&stmt.transitions, "next", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "output", fields));
+        Ok(())
+    }
+
+    fn lower_deliverable(
+        &mut self,
+        deliverable: &DeliverableStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut items = Vec::with_capacity(deliverable.items.len());
+        for (name, source) in &deliverable.items {
+            let mut entry = Map::new();
+            entry.insert("name".into(), Value::String(name.clone()));
+            entry.insert("source".into(), self.lower_expr(source)?);
+            items.push(Value::Object(entry));
+        }
+        let mut params = Map::new();
+        params.insert("items".into(), Value::Array(items));
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "next", next)?,
+            ),
+        ];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "deliverable", fields));
         Ok(())
     }
 
@@ -666,7 +699,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "next", next),
+                self.leaf_transitions(&stmt.transitions, "next", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -701,7 +734,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -736,7 +769,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -762,7 +795,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -788,7 +821,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "next", next),
+                self.leaf_transitions(&stmt.transitions, "next", next)?,
             ),
         ];
         self.apply_annotations(&mut fields, stmt);
@@ -850,7 +883,12 @@ impl Lowerer {
 
     /// build a transitions object for a leaf step. the happy path uses `primary`
     /// (on_success for actions, next for control-ish leaves) and falls back to `cont`.
-    fn leaf_transitions(&self, clause: &TransitionClause, primary: &str, cont: &str) -> Value {
+    fn leaf_transitions(
+        &self,
+        clause: &TransitionClause,
+        primary: &str,
+        cont: &str,
+    ) -> Result<Value, WdlError> {
         let mut map = Map::new();
         let success = clause.next.as_ref().or(clause.on_success.as_ref());
         let success_id = match success {
@@ -867,7 +905,20 @@ impl Lowerer {
         if let Some(target) = &clause.on_reject {
             map.insert("on_reject".into(), node_ref(&self.target_id(target)));
         }
-        Value::Object(map)
+        if !clause.branches.is_empty() {
+            let mut branches = Vec::with_capacity(clause.branches.len());
+            for edge in &clause.branches {
+                let mut branch = Map::new();
+                branch.insert("when".into(), self.lower_cond(&edge.when)?);
+                branch.insert("target".into(), node_ref(&self.target_id(&edge.target)));
+                if let Some(priority) = edge.priority {
+                    branch.insert("priority".into(), Value::from(priority));
+                }
+                branches.push(Value::Object(branch));
+            }
+            map.insert("branches".into(), Value::Array(branches));
+        }
+        Ok(Value::Object(map))
     }
 
     /// the continuation a control block flows into: an explicit forward arrow overrides

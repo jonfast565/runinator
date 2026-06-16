@@ -86,6 +86,9 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
         if path.head == "config" || path.head == "secret" {
             return complete_setting_path(&request.settings, path);
         }
+        if path.head == "std" {
+            return complete_std_path(path);
+        }
         if let Some(response) = complete_path(path, &context) {
             return response;
         }
@@ -294,6 +297,50 @@ fn typed_placeholder(ty: &RuninatorType) -> (&'static str, &'static str, &'stati
         RuninatorType::Array(_) => ("[", "", "]"),
         RuninatorType::Map(_) | RuninatorType::Struct { .. } => ("{", "", "}"),
         _ => ("", "", ""),
+    }
+}
+
+// complete the builtin standard library: `std.` suggests modules, `std.<module>.` suggests the
+// module's function leaves. driven by the shared module map so it never drifts from the runtime.
+fn complete_std_path(path: PathContext) -> WdlCompletionResponse {
+    let mut items = Vec::new();
+    match path.completed.as_slice() {
+        [] => {
+            for module in runinator_workflows::STD_MODULES {
+                items.push(WdlCompletionItem {
+                    label: (*module).into(),
+                    kind: "module".into(),
+                    detail: Some("std module".into()),
+                    documentation: None,
+                    insert_text: (*module).into(),
+                    is_snippet: false,
+                });
+            }
+        }
+        [module] => {
+            for leaf in runinator_workflows::PureIntrinsics::names()
+                .iter()
+                .chain(runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.iter())
+                .chain(runinator_workflows::HIGHER_ORDER_NAMES.iter())
+                .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(module.as_str()))
+            {
+                items.push(WdlCompletionItem {
+                    label: (*leaf).into(),
+                    kind: "function".into(),
+                    detail: Some(format!("std.{module}.{leaf}")),
+                    documentation: None,
+                    insert_text: (*leaf).into(),
+                    is_snippet: false,
+                });
+            }
+        }
+        _ => {}
+    }
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    WdlCompletionResponse {
+        replace_start_byte: path.replace_start,
+        replace_end_byte: path.replace_end,
+        items,
     }
 }
 

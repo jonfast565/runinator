@@ -115,6 +115,18 @@ pub(crate) async fn create_gate<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/gates/{id}/open",
+    tag = "Automation",
+    params(("id" = Uuid, Path, description = "Gate identifier.")),
+    request_body = crate::models::GateResolutionRequest,
+    responses(
+        (status = 200, description = "gate opened", body = serde_json::Value),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+        (status = 404, description = "gate was not found", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn open_gate<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -140,6 +152,18 @@ pub(crate) async fn open_gate<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/gates/{id}/close",
+    tag = "Automation",
+    params(("id" = Uuid, Path, description = "Gate identifier.")),
+    request_body = crate::models::GateResolutionRequest,
+    responses(
+        (status = 200, description = "gate closed", body = serde_json::Value),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+        (status = 404, description = "gate was not found", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn close_gate<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,

@@ -886,16 +886,34 @@ pub(crate) fn resolve_value_ref(
     reference: &WorkflowValueRef,
     context: &Value,
 ) -> Result<Value, WorkflowValidationError> {
+    // a node ref resolves into the node's `output_json` first; if that path misses, it falls back
+    // to the step root so siblings of `output` (notably `artifacts`) are reachable via the same
+    // `node.field` surface. providers that put a real key in `output` always win the lookup.
+    if let WorkflowRefSource::NodeOutput(node) = &reference.source {
+        let step = context
+            .get(REF_STEPS)
+            .and_then(|steps| steps.get(node.as_str()))
+            .ok_or_else(|| {
+                WorkflowValidationError::InvalidValueRef(serialize_value_ref(reference).to_string())
+            })?;
+        let from_output = step
+            .get(REF_OUTPUT)
+            .and_then(|output| resolve_path(output, &reference.path));
+        let resolved = match from_output {
+            Some(value) => value.clone(),
+            None => resolve_path(step, &reference.path)
+                .cloned()
+                .unwrap_or(Value::Null),
+        };
+        return Ok(resolved);
+    }
     let base = match &reference.source {
         WorkflowRefSource::Input => context.get(REF_INPUT),
         WorkflowRefSource::Prev => context.get(REF_PREV),
         WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
         WorkflowRefSource::Config => context.get(REF_CONFIG),
         WorkflowRefSource::Local => context.get(REF_LOCAL),
-        WorkflowRefSource::NodeOutput(node) => context
-            .get(REF_STEPS)
-            .and_then(|steps| steps.get(node.as_str()))
-            .and_then(|step| step.get(REF_OUTPUT)),
+        WorkflowRefSource::NodeOutput(_) => unreachable!("handled above"),
     }
     .ok_or_else(|| {
         WorkflowValidationError::InvalidValueRef(serialize_value_ref(reference).to_string())

@@ -694,6 +694,61 @@ pub fn is_known_intrinsic(name: &str) -> bool {
         || is_higher_order(name)
 }
 
+/// the reserved root namespace for the builtin standard library.
+pub const STD_NAMESPACE: &str = "std";
+
+/// the std module names, in stable order, used for completion and decompile grouping.
+pub const STD_MODULES: &[&str] = &[
+    "math",
+    "strings",
+    "collections",
+    "objects",
+    "encoding",
+    "logic",
+    "dates",
+    "regex",
+    "exec",
+];
+
+/// the std module an intrinsic leaf belongs to (the single segment between `std` and the leaf).
+/// single source of truth for surface qualification, sema validation, and decompile rendering; the
+/// runtime dispatch (`call_pure` and the worker std provider) still keys on the bare leaf.
+pub fn intrinsic_module(leaf: &str) -> Option<&'static str> {
+    let module = match leaf {
+        "add" | "sub" | "mul" | "div" | "mod" | "floor" | "ceil" | "round" | "min" | "max"
+        | "parse_int" | "parse_float" => "math",
+        "lower" | "upper" | "trim" | "split" | "join" | "replace" | "substring" | "starts_with"
+        | "ends_with" => "strings",
+        "len" | "keys" | "values" | "contains" | "at" | "has" | "sum" | "sort" | "reverse"
+        | "unique" | "flatten" | "slice" | "first" | "last" | "append" | "range" | "map"
+        | "filter" | "find" | "any" | "all" | "reduce" | "sort_by" | "flat_map" => "collections",
+        "merge" | "pick" | "omit" | "entries" | "from_entries" => "objects",
+        "parse_json" | "base64_encode" | "base64_decode" => "encoding",
+        "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "not" | "and" | "or" | "default" => "logic",
+        "format_date" | "parse_date" | "add_duration" | "date_diff" => "dates",
+        "regex_match" | "regex_replace" | "regex_extract" => "regex",
+        "http_get" | "http_post" | "now" | "uuid" | "env" => "exec",
+        _ => return None,
+    };
+    Some(module)
+}
+
+/// the fully-qualified surface name of an intrinsic leaf, e.g. `add` -> `std.math.add`.
+pub fn qualified_intrinsic_name(leaf: &str) -> Option<String> {
+    intrinsic_module(leaf).map(|module| format!("{STD_NAMESPACE}.{module}.{leaf}"))
+}
+
+/// resolve a fully-qualified std path (`std.<module>.<leaf>`) to its bare leaf, validating that the
+/// module segment is the one the leaf actually lives in. `Err(Some(module))` names the leaf's real
+/// module on a mismatch; `Err(None)` means the leaf is not a std intrinsic at all.
+pub fn resolve_std_path(module: &str, leaf: &str) -> Result<&'static str, Option<&'static str>> {
+    match intrinsic_module(leaf) {
+        Some(actual) if actual == module => Ok(actual),
+        Some(actual) => Err(Some(actual)),
+        None => Err(None),
+    }
+}
+
 /// the accepted argument count range `(min, max)` for an intrinsic, or `None` if unknown. used by
 /// sema to flag obvious arity mistakes (a typo'd name returns `None` and is rejected separately).
 pub fn intrinsic_arity(name: &str) -> Option<(usize, usize)> {

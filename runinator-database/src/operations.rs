@@ -22,8 +22,8 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     workflows::{
-        WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        NewWorkflowRunDeliverable, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
     },
 };
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
@@ -279,30 +279,37 @@ where
         workflow: &WorkflowDefinition,
     ) -> Result<WorkflowDefinition, SendableError> {
         let now = Utc::now().timestamp();
-        // resolve an existing row by explicit id or by unique name, else mint a fresh uuid.
-        let existing_id =
-            match workflow.id {
-                Some(id) => Some(id),
-                None => sqlx::query(&self.render(
-                    "SELECT id FROM workflows WHERE name = ? ORDER BY created_at, id LIMIT 1",
-                ))
-                .bind(workflow.name.as_str())
-                .fetch_optional(self.pool())
-                .await?
-                .map(|row| row.get::<Uuid, _>("id")),
-            };
+        // resolve an existing row by explicit id or by its (namespace, name) identity, else mint a
+        // fresh uuid. the namespace branch keeps same-named workflows in different namespaces apart.
+        let existing_id = match workflow.id {
+            Some(id) => Some(id),
+            None => {
+                let sql = self.render(match &workflow.namespace {
+                    Some(_) => "SELECT id FROM workflows WHERE name = ? AND namespace = ? ORDER BY created_at, id LIMIT 1",
+                    None => "SELECT id FROM workflows WHERE name = ? AND namespace IS NULL ORDER BY created_at, id LIMIT 1",
+                });
+                let mut query = sqlx::query(&sql).bind(workflow.name.as_str());
+                if workflow.namespace.is_some() {
+                    query = query.bind(workflow.namespace.clone());
+                }
+                query
+                    .fetch_optional(self.pool())
+                    .await?
+                    .map(|row| row.get::<Uuid, _>("id"))
+            }
+        };
         let workflow_id = existing_id.unwrap_or_else(Uuid::new_v4);
 
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
         // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
-            let columns =
-                "id, name, version, enabled, input_schema, definition, created_at, updated_at";
+            let columns = "id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at";
             let conflict = queries::on_conflict_update(
                 SqlDialect::MySql,
                 "id",
                 &[
                     "name",
+                    "namespace",
                     "version",
                     "enabled",
                     "input_schema",
@@ -312,11 +319,12 @@ where
             );
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
-                "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+                "INSERT INTO workflows (id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
             .bind(workflow_id)
             .bind(workflow.name.as_str())
+            .bind(workflow.namespace.clone())
             .bind(workflow.version.to_string())
             .bind(workflow.enabled)
             .bind(serde_json::to_string(&workflow.input_type)?)
@@ -334,13 +342,14 @@ where
         }
 
         let row = sqlx::query(&self.render(
-            "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET name = excluded.name, version = excluded.version, enabled = excluded.enabled, input_schema = excluded.input_schema, definition = excluded.definition, updated_at = excluded.updated_at
-             RETURNING id, name, version, enabled, input_schema, definition, created_at, updated_at",
+            "INSERT INTO workflows (id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, namespace = excluded.namespace, version = excluded.version, enabled = excluded.enabled, input_schema = excluded.input_schema, definition = excluded.definition, updated_at = excluded.updated_at
+             RETURNING id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at",
         ))
         .bind(workflow_id)
         .bind(workflow.name.as_str())
+        .bind(workflow.namespace.clone())
         .bind(workflow.version.to_string())
         .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.input_type)?)
@@ -360,17 +369,17 @@ where
         // by name, so duplicating a workflow yields a sibling version sharing the same name.
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();
-        let columns =
-            "id, name, version, enabled, input_schema, definition, created_at, updated_at";
+        let columns = "id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at";
 
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflows (id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(workflow.name.as_str())
+            .bind(workflow.namespace.clone())
             .bind(workflow.version.to_string())
             .bind(workflow.enabled)
             .bind(serde_json::to_string(&workflow.input_type)?)
@@ -388,12 +397,13 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflows (id, name, version, enabled, input_schema, definition, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflows (id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
         .bind(id)
         .bind(workflow.name.as_str())
+        .bind(workflow.namespace.clone())
         .bind(workflow.version.to_string())
         .bind(workflow.enabled)
         .bind(serde_json::to_string(&workflow.input_type)?)
@@ -406,7 +416,7 @@ where
     }
 
     async fn fetch_workflows(&self) -> Result<Vec<WorkflowDefinition>, SendableError> {
-        let rows = sqlx::query("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows ORDER BY name")
+        let rows = sqlx::query("SELECT id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at FROM workflows ORDER BY name")
             .fetch_all(self.pool())
             .await?;
         Ok(rows.iter().map(mappers::row_to_workflow).collect())
@@ -416,7 +426,7 @@ where
         &self,
         workflow_id: Uuid,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
+        let row = sqlx::query(&self.render("SELECT id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
             .bind(workflow_id)
             .fetch_optional(self.pool())
             .await?;
@@ -427,8 +437,22 @@ where
         &self,
         name: String,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        let row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE name = ? ORDER BY created_at, id LIMIT 1"))
-            .bind(name)
+        // match either an unqualified `name` or a qualified subflow target `"<namespace>.<name>"`
+        // against the stored identity `namespace + "." + name`. matching the concatenation (rather
+        // than splitting the target) is unambiguous when a workflow name itself contains dots.
+        let concat = if self.dialect() == SqlDialect::MySql {
+            "CONCAT(namespace, '.', name)"
+        } else {
+            "namespace || '.' || name"
+        };
+        let sql = format!(
+            "SELECT id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at \
+             FROM workflows WHERE name = ? OR (namespace IS NOT NULL AND {concat} = ?) \
+             ORDER BY created_at, id LIMIT 1"
+        );
+        let row = sqlx::query(&self.render(&sql))
+            .bind(&name)
+            .bind(&name)
             .fetch_optional(self.pool())
             .await?;
         Ok(row.map(|row| mappers::row_to_workflow(&row)))
@@ -686,7 +710,7 @@ where
                 continue;
             }
 
-            let workflow_row = sqlx::query(&self.render("SELECT id, name, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
+            let workflow_row = sqlx::query(&self.render("SELECT id, name, namespace, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
                 .bind(trigger.workflow_id)
                 .fetch_one(&mut *tx)
                 .await?;
@@ -1324,6 +1348,94 @@ where
         Ok(rows
             .iter()
             .map(mappers::row_to_workflow_node_run_artifact)
+            .collect())
+    }
+
+    async fn fetch_workflow_node_run_artifacts_for_run(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowNodeRunArtifact>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT a.id, a.workflow_node_run_id, a.name, a.mime_type, a.size_bytes, a.uri, a.metadata, a.created_at
+             FROM workflow_node_artifacts a
+             JOIN workflow_node_runs r ON a.workflow_node_run_id = r.id
+             WHERE r.workflow_run_id = ?
+             ORDER BY a.created_at ASC, a.id ASC",
+        ))
+        .bind(workflow_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_workflow_node_run_artifact)
+            .collect())
+    }
+
+    async fn add_workflow_run_deliverable(
+        &self,
+        deliverable: &NewWorkflowRunDeliverable,
+    ) -> Result<WorkflowRunDeliverable, SendableError> {
+        let columns = "id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at";
+        let id = Uuid::now_v7();
+        let created_at = Utc::now().timestamp();
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO workflow_run_deliverables (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(id)
+            .bind(deliverable.workflow_run_id)
+            .bind(deliverable.node_id.as_str())
+            .bind(deliverable.artifact_id)
+            .bind(deliverable.name.as_str())
+            .bind(deliverable.mime_type.as_str())
+            .bind(deliverable.size_bytes)
+            .bind(deliverable.uri.as_str())
+            .bind(deliverable.metadata.to_string())
+            .bind(created_at)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_run_deliverables WHERE id = ?"
+            )))
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_workflow_run_deliverable(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO workflow_run_deliverables (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING {columns}",
+        )))
+        .bind(id)
+        .bind(deliverable.workflow_run_id)
+        .bind(deliverable.node_id.as_str())
+        .bind(deliverable.artifact_id)
+        .bind(deliverable.name.as_str())
+        .bind(deliverable.mime_type.as_str())
+        .bind(deliverable.size_bytes)
+        .bind(deliverable.uri.as_str())
+        .bind(deliverable.metadata.to_string())
+        .bind(created_at)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_workflow_run_deliverable(&row))
+    }
+
+    async fn fetch_workflow_run_deliverables(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowRunDeliverable>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_run_deliverables WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC",
+        ))
+        .bind(workflow_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_workflow_run_deliverable)
             .collect())
     }
 

@@ -174,8 +174,15 @@ async fn validate_subflow_targets<T: DatabaseImpl>(
     db: &T,
     bundle: &WorkflowBundle,
 ) -> Result<(), SendableError> {
-    let incoming: std::collections::HashSet<&str> =
-        bundle.workflows.iter().map(|w| w.name.as_str()).collect();
+    // a subflow target may be unqualified (`"name"`) or qualified (`"<namespace>.<name>"`); accept
+    // both forms for every workflow in the bundle so cross-workflow references resolve at import.
+    let mut incoming: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for workflow in &bundle.workflows {
+        incoming.insert(workflow.name.clone());
+        if let Some(namespace) = &workflow.namespace {
+            incoming.insert(format!("{namespace}.{}", workflow.name));
+        }
+    }
     for workflow in &bundle.workflows {
         // structural problems surface in the per-workflow validator/upsert; skip them here.
         let Ok((_, nodes)) = runinator_workflows::parse_nodes(workflow) else {

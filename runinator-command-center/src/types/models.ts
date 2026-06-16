@@ -82,6 +82,9 @@ export interface WorkflowEdgeEditorDraft {
   canMove: boolean;
   orderIndex: number;
   orderCount: number;
+  // selection priority for predicate edges; lower numbers are evaluated first. null means unset.
+  priority: number | null;
+  canEditPriority: boolean;
 }
 
 export interface WorkflowEdgeLabelOffset {
@@ -207,6 +210,19 @@ export interface RunArtifact {
   id: string;
   run_id: string;
   workflow_node_run_id?: string | null;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  uri: string;
+  metadata?: JsonRecord;
+  created_at: string;
+}
+
+export interface WorkflowRunDeliverable {
+  id: string;
+  workflow_run_id: string;
+  node_id: string;
+  artifact_id: string;
   name: string;
   mime_type: string;
   size_bytes: number;

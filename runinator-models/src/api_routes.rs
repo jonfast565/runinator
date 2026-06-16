@@ -88,6 +88,10 @@ pub fn api_workflow_run_nodes(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/nodes")
 }
 
+pub fn api_workflow_run_deliverables(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/deliverables")
+}
+
 pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/renew")
 }
@@ -130,6 +134,10 @@ pub fn api_workflow_node_run_chunks(node_run_id: Uuid) -> String {
 
 pub fn api_workflow_node_run_artifacts(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/artifacts")
+}
+
+pub fn api_artifact_download(artifact_id: Uuid) -> String {
+    format!("{API_ARTIFACTS}/{artifact_id}/download")
 }
 
 pub fn api_workflow_node_run_claim(node_run_id: Uuid) -> String {

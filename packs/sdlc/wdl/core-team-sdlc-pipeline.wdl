@@ -20,7 +20,7 @@ workflow "Core Team SDLC Pipeline" v1 {
 
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
-    let tickets: JiraSearchResult = jira.search(
+    node tickets: JiraSearchResult = jira.search(
         ...jira_conn,
         jql: config.jira.jql
     )
@@ -28,7 +28,7 @@ workflow "Core Team SDLC Pipeline" v1 {
         .retry(3)
 
     for ticket in tickets.issues limit 50 {
-        spawn "Ticket Work" reuse as "Ticket Work: " ++ ticket.key with {
+        node spawn "Ticket Work" reuse as "Ticket Work: " ++ ticket.key with {
             ticket,
             parent_workflow_run_id: run.run_id
         }

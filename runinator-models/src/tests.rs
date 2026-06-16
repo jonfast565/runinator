@@ -223,7 +223,7 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         ("map", WorkflowNodeKind::Map),
         ("race", WorkflowNodeKind::Race),
         ("output", WorkflowNodeKind::Output),
-        ("output", WorkflowNodeKind::Output),
+        ("deliverable", WorkflowNodeKind::Deliverable),
         ("input", WorkflowNodeKind::Input),
         ("config", WorkflowNodeKind::Config),
     ] {

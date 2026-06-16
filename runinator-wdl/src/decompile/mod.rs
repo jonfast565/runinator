@@ -32,7 +32,7 @@ pub(super) struct Decompiler<'a> {
     // surface every implicit construct (ids, edges, defaults) instead of the terse form.
     explicit: bool,
     loop_vars: Vec<(String, String)>,
-    // declared `let <id>: <type>` annotations recovered from graph metadata, kept as rendered wdl
+    // declared `node <id>: <type>` annotations recovered from graph metadata, kept as rendered wdl
     // type text so declared type-name references survive the round trip.
     declared_types: HashMap<String, String>,
     // surface-form overrides for top-level workflow parameter fields that reference a declared
@@ -103,6 +103,9 @@ pub fn decompile_definition(
     ));
     decompiler.indent += 1;
     decompiler.emit_params(&definition.input_type)?;
+    if let Some(namespace) = &definition.namespace {
+        decompiler.line(&format!("namespace {namespace}"));
+    }
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
@@ -332,7 +335,10 @@ impl<'a> Decompiler<'a> {
         if decls.is_empty() {
             return Ok(());
         }
-        for (name, rendered) in decls {
+        for (index, (name, rendered)) in decls.iter().enumerate() {
+            if index > 0 {
+                self.out.push('\n');
+            }
             if rendered.starts_with('{') {
                 self.line(&format!("type {name} {rendered}"));
             } else {
@@ -361,6 +367,9 @@ impl<'a> Decompiler<'a> {
     /// emit statements from `cur` until reaching `stop`, a terminal, or a dead end.
     fn emit_region(&mut self, cur: &str, stop: Option<&str>) -> Result<(), WdlError> {
         let mut cur = cur.to_string();
+        // tracks whether the previous sibling in this block spanned multiple lines; `None` until the
+        // first statement is emitted so the block never opens with a blank line.
+        let mut prev_multiline: Option<bool> = None;
         loop {
             if stop == Some(cur.as_str()) {
                 break;
@@ -380,11 +389,11 @@ impl<'a> Decompiler<'a> {
                 Some(node) => *node,
                 None => break,
             };
-            match &node.kind {
-                WorkflowNodeKind::Loop => match self.emit_loop(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
+            // capture each statement's rendered span so multi-line statements can be blank-separated
+            // from their siblings, matching the formatter's block layout.
+            let start = self.out.len();
+            let (advance, stop_after) = match &node.kind {
+                WorkflowNodeKind::Loop => (self.emit_loop(node, stop)?, false),
                 WorkflowNodeKind::Condition => {
                     // a reentry-enabled single-branch condition node is a while/until loop
                     // header (its body loops back); anything else is a plain if/else.
@@ -394,68 +403,78 @@ impl<'a> Decompiler<'a> {
                     } else {
                         self.emit_if(node, stop)?
                     };
-                    match merge {
-                        Some(next) => cur = next,
-                        None => break,
-                    }
+                    (merge, false)
                 }
-                WorkflowNodeKind::Switch => match self.emit_match(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
+                WorkflowNodeKind::Switch => (self.emit_match(node, stop)?, false),
                 WorkflowNodeKind::Fail => {
                     self.line("fail");
-                    break;
+                    (None, true)
                 }
                 WorkflowNodeKind::Action
                 | WorkflowNodeKind::Subflow
                 | WorkflowNodeKind::Wait
                 | WorkflowNodeKind::Output
+                | WorkflowNodeKind::Deliverable
                 | WorkflowNodeKind::Input
                 | WorkflowNodeKind::Approval
                 | WorkflowNodeKind::Gate
                 | WorkflowNodeKind::Signal
                 | WorkflowNodeKind::Config => {
                     let success = self.emit_leaf(node, stop)?;
-                    match success {
-                        // keep walking only into a fresh linear successor; a jump to a
-                        // terminal, the region stop, or an already-emitted node was rendered
-                        // as an explicit arrow by emit_leaf, so stop here.
+                    // keep walking only into a fresh linear successor; a jump to a terminal, the
+                    // region stop, or an already-emitted node was rendered as an explicit arrow by
+                    // emit_leaf, so stop here.
+                    let advance = match success {
                         Some(next)
                             if !self.is_terminal(&next)
                                 && stop != Some(next.as_str())
                                 && !self.visited.contains(&next) =>
                         {
-                            cur = next;
+                            Some(next)
                         }
-                        _ => break,
-                    }
+                        _ => None,
+                    };
+                    let stop_after = advance.is_none();
+                    (advance, stop_after)
                 }
-                WorkflowNodeKind::Map => match self.emit_map(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
-                WorkflowNodeKind::Parallel => match self.emit_parallel(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
-                WorkflowNodeKind::Race => match self.emit_race(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
-                WorkflowNodeKind::Try => match self.emit_try(node, stop)? {
-                    Some(next) => cur = next,
-                    None => break,
-                },
-                // a join is consumed by its parallel; if reached directly, pass through.
-                WorkflowNodeKind::Join => match node.transitions.next.as_ref() {
-                    Some(target) => cur = target.as_str().to_string(),
-                    None => break,
-                },
-                WorkflowNodeKind::Start | WorkflowNodeKind::End => break,
+                WorkflowNodeKind::Map => (self.emit_map(node, stop)?, false),
+                WorkflowNodeKind::Parallel => (self.emit_parallel(node, stop)?, false),
+                WorkflowNodeKind::Race => (self.emit_race(node, stop)?, false),
+                WorkflowNodeKind::Try => (self.emit_try(node, stop)?, false),
+                // a join is consumed by its parallel; if reached directly, pass through without
+                // emitting a statement.
+                WorkflowNodeKind::Join => (
+                    node.transitions
+                        .next
+                        .as_ref()
+                        .map(|target| target.as_str().to_string()),
+                    false,
+                ),
+                WorkflowNodeKind::Start | WorkflowNodeKind::End => (None, true),
+            };
+
+            self.separate_block_statement(start, &mut prev_multiline);
+
+            match advance {
+                Some(next) if !stop_after => cur = next,
+                _ => break,
             }
         }
         Ok(())
+    }
+
+    // insert a blank line before the statement just rendered into `self.out[start..]` when it or the
+    // previous sibling spans multiple lines. statements that emitted nothing (a join passthrough)
+    // are ignored and leave `prev_multiline` untouched.
+    fn separate_block_statement(&mut self, start: usize, prev_multiline: &mut Option<bool>) {
+        if self.out.len() == start {
+            return;
+        }
+        let cur_multiline = self.out[start..].trim_end_matches('\n').contains('\n');
+        if matches!(prev_multiline, Some(prev) if *prev || cur_multiline) {
+            self.out.insert(start, '\n');
+        }
+        *prev_multiline = Some(cur_multiline);
     }
 
     fn is_terminal(&self, id: &str) -> bool {
@@ -579,12 +598,12 @@ impl<'a> Decompiler<'a> {
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
                 Some(rendered) => format!(
-                    "{}let {}: {} = ",
+                    "{}node {}: {} = ",
                     self.annotation_prefix(node, false),
                     node.id,
                     rendered
                 ),
-                None => format!("{}let {} = ", self.annotation_prefix(node, false), node.id),
+                None => format!("{}node {} = ", self.annotation_prefix(node, false), node.id),
             }
         } else if needs_id_annotation(&node.kind) {
             self.annotation_prefix(node, true)
@@ -632,21 +651,32 @@ impl<'a> Decompiler<'a> {
         // gather every rendered outgoing edge into one `edges { … }` section under the statement.
         // the pure linear successor stays implicit (success_arrow is None), so most nodes emit no
         // block; only explicit jumps and failure arrows surface a section.
-        let mut edges: Vec<(String, String)> = Vec::new();
+        let mut edges: Vec<String> = Vec::new();
         if let Some(label) = &success_arrow {
             let kw = if self.explicit { succ_kw } else { "ok" };
-            edges.push((kw.to_string(), label.clone()));
+            edges.push(format!("{kw} -> {label}"));
         }
         for (outcome, label) in &arrows {
-            edges.push((outcome.clone(), label.clone()));
+            edges.push(format!("{outcome} -> {label}"));
+        }
+        // user-defined predicate edges, preserved in declaration order; an explicit `priority`
+        // token is rendered whenever the branch carries one, keeping the round-trip stable.
+        for branch in &transitions.branches {
+            let cond = self.cond(&branch.when)?;
+            let label = self.target_label(branch.target.as_str());
+            self.defer(branch.target.as_str());
+            match branch.priority {
+                Some(priority) => edges.push(format!("when {cond} priority {priority} -> {label}")),
+                None => edges.push(format!("when {cond} -> {label}")),
+            }
         }
 
         self.line(&format!("{prefix}{text}"));
         if !edges.is_empty() {
             self.line("edges {");
             self.indent += 1;
-            for (outcome, label) in &edges {
-                self.line(&format!("{outcome} -> {label}"));
+            for edge in &edges {
+                self.line(edge);
             }
             self.indent -= 1;
             self.line("}");
@@ -655,7 +685,7 @@ impl<'a> Decompiler<'a> {
         Ok(success)
     }
 
-    /// returns the statement text and whether it should be prefixed with `let <id> =`.
+    /// returns the statement text and whether it should be prefixed with `node <id> =`.
     fn statement_text(&self, node: &WorkflowNode) -> Result<(String, bool), WdlError> {
         match &node.kind {
             WorkflowNodeKind::Action => {
@@ -668,6 +698,7 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
             WorkflowNodeKind::Output => Ok((self.output_text(node)?, false)),
+            WorkflowNodeKind::Deliverable => Ok((self.deliverable_text(node)?, false)),
             WorkflowNodeKind::Input => Ok((self.input_text(node)?, false)),
             WorkflowNodeKind::Approval => Ok((self.approval_text(node)?, false)),
             WorkflowNodeKind::Gate => Ok((self.gate_text(node)?, false)),
@@ -694,7 +725,8 @@ impl<'a> Decompiler<'a> {
             if self.explicit || node.retry.max_attempts > 1 {
                 modifiers.push(format!(".retry({})", node.retry.max_attempts));
             }
-            out.push_str(&self.modifier_suffix(base, &modifiers));
+            // a compute block always closes its brace on its own line, so the chain hugs it.
+            out.push_str(&self.modifier_suffix(base, &modifiers, true));
         }
         Ok(out)
     }
@@ -789,12 +821,22 @@ impl<'a> Decompiler<'a> {
         out
     }
 
-    // append modifier calls (`.timeout(…)`, `.retry(…)`, …), each on its own line indented one
-    // level under `base` so the chain reads as a section tied beneath the call.
-    fn modifier_suffix(&self, base: usize, modifiers: &[String]) -> String {
-        let pad = "    ".repeat(base + 1);
-        let mut out = String::new();
-        for modifier in modifiers {
+    // append the fluent modifier chain (`.timeout(…)`, `.retry(…)`, …). the first call hugs the
+    // closing paren/brace; any further calls align their leading dot one column past it. an inline
+    // call (no multi-line args) keeps the whole chain on one line.
+    fn modifier_suffix(&self, base: usize, modifiers: &[String], multiline: bool) -> String {
+        let Some((first, rest)) = modifiers.split_first() else {
+            return String::new();
+        };
+        let mut out = String::from(first.as_str());
+        if !multiline {
+            for modifier in rest {
+                out.push_str(modifier);
+            }
+            return out;
+        }
+        let pad = format!("{} ", "    ".repeat(base));
+        for modifier in rest {
             out.push('\n');
             out.push_str(&pad);
             out.push_str(modifier);
@@ -834,6 +876,7 @@ impl<'a> Decompiler<'a> {
             }
             args
         };
+        let multiline = !arg_parts.is_empty();
         let mut text = format!(
             "{}.{}{}",
             action.provider,
@@ -862,7 +905,7 @@ impl<'a> Decompiler<'a> {
         if node.reentry.enabled {
             modifiers.push(format!(".reentry({})", node.reentry.max_visits));
         }
-        text.push_str(&self.modifier_suffix(base, &modifiers));
+        text.push_str(&self.modifier_suffix(base, &modifiers, multiline));
         Ok(text)
     }
 
@@ -935,6 +978,22 @@ impl<'a> Decompiler<'a> {
             }
         }
         Ok(text)
+    }
+
+    fn deliverable_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let base = self.indent;
+        let mut out = String::from("deliverable {\n");
+        if let Some(items) = node.parameters.get("items").and_then(Value::as_array) {
+            for item in items {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+                let source = item.get("source").cloned().unwrap_or(Value::Null);
+                out.push_str(&"    ".repeat(base + 1));
+                out.push_str(&format!("{name} = {}\n", self.expr(&source)?));
+            }
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        Ok(out)
     }
 
     fn input_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -1579,6 +1638,7 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
         kind,
         WorkflowNodeKind::Wait
             | WorkflowNodeKind::Output
+            | WorkflowNodeKind::Deliverable
             | WorkflowNodeKind::Input
             | WorkflowNodeKind::Approval
             | WorkflowNodeKind::Gate

@@ -16,8 +16,9 @@ use serde::Deserialize;
 use crate::events::{AppEvent, EventSender, emit, emit_task_run, emit_workflow_run};
 use crate::models::{
     self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
-    SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, WorkflowRunRequest,
-    WorkflowRunStatusQuery, WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
+    SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, TaskResponseSchema,
+    WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
+    WorkflowTriggerRunRequest,
 };
 use crate::repository;
 use crate::responses::{api_error, bad_request, not_found};
@@ -297,6 +298,17 @@ pub(crate) async fn release_workflow_run_claim<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflow_runs/{id}/cancel",
+    tag = "Workflow Runs",
+    params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    responses(
+        (status = 200, description = "workflow run cancel requested", body = TaskResponseSchema),
+        (status = 400, description = "workflow run could not be canceled", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn cancel_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
@@ -328,6 +340,17 @@ pub(crate) async fn cancel_workflow_run<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflow_runs/{id}/pause",
+    tag = "Workflow Runs",
+    params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    responses(
+        (status = 200, description = "workflow run pause requested", body = TaskResponseSchema),
+        (status = 400, description = "workflow run could not be paused", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn pause_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -358,6 +381,17 @@ pub(crate) async fn pause_workflow_run<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflow_runs/{id}/resume",
+    tag = "Workflow Runs",
+    params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    responses(
+        (status = 200, description = "workflow run resume requested", body = TaskResponseSchema),
+        (status = 400, description = "workflow run could not be resumed", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn resume_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -388,6 +422,18 @@ pub(crate) async fn resume_workflow_run<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflow_runs/{id}/replay",
+    tag = "Workflow Runs",
+    params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    request_body = Option<crate::models::WorkflowRunReplayRequest>,
+    responses(
+        (status = 202, description = "workflow run replay accepted", body = serde_json::Value),
+        (status = 400, description = "workflow run could not be replayed", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn replay_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -454,6 +500,18 @@ pub(crate) async fn deliver_signal<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflow_runs/{id}/rename",
+    tag = "Workflow Runs",
+    params(("id" = Uuid, Path, description = "Workflow run identifier.")),
+    request_body = crate::models::WorkflowRunRenameRequest,
+    responses(
+        (status = 200, description = "workflow run renamed", body = TaskResponseSchema),
+        (status = 400, description = "workflow run could not be renamed", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn rename_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

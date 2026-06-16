@@ -17,6 +17,7 @@ pub mod errors;
 mod format;
 mod includes;
 pub(crate) mod lower;
+mod namespace;
 mod parser;
 mod purity;
 mod registry;
@@ -77,7 +78,9 @@ pub fn compile_str_with_diagnostics(
     src: &str,
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<Diagnostic>), WdlError> {
-    let document = parse_document(src)?;
+    let mut document = parse_document(src)?;
+    // resolve namespaced calls to their bare runtime form before any later pass runs.
+    namespace::resolve(&mut document)?;
     // desugar a clone so sema validates the fully-expanded program, while lowering keeps the
     // sugared form to record `...alias` spreads for the decompile sidecar.
     let mut desugared = document.clone();
@@ -101,6 +104,7 @@ pub fn compile_str_with_diagnostics(
 /// with `Diagnostic::render`.
 pub fn analyze_source(src: &str) -> Result<Vec<Diagnostic>, WdlError> {
     let mut document = parse_document(src)?;
+    namespace::resolve(&mut document)?;
     desugar::desugar(&mut document)?;
     Ok(sema::analyze(&document))
 }
@@ -120,15 +124,18 @@ pub fn lower_fragment(
 ) -> Result<Value, WdlError> {
     match kind {
         WdlFragmentKind::Expression => {
-            let expr = parse_expression_fragment(src)?;
+            let mut expr = parse_expression_fragment(src)?;
+            namespace::resolve_expr_fragment(&mut expr)?;
             lower::lower_expression_fragment(&expr, options)
         }
         WdlFragmentKind::Condition => {
-            let cond = parse_condition_fragment(src)?;
+            let mut cond = parse_condition_fragment(src)?;
+            namespace::resolve_cond_fragment(&mut cond)?;
             lower::lower_condition_fragment(&cond, options)
         }
         WdlFragmentKind::Compute => {
-            let body = parse_compute_fragment(src)?;
+            let mut body = parse_compute_fragment(src)?;
+            namespace::resolve_compute_fragment(&mut body)?;
             lower::lower_compute_fragment(&body, options)
         }
     }
@@ -209,7 +216,8 @@ pub fn compile_unchecked(
     src: &str,
     options: &CompileOptions,
 ) -> Result<WorkflowDefinition, WdlError> {
-    let document = parse_document(src)?;
+    let mut document = parse_document(src)?;
+    namespace::resolve(&mut document)?;
     // validate the alias expansion on a clone, then lower the sugared form (see above).
     let mut desugared = document.clone();
     desugar::desugar(&mut desugared)?;
@@ -223,9 +231,16 @@ pub fn validate(definition: &WorkflowDefinition) -> Result<(), WdlError> {
         .map_err(|err| WdlError::Validation(err.to_string()))
 }
 
-/// decompile a WorkflowDefinition back into terse wdl source text.
+/// decompile a WorkflowDefinition back into terse wdl source text, rendered with the same
+/// canonical whitespace the formatter produces. the editor regenerates this view on every
+/// refresh, so routing it through the formatter keeps `format` idempotent against it: without
+/// this the decompiler's inline rendering (e.g. a one-line struct type) would silently revert
+/// a user's `Format` on the next refresh/save.
 pub fn decompile(definition: &WorkflowDefinition) -> Result<String, WdlError> {
-    decompile::decompile_definition(definition, &DecompileOptions::default())
+    let source = decompile::decompile_definition(definition, &DecompileOptions::default())?;
+    // decompiler output is always valid wdl, so a parse failure here is a bug, not user input;
+    // fall back to the raw rendering rather than failing the decompile outright.
+    Ok(format_str(&source).unwrap_or(source))
 }
 
 /// decompile with explicit options. `DecompileOptions { explicit: true }` renders the canonical

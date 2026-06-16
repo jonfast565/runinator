@@ -249,6 +249,30 @@ pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn get_workflow_run_deliverables<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        runinator_models::auth::Permission::View,
+    )
+    .await
+    {
+        return reply;
+    }
+    match repository::fetch_workflow_run_deliverables(db.as_ref(), workflow_run_id).await {
+        Ok(deliverables) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowRunDeliverables(deliverables)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

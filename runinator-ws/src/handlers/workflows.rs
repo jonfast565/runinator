@@ -108,6 +108,28 @@ pub(crate) async fn get_workflows<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/workflows/import",
+    tag = "Packs",
+    params(
+        (
+            "x-runinator-json-workflow-risk",
+            Header,
+            description = "Required to acknowledge the risk of importing a raw JSON workflow bundle.",
+            example = "system-breakage-possible"
+        )
+    ),
+    request_body(
+        description = "A raw workflow bundle JSON payload. This path is the legacy non-zip import flow.",
+        content(("application/json"))
+    ),
+    responses(
+        (status = 200, description = "workflow bundle imported", body = serde_json::Value),
+        (status = 400, description = "invalid bundle or missing risk acknowledgment", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

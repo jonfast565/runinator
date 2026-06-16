@@ -66,6 +66,12 @@ Open the Tauri command center against the deployed local cluster with:
 bash scripts/run-k8s.sh ui
 ```
 
+To inspect the raw API docs directly in a browser instead of launching the UI:
+
+```sh
+bash scripts/port-forward-ws.sh
+```
+
 If images are already available and you only need to apply the overlay:
 
 ```sh

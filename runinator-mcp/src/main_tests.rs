@@ -5,6 +5,7 @@ fn mock_workflow(id: Uuid, name: &str, enabled: bool) -> WorkflowDefinition {
     WorkflowDefinition {
         id: Some(id),
         name: name.into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled,
         input_type: runinator_models::types::RuninatorType::from_json_schema(

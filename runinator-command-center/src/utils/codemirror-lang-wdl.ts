@@ -21,14 +21,14 @@ import {
 // keyword groups mirror runinator-wdl/src/wdl.pest, split by role so each gets its own color.
 // structural declarations that open blocks or bind names.
 const DECL_KW = new Set([
-  "workflow", "input", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
-  "fn",
+  "workflow", "input", "node", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
+  "fn", "namespace", "import",
 ]);
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
   "if", "else", "for", "while", "until", "match", "when", "parallel", "race", "try", "catch",
-  "finally", "map", "branch", "join", "wait", "output", "approve", "fail", "subflow", "spawn",
-  "call", "compute", "return", "goto", "edges",
+  "finally", "map", "branch", "join", "wait", "output", "deliverable", "approve", "fail",
+  "subflow", "spawn", "call", "compute", "return", "goto", "edges",
 ]);
 // clause/option words that modify a statement.
 const MODIFIER_KW = new Set([
@@ -45,9 +45,11 @@ const ATOMS = new Set(["all", "any", "first_success", "done", "none"]);
 const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);
 // reference roots that are never keywords.
 const PURE_REFS = new Set(["run", "loop", "state", "item"]);
-// roots that double as keywords; treated as a reference only before a `.`.
-const ROOT_KEYWORDS = new Set(["params", "config", "secret", "workflow"]);
-// primitive type names, surfaced for completion only (too ambiguous to color reliably).
+// roots that double as keywords; treated as a reference only before a `.`. `std` is the builtin
+// standard-library namespace root (`std.strings.upper(...)`).
+const ROOT_KEYWORDS = new Set(["params", "config", "secret", "workflow", "std"]);
+// primitive type names. surfaced for completion, and colored inside type-position contexts
+// (after `type`/`:` in a type field, `node x:`/`let x:` annotations) where they are unambiguous.
 const TYPES = ["any", "boolean", "integer", "map", "number", "string"];
 
 // completion vocabulary spans every group so suggestions stay broad.
@@ -64,6 +66,18 @@ interface WdlState {
   afterProvider: boolean;
   // next identifier is the action name of a `provider.action(` call.
   expectAction: boolean;
+  // next identifier is the name being declared by a `type` keyword.
+  expectTypeName: boolean;
+  // next identifier is the name being bound by a `let` keyword.
+  expectBindingName: boolean;
+  // a `:` after the just-seen binding name opens a type annotation.
+  pendingBindingType: boolean;
+  // the just-seen token was a declared type name or `params`; a following `{` opens a type body.
+  afterTypeName: boolean;
+  // currently scanning a type expression; identifiers here are type references.
+  inType: boolean;
+  // kind of each open `{`: "type" bodies make `:` introduce a type, "value" bodies are object literals.
+  braceStack: ("type" | "value")[];
 }
 
 // consume the rest of a string literal on the current line, respecting escapes. returns
@@ -107,7 +121,18 @@ function classifyWord(word: string, stream: StringStream): string {
 }
 
 const wdlParser = StreamLanguage.define<WdlState>({
-  startState: () => ({ inBlockComment: false, afterDot: false, afterProvider: false, expectAction: false }),
+  startState: () => ({
+    inBlockComment: false,
+    afterDot: false,
+    afterProvider: false,
+    expectAction: false,
+    expectTypeName: false,
+    expectBindingName: false,
+    pendingBindingType: false,
+    afterTypeName: false,
+    inType: false,
+    braceStack: [],
+  }),
   token(stream, state) {
     // continue an open block comment across lines.
     if (state.inBlockComment) {
@@ -118,6 +143,13 @@ const wdlParser = StreamLanguage.define<WdlState>({
         stream.skipToEnd();
       }
       return "comment";
+    }
+
+    // type expressions are single-line; reset type context at the start of each line so a field
+    // name beginning a new line is not mistaken for the previous field's type.
+    if (stream.sol()) {
+      state.inType = false;
+      state.afterTypeName = false;
     }
 
     // dot context applies to the next token only; preserve it across whitespace.
@@ -180,7 +212,32 @@ const wdlParser = StreamLanguage.define<WdlState>({
       if (afterDot) {
         return stream.match(/^\s*\(/, false) ? "method" : "property";
       }
-      return classifyWord(word, stream);
+      // the name being declared by `type` (a `{` or `=` body follows).
+      if (state.expectTypeName) {
+        state.expectTypeName = false;
+        state.afterTypeName = true;
+        return "typeName";
+      }
+      // the name being bound by `node` (workflow scope) or `let` (compute-local); a following `:`
+      // would open a type annotation.
+      if (state.expectBindingName) {
+        state.expectBindingName = false;
+        state.pendingBindingType = true;
+        return "variableName";
+      }
+      // any identifier inside a type expression is a type reference (named or builtin primitive).
+      if (state.inType) {
+        return "typeName";
+      }
+      const cls = classifyWord(word, stream);
+      if (cls === "declKw" && word === "type") state.expectTypeName = true;
+      if (cls === "declKw" && (word === "node" || word === "let")) state.expectBindingName = true;
+      // the `params` block keyword opens a type body of input fields.
+      if (word === "params" && stream.match(/^\s*\{/, false)) {
+        state.afterTypeName = true;
+        return "declKw";
+      }
+      return cls;
     }
 
     // transition arrow.
@@ -202,12 +259,54 @@ const wdlParser = StreamLanguage.define<WdlState>({
       }
       return "operator";
     }
+    // braces maintain a context stack so a `:` can tell a type field from an object-literal entry.
+    if (stream.match("{")) {
+      const kind = state.afterTypeName || state.inType ? "type" : "value";
+      state.afterTypeName = false;
+      state.inType = false;
+      state.braceStack.push(kind);
+      return "bracket";
+    }
+    if (stream.match("}")) {
+      state.braceStack.pop();
+      state.inType = false;
+      return "bracket";
+    }
+    // `=` assignment (`==` is handled above): opens a `type X =` alias body, otherwise ends type
+    // context. the lambda arrow `=>` keeps its operator role without touching type context.
+    if (stream.match("=")) {
+      if (stream.peek() === ">") {
+        return "operator";
+      }
+      if (state.afterTypeName) {
+        state.afterTypeName = false;
+        state.inType = true;
+      } else {
+        state.inType = false;
+        state.pendingBindingType = false;
+      }
+      return "operator";
+    }
+    // `:` opens a type when inside a type body or a `let`/field annotation.
+    if (stream.match(":")) {
+      const top = state.braceStack[state.braceStack.length - 1];
+      if (top === "type" || state.pendingBindingType) {
+        state.inType = true;
+        state.pendingBindingType = false;
+      }
+      return "operator";
+    }
+    // `,` separates type fields; the next field name leaves type context.
+    if (stream.match(",")) {
+      state.inType = false;
+      return "operator";
+    }
     // remaining single-char operators.
-    if (stream.match(/^[=<>!:,+?*/%|&-]/)) {
+    if (stream.match(/^[<>!+?*/%|&-]/)) {
       return "operator";
     }
     // brackets and punctuation.
-    if (stream.match(/^[()[\]{}]/)) {
+    if (stream.match(/^[()[\]]/)) {
       return "bracket";
     }
 
@@ -225,6 +324,7 @@ const wdlParser = StreamLanguage.define<WdlState>({
     bool: t.bool,
     null: t.null,
     provider: t.namespace,
+    typeName: t.typeName,
     action: t.function(t.variableName),
     method: t.function(t.propertyName),
     builtin: t.standard(t.function(t.variableName)),
@@ -255,6 +355,8 @@ const wdlHighlightStyle = HighlightStyle.define([
   { tag: t.operatorKeyword, color: "#0184bc" },
   // provider namespace vs the action/method/builtin function names.
   { tag: t.namespace, color: "#c18401" },
+  // type names (declared `type X`, primitive builtins, and type-position references) in cyan.
+  { tag: t.typeName, color: "#0997b3" },
   { tag: [t.function(t.variableName), t.function(t.propertyName), t.standard(t.function(t.variableName))], color: "#4078f2" },
   // reference roots (`params.*`, `run.*`) and their member path.
   { tag: t.special(t.variableName), color: "#e45649" },
@@ -291,10 +393,10 @@ const snippets = [
     type: "keyword",
     detail: "workflow scaffold",
   }),
-  snippetCompletion("${provider}.${action}(${args}) -> ok", {
+  snippetCompletion("node ${provider}.${action}(${args}) -> ok", {
     label: "action",
     type: "function",
-    detail: "provider action call",
+    detail: "provider action node",
   }),
 ];
 

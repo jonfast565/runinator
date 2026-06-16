@@ -18,7 +18,8 @@ use runinator_models::{
     types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
+        WorkflowTriggerKind,
     },
 };
 use sqlx::{ColumnIndex, Decode, Row, Type};
@@ -235,6 +236,7 @@ macro_rules! workflow_from_row {
         WorkflowDefinition {
             id: $row.get("id"),
             name: $row.get("name"),
+            namespace: $row.get("namespace"),
             version: $row.get::<String, _>("version").parse().unwrap_or_default(),
             enabled: $row.get("enabled"),
             input_type: parse_type($row.get::<String, _>("input_schema")),
@@ -408,6 +410,28 @@ macro_rules! workflow_node_run_artifact_from_row {
 
 row_mapper!(row_to_workflow_node_run_artifact(row) -> WorkflowNodeRunArtifact {
     workflow_node_run_artifact_from_row!(row)
+});
+
+macro_rules! workflow_run_deliverable_from_row {
+    ($row:expr) => {{
+        WorkflowRunDeliverable {
+            id: $row.get("id"),
+            workflow_run_id: $row.get("workflow_run_id"),
+            node_id: $row.get("node_id"),
+            artifact_id: $row.get("artifact_id"),
+            name: $row.get("name"),
+            mime_type: $row.get("mime_type"),
+            size_bytes: $row.get("size_bytes"),
+            uri: $row.get("uri"),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+row_mapper!(row_to_workflow_run_deliverable(row) -> WorkflowRunDeliverable {
+    workflow_run_deliverable_from_row!(row)
 });
 
 macro_rules! catalog_item_from_row {

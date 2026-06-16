@@ -61,7 +61,7 @@ workflow "Ticket Work" v1 {
     set name = "Ticket Work: " ++ params.ticket.key
     set meta { parent_workflow_run_id: params.parent_workflow_run_id, ticket_key: params.ticket.key }
 
-    let transition_in_progress: JiraIssue = jira.transition(
+    node transition_in_progress: JiraIssue = jira.transition(
         ...jira_conn,
         key: params.ticket.key,
         transition_id: config.transitions.in_progress
@@ -69,14 +69,14 @@ workflow "Ticket Work" v1 {
         .timeout(30s)
         fail -> notify_failure
 
-    let kickoff_comment: JiraIssue = jira.comment(
+    node kickoff_comment: JiraIssue = jira.comment(
         ...jira_conn,
         key: params.ticket.key,
         body: "Automation started for " ++ params.ticket.key ++ ". Run " ++ string(run.run_id)
     )
         .timeout(30s)
 
-    let create_workspace: GitWorktreeResult = git.worktree(
+    node create_workspace: GitWorktreeResult = git.worktree(
         repo: config.git.repo,
         branch: "feature/" ++ params.ticket.key,
         path: config.git.repo ++ "/../runinator-worktrees/" ++ params.ticket.key
@@ -84,7 +84,7 @@ workflow "Ticket Work" v1 {
         .timeout(120s)
         fail -> notify_failure
 
-    let implement_change: AnyResponse = ai-command.claude_code(
+    node implement_change: AnyResponse = ai-command.claude_code(
         binary: config.claude.binary,
         model: config.claude.model,
         output_format: config.claude.output_format,
@@ -100,14 +100,14 @@ workflow "Ticket Work" v1 {
         .timeout(1800s)
         fail -> notify_failure
 
-    let commit_change: GitCommandResult = git.commit(
+    node commit_change: GitCommandResult = git.commit(
         workspace: create_workspace.workspace,
         message: params.ticket.key ++ " " ++ params.ticket.fields.summary
     )
         .timeout(60s)
         fail -> notify_failure
 
-    let push_branch: GitCommandResult = git.push(
+    node push_branch: GitCommandResult = git.push(
         workspace: create_workspace.workspace,
         remote: config.git.remote,
         branch: "feature/" ++ params.ticket.key
@@ -115,7 +115,7 @@ workflow "Ticket Work" v1 {
         .timeout(60s)
         fail -> notify_failure
 
-    let create_pr: PullRequest = github.create_pr(
+    node create_pr: PullRequest = github.create_pr(
         ...github_conn,
         base: config.github.base_branch,
         head: "feature/" ++ params.ticket.key,
@@ -125,14 +125,14 @@ workflow "Ticket Work" v1 {
         .timeout(60s)
         fail -> notify_failure
 
-    let link_pr_to_ticket: JiraIssue = jira.comment(
+    node link_pr_to_ticket: JiraIssue = jira.comment(
         ...jira_conn,
         key: params.ticket.key,
         body: "Pull request opened: " ++ create_pr.html_url
     )
         .timeout(30s)
 
-    let transition_in_review: JiraIssue = jira.transition(
+    node transition_in_review: JiraIssue = jira.transition(
         ...jira_conn,
         key: params.ticket.key,
         transition_id: config.transitions.in_review
@@ -142,7 +142,7 @@ workflow "Ticket Work" v1 {
     // poll ci on the configured interval until the checks settle, capped at 30 polls.
     until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
         wait config.ci_poll.interval_seconds
-        let poll_checks: CheckSummary = github.checks_summary(
+        node poll_checks: CheckSummary = github.checks_summary(
             ...github_conn,
             ref: create_pr.head.sha
         )
@@ -156,7 +156,7 @@ workflow "Ticket Work" v1 {
             reject -> comment_rejected
     } -> notify_failure
 
-    let merge_pr: AnyResponse = github.merge_pr(
+    node merge_pr: AnyResponse = github.merge_pr(
         ...github_conn,
         pull_number: string(create_pr.number),
         merge_method: "squash"
@@ -164,28 +164,28 @@ workflow "Ticket Work" v1 {
         .timeout(60s)
         fail -> notify_failure
 
-    let transition_done: JiraIssue = jira.transition(
+    node transition_done: JiraIssue = jira.transition(
         ...jira_conn,
         key: params.ticket.key,
         transition_id: config.transitions.done
     )
         .timeout(30s)
 
-    let comment_merged: JiraIssue = jira.comment(
+    node comment_merged: JiraIssue = jira.comment(
         ...jira_conn,
         key: params.ticket.key,
         body: "Merged " ++ create_pr.html_url
     )
         .timeout(30s)
 
-    let notify_done: SlackMessage = slack.send_message(
+    node notify_done: SlackMessage = slack.send_message(
         ...slack_conn,
         text: ":white_check_mark: " ++ params.ticket.key ++ " merged and closed."
     )
         .timeout(15s)
         -> cleanup_workspace
 
-    let comment_rejected: JiraIssue = jira.comment(
+    node comment_rejected: JiraIssue = jira.comment(
         ...jira_conn,
         key: params.ticket.key,
         body: "Reviewer rejected automated merge. Manual follow-up required."
@@ -193,14 +193,14 @@ workflow "Ticket Work" v1 {
         .timeout(30s)
         -> cleanup_workspace
 
-    let notify_failure: SlackMessage = slack.send_message(
+    node notify_failure: SlackMessage = slack.send_message(
         ...slack_conn,
         text: ":x: SDLC pipeline failed on " ++ params.ticket.key
     )
         .timeout(15s)
         -> cleanup_workspace
 
-    let cleanup_workspace: GitCommandResult = git.cleanup(
+    node cleanup_workspace: GitCommandResult = git.cleanup(
         repo: config.git.repo,
         path: create_workspace.workspace
     )

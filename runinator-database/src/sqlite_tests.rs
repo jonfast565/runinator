@@ -392,6 +392,43 @@ async fn upsert_workflow_without_id_updates_existing_name() {
 }
 
 #[tokio::test]
+async fn namespaced_workflow_persists_and_resolves_by_qualified_name() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-namespace-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    // two workflows share the bare name "ticket_work" but live in different namespaces.
+    let mut core = workflow("ticket_work");
+    core.namespace = Some("core_sdlc".into());
+    let mut ops = workflow("ticket_work");
+    ops.namespace = Some("ops".into());
+    let core = db.upsert_workflow(&core).await.unwrap();
+    let ops = db.upsert_workflow(&ops).await.unwrap();
+    // distinct namespaces keep them apart rather than colliding on the shared name.
+    assert_ne!(core.id, ops.id);
+    assert_eq!(core.namespace.as_deref(), Some("core_sdlc"));
+
+    // a qualified subflow target resolves to the matching namespace.
+    let resolved = db
+        .fetch_workflow_by_name("core_sdlc.ticket_work".into())
+        .await
+        .unwrap()
+        .expect("qualified resolution");
+    assert_eq!(resolved.id, core.id);
+    assert_eq!(resolved.namespace.as_deref(), Some("core_sdlc"));
+
+    // re-upsert by (namespace, name) identity updates in place, not creating a sibling.
+    let again = db.upsert_workflow(&core).await.unwrap();
+    assert_eq!(again.id, core.id);
+    assert_eq!(db.fetch_workflows().await.unwrap().len(), 2);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn insert_workflow_creates_sibling_row_sharing_name() {
     let path = std::env::temp_dir().join(format!(
         "runinator-workflow-insert-{}.db",
@@ -780,6 +817,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,
         name: name.to_string(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,

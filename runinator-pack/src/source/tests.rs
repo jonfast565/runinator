@@ -49,7 +49,7 @@ fn directory_pack_loads_wdls_settings() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("flow.wdl"),
-        "workflow \"Temp\" v1 {\n  console.run(command: \"hi\")\n}\n",
+        "workflow \"Temp\" v1 {\n  node go = console.run(command: \"hi\")\n}\n",
     )
     .expect("write wdl");
     fs::write(

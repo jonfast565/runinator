@@ -195,12 +195,35 @@ export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
       if (target && nodeIds.has(target)) {
         const semanticKey = `branches.${index}`;
         const handles = edgeHandles(definition, source, semanticKey);
-        edges.push(graphEdge(source, target, branch.label ?? `branch ${index + 1}`, edgeData(source, semanticKey, { kind: "branch", branchIndex: index, ...handles, editable: true })));
+        const base = branch.label ?? `branch ${index + 1}`;
+        const label = typeof branch.priority === "number" ? `#${branch.priority} ${base}` : base;
+        edges.push(graphEdge(source, target, label, edgeData(source, semanticKey, { kind: "branch", branchIndex: index, ...handles, editable: true })));
       }
     }
     edges.push(...controlFlowEdges(definition, node, nodeIds, issuesByEdge));
   }
   return separateParallelEdges(edges);
+}
+
+// control-flow kinds carry their own parameter-based routes; condition has its own branch options;
+// terminals and start have no user-defined predicate routes. everything else is a default-transition
+// node that can host predicate edges.
+const predicateEdgeExcludedKinds = new Set([
+  "condition",
+  "switch",
+  "parallel",
+  "race",
+  "join",
+  "try",
+  "loop",
+  "map",
+  "start",
+  "end",
+  "fail"
+]);
+
+function supportsPredicateEdges(kind: string): boolean {
+  return !predicateEdgeExcludedKinds.has(kind);
 }
 
 export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSemanticOption[] {
@@ -217,6 +240,14 @@ export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSeman
       options.push({ id: `branch:${index}`, label: `Condition branch ${index + 1}`, description: "Update an existing condition branch" });
     });
     options.push({ id: "branch:new", label: "New condition branch", description: "Add a conditional route" });
+  } else if (supportsPredicateEdges(kind)) {
+    // predicate edges attach a user-defined when -> target route to any default-transition node,
+    // evaluated before status routing in ascending priority order.
+    const branches = Array.isArray(transitions.branches) ? transitions.branches : [];
+    branches.forEach((_, index) => {
+      options.push({ id: `branch:${index}`, label: `Predicate edge ${index + 1}`, description: "Update a conditional route" });
+    });
+    options.push({ id: "branch:new", label: "New predicate edge", description: "Add a conditional route evaluated by priority" });
   }
 
   const parameters = isRecord(node.parameters) ? node.parameters : {};
@@ -397,7 +428,9 @@ export function workflowEdgeEditorDraft(workflow: WorkflowDefinition, edge: Edge
       canEditCondition: true,
       canMove: true,
       orderIndex: data.branchIndex,
-      orderCount: branches.length
+      orderCount: branches.length,
+      priority: typeof branch.priority === "number" ? branch.priority : null,
+      canEditPriority: true
     };
   }
 
@@ -501,7 +534,9 @@ function defaultWorkflowEdgeEditorDraft(edge: Edge, optionId: string): WorkflowE
     canEditSwitchCase: false,
     canMove: false,
     orderIndex: -1,
-    orderCount: 0
+    orderCount: 0,
+    priority: null,
+    canEditPriority: false
   };
 }
 
@@ -579,6 +614,7 @@ function writeWorkflowEdgeDraft(
       target: nodeRef(draft.target)
     };
     applyOptionalLabel(branch, draft.label);
+    applyBranchPriority(branch, draft, node.transitions.branches, index);
     node.transitions.branches[index] = branch;
     return `branches.${index}`;
   }
@@ -613,6 +649,25 @@ function applyOptionalLabel(record: JsonRecord, label: string) {
   const trimmed = label.trim();
   if (trimmed) record.label = trimmed;
   else delete record.label;
+}
+
+// write a predicate edge's selection priority (lower is evaluated first). an unset draft priority
+// on a new branch defaults to the next free slot after the highest existing priority.
+function applyBranchPriority(branch: JsonRecord, draft: WorkflowEdgeEditorDraft, branches: unknown[], index: number) {
+  if (typeof draft.priority === "number" && Number.isFinite(draft.priority)) {
+    branch.priority = Math.trunc(draft.priority);
+    return;
+  }
+  const isNew = index >= branches.length || !isRecord(branches[index]);
+  if (!isNew) {
+    delete branch.priority;
+    return;
+  }
+  const highest = branches.reduce<number>((max, item) => {
+    const value = isRecord(item) && typeof item.priority === "number" ? item.priority : null;
+    return value !== null && value > max ? value : max;
+  }, 0);
+  branch.priority = highest + 1;
 }
 
 function edgeOptionIndex(optionId: string, prefix: string, newIndex: number): number | null {

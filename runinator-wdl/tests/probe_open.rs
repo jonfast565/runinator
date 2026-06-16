@@ -12,37 +12,37 @@ fn probe() {
     try_compile(
         "params open w/ field, typed tail",
         r#"
-        workflow "A" v1 { params { name: string ...: integer } console.run(command: params.name) }
+        workflow "A" v1 { params { name: string ...: integer } node console.run(command: params.name) }
     "#,
     );
     try_compile(
         "params open no fields, typed tail",
         r#"
-        workflow "A" v1 { params { ...: any } console.run(command: "x") }
+        workflow "A" v1 { params { ...: any } node console.run(command: "x") }
     "#,
     );
     try_compile(
         "params bare ellipsis (no type)",
         r#"
-        workflow "A" v1 { params { name: string ... } console.run(command: params.name) }
+        workflow "A" v1 { params { name: string ... } node console.run(command: params.name) }
     "#,
     );
     try_compile(
         "params only bare ellipsis",
         r#"
-        workflow "A" v1 { params { ... } console.run(command: "x") }
+        workflow "A" v1 { params { ... } node console.run(command: "x") }
     "#,
     );
     try_compile(
         "type decl typed tail",
         r#"
-        workflow "A" v1 { type T { id: string ...: any } params { p: T } console.run(command: "x") }
+        workflow "A" v1 { type T { id: string ...: any } params { p: T } node console.run(command: "x") }
     "#,
     );
     try_compile(
         "type decl bare ellipsis",
         r#"
-        workflow "A" v1 { type T { id: string ... } params { p: T } console.run(command: "x") }
+        workflow "A" v1 { type T { id: string ... } params { p: T } node console.run(command: "x") }
     "#,
     );
 }

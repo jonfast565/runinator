@@ -179,6 +179,11 @@ fn resolve_stmt(
                 resolve_expr(data, symbols, scope, ctx, diagnostics);
             }
         }
+        StmtKind::Deliverable(deliverable) => {
+            for (_, source) in &deliverable.items {
+                resolve_expr(source, symbols, scope, ctx, diagnostics);
+            }
+        }
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 resolve_expr(prompt, symbols, scope, ctx, diagnostics);
@@ -482,7 +487,9 @@ fn resolve_expr(
                 resolve_expr(part, symbols, scope, ctx, diagnostics);
             }
         }
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name, args, named, ..
+        } => {
             let is_user = symbols.registry.is_user(name);
             // validate the call against the callable vocabulary: unknown names (typos), arity, and
             // keyword-argument mistakes are reported here rather than failing late at the worker.
@@ -606,7 +613,9 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
                 resolve_default_expr(part, diagnostics);
             }
         }
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name, args, named, ..
+        } => {
             // defaults are evaluated eagerly at workflow start, so an effectful call is not allowed.
             if runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str()) {
                 diagnostics.push(Diagnostic::error(

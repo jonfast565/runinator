@@ -130,6 +130,18 @@ pub struct OutputParameters {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct DeliverableParameters {
+    pub items: Vec<DeliverableItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeliverableItem {
+    pub name: String,
+    /// value-ref that resolves to an artifact descriptor (or array of them) at runtime.
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct InputParameters {
     pub prompt: Option<String>,
 }

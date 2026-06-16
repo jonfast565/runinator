@@ -105,6 +105,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
+    /// List and download run artifacts.
+    Artifacts {
+        #[command(subcommand)]
+        command: ArtifactCommands,
+    },
     /// Compile, decompile, format, and check the wdl workflow language.
     Wdl {
         #[command(subcommand)]
@@ -295,6 +300,23 @@ pub enum RunCommands {
     },
     /// Rename a workflow run.
     Rename { id: Uuid, name: Option<String> },
+    /// List the run-level deliverables a workflow run produced.
+    Deliverables { id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ArtifactCommands {
+    /// List the artifacts a workflow node run produced.
+    List {
+        #[arg(long = "node-run")]
+        node_run_id: Uuid,
+    },
+    /// Download an artifact by id to a file (defaults to its name in the cwd).
+    Download {
+        id: Uuid,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

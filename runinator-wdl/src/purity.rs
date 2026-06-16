@@ -44,7 +44,9 @@ pub(crate) fn cond_is_effectful(cond: &Cond, registry: &FunctionRegistry) -> boo
 /// user-function call is pure in itself (bodies are validated pure), so only its arguments matter.
 pub(crate) fn expr_is_effectful(expr: &Expr, registry: &FunctionRegistry) -> bool {
     match &expr.kind {
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name, args, named, ..
+        } => {
             // higher-order intrinsics and user functions are structurally pure: only the arguments
             // can carry effects. any other unknown/effectful name forces the block to the worker.
             let structurally_pure = registry.is_user(name)

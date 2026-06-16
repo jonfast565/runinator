@@ -10,7 +10,7 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,47 @@ impl ApiError {
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthConfigResponseSchema {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoginRequestSchema {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserSchema {
+    pub id: Option<Uuid>,
+    pub username: String,
+    pub email: Option<String>,
+    pub is_admin: bool,
+    pub disabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoginResponseSchema {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: i64,
+    pub user: UserSchema,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RefreshRequestSchema {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TaskResponseSchema {
+    pub success: bool,
+    pub message: String,
+}
+
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum ApiResponse {
@@ -57,6 +98,7 @@ pub enum ApiResponse {
     WorkflowNodeRun(WorkflowNodeRun),
     WorkflowNodeRunChunks(Vec<WorkflowNodeRunChunk>),
     WorkflowNodeRunArtifacts(Vec<WorkflowNodeRunArtifact>),
+    WorkflowRunDeliverables(Vec<WorkflowRunDeliverable>),
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
     ProviderBundle(ProviderBundle),
@@ -151,7 +193,7 @@ pub struct SchedulerRunClaimReleaseRequest {
     pub scheduler_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct WorkflowRunRenameRequest {
     #[serde(default)]
     pub name: Option<String>,
@@ -164,7 +206,7 @@ pub struct SignalDeliveryRequest {
     pub payload: Value,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct WorkflowRunReplayRequest {
     #[serde(default)]
     pub from_step_id: Option<String>,
@@ -252,7 +294,7 @@ pub struct GateQuery {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct GateResolutionRequest {
     #[serde(default)]
     pub resolved_by: Option<String>,

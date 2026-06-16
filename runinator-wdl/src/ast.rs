@@ -44,6 +44,11 @@ pub struct Workflow {
     /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
     /// action calls by `...name` spreads during desugaring.
     pub aliases: Vec<Alias>,
+    /// optional header `namespace <path>` declaration: the namespace this workflow's identity lives
+    /// in. when `None` the importer stamps the pack name.
+    pub namespace: Option<String>,
+    /// header `import <path> (as <alias>)?` declarations opening namespaces into local scope.
+    pub imports: Vec<Import>,
     /// an optional explicit `start -> <target>` entry edge. when `None` the first body
     /// statement is the entry; when set it names the entry node directly.
     pub start: Option<Target>,
@@ -72,6 +77,15 @@ pub struct TriggerDecl {
     pub enabled: bool,
     pub blackout_start: Option<Expr>,
     pub blackout_end: Option<Expr>,
+    pub span: Span,
+}
+
+/// a header `import <path> (as <alias>)?` declaration. `path` is the dotted namespace
+/// (`std.strings`, `some_pack`); `alias` binds a short local name when present.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub path: String,
+    pub alias: Option<String>,
     pub span: Span,
 }
 
@@ -113,6 +127,7 @@ pub enum StmtKind {
     Subflow(SubflowStmt),
     Wait(WaitStmt),
     Output(OutputStmt),
+    Deliverable(DeliverableStmt),
     Input(InputStmt),
     Approval(ApprovalStmt),
     Gate(GateStmt),
@@ -136,6 +151,8 @@ pub struct TransitionClause {
     pub on_failure: Option<Target>,
     pub on_timeout: Option<Target>,
     pub on_reject: Option<Target>,
+    /// user-defined predicate edges, in declaration order; lowered to `transitions.branches`.
+    pub branches: Vec<PredicateEdge>,
 }
 
 impl TransitionClause {
@@ -145,7 +162,17 @@ impl TransitionClause {
             && self.on_failure.is_none()
             && self.on_timeout.is_none()
             && self.on_reject.is_none()
+            && self.branches.is_empty()
     }
+}
+
+/// a user-defined predicate edge: take `target` when `when` holds. `priority` orders evaluation
+/// among predicate edges (lower first); `None` keeps declaration order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredicateEdge {
+    pub when: Cond,
+    pub target: Target,
+    pub priority: Option<i64>,
 }
 
 /// a transition destination. `done` and `fail` are reserved labels that resolve to the
@@ -240,6 +267,12 @@ pub struct OutputStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputStmt {
     pub prompt: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeliverableStmt {
+    /// (name, artifact-valued expression) pairs in source order.
+    pub items: Vec<(String, Expr)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -423,10 +456,16 @@ pub enum ExprKind {
     /// a library or user-function call `name(args...)`, e.g. `add(a, b)` or `double(x)`. positional
     /// arguments are in `args`; trailing keyword arguments (`f(x, k: v)`) are in `named`. the
     /// lowering pass resolves `named` into positional order against the callee's signature.
+    ///
+    /// `method` records the syntactic origin so namespace resolution can require qualification of
+    /// prefix intrinsic calls (`std.math.add(a, b)`) while leaving fluent method calls
+    /// (`xs.filter(p)`, which desugar to `filter(xs, p)`) and synthetic index access (`at`) as
+    /// sugar. it is set during parsing and ignored by sema and lowering.
     Call {
         name: String,
         args: Vec<Expr>,
         named: Vec<(String, Expr)>,
+        method: bool,
     },
     /// an anonymous function `params => body`, only valid inside `compute { }` as the argument to a
     /// higher-order library call (`map`, `filter`, `reduce`, ...).

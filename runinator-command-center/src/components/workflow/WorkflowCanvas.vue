@@ -171,6 +171,10 @@
         When
         <ExpressionJsonEditor v-model="edgeEditor.whenJson" :context="edgeExpressionContext" class="workflow-edge-json" title="When" />
       </label>
+      <label v-if="edgeEditor.canEditPriority">
+        Priority
+        <input v-model.number="edgeEditorPriority" type="number" step="1" placeholder="Lower runs first" />
+      </label>
       <template v-if="edgeEditorIsSwitchCase">
         <label>
           Match
@@ -251,6 +255,14 @@ const edgeEditorOptions = computed(() => edgeEditor.value ? workflows.workflowEd
 const edgeEditorIsConditionBranch = computed(() => edgeEditor.value?.optionId.startsWith("branch:") ?? false);
 const edgeEditorIsSwitchCase = computed(() => edgeEditor.value?.optionId.startsWith("control:cases:") ?? false);
 const edgeEditorCanEditLabel = computed(() => edgeEditorIsConditionBranch.value || edgeEditorIsSwitchCase.value);
+// bridge the numeric input to the draft's nullable priority; a blank/invalid entry clears it.
+const edgeEditorPriority = computed<number | null>({
+  get: () => edgeEditor.value?.priority ?? null,
+  set: (value) => {
+    if (!edgeEditor.value) return;
+    edgeEditor.value.priority = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+  }
+});
 const edgeEditorCanMove = computed(() => {
   const optionId = edgeEditor.value?.optionId ?? "";
   return Boolean(edgeEditor.value?.canMove) && !optionId.endsWith(":new") && (

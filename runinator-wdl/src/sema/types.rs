@@ -69,6 +69,11 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(data, env, diagnostics);
             }
         }
+        StmtKind::Deliverable(deliverable) => {
+            for (_, source) in &deliverable.items {
+                check_expr(source, env, diagnostics);
+            }
+        }
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 check_expr(prompt, env, diagnostics);
@@ -269,7 +274,9 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
             check_expr(then, env, diagnostics);
             check_expr(els, env, diagnostics);
         }
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name, args, named, ..
+        } => {
             // check each positional argument against the intrinsic's declared parameter type,
             // skipping opaque (`any`) types on either side to avoid false positives on refs.
             if let Some(sig) = runinator_workflows::intrinsic_signature(name) {

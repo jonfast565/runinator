@@ -24,7 +24,7 @@ workflow "Core Team SDLC Pipeline" v1 {
         jira: { base_url: string, email: string, token: string, jql: string }
     }
 
-    let tickets = jira.search(
+    node tickets = jira.search(
         base_url: params.jira.base_url,
         jql:      params.jira.jql,
     ).timeout(60s)
@@ -43,10 +43,17 @@ workflow "Core Team SDLC Pipeline" v1 {
 `on_success`, control-ish leaves use `next`). A synthetic `start`/`end`/`fail` are always
 emitted. Every implicit part can also be written explicitly — see [Implicit vs explicit](#implicit-vs-explicit).
 
+**Node leaves carry `node`.** The value-producing leaves — actions (`provider.fn(...)`),
+subflows (`spawn`/`call`), and `compute` blocks — are declared with the `node` keyword, optionally
+binding the output (`node x = provider.fn(...)`). These are the statements that otherwise read like
+bare function calls, so `node` keeps them distinct from the `fn` functions and pure expressions
+around them. Every other statement (`wait`, `output`, `approve`, control flow, …) stays bare. `let`
+is no longer a workflow-level keyword; it now means only a pure local inside a `compute` block.
+
 **Arrows make transitions explicit.** `-> done` (single) or outcome arrows:
 
 ```
-deploy()
+node deploy()
     ok      -> verify
     fail    -> rollback
     timeout -> alert
@@ -61,8 +68,8 @@ deploy()
 
 | WDL | JSON kind |
 |---|---|
-| `provider.fn(args).mods` | action |
-| `spawn`/`call "WF" reuse as ... with { }` | subflow (fire_and_forget / wait) |
+| `node provider.fn(args).mods` | action |
+| `node spawn`/`node call "WF" reuse as ... with { }` | subflow (fire_and_forget / wait) |
 | `wait 30s until "ready"` | wait |
 | `emit "type" { data }` (payload is any expression; parenthesize an event-less scalar: `emit (42)`) | emit |
 | `approve "..." type "..." { meta }` | approval |
@@ -78,8 +85,10 @@ deploy()
 
 **Expressions**: `params.x`, `prev.x`, `run.x`, `<binding>.x` (dotted refs); `"a ${x}"`
 or `a ++ b` (`$concat`); `a ?? b` (`$coalesce`); `string(x)` / `json(x)`; arithmetic
-(`+ - * / %`); standard-library calls (`upper(x)`, `len(xs)`, …) and higher-order calls with
-lambdas (`map(xs, x => x.id)`, `filter`, `reduce`); object/array literals.
+(`+ - * / %`); standard-library calls (`std.strings.upper(x)`, `std.collections.len(xs)`, …) and
+higher-order calls with lambdas (`std.collections.map(xs, x => x.id)`, `…filter`, `…reduce`);
+object/array literals. See [Namespaces](#namespaces-and-imports) for the `std.<module>.<leaf>`
+addressing and `import`.
 
 **Access chaining**: any value-producing expression can be followed by `.key` / `.0` (dot) or
 `[expr]` (bracket) access — `http_get(url).body`, `split(s, ",")[0]`, `(a ?? b).field`,
@@ -92,15 +101,17 @@ function call with the receiver as the first argument — `recv.f(a)` ≡ `f(rec
 standard-library intrinsic takes its subject first, pipelines read left-to-right:
 
 ```
-params.xs.filter(x => gt(x, 1)).map(x => mul(x, 2))   // == map(filter(params.xs, …), …)
-split(params.csv, ",").join("-")                       // == join(split(params.csv, ","), "-")
-params.name.upper()                                    // == upper(params.name)
-http_get(url).body.host                               // access + method chained
+params.xs.filter(x => x.gt(1)).map(x => x.mul(2))   // fluent receiver-first, no std. needed
+std.strings.split(params.csv, ",").join("-")         // qualified prefix, then fluent
+params.name.upper()                                  // == std.strings.upper(params.name)
+std.exec.http_get(url).body.host                     // access + method chained
 ```
 
 A bare `.field` (no parentheses) stays a field/path access even when it shares a name with a
-function (`params.map.value` is a path), so the two never collide. Method calls decompile to the
-canonical `f(recv, …)` function-call form.
+function (`params.map.value` is a path), so the two never collide. The fluent/method form is the
+namespace-free sugar — `recv.upper()` needs no `std.` because the receiver carries it; only the
+**prefix** form requires qualification (`std.strings.upper(x)`). Method calls decompile to the
+canonical qualified form.
 
 One expression grammar serves every position — action arguments, conditions, `${…}`
 interpolation, and `compute` lines — so a call or lambda is legal anywhere an expression is.
@@ -109,6 +120,36 @@ reducer, while an *effectful* call (`http_get`, `http_post`, `now`, `uuid`, `env
 error outside a `compute` block, since it must dispatch to a worker. A `compute { }` block is the
 only place effectful calls and multi-statement programs (`let` / `return` / `goto` / `if`) live;
 it lowers to `std.run` when pure and `std.exec` when effectful.
+
+### Namespaces and imports
+
+Names are qualified, not flat. There are three namespace roots:
+
+- **`std`** — the builtin standard library, organized into modules: `std.math`, `std.strings`,
+  `std.collections`, `std.objects`, `std.encoding`, `std.logic`, `std.dates`, `std.regex`, and the
+  effectful `std.exec`. A **prefix** intrinsic call must be fully qualified — `std.math.add(a, b)`,
+  not `add(a, b)` — though the fluent/method form (`a.add(b)`) needs no prefix. The `std.` prefix is
+  surface-only: the compiled graph and runtime dispatch use the bare leaf, so already-stored
+  workflows are unaffected.
+- **providers** — a provider action's name may be a dotted path; the trailing segment is the
+  function and the leading segments are the provider (`github.repos.create_pr(...)` →
+  provider `github.repos`, function `create_pr`).
+- **workflow namespace** — an optional `namespace <path>` header qualifies a workflow's identity so
+  a subflow target can name a workflow in another pack (`call "core_sdlc.ticket_work"`).
+
+`import` opens a namespace into local scope (header declaration, pure surface sugar — the compiled
+graph always holds fully-resolved names):
+
+```
+namespace core_sdlc                 // this workflow's identity namespace
+import std                          // the whole stdlib, callable bare: add(a, b), upper(x)
+import std.strings                  // just the strings module, callable bare: upper(x)
+import std.collections as col       // aliased: col.map(xs, f)
+```
+
+Resolution order for an unqualified call is: file-local user `fn` → imported names → otherwise a
+builtin intrinsic must be qualified or imported (a bare prefix intrinsic call is a semantic error
+that names the module to use). The decompiler always emits the canonical `std.<module>.<leaf>` form.
 
 **Source text includes**: `file("scripts/job.py")` reads a UTF-8 text file at compile time,
 relative to the `.wdl` file's directory, and lowers to a normal string value. Paths must be
@@ -124,7 +165,7 @@ relative-path safety rules as `file()` apply, and the listed files are bundled w
 For embedded source, use a fenced inline block:
 
 ````
-let run = console.run(command: inline("python", ```
+node run = console.run(command: inline("python", ```
 print("hello")
 ```))
 ````
@@ -184,7 +225,7 @@ manifests, and they round-trip through decompile.
 stability and node-level orchestration metadata. Action `.timeout(...)` remains the provider
 command timeout; `@timeout(...)` maps to the workflow node timeout.
 
-**Typed bindings**: `let tickets: { issues: any[] } = jira.search(...)` annotates a step's
+**Typed bindings**: `node tickets: { issues: any[] } = jira.search(...)` annotates a step's
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
 
@@ -195,7 +236,7 @@ metadata, and re-emitted by the decompiler so it survives a round trip.
 workflow "Ticket Work" v1 {
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
-    let t = jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
+    node t = jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
 }
 ```
 
@@ -227,7 +268,7 @@ canonical fully-expanded source so a reader never has to guess how a workflow is
 |---|---|---|
 | synthetic `start` → first statement | `start -> <id>` (top of body) | first statement |
 | sequential happy-path edge | `ok -> <id>` (action/subflow/approval) or `next -> <id>` (wait/emit/config, control blocks) | next statement |
-| auto node id (`action_1`, `for_loop_2`…) | `let x = …` (action/subflow) or `@id("x") …` (any statement) | generated |
+| auto node id (`action_1`, `for_loop_2`…) | `node x = …` (action/subflow/compute) or `@id("x") …` (any statement) | generated |
 | action `.timeout(…)` | `.timeout(60s)` | 60s |
 | action `.retry(…)` | `.retry(1)` | 1 attempt |
 | `while`/`until` cap | `limit 1000` | 1000 |
@@ -244,7 +285,7 @@ So this terse workflow:
 
 ```
 workflow "Hello" v1 {
-    let greeting = console.run(command: "echo hi")
+    node greeting = console.run(command: "echo hi")
 }
 ```
 
@@ -253,7 +294,7 @@ is exactly this fully-explicit one (`decompile --explicit`):
 ```
 workflow "Hello" v1 {
     start -> greeting
-    let greeting = console.run(command: "echo hi").timeout(60s).retry(1)
+    node greeting = console.run(command: "echo hi").timeout(60s).retry(1)
         ok -> done
 }
 ```

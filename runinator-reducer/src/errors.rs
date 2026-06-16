@@ -67,6 +67,12 @@ pub const COMPUTE_NODE_FAILED: ErrorDescriptor = ErrorDescriptor::new(
     "In-process compute node failed to evaluate",
 );
 
+pub const DELIVERABLE_SOURCE_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI143",
+    "workflow.deliverable.source_unresolved",
+    "Deliverable source did not resolve to an artifact",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     WORKFLOW_NOT_FOUND,
     WORKFLOW_RUN_NOT_FOUND,
@@ -81,6 +87,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     SUBFLOW_TARGET_MISSING,
     SUBFLOW_INVALID_ID,
     COMPUTE_NODE_FAILED,
+    DELIVERABLE_SOURCE_UNRESOLVED,
 ];
 
 /// reducer error dictionary.

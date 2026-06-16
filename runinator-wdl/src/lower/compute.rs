@@ -56,7 +56,7 @@ impl Lowerer {
             ("action", Value::Object(action_obj)),
             (
                 "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next),
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
         self.apply_modifier_fields(&mut fields, &compute.modifiers);

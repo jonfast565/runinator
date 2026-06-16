@@ -1,8 +1,43 @@
 use runinator_models::json;
 use runinator_models::value::Value;
 
-use crate::compute::{ComputeOutcome, PureIntrinsics, parse_program, run_program};
+use crate::compute::{
+    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, PureIntrinsics, STD_MODULES,
+    intrinsic_module, parse_program, qualified_intrinsic_name, resolve_std_path, run_program,
+};
 use crate::expressions::resolve_value_refs;
+
+#[test]
+fn every_intrinsic_maps_to_a_known_std_module() {
+    // the module map is the single source of truth for surface qualification; every pure,
+    // effectful, and higher-order intrinsic must resolve to a declared std module, and the
+    // qualified name must round-trip back to the same leaf.
+    let leaves = PureIntrinsics::names()
+        .iter()
+        .chain(EFFECTFUL_INTRINSIC_NAMES.iter())
+        .chain(HIGHER_ORDER_NAMES.iter());
+    for leaf in leaves {
+        let module = intrinsic_module(leaf)
+            .unwrap_or_else(|| panic!("intrinsic '{leaf}' has no std module"));
+        assert!(
+            STD_MODULES.contains(&module),
+            "intrinsic '{leaf}' maps to undeclared module '{module}'"
+        );
+        assert_eq!(
+            qualified_intrinsic_name(leaf).as_deref(),
+            Some(&*format!("std.{module}.{leaf}"))
+        );
+        assert_eq!(resolve_std_path(module, leaf), Ok(module));
+    }
+}
+
+#[test]
+fn resolve_std_path_rejects_wrong_module() {
+    // `upper` lives in strings, so addressing it through math is a hard error that names the
+    // correct module.
+    assert_eq!(resolve_std_path("math", "upper"), Err(Some("strings")));
+    assert_eq!(resolve_std_path("strings", "not_a_function"), Err(None));
+}
 
 #[test]
 fn arithmetic_preserves_integers() {

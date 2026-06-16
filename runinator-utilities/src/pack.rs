@@ -75,6 +75,7 @@ mod tests {
             workflows: vec![WorkflowDefinition {
                 id: None,
                 name: "demo".into(),
+                namespace: None,
                 version: runinator_models::semver::SemVer::new(1, 0, 0),
                 enabled: true,
                 input_type: Default::default(),

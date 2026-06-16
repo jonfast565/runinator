@@ -83,11 +83,12 @@
                         <th>Size</th>
                         <th>URI</th>
                         <th>Created</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-if="!artifacts.length" class="muted">
-                        <td colspan="5">No artifacts available.</td>
+                        <td colspan="6">No artifacts available.</td>
                       </tr>
                       <tr v-for="artifact in artifacts" :key="artifact.id">
                         <td>{{ artifact.name }}</td>
@@ -95,6 +96,40 @@
                         <td>{{ artifact.size_bytes }}</td>
                         <td>{{ artifact.uri }}</td>
                         <td>{{ formatDate(artifact.created_at) }}</td>
+                        <td><button class="btn" @click="download(artifact.id, artifact.name)">Download</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="runs-detail-section">
+                <div class="runs-section-header">
+                  <h2 class="runs-detail-heading">Deliverables</h2>
+                  <span>{{ deliverables.length ? `${deliverables.length} for this run` : "No deliverables for this run" }}</span>
+                </div>
+                <div class="table-scroll compact-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>From node</th>
+                        <th>MIME</th>
+                        <th>Size</th>
+                        <th>Created</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!deliverables.length" class="muted">
+                        <td colspan="6">No deliverables available.</td>
+                      </tr>
+                      <tr v-for="deliverable in deliverables" :key="deliverable.id">
+                        <td>{{ deliverable.name }}</td>
+                        <td>{{ deliverable.node_id }}</td>
+                        <td>{{ deliverable.mime_type }}</td>
+                        <td>{{ deliverable.size_bytes }}</td>
+                        <td>{{ formatDate(deliverable.created_at) }}</td>
+                        <td><button class="btn" @click="download(deliverable.artifact_id, deliverable.name)">Download</button></td>
                       </tr>
                     </tbody>
                   </table>
@@ -111,7 +146,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { fetchWorkflowNodeRunArtifacts } from "../api/commandCenterApi";
+import {
+  downloadArtifactInBrowser,
+  downloadArtifactToPath,
+  fetchWorkflowNodeRunArtifacts,
+  fetchWorkflowRunDeliverables
+} from "../api/commandCenterApi";
+import { isTauriRuntime } from "../api/tauriRuntime";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
@@ -123,12 +164,21 @@ import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
 import { useAppStore } from "../stores/app";
 import { useWorkflowsStore } from "../stores/workflows";
-import type { RunArtifact } from "../types/models";
+import type { RunArtifact, WorkflowRunDeliverable } from "../types/models";
 import { formatDate, pretty } from "../utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
 const artifacts = ref<RunArtifact[]>([]);
+const deliverables = ref<WorkflowRunDeliverable[]>([]);
+
+async function download(artifactId: string, name: string) {
+  await app.runOperation(`Downloading ${name}`, async () => {
+    if (isTauriRuntime()) return downloadArtifactToPath(artifactId, name);
+    await downloadArtifactInBrowser(artifactId, name);
+    return null;
+  }).catch((error) => app.setError(String(error)));
+}
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
 const selectedNodeRunIdRef = ref(workflows.selectedWorkflowNodeRunId);
 const workflowNames = computed(() => Object.fromEntries(workflows.workflows.filter((workflow) => workflow.id).map((workflow) => [workflow.id!, workflow.name])));
@@ -141,6 +191,9 @@ useWorkflowRunStream();
 watch(() => workflows.selectedWorkflowNodeRunId, (id) => { selectedNodeRunIdRef.value = id; }, { immediate: true });
 watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
   artifacts.value = id ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
+}, { immediate: true });
+watch(() => workflows.selectedWorkflowRunId, async (id) => {
+  deliverables.value = id ? await app.runOperation("Loading deliverables", () => fetchWorkflowRunDeliverables(id)).catch(() => []) : [];
 }, { immediate: true });
 
 const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);

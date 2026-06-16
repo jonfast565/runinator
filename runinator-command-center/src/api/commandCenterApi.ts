@@ -25,6 +25,7 @@ import type {
   WorkflowBundle,
   WorkflowDefinition,
   WorkflowRunCreated,
+  WorkflowRunDeliverable,
   WorkflowRunDetail,
   WorkflowTrigger
 } from "../types/models";
@@ -143,6 +144,10 @@ export async function fetchWorkflowNodeRunChunks(nodeRunId: string) {
 
 export async function fetchWorkflowNodeRunArtifacts(nodeRunId: string) {
   return command<RunArtifact[]>("fetch_workflow_node_run_artifacts", { nodeRunId });
+}
+
+export async function fetchWorkflowRunDeliverables(workflowRunId: string) {
+  return command<WorkflowRunDeliverable[]>("fetch_workflow_run_deliverables", { workflowRunId });
 }
 
 export async function fetchWorkflows() {

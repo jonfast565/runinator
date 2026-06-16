@@ -21,8 +21,8 @@ use runinator_models::{
     auth::{AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType},
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
-        WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
-        WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+        NewWorkflowRunDeliverable, WorkflowAction, WorkflowBundle, WorkflowDefinition,
+        WorkflowGraph, WorkflowNodeRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
 use runinator_wdl::WdlFragmentKind;
@@ -1551,6 +1551,59 @@ async fn result_consumer_dead_letters_poison_result_events_after_retries() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn deliverables_promote_node_artifacts_to_the_run() {
+    let (db, path) = test_db().await;
+    let node_run = create_node_run(&db).await;
+    // a node artifact, then a deliverable promoting it to the run.
+    let artifact = db
+        .add_workflow_node_run_artifact(
+            node_run.id,
+            &NewRunArtifact {
+                name: "dump.csv".into(),
+                mime_type: "text/csv".into(),
+                size_bytes: 42,
+                uri: "memory://dump.csv".into(),
+                metadata: json!({}),
+            },
+        )
+        .await
+        .unwrap();
+
+    // the run-wide artifact fetch (used to build runtime context) sees it.
+    let run_artifacts = db
+        .fetch_workflow_node_run_artifacts_for_run(node_run.workflow_run_id)
+        .await
+        .unwrap();
+    assert_eq!(run_artifacts.len(), 1);
+    assert_eq!(run_artifacts[0].id, artifact.id);
+
+    let stored = db
+        .add_workflow_run_deliverable(&NewWorkflowRunDeliverable {
+            workflow_run_id: node_run.workflow_run_id,
+            node_id: node_run.node_id.clone(),
+            artifact_id: artifact.id,
+            name: "report".into(),
+            mime_type: artifact.mime_type.clone(),
+            size_bytes: artifact.size_bytes,
+            uri: artifact.uri.clone(),
+            metadata: json!({}),
+        })
+        .await
+        .unwrap();
+    assert_eq!(stored.name, "report");
+
+    let deliverables = db
+        .fetch_workflow_run_deliverables(node_run.workflow_run_id)
+        .await
+        .unwrap();
+    assert_eq!(deliverables.len(), 1);
+    assert_eq!(deliverables[0].artifact_id, artifact.id);
+    assert_eq!(deliverables[0].name, "report");
+    assert_eq!(deliverables[0].uri, "memory://dump.csv");
+    let _ = std::fs::remove_file(path);
+}
+
 async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!(
         "runinator-ws-workflows-{}.db",
@@ -1766,6 +1819,7 @@ fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id,
         name: name.into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::from_json_schema(
@@ -1789,6 +1843,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "ancestors".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
@@ -1824,6 +1879,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "loop_ancestor".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
@@ -1857,6 +1913,7 @@ fn ancestors_in_snapshot_rejects_missing_step() {
     let snapshot = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "missing".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,

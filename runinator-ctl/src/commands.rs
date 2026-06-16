@@ -23,8 +23,8 @@ use runinator_pack::source as pack;
 
 use crate::{
     cli::{
-        ApprovalCommands, Cli, Commands, ProviderCommands, RunCommands, SettingsCommands,
-        TriggerCommands, WdlCommands, WorkflowCommands,
+        ApprovalCommands, ArtifactCommands, Cli, Commands, ProviderCommands, RunCommands,
+        SettingsCommands, TriggerCommands, WdlCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -63,6 +63,7 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Approvals { command } => approvals(client, command, cli.json).await,
         Commands::Triggers { command } => triggers(client, command, cli.json).await,
         Commands::Providers { command } => providers(client, command, cli.json).await,
+        Commands::Artifacts { command } => artifacts(client, command, cli.json).await,
         Commands::Wdl { command } => wdl(command, cli.json),
         Commands::Settings { command } => settings(client, command, cli.json).await,
     }
@@ -648,6 +649,61 @@ async fn runs(client: &Client, command: &RunCommands, json_output: bool) -> Resu
             "renamed workflow run",
             json_output,
         )?,
+        RunCommands::Deliverables { id } => {
+            let deliverables = client.fetch_workflow_run_deliverables(*id).await?;
+            if json_output {
+                return output::json(&deliverables);
+            }
+            if deliverables.is_empty() {
+                println!("no deliverables for run {id}");
+                return Ok(());
+            }
+            for deliverable in deliverables {
+                println!(
+                    "{}\t{}\t{}\t{} bytes\t{}",
+                    deliverable.id,
+                    deliverable.name,
+                    deliverable.mime_type,
+                    deliverable.size_bytes,
+                    deliverable.uri
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn artifacts(client: &Client, command: &ArtifactCommands, json_output: bool) -> Result<()> {
+    match command {
+        ArtifactCommands::List { node_run_id } => {
+            let artifacts = client
+                .fetch_workflow_node_run_artifacts(*node_run_id)
+                .await?;
+            if json_output {
+                return output::json(&artifacts);
+            }
+            if artifacts.is_empty() {
+                println!("no artifacts for node run {node_run_id}");
+                return Ok(());
+            }
+            for artifact in artifacts {
+                println!(
+                    "{}\t{}\t{}\t{} bytes",
+                    artifact.id, artifact.name, artifact.mime_type, artifact.size_bytes
+                );
+            }
+        }
+        ArtifactCommands::Download { id, out } => {
+            let bytes = client.download_artifact(*id).await?;
+            let path = out.clone().unwrap_or_else(|| PathBuf::from(id.to_string()));
+            fs::write(&path, &bytes)?;
+            if json_output {
+                return output::json(
+                    &json!({ "path": path.display().to_string(), "bytes": bytes.len() }),
+                );
+            }
+            println!("wrote {} bytes to {}", bytes.len(), path.display());
+        }
     }
     Ok(())
 }

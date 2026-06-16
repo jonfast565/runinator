@@ -41,12 +41,78 @@ pub(super) async fn runtime_context<T: DatabaseImpl>(
     if let Some(snapshot) = &workflow_run.workflow_snapshot {
         runinator_workflows::apply_input_defaults(&mut context, &snapshot.input_type);
     }
+    // expose each node's emitted artifacts under `steps.<node_id>.artifacts` so downstream nodes
+    // (and deliverable nodes) can ref them like any other output value.
+    inject_node_artifacts(db, workflow_run.id, node_runs, &mut context).await;
     context
+}
+
+// attach `steps.<node_id>.artifacts` for every node run that produced artifacts.
+async fn inject_node_artifacts<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node_runs: &[WorkflowNodeRun],
+    context: &mut Value,
+) {
+    let artifacts = match db
+        .fetch_workflow_node_run_artifacts_for_run(workflow_run_id)
+        .await
+    {
+        Ok(artifacts) => artifacts,
+        Err(_) => return,
+    };
+    if artifacts.is_empty() {
+        return;
+    }
+    // map node-run id -> node id so artifacts land on the authored step, not the run uuid.
+    let node_for_run: HashMap<Uuid, String> = node_runs
+        .iter()
+        .map(|run| (run.id, run.node_id.clone()))
+        .collect();
+    let mut by_node: HashMap<String, Vec<Value>> = HashMap::new();
+    for artifact in artifacts {
+        let Some(node_id) = node_for_run.get(&artifact.workflow_node_run_id) else {
+            continue;
+        };
+        by_node
+            .entry(node_id.clone())
+            .or_default()
+            .push(artifact_descriptor(&artifact));
+    }
+    for (node_id, list) in by_node {
+        set_step_artifacts(context, &node_id, Value::Array(list));
+    }
+}
+
+// the value-ref shape a workflow author sees for an artifact.
+pub(super) fn artifact_descriptor(artifact: &WorkflowNodeRunArtifact) -> Value {
+    runinator_models::json!({
+        "id": artifact.id,
+        "name": artifact.name,
+        "mime_type": artifact.mime_type,
+        "size_bytes": artifact.size_bytes,
+        "uri": artifact.uri,
+        "metadata": artifact.metadata,
+    })
 }
 
 pub(super) fn set_step_output(scope: &mut Value, node_id: &str, output: Value) {
     if let Some(slot) = scope.pointer_mut(&format!("/steps/{node_id}/output")) {
         *slot = output;
+    }
+}
+
+// set `steps.<node_id>.artifacts`, creating the step entry if the node produced artifacts but no
+// `output_json` (so `outputs_context` never recorded a step for it).
+pub(super) fn set_step_artifacts(scope: &mut Value, node_id: &str, artifacts: Value) {
+    let Some(steps) = scope.pointer_mut("/steps").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let entry = steps
+        .entry(node_id.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(object) = entry.as_object_mut() {
+        object.insert("artifacts".into(), artifacts);
     }
 }
 

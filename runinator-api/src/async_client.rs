@@ -5,23 +5,23 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        api_approval_command, api_replica_heartbeat, api_replica_offline, api_replica_providers,
-        api_run, api_run_artifacts, api_run_chunks, api_scheduler_action_dispatch_failed,
-        api_scheduler_action_dispatch_published, api_scheduler_ready_node_process,
-        api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
-        api_workflow, api_workflow_duplicate, api_workflow_node_run,
-        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
-        api_workflow_node_run_release, api_workflow_run, api_workflow_run_command,
-        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
-        api_workflow_runs, api_workflow_trigger, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH,
-        API_CREDENTIALS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS,
-        API_RUNS, API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
-        API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
-        API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
-        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT,
-        API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
-        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        api_approval_command, api_artifact_download, api_replica_heartbeat, api_replica_offline,
+        api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
+        api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
+        api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
+        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
+        api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
+        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_run,
+        api_workflow_run_command, api_workflow_run_deliverables, api_workflow_run_nodes,
+        api_workflow_run_rename, api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
+        api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_AUTH_CONFIG,
+        API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH, API_CREDENTIALS, API_IDEMPOTENCY_KEYS,
+        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
+        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS,
+        API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
@@ -37,7 +37,7 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
     },
 };
 use uuid::Uuid;
@@ -1052,6 +1052,38 @@ where
         let response = self.client.post(url.clone()).json(payload).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
+    }
+
+    pub async fn fetch_workflow_run_deliverables(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowRunDeliverable>> {
+        let url = self
+            .build_url(&api_workflow_run_deliverables(workflow_run_id))
+            .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRunDeliverable>>().await?)
+    }
+
+    pub async fn fetch_workflow_node_run_artifacts(
+        &self,
+        node_run_id: Uuid,
+    ) -> Result<Vec<WorkflowNodeRunArtifact>> {
+        let url = self
+            .build_url(&api_workflow_node_run_artifacts(node_run_id))
+            .await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
+    }
+
+    /// download an artifact's raw bytes from the streaming download endpoint.
+    pub async fn download_artifact(&self, artifact_id: Uuid) -> Result<Vec<u8>> {
+        let url = self.build_url(&api_artifact_download(artifact_id)).await?;
+        let response = self.client.get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
     }
 
     pub async fn fetch_supervisor_status(&self) -> Result<Value> {

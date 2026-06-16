@@ -45,3 +45,9 @@ Service with:
 ```sh
 bash scripts/run-k8s.sh ui --context my-prod-context --namespace runinator
 ```
+
+To browse the raw API or Scalar docs directly from the prod cluster:
+
+```sh
+bash scripts/port-forward-ws.sh --context my-prod-context --namespace runinator
+```

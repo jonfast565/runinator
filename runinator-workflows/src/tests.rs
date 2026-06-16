@@ -16,6 +16,7 @@ fn workflow(definition: runinator_models::value::Value) -> WorkflowDefinition {
     WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "test".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
@@ -127,6 +128,32 @@ fn resolves_value_refs() {
 }
 
 #[test]
+fn resolves_node_artifact_refs() {
+    // artifacts live at the step root (sibling of `output`); a `node.artifacts` ref falls back to
+    // the step root when the output path misses, so artifacts are referenceable downstream.
+    let context = runinator_models::json!({
+        "steps": {
+            "dump": {
+                "output": { "rows": 3 },
+                "artifacts": [{ "id": "abc", "uri": "/tmp/dump.csv" }]
+            }
+        }
+    });
+    let value =
+        runinator_models::json!({ "$ref": { "node": "dump", "output": ["artifacts", 0, "uri"] } });
+    assert_eq!(
+        resolve_value_refs(&value, &context).unwrap(),
+        runinator_models::value::Value::String("/tmp/dump.csv".into())
+    );
+    // a real output key still wins over the step-root fallback.
+    let rows = runinator_models::json!({ "$ref": { "node": "dump", "output": ["rows"] } });
+    assert_eq!(
+        resolve_value_refs(&rows, &context).unwrap(),
+        runinator_models::value::Value::from(3)
+    );
+}
+
+#[test]
 fn resolves_config_refs() {
     // config is injected into the context by the web service as `{ scope: { name: value } }`.
     let context = runinator_models::json!({
@@ -144,6 +171,7 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
     let wf = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "schema-boundary".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::from_json_schema(&runinator_models::json!({
@@ -608,6 +636,7 @@ fn test_workflow_state_machine_logic_integration() {
     let wf = WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "integration-test".into(),
+        namespace: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
@@ -656,6 +685,87 @@ fn test_workflow_state_machine_logic_integration() {
     let context_fail = outputs_context(&runinator_models::json!({}), &outputs_fail);
     let next_fail = next_transition(step2_node, WorkflowStatus::Running, &context_fail).unwrap();
     assert_eq!(next_fail.unwrap(), "failed");
+}
+
+#[test]
+fn predicate_edges_route_in_priority_order_on_any_node() {
+    // an action node carries two predicate edges; the lower-priority one is evaluated first even
+    // though it is declared second.
+    let definition = runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "work" } } },
+            {
+                "id": "work",
+                "kind": "action",
+                "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "configuration": {} },
+                "transitions": {
+                    "branches": [
+                        { "when": { "value": { "$ref": { "params": ["flag"] } }, "equals": "yes" }, "target": { "$node": "second" }, "priority": 20 },
+                        { "when": { "value": { "$ref": { "params": ["flag"] } }, "equals": "yes" }, "target": { "$node": "first" }, "priority": 10 }
+                    ],
+                    "on_success": { "$node": "fallback" }
+                }
+            },
+            { "id": "first", "kind": "end" },
+            { "id": "second", "kind": "end" },
+            { "id": "fallback", "kind": "end" }
+        ]
+    });
+
+    let wf = workflow(definition);
+    let (_, nodes) = validate_workflow(&wf).expect("workflow should be valid");
+    let node_map: HashMap<String, &WorkflowNode> =
+        nodes.iter().map(|n| (n.id.clone(), n)).collect();
+    let work = node_map.get("work").unwrap();
+
+    let context = outputs_context(&runinator_models::json!({ "flag": "yes" }), &HashMap::new());
+
+    // both predicates match; priority 10 wins over priority 20 despite later declaration.
+    let next = next_transition(work, WorkflowStatus::Succeeded, &context).unwrap();
+    assert_eq!(next.unwrap(), "first");
+
+    // with no matching predicate, status routing falls through to on_success.
+    let empty = outputs_context(&runinator_models::json!({ "flag": "no" }), &HashMap::new());
+    let next = next_transition(work, WorkflowStatus::Succeeded, &empty).unwrap();
+    assert_eq!(next.unwrap(), "fallback");
+}
+
+#[test]
+fn predicate_edges_without_priority_keep_declaration_order() {
+    // unset priorities sort last but stable, so declaration order decides between equal matches.
+    let definition = runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "work" } } },
+            {
+                "id": "work",
+                "kind": "action",
+                "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "configuration": {} },
+                "transitions": {
+                    "branches": [
+                        { "when": null, "target": { "$node": "first" } },
+                        { "when": null, "target": { "$node": "second" } }
+                    ],
+                    "on_success": { "$node": "fallback" }
+                }
+            },
+            { "id": "first", "kind": "end" },
+            { "id": "second", "kind": "end" },
+            { "id": "fallback", "kind": "end" }
+        ]
+    });
+
+    let wf = workflow(definition);
+    let (_, nodes) = validate_workflow(&wf).expect("workflow should be valid");
+    let work = nodes.iter().find(|n| n.id == "work").unwrap();
+    let next = next_transition(
+        work,
+        WorkflowStatus::Succeeded,
+        &runinator_models::json!({}),
+    )
+    .unwrap();
+    assert_eq!(next.unwrap(), "first");
 }
 
 #[test]

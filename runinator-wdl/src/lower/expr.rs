@@ -79,7 +79,9 @@ impl Lowerer {
                 map.insert("else".into(), self.lower_expr(els)?);
                 Ok(Value::Object(map))
             }
-            ExprKind::Call { name, args, named } => {
+            ExprKind::Call {
+                name, args, named, ..
+            } => {
                 // resolve keyword args into positional order and fill user-function defaults.
                 let positional = self
                     .registry

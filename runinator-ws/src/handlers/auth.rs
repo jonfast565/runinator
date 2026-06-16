@@ -17,7 +17,10 @@ use crate::auth::{
     verify_password,
 };
 use crate::authz;
-use crate::models::{ApiError, ApiResponse};
+use crate::models::{
+    ApiError, ApiResponse, AuthConfigResponseSchema, LoginRequestSchema, LoginResponseSchema,
+    RefreshRequestSchema,
+};
 use crate::responses::{api_error, not_found, task_response_success};
 
 type Reply = (StatusCode, Json<ApiResponse>);
@@ -92,7 +95,7 @@ async fn issue_session<T: DatabaseImpl>(
     path = "/auth/config",
     tag = "Auth",
     security(),
-    responses((status = 200, description = "whether auth is enforced", body = serde_json::Value)),
+    responses((status = 200, description = "whether auth is enforced", body = AuthConfigResponseSchema)),
 )]
 pub(crate) async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -> Reply {
     ok_value(&serde_json::json!({ "enabled": config.enabled }))
@@ -106,9 +109,9 @@ pub(crate) async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -
     path = "/auth/login",
     tag = "Auth",
     security(),
-    request_body = serde_json::Value,
+    request_body = LoginRequestSchema,
     responses(
-        (status = 200, description = "token pair and the authenticated user", body = serde_json::Value),
+        (status = 200, description = "token pair and the authenticated user", body = LoginResponseSchema),
         (status = 401, description = "invalid username or password", body = ApiError),
     ),
 )]
@@ -131,6 +134,17 @@ pub(crate) async fn login<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/refresh",
+    tag = "Auth",
+    security(),
+    request_body = RefreshRequestSchema,
+    responses(
+        (status = 200, description = "rotated token pair and authenticated user", body = LoginResponseSchema),
+        (status = 401, description = "invalid or expired refresh token", body = ApiError),
+    ),
+)]
 pub(crate) async fn refresh<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
@@ -160,6 +174,16 @@ pub(crate) async fn refresh<T: DatabaseImpl>(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "Auth",
+    request_body = RefreshRequestSchema,
+    responses(
+        (status = 200, description = "refresh session revoked", body = crate::models::TaskResponseSchema),
+        (status = 401, description = "request is missing or has an invalid credential", body = ApiError),
+    ),
+)]
 pub(crate) async fn logout<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Json(request): Json<RefreshRequest>,

@@ -195,6 +195,8 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut version = None;
     let mut input = None;
     let mut aliases = Vec::new();
+    let mut namespace = None;
+    let mut imports = Vec::new();
     let mut start = None;
     let mut triggers = Vec::new();
     let mut type_decls = Vec::new();
@@ -210,6 +212,8 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                     })?);
             }
             Rule::params_block => input = Some(parse_params_block(inner)?),
+            Rule::namespace_decl => namespace = Some(first_inner(inner)?.as_str().to_string()),
+            Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
@@ -223,12 +227,28 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         version,
         input,
         aliases,
+        namespace,
+        imports,
         start,
         triggers,
         type_decls,
         body,
         span,
     })
+}
+
+fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, WdlError> {
+    let span = span_of(&pair);
+    let mut path = String::new();
+    let mut alias = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ns_path => path = inner.as_str().to_string(),
+            Rule::ident => alias = Some(inner.as_str().to_string()),
+            _ => {}
+        }
+    }
+    Ok(Import { path, alias, span })
 }
 
 fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
@@ -444,12 +464,14 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
     let mut annotations = Annotations::default();
     let mut label = None;
     let mut label_type = None;
+    let mut has_node = false;
     let mut kind = None;
     let mut transitions = TransitionClause::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::annotation => apply_annotation(&mut annotations, inner)?,
-            Rule::binding => {
+            Rule::node_decl => {
+                has_node = true;
                 for part in inner.into_inner() {
                     match part.as_rule() {
                         Rule::ident => label = Some(part.as_str().to_string()),
@@ -464,15 +486,21 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         }
     }
     let kind = kind.ok_or_else(|| WdlError::syntax(span, "statement has no body"))?;
-    if label.is_some()
-        && !matches!(
-            kind,
-            StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_)
-        )
-    {
+    // `node` is required on the value-producing leaves and forbidden everywhere else.
+    let is_node_leaf = matches!(
+        kind,
+        StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_)
+    );
+    if is_node_leaf && !has_node {
         return Err(WdlError::syntax(
             span,
-            "let binding is only allowed on action, subflow, or compute steps",
+            "action, subflow, and compute steps must be declared with `node`",
+        ));
+    }
+    if !is_node_leaf && has_node {
+        return Err(WdlError::syntax(
+            span,
+            "`node` is only allowed on action, subflow, or compute steps",
         ));
     }
     Ok(Stmt {
@@ -512,6 +540,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
         Rule::output_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
+        Rule::deliverable_stmt => Ok(StmtKind::Deliverable(parse_deliverable(inner)?)),
         Rule::input_stmt => Ok(StmtKind::Input(parse_input(inner)?)),
         Rule::approval_stmt => Ok(StmtKind::Approval(parse_approval(inner)?)),
         Rule::gate_stmt => Ok(StmtKind::Gate(parse_gate(inner)?)),
@@ -544,12 +573,20 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
             _ => {}
         }
     }
-    if idents.len() != 2 {
-        return Err(WdlError::syntax(span, "action requires provider.function"));
+    if idents.len() < 2 {
+        return Err(WdlError::syntax(
+            span,
+            "action requires provider.function (provider may be a dotted namespace path)",
+        ));
     }
+    // the trailing segment is the function; the leading segments are the provider namespace path.
+    let function = idents
+        .pop()
+        .ok_or_else(|| WdlError::lower("action function"))?;
+    let provider = idents.join(".");
     Ok(ActionStmt {
-        provider: idents[0].clone(),
-        function: idents[1].clone(),
+        provider,
+        function,
         args,
         modifiers,
     })
@@ -666,7 +703,16 @@ fn parse_lib_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
             _ => {}
         }
     }
-    Ok(Expr::new(ExprKind::Call { name, args, named }, span))
+    // a prefix `name(...)` call: subject to the std-qualification requirement during resolution.
+    Ok(Expr::new(
+        ExprKind::Call {
+            name,
+            args,
+            named,
+            method: false,
+        },
+        span,
+    ))
 }
 
 // split one `call_arg` into the positional or keyword bucket.
@@ -886,6 +932,28 @@ fn parse_output(pair: Pair<Rule>) -> Result<OutputStmt, WdlError> {
         }
     }
     Ok(OutputStmt { event_type, data })
+}
+
+fn parse_deliverable(pair: Pair<Rule>) -> Result<DeliverableStmt, WdlError> {
+    let mut items = Vec::new();
+    for inner in pair.into_inner() {
+        if inner.as_rule() != Rule::deliverable_item {
+            continue;
+        }
+        let mut name = String::new();
+        let mut source = None;
+        for part in inner.into_inner() {
+            match part.as_rule() {
+                Rule::ident => name = part.as_str().to_string(),
+                Rule::expr => source = Some(parse_expr(part)?),
+                _ => {}
+            }
+        }
+        if let Some(source) = source {
+            items.push((name, source));
+        }
+    }
+    Ok(DeliverableStmt { items })
 }
 
 fn parse_input(pair: Pair<Rule>) -> Result<InputStmt, WdlError> {
@@ -1221,15 +1289,18 @@ fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, WdlError> {
                 let target = parse_target(first_inner(inner)?)?;
                 clause.next = Some(target);
             }
-            // an `edges { … }` block is just a delimited group of outcome arrows.
+            // an `edges { … }` block is just a delimited group of outcome and predicate arrows.
             Rule::edges_block => {
                 for arrow in inner.into_inner() {
-                    if arrow.as_rule() == Rule::outcome_arrow {
-                        apply_outcome_arrow(&mut clause, arrow)?;
+                    match arrow.as_rule() {
+                        Rule::outcome_arrow => apply_outcome_arrow(&mut clause, arrow)?,
+                        Rule::predicate_arrow => apply_predicate_arrow(&mut clause, arrow)?,
+                        _ => {}
                     }
                 }
             }
             Rule::outcome_arrow => apply_outcome_arrow(&mut clause, inner)?,
+            Rule::predicate_arrow => apply_predicate_arrow(&mut clause, inner)?,
             _ => {}
         }
     }
@@ -1261,6 +1332,34 @@ fn apply_outcome_arrow(clause: &mut TransitionClause, pair: Pair<Rule>) -> Resul
             ));
         }
     }
+    Ok(())
+}
+
+fn apply_predicate_arrow(clause: &mut TransitionClause, pair: Pair<Rule>) -> Result<(), WdlError> {
+    let arrow_span = span_of(&pair);
+    let mut when = None;
+    let mut priority = None;
+    let mut target = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::cond => when = Some(parse_cond(part)?),
+            Rule::edge_priority => {
+                let int = first_inner(part)?;
+                priority = Some(parse_i64(int.as_str(), span_of(&int))?);
+            }
+            Rule::target => target = Some(parse_target(part)?),
+            _ => {}
+        }
+    }
+    let when =
+        when.ok_or_else(|| WdlError::syntax(arrow_span, "predicate edge missing condition"))?;
+    let target =
+        target.ok_or_else(|| WdlError::syntax(arrow_span, "predicate edge missing target"))?;
+    clause.branches.push(PredicateEdge {
+        when,
+        target,
+        priority,
+    });
     Ok(())
 }
 
@@ -1591,7 +1690,17 @@ fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
             for arg in parts.filter(|p| p.as_rule() == Rule::call_arg) {
                 parse_call_arg(arg, &mut args, &mut named)?;
             }
-            Ok(Expr::new(ExprKind::Call { name, args, named }, span))
+            // a fluent `recv.method(...)` call: exempt from std-qualification (the receiver carries
+            // any namespace), distinguished from a prefix call by `method: true`.
+            Ok(Expr::new(
+                ExprKind::Call {
+                    name,
+                    args,
+                    named,
+                    method: true,
+                },
+                span,
+            ))
         }
         Rule::path_seg => Ok(index_access(base, path_seg_key(first)?, span)),
         Rule::expr => Ok(index_access(base, parse_expr(first)?, span)),
@@ -1631,6 +1740,7 @@ fn index_access(base: Expr, key: Expr, span: Span) -> Expr {
             name: "at".to_string(),
             args: vec![base, key],
             named: Vec::new(),
+            method: true,
         },
         span,
     )

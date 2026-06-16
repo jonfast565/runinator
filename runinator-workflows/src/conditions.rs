@@ -222,7 +222,11 @@ pub fn next_transition(
     status: WorkflowStatus,
     context: &Value,
 ) -> Result<Option<String>, WorkflowValidationError> {
-    for branch in &node.transitions.branches {
+    // predicate edges are evaluated in ascending priority order; unset priorities sort last and a
+    // stable sort preserves declaration order within a priority (and for all-unset branches).
+    let mut ordered: Vec<&_> = node.transitions.branches.iter().collect();
+    ordered.sort_by_key(|branch| branch.priority.unwrap_or(i64::MAX));
+    for branch in ordered {
         if evaluate_condition(&branch.when, context)? {
             return Ok(Some(branch.target.as_str().to_string()));
         }

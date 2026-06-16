@@ -13,6 +13,7 @@ use runinator_models::{
     bundles::{PackImportResult, SecretBundle},
 };
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 use crate::events::{AppEvent, EventSender, emit};
 use crate::handlers::credentials::import_secret_entries_with;
@@ -24,7 +25,8 @@ use crate::repository;
 use crate::responses::{api_error, bad_request};
 
 // query parameters for the pack import endpoint.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct PackImportParams {
     // when true, an explicit re-apply updates existing items in place instead of skipping ones
     // that are not strictly newer than the stored copy.
@@ -33,6 +35,32 @@ pub(crate) struct PackImportParams {
 }
 
 // import a compiled pack zip, or a raw workflow bundle json when risk is acknowledged.
+#[utoipa::path(
+    post,
+    path = "/packs/import",
+    tag = "Packs",
+    params(
+        PackImportParams,
+        (
+            "x-runinator-json-workflow-risk",
+            Header,
+            description = "Required only for raw JSON workflow bundle imports posted as application/json.",
+            example = "system-breakage-possible"
+        )
+    ),
+    request_body(
+        description = "A compiled pack zip produced by `runinatorctl workflows apply`, or a raw JSON workflow bundle when the risk-acknowledgment header is present.",
+        content(
+            ("application/zip"),
+            ("application/json")
+        )
+    ),
+    responses(
+        (status = 200, description = "pack or workflow bundle imported", body = serde_json::Value),
+        (status = 400, description = "invalid zip, invalid json, or missing risk acknowledgment", body = crate::models::ApiError),
+        (status = 401, description = "request is missing or has an invalid credential", body = crate::models::ApiError),
+    ),
+)]
 pub(crate) async fn import_pack<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

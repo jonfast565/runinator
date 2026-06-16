@@ -29,7 +29,9 @@ export function defaultEdgeEditorDraft(): WorkflowEdgeEditorDraft {
     canEditSwitchCase: false,
     canMove: false,
     orderIndex: -1,
-    orderCount: 0
+    orderCount: 0,
+    priority: null,
+    canEditPriority: false
   };
 }
 

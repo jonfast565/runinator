@@ -72,9 +72,29 @@ impl Formatter {
             if !workflow.triggers.is_empty()
                 || !workflow.aliases.is_empty()
                 || !workflow.body.is_empty()
+                || workflow.namespace.is_some()
+                || !workflow.imports.is_empty()
             {
                 self.out.push('\n');
             }
+        }
+        // preserve the `namespace` header and `import` declarations (surface sugar that qualifies
+        // identity and opens namespaces into local scope).
+        if let Some(namespace) = &workflow.namespace {
+            self.line(&format!("namespace {namespace}"));
+        }
+        for import in &workflow.imports {
+            match &import.alias {
+                Some(alias) => self.line(&format!("import {} as {alias}", import.path)),
+                None => self.line(&format!("import {}", import.path)),
+            }
+        }
+        if (workflow.namespace.is_some() || !workflow.imports.is_empty())
+            && (!workflow.triggers.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
         }
         // preserve header `trigger cron` declarations.
         for trigger in &workflow.triggers {
@@ -85,13 +105,15 @@ impl Formatter {
         {
             self.out.push('\n');
         }
-        // preserve named `type <Name>` declarations.
-        for decl in &workflow.type_decls {
-            let rendered = format_type(&decl.ty);
-            if matches!(decl.ty, TypeExpr::Struct { .. }) {
-                self.line(&format!("type {} {rendered}", decl.name));
+        // preserve named `type <Name>` declarations; struct types render each field on its own line.
+        for (index, decl) in workflow.type_decls.iter().enumerate() {
+            if index > 0 {
+                self.out.push('\n');
+            }
+            if let TypeExpr::Struct { fields, additional } = &decl.ty {
+                self.type_struct_block(&format!("type {} {{", decl.name), fields, additional);
             } else {
-                self.line(&format!("type {} = {rendered}", decl.name));
+                self.line(&format!("type {} = {}", decl.name, format_type(&decl.ty)));
             }
         }
         if !workflow.type_decls.is_empty()
@@ -119,7 +141,18 @@ impl Formatter {
         let TypeExpr::Struct { fields, additional } = input else {
             return;
         };
-        self.line("params {");
+        self.type_struct_block("params {", fields, additional);
+    }
+
+    // render a struct body as a brace block with one field per line, sharing the shape used by
+    // `params` and named `type` declarations.
+    fn type_struct_block(
+        &mut self,
+        header: &str,
+        fields: &[TypeField],
+        additional: &Option<Box<TypeExpr>>,
+    ) {
+        self.line(header);
         self.indent += 1;
         for field in fields {
             self.type_field(field, false);
@@ -190,8 +223,19 @@ impl Formatter {
     }
 
     fn block_body(&mut self, body: &Block) {
+        // render each statement in isolation, then rejoin with a blank line between any pair where
+        // either statement spans multiple lines, so multi-line statements never look crushed.
+        let mut pieces: Vec<String> = Vec::with_capacity(body.len());
         for stmt in body {
+            let previous = std::mem::take(&mut self.out);
             self.stmt(stmt);
+            pieces.push(std::mem::replace(&mut self.out, previous));
+        }
+        for (index, piece) in pieces.iter().enumerate() {
+            if index > 0 && (is_multiline_piece(&pieces[index - 1]) || is_multiline_piece(piece)) {
+                self.out.push('\n');
+            }
+            self.out.push_str(piece);
         }
     }
 
@@ -210,14 +254,22 @@ impl Formatter {
         }
 
         let mut text = String::new();
-        if let Some(label) = &stmt.label {
-            text.push_str("let ");
-            text.push_str(label);
-            if let Some(label_type) = &stmt.label_type {
-                text.push_str(": ");
-                text.push_str(&format_type(label_type));
+        // action, subflow, and compute are the node-leaves: they carry the `node` keyword (with an
+        // optional `label[: type] =` binding). every other statement stays bare.
+        let is_node_leaf = matches!(
+            stmt.kind,
+            StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_)
+        );
+        if is_node_leaf {
+            text.push_str("node ");
+            if let Some(label) = &stmt.label {
+                text.push_str(label);
+                if let Some(label_type) = &stmt.label_type {
+                    text.push_str(": ");
+                    text.push_str(&format_type(label_type));
+                }
+                text.push_str(" = ");
             }
-            text.push_str(" = ");
         }
 
         text.push_str(&self.stmt_kind(&stmt.kind));
@@ -245,13 +297,24 @@ impl Formatter {
         }
 
         self.line(text);
-        if edges.is_empty() {
+        if edges.is_empty() && transitions.branches.is_empty() {
             return;
         }
         self.line("edges {");
         self.indent += 1;
         for (outcome, target) in edges {
             self.line(&format!("{outcome} -> {}", format_target(target)));
+        }
+        // user-defined predicate edges, in declaration order, mirroring the decompiler's rendering.
+        for branch in &transitions.branches {
+            let cond = format_cond(&branch.when);
+            let target = format_target(&branch.target);
+            match branch.priority {
+                Some(priority) => {
+                    self.line(&format!("when {cond} priority {priority} -> {target}"))
+                }
+                None => self.line(&format!("when {cond} -> {target}")),
+            }
         }
         self.indent -= 1;
         self.line("}");
@@ -264,6 +327,7 @@ impl Formatter {
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Output(output) => self.output(output),
+            StmtKind::Deliverable(deliverable) => self.deliverable(deliverable),
             StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
             StmtKind::Gate(gate) => self.gate(gate),
@@ -292,12 +356,14 @@ impl Formatter {
         self.push_indent(&mut out);
         out.push('}');
         // render trailing modifiers (e.g. `.timeout(30s)`) like an action call.
+        let mut modifiers = Vec::new();
         if let Some(seconds) = compute.modifiers.timeout_seconds {
-            self.push_modifier(&mut out, &format!(".timeout({seconds}s)"));
+            modifiers.push(format!(".timeout({seconds}s)"));
         }
         if let Some(retry) = compute.modifiers.retry {
-            self.push_modifier(&mut out, &format!(".retry({retry})"));
+            modifiers.push(format!(".retry({retry})"));
         }
+        self.append_modifiers(&mut out, &modifiers, true);
         out
     }
 
@@ -352,13 +418,14 @@ impl Formatter {
     }
 
     fn action(&self, action: &ActionStmt) -> String {
-        let args = if action.args.is_empty() {
-            "()".to_string()
-        } else {
+        let multiline = !action.args.is_empty();
+        let args = if multiline {
             self.action_args_multiline(&action.args)
+        } else {
+            "()".to_string()
         };
         let mut text = format!("{}.{}{args}", action.provider, action.function);
-        self.action_modifiers(action, &mut text);
+        self.action_modifiers(action, &mut text, multiline);
         text
     }
 
@@ -389,12 +456,13 @@ impl Formatter {
         out
     }
 
-    fn action_modifiers(&self, action: &ActionStmt, text: &mut String) {
+    fn action_modifiers(&self, action: &ActionStmt, text: &mut String, multiline: bool) {
+        let mut modifiers = Vec::new();
         if let Some(seconds) = action.modifiers.timeout_seconds {
-            self.push_modifier(text, &format!(".timeout({seconds}s)"));
+            modifiers.push(format!(".timeout({seconds}s)"));
         }
         if let Some(retry) = action.modifiers.retry {
-            self.push_modifier(text, &format!(".retry({retry})"));
+            modifiers.push(format!(".retry({retry})"));
         }
         if !action.modifiers.tags.is_empty() {
             let tags = action
@@ -404,10 +472,10 @@ impl Formatter {
                 .map(|tag| quote(tag))
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.push_modifier(text, &format!(".tags({tags})"));
+            modifiers.push(format!(".tags({tags})"));
         }
         if action.modifiers.mcp {
-            self.push_modifier(text, ".mcp()");
+            modifiers.push(".mcp()".to_string());
         }
         if let Some(reentry) = &action.modifiers.reentry {
             let mut modifier = format!(".reentry(max: {}", reentry.max_visits);
@@ -415,14 +483,30 @@ impl Formatter {
                 modifier.push_str(&format!(", else: {}", format_target(target)));
             }
             modifier.push(')');
-            self.push_modifier(text, &modifier);
+            modifiers.push(modifier);
         }
+        self.append_modifiers(text, &modifiers, multiline);
     }
 
-    fn push_modifier(&self, text: &mut String, modifier: &str) {
-        text.push('\n');
-        text.push_str(&indent(self.indent + 1));
-        text.push_str(modifier);
+    // attach the fluent modifier chain. the first call hugs the closing paren/brace; any further
+    // calls align their leading dot one column past it. an inline call keeps the chain on one line.
+    fn append_modifiers(&self, text: &mut String, modifiers: &[String], multiline: bool) {
+        let Some((first, rest)) = modifiers.split_first() else {
+            return;
+        };
+        text.push_str(first);
+        if !multiline {
+            for modifier in rest {
+                text.push_str(modifier);
+            }
+            return;
+        }
+        let pad = format!("{} ", indent(self.indent));
+        for modifier in rest {
+            text.push('\n');
+            text.push_str(&pad);
+            text.push_str(modifier);
+        }
     }
 
     fn subflow(&self, subflow: &SubflowStmt) -> String {
@@ -475,6 +559,19 @@ impl Formatter {
             }
         }
         text
+    }
+
+    fn deliverable(&mut self, deliverable: &DeliverableStmt) -> String {
+        let mut out = String::from("deliverable {\n");
+        self.indent += 1;
+        for (name, source) in &deliverable.items {
+            self.push_indent(&mut out);
+            out.push_str(&format!("{name} = {}\n", format_expr(source)));
+        }
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        out
     }
 
     fn input_stmt(&self, input: &InputStmt) -> String {
@@ -834,20 +931,41 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
                 format_expr(els),
             ),
         ),
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name,
+            args,
+            named,
+            method,
+        } => {
             // re-sugar `at(base, key)` into `base.key` / `base[index]` access syntax.
-            let rendered = (name == "at" && args.len() == 2 && named.is_empty())
-                .then(|| format_access(&args[0], &args[1]))
-                .flatten()
-                .unwrap_or_else(|| {
-                    let mut rendered = args.iter().map(format_expr).collect::<Vec<_>>();
-                    rendered.extend(
-                        named
-                            .iter()
-                            .map(|(key, value)| format!("{key}: {}", format_expr(value))),
-                    );
-                    format!("{name}({})", rendered.join(", "))
-                });
+            let rendered = if name == "at"
+                && args.len() == 2
+                && named.is_empty()
+                && let Some(access) = format_access(&args[0], &args[1])
+            {
+                access
+            } else if *method && !args.is_empty() {
+                // a method-origin call renders fluent as `receiver.name(rest)`. for a namespaced
+                // call (`std.strings.upper(x)`) the receiver is the namespace path, so this is also
+                // how a qualified intrinsic call round-trips through the formatter.
+                let receiver = format_expr_at(&args[0], ExprPrec::Primary);
+                let mut rest = args[1..].iter().map(format_expr).collect::<Vec<_>>();
+                rest.extend(
+                    named
+                        .iter()
+                        .map(|(key, value)| format!("{key}: {}", format_expr(value))),
+                );
+                format!("{receiver}.{name}({})", rest.join(", "))
+            } else {
+                // a prefix call: user functions and zero-arg calls render bare.
+                let mut rendered = args.iter().map(format_expr).collect::<Vec<_>>();
+                rendered.extend(
+                    named
+                        .iter()
+                        .map(|(key, value)| format!("{key}: {}", format_expr(value))),
+                );
+                format!("{name}({})", rendered.join(", "))
+            };
             (ExprPrec::Primary, rendered)
         }
         ExprKind::Lambda { params, body } => {
@@ -1233,4 +1351,9 @@ fn contains_object(expr: &Expr) -> bool {
 
 fn indent(level: usize) -> String {
     "    ".repeat(level)
+}
+
+// a rendered statement spans multiple lines if its text, sans the trailing newline, contains one.
+fn is_multiline_piece(piece: &str) -> bool {
+    piece.trim_end_matches('\n').contains('\n')
 }

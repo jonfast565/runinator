@@ -84,6 +84,13 @@ pub async fn fetch_workflow_node_run_artifacts<T: DatabaseImpl>(
         .await
 }
 
+pub async fn fetch_workflow_run_deliverables<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<Vec<runinator_models::workflows::WorkflowRunDeliverable>, SendableError> {
+    db.fetch_workflow_run_deliverables(workflow_run_id).await
+}
+
 pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     db: &T,
     event: &WorkflowResultEvent,

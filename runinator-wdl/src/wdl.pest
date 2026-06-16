@@ -26,7 +26,22 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (trigger_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+
+// the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
+// subflow targets resolve unambiguously across packs; falls back to the pack name on import when
+// absent. render-only surface that rides in metadata.
+namespace_decl = { "namespace" ~ ns_path }
+
+// `import <path> (as <alias>)?` opens a namespace into local scope. `import std.strings` makes
+// `upper(x)` callable bare; `import std.strings as s` binds `s.upper(x)`; `import some_pack` brings
+// another pack's workflows into subflow scope. pure surface sugar carried in metadata; the compiled
+// graph only ever holds fully-resolved names.
+import_decl = { "import" ~ ns_path ~ ("as" ~ ident)? }
+
+// a dotted namespace path (`std.strings`, `some_pack.helpers`). atomic so it is captured whole and
+// split by the parser.
+ns_path = @{ ident ~ ("." ~ ident)* }
 
 // named type declarations, reusable for parameter/let typing. a struct shorthand (`type Cart { ... }`)
 // or an alias (`type Ids = int[]`). render-only surface: declared names resolve to RuninatorType
@@ -77,7 +92,7 @@ type_named   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // statements ---------------------------------------------------------------
 
-stmt = { annotation* ~ binding? ~ stmt_body ~ transitions? }
+stmt = { annotation* ~ node_decl? ~ stmt_body ~ transitions? }
 
 annotation = { ann_id | ann_skip | ann_lock | ann_timeout }
 ann_id     = { "@id" ~ "(" ~ string ~ ")" }
@@ -85,7 +100,13 @@ ann_skip   = { "@skip" }
 ann_lock   = { "@lock" }
 ann_timeout = { "@timeout" ~ "(" ~ duration ~ ")" }
 
-binding = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" }
+// a graph-node declaration. `node` is required on the value-producing leaves (action, subflow,
+// compute) — the statements that otherwise read like bare function calls — and forbidden on every
+// other statement; the parser enforces that split. an optional `ident (: type)? =` binds the node's
+// output. `node_kw` carries a word boundary so identifiers like `node_pool` are not mistaken for it.
+// `let` is no longer a workflow-level keyword; it now means only a pure local inside a compute block.
+node_decl = { node_kw ~ (ident ~ (":" ~ type_expr)? ~ "=")? }
+node_kw   = @{ "node" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 stmt_body = {
     if_stmt
@@ -99,6 +120,7 @@ stmt_body = {
   | map_stmt
   | wait_stmt
   | output_stmt
+  | deliverable_stmt
   | input_stmt
   | approval_stmt
   | gate_stmt
@@ -129,7 +151,9 @@ mul_op   = { "*" | "/" | "%" }
 
 // provider/function names may contain internal hyphens (e.g. `ai-command`); this token is
 // confined to the call position, where `-` is never an operator.
-action_stmt  = { action_ident ~ "." ~ action_ident ~ "(" ~ arg_list? ~ ")" ~ modifier* }
+// a provider action call. two-or-more dotted segments: the leading segments are the provider
+// namespace path (`github`, or `github.repos`), the trailing segment is the function name.
+action_stmt  = { action_ident ~ ("." ~ action_ident)+ ~ "(" ~ arg_list? ~ ")" ~ modifier* }
 action_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 arg_list     = { arg ~ ("," ~ arg)* ~ ","? }
 arg          = { arg_spread | arg_pair }
@@ -157,6 +181,12 @@ wait_initial = { "initial" ~ string }
 // payload keeps its brace form (`output "x" { a: 1 }`); other payloads are any expression, and
 // the decompiler parenthesizes an event-less scalar so it is not mistaken for the event type.
 output_stmt = { "output" ~ string? ~ expr? }
+
+// names upstream artifacts as run-level deliverables. each `name = expr` entry binds a label to an
+// artifact-valued expression (typically `step.artifacts` or a single artifact).
+deliverable_stmt = { "deliverable" ~ "{" ~ deliverable_item* ~ "}" }
+deliverable_item = { ident ~ "=" ~ expr }
+
 input_stmt = { "input" ~ expr? }
 
 approval_stmt = { "approve" ~ expr ~ approval_type? ~ object? }
@@ -221,12 +251,16 @@ block = { "{" ~ stmt* ~ "}" }
 
 // transitions --------------------------------------------------------------
 
-transitions   = { edges_block | outcome_arrow+ | single_arrow }
+transitions   = { edges_block | (outcome_arrow | predicate_arrow)+ | single_arrow }
 // the canonical emitted form: every outgoing edge gathered into one delimited section under the
 // node statement. the bare arrow forms remain accepted for terse hand-written source.
-edges_block   = { "edges" ~ "{" ~ outcome_arrow+ ~ "}" }
+edges_block   = { "edges" ~ "{" ~ (outcome_arrow | predicate_arrow)+ ~ "}" }
 single_arrow  = { "->" ~ target }
 outcome_arrow = { outcome ~ "->" ~ target }
+// a user-defined predicate edge: routes to `target` when `cond` holds. multiple predicate edges are
+// tried in ascending `priority` (lower first); unset priorities keep declaration order.
+predicate_arrow = { "when" ~ cond ~ edge_priority? ~ "->" ~ target }
+edge_priority   = { "priority" ~ integer }
 // `next` names the happy-path edge for next-based leaves (wait/output/config) and control blocks,
 // the named twin of the `-> target` single arrow; `ok` is the happy path for on_success leaves.
 outcome       = { "ok" | "next" | "fail" | "timeout" | "reject" }

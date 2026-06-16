@@ -14,6 +14,11 @@ use crate::types::RuninatorType;
 pub struct WorkflowDefinition {
     pub id: Option<Uuid>,
     pub name: String,
+    /// the namespace that qualifies this workflow's identity, from a `namespace <path>` header.
+    /// `None` for an unqualified workflow. a subflow target `"<namespace>.<name>"` resolves against
+    /// the qualified identity `namespace + "." + name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(default)]
     pub version: SemVer,
     #[serde(default)]
@@ -464,6 +469,7 @@ pub enum WorkflowNodeKind {
     Race,
     #[serde(rename = "output")]
     Output,
+    Deliverable,
     Input,
     Subflow,
     Config,
@@ -705,6 +711,10 @@ pub struct WorkflowTransitions {
 pub struct WorkflowBranch {
     pub when: Value,
     pub target: WorkflowNodeRef,
+    /// selection priority for predicate edges; lower numbers are evaluated first. unset branches
+    /// keep their declaration order (sorted after any numbered branches).
+    #[serde(default)]
+    pub priority: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -810,6 +820,35 @@ pub struct WorkflowNodeRunChunk {
 pub struct WorkflowNodeRunArtifact {
     pub id: Uuid,
     pub workflow_node_run_id: Uuid,
+    pub name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub uri: String,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Input for promoting a node artifact to a run-level deliverable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWorkflowRunDeliverable {
+    pub workflow_run_id: Uuid,
+    pub node_id: String,
+    pub artifact_id: Uuid,
+    pub name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub uri: String,
+    pub metadata: Value,
+}
+
+/// A run-level deliverable: an author-declared label over a node artifact, promoted by a
+/// `deliverable` node so a finished workflow run exposes what it produced.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRunDeliverable {
+    pub id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub node_id: String,
+    pub artifact_id: Uuid,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: i64,

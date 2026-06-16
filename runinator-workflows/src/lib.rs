@@ -18,9 +18,9 @@ mod validation;
 
 pub use compute::{
     ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES,
-    IntrinsicLibrary, PureIntrinsics, call_pure, effectful_signatures, intrinsic_arity,
-    intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program, run_program,
-    run_program_with,
+    IntrinsicLibrary, PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures,
+    intrinsic_arity, intrinsic_module, intrinsic_signature, is_higher_order, is_known_intrinsic,
+    parse_program, qualified_intrinsic_name, resolve_std_path, run_program, run_program_with,
 };
 pub use conditions::{
     evaluate_condition, evaluate_condition_with, next_transition, validate_condition_value,
@@ -33,20 +33,22 @@ pub use expressions::{
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
-    evaluate_switch, parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
-    parse_join_parameters, parse_loop_items, parse_map_parameters, parse_output_parameters,
-    parse_parallel_parameters, parse_race_parameters, parse_signal_parameters,
-    parse_switch_parameters, parse_try_parameters, parse_wait_parameters,
+    evaluate_switch, parse_approval_parameters, parse_deliverable_parameters,
+    parse_gate_parameters, parse_input_parameters, parse_join_parameters, parse_loop_items,
+    parse_map_parameters, parse_output_parameters, parse_parallel_parameters,
+    parse_race_parameters, parse_signal_parameters, parse_switch_parameters, parse_try_parameters,
+    parse_wait_parameters,
 };
 pub use refs::expand_workflow_refs;
 pub use run_state::{
     branch_policy_name, join_satisfied, latest_node_run, latest_status, race_winner,
 };
 pub use types::{
-    ApprovalParameters, BranchPolicy, GateParameters, InputParameters, JoinParameters,
-    LoopParameters, MapParameters, OutputParameters, ParallelParameters, RaceParameters,
-    SignalParameters, SwitchCase, SwitchParameters, TryParameters, WaitParameters,
-    WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
+    ApprovalParameters, BranchPolicy, DeliverableItem, DeliverableParameters, GateParameters,
+    InputParameters, JoinParameters, LoopParameters, MapParameters, OutputParameters,
+    ParallelParameters, RaceParameters, SignalParameters, SwitchCase, SwitchParameters,
+    TryParameters, WaitParameters, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,
+    WorkflowValueRef,
 };
 pub use typing::{WorkflowType, validate_workflow_types};
 pub use validation::{

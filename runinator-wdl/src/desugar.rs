@@ -120,6 +120,11 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_expr(data, aliases)?;
             }
         }
+        StmtKind::Deliverable(deliverable) => {
+            for (_, source) in deliverable.items.iter_mut() {
+                expand_expr(source, aliases)?;
+            }
+        }
         StmtKind::Input(input) => {
             if let Some(prompt) = input.prompt.as_mut() {
                 expand_expr(prompt, aliases)?;

@@ -462,6 +462,18 @@ context's `runinator` namespace:
 bash scripts/run-k8s.sh ui --context my-prod-context --namespace runinator
 ```
 
+To open the raw web-service API or Scalar docs directly in a browser, forward
+the `runinator-ws` Service on a separate local port:
+
+```bash
+bash scripts/port-forward-ws.sh
+```
+
+That exposes:
+
+- `http://127.0.0.1:8081/docs`
+- `http://127.0.0.1:8081/openapi.json`
+
 ## Build Command Center
 
 `runinator-command-center` is a Tauri client. Run it against the local stack with:

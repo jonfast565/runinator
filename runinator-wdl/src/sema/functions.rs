@@ -88,7 +88,9 @@ fn reaches_self(start: &str, edges: &HashMap<&str, BTreeSet<String>>) -> bool {
 /// collect the names of user functions called anywhere in `expr`.
 fn collect_user_calls(expr: &Expr, registry: &FunctionRegistry, out: &mut BTreeSet<String>) {
     match &expr.kind {
-        ExprKind::Call { name, args, named } => {
+        ExprKind::Call {
+            name, args, named, ..
+        } => {
             if registry.is_user(name) {
                 out.insert(name.clone());
             }

@@ -72,7 +72,7 @@ emitted as explicit `-> label` arrows. `Ticket Work` round-trips compile → dec
 ```
 until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
     wait config.ci_poll.interval_seconds
-    let poll_checks: CheckSummary = github.checks_summary(
+    node poll_checks: CheckSummary = github.checks_summary(
         ...github_conn,
         ref: create_pr.head.sha
     )

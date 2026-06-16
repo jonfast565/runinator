@@ -75,6 +75,11 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_expr(data, source_dir, paths)?;
             }
         }
+        StmtKind::Deliverable(deliverable) => {
+            for (_, source) in &deliverable.items {
+                collect_expr(source, source_dir, paths)?;
+            }
+        }
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 collect_expr(prompt, source_dir, paths)?;

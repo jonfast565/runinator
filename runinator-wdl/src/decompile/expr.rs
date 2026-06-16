@@ -121,7 +121,11 @@ impl Decompiler<'_> {
                 .iter()
                 .map(|arg| self.expr(arg))
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok(Some(format!("{name}({})", rendered.join(", "))));
+            // qualify builtin intrinsics to their canonical `std.<module>.<leaf>` form; user
+            // functions (never intrinsic-named, by the no-shadow rule) stay bare.
+            let callee = runinator_workflows::qualified_intrinsic_name(name)
+                .unwrap_or_else(|| name.to_string());
+            return Ok(Some(format!("{callee}({})", rendered.join(", "))));
         }
         if map.len() == 1 {
             if let Some(spec) = map.get("$lambda").and_then(Value::as_object) {
