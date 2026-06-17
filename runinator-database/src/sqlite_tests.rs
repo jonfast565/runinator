@@ -813,6 +813,182 @@ async fn delete_workflow_cascades_runs_and_execution_records() {
     let _ = fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn waiting_signal_runs_are_routable_by_correlation_key() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-signal-correlation-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("signal-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+
+    // two runs park a signal node on the same name but different correlation keys.
+    let park = |key: &'static str| {
+        let db = &db;
+        let snapshot = snapshot.clone();
+        async move {
+            let run = db
+                .create_workflow_run(
+                    workflow_id,
+                    snapshot,
+                    runinator_models::json!({}),
+                    runinator_models::json!({}),
+                    None,
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            let node_run = db
+                .create_workflow_node_run(run.id, "wait_review".into(), runinator_models::json!({}))
+                .await
+                .unwrap();
+            let state = runinator_models::workflow_state::SignalState {
+                name: "github.review".into(),
+                correlation_key: Some(key.into()),
+            };
+            db.update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Waiting,
+                Some(1),
+                None,
+                None,
+                Some(serde_json::to_value(&state).unwrap().into()),
+                Some("signal_waiting".into()),
+                None,
+            )
+            .await
+            .unwrap();
+            (run.id, node_run.id)
+        }
+    };
+    let (run_abc, node_abc) = park("ABC-1").await;
+    let (_run_xyz, _node_xyz) = park("XYZ-9").await;
+
+    let waiting = db
+        .fetch_workflow_node_runs_by_status(WorkflowStatus::Waiting)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 2);
+
+    // the same predicate the ws repository uses must select exactly the matching run.
+    let matched: Vec<_> = waiting
+        .iter()
+        .filter(|run| {
+            serde_json::from_value::<runinator_models::workflow_state::SignalState>(
+                run.state.clone().into(),
+            )
+            .map(|state| {
+                state.name == "github.review" && state.correlation_key.as_deref() == Some("ABC-1")
+            })
+            .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0].id, node_abc);
+    assert_eq!(matched[0].workflow_run_id, run_abc);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn executor_lease_is_mutually_exclusive_until_stale_or_released() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-executor-lease-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("lease-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let node_run = db
+        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}))
+        .await
+        .unwrap();
+
+    let register = |instance: &'static str| {
+        let db = &db;
+        async move {
+            db.register_replica(
+                runinator_models::replicas::ReplicaRegistrationRequest {
+                    replica_type: runinator_models::replicas::ReplicaKind::Worker,
+                    instance_id: instance.into(),
+                    runtime_id: Uuid::new_v4().to_string(),
+                    display_name: None,
+                    host: None,
+                    port: None,
+                    base_path: None,
+                    version: None,
+                    attributes: runinator_models::json!({}),
+                },
+                None,
+            )
+            .await
+            .unwrap()
+            .replica_id
+        }
+    };
+    let worker_a = register("worker-a").await;
+    let worker_b = register("worker-b").await;
+    let now = Utc::now();
+    let stale_before = now - Duration::seconds(300);
+
+    // first claim wins.
+    assert!(
+        db.claim_workflow_node_run_executor(node_run.id, worker_a, now, stale_before)
+            .await
+            .unwrap()
+    );
+    // a concurrent duplicate loses while the lease is fresh.
+    assert!(
+        !db.claim_workflow_node_run_executor(node_run.id, worker_b, now, stale_before)
+            .await
+            .unwrap()
+    );
+    // once the prior claim ages past the cutoff, a retry may steal it.
+    let future_cutoff = now + Duration::seconds(1);
+    assert!(
+        db.claim_workflow_node_run_executor(node_run.id, worker_b, now, future_cutoff)
+            .await
+            .unwrap()
+    );
+    // releasing frees the slot for the next attempt immediately.
+    db.release_workflow_node_run_executor(node_run.id, worker_b, Utc::now())
+        .await
+        .unwrap();
+    assert!(
+        db.claim_workflow_node_run_executor(node_run.id, worker_a, Utc::now(), stale_before)
+            .await
+            .unwrap()
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 fn workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
         id: None,

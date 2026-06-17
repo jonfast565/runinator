@@ -13,7 +13,10 @@ use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetad
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 
-use crate::compute::{IntrinsicLibrary, PureIntrinsics, effectful_signatures};
+use crate::compute::{
+    ComputeOutcome, ComputeProgram, IntrinsicLibrary, PureIntrinsics, effectful_signatures,
+    parse_program, run_block,
+};
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{evaluate_expression_with, parse_expression};
 use crate::keys::REF_LOCAL;
@@ -66,11 +69,18 @@ fn higher_order_signatures() -> Vec<ActionMetadata> {
     ]
 }
 
+/// a user-defined function body: a single lowered expression, or a compute-style program (the same
+/// `$let`/`$return`/`$if` form a `compute` block lowers to) evaluated by the shared block runner.
+pub enum FunctionBody {
+    Expr(WorkflowExpression),
+    Program(ComputeProgram),
+}
+
 /// a user-defined function resolved for runtime evaluation: parameter names (binding is positional),
-/// the lowered body expression, and an optional recursion depth limit.
+/// the lowered body, and an optional recursion depth limit.
 pub struct RuntimeFunction {
     pub params: Vec<String>,
-    pub body: WorkflowExpression,
+    pub body: FunctionBody,
     pub max_depth: Option<u32>,
 }
 
@@ -132,9 +142,16 @@ fn parse_function(value: &Value) -> Result<RuntimeFunction, WorkflowValidationEr
         .map(|items| items.iter().map(param_name).collect::<Result<Vec<_>, _>>())
         .transpose()?
         .unwrap_or_default();
-    let body = object.get("body").ok_or_else(|| {
-        WorkflowValidationError::InvalidValueRef("function requires a body".into())
-    })?;
+    // a block body lowers to a `program` array; an expression body keeps a single `body` expr.
+    let body = match object.get("program") {
+        Some(program) => FunctionBody::Program(parse_program(program)?),
+        None => {
+            let body = object.get("body").ok_or_else(|| {
+                WorkflowValidationError::InvalidValueRef("function requires a body".into())
+            })?;
+            FunctionBody::Expr(parse_expression(body)?)
+        }
+    };
     let max_depth = object
         .get("recursive")
         .and_then(Value::as_object)
@@ -143,7 +160,7 @@ fn parse_function(value: &Value) -> Result<RuntimeFunction, WorkflowValidationEr
         .map(|depth| depth as u32);
     Ok(RuntimeFunction {
         params,
-        body: parse_expression(body)?,
+        body,
         max_depth,
     })
 }
@@ -233,6 +250,18 @@ pub(crate) fn invoke_user_function(
     for (param, value) in function.params.iter().zip(values.iter()) {
         locals.insert(param.clone(), value.clone());
     }
-    let scope = Value::Object(Map::from_iter([(REF_LOCAL.into(), Value::Object(locals))]));
-    evaluate_expression_with(&function.body, &scope, env.deeper())
+    let mut scope = Value::Object(Map::from_iter([(REF_LOCAL.into(), Value::Object(locals))]));
+    match &function.body {
+        FunctionBody::Expr(expr) => evaluate_expression_with(expr, &scope, env.deeper()),
+        // a block body runs like a compute block in the hermetic scope; a final `return` yields the
+        // value, falling off the end yields null (a void function). `goto` is rejected at compile.
+        FunctionBody::Program(program) => match run_block(&program.0, &mut scope, env.deeper())? {
+            Some(ComputeOutcome::Return(value)) => Ok(value),
+            Some(ComputeOutcome::Goto(_)) => Err(WorkflowValidationError::InvalidValueRef(
+                format!("goto is not allowed in function '{name}'"),
+            )),
+            Some(ComputeOutcome::Fallthrough(value)) => Ok(value),
+            None => Ok(Value::Null),
+        },
+    }
 }

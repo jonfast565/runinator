@@ -134,6 +134,7 @@ pub(crate) async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
         node_run_id,
         request.replica_id,
         request.claimed_at,
+        request.stale_before.unwrap_or(request.claimed_at),
     )
     .await
     {

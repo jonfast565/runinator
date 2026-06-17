@@ -277,13 +277,17 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
 
-    /// Mark a node run as currently executing on a specific replica.
+    /// Acquire the executor lease for a node run, returning whether it was acquired. The claim only
+    /// succeeds when no live executor holds the slot (unclaimed, or the prior claim predates
+    /// `stale_before`), making duplicate/redelivered executions of the same node run mutually
+    /// exclusive.
     fn claim_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,
         replica_id: Uuid,
         claimed_at: DateTime<Utc>,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+        stale_before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Clear the current executor and record the last executor for a node run.
     fn release_workflow_node_run_executor(
@@ -298,6 +302,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_node_run_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowNodeRun>, SendableError>> + Send;
+
+    /// Fetch all node execution records in a given status across every run. Used to route an
+    /// inbound signal to a parked node by correlation key without knowing its run id.
+    fn fetch_workflow_node_runs_by_status(
+        &self,
+        status: WorkflowStatus,
+    ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
 
     /// Append a log chunk to a workflow node run.
     fn append_workflow_node_run_chunk(

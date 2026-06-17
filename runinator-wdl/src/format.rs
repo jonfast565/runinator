@@ -22,34 +22,27 @@ impl Formatter {
         if let Some(max_depth) = function.recursive {
             self.line(&format!("@recursive(max_depth: {max_depth})"));
         }
-        let params = function
-            .params
-            .iter()
-            .map(|param| {
-                let optional = if param.optional { "?" } else { "" };
-                let default = param
-                    .default
-                    .as_ref()
-                    .map(|expr| format!(" = {}", format_expr(expr)))
-                    .unwrap_or_default();
-                format!(
-                    "{}{optional}: {}{default}",
-                    param.name,
-                    format_type(&param.ty)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let ret = function
-            .ret
-            .as_ref()
-            .map(|ty| format!(" -> {}", format_type(ty)))
-            .unwrap_or_default();
-        self.line(&format!(
-            "fn {}({params}){ret} = {}",
-            function.name,
-            format_expr(&function.body)
-        ));
+        let signature = format_fn_signature(function);
+        match &function.body {
+            FnBody::Expr(expr) => {
+                self.line(&format!(
+                    "fn {}{signature} = {}",
+                    function.name,
+                    format_expr(expr)
+                ));
+            }
+            // a block body renders like a compute block: each line carries its own indentation and
+            // the closing brace hugs the function's base indent.
+            FnBody::Block(lines) => {
+                let mut out = format!("fn {}{signature} = {{\n", function.name);
+                self.indent += 1;
+                self.compute_lines(&mut out, lines);
+                self.indent -= 1;
+                self.push_indent(&mut out);
+                out.push('}');
+                self.line(&out);
+            }
+        }
     }
 
     fn document(&mut self, document: &Document) {
@@ -102,6 +95,21 @@ impl Formatter {
         }
         if !workflow.triggers.is_empty()
             && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
+        }
+        // preserve header `watch <cond> -> <target>` cancellation guards.
+        for watch in &workflow.watches {
+            self.line(&format!(
+                "watch {} -> {}",
+                format_cond(&watch.cond),
+                format_target(&watch.handler)
+            ));
+        }
+        if !workflow.watches.is_empty()
+            && (!workflow.type_decls.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty())
         {
             self.out.push('\n');
         }
@@ -273,6 +281,9 @@ impl Formatter {
         }
 
         text.push_str(&self.stmt_kind(&stmt.kind));
+        if let Some(compensation) = &stmt.compensation {
+            text.push_str(&format!(" compensate {}", self.action(compensation)));
+        }
         if stmt.transitions.is_empty() {
             self.line(&text);
             return;
@@ -360,8 +371,8 @@ impl Formatter {
         if let Some(seconds) = compute.modifiers.timeout_seconds {
             modifiers.push(format!(".timeout({seconds}s)"));
         }
-        if let Some(retry) = compute.modifiers.retry {
-            modifiers.push(format!(".retry({retry})"));
+        if let Some(retry) = &compute.modifiers.retry {
+            modifiers.push(format_retry(retry));
         }
         self.append_modifiers(&mut out, &modifiers, true);
         out
@@ -461,8 +472,8 @@ impl Formatter {
         if let Some(seconds) = action.modifiers.timeout_seconds {
             modifiers.push(format!(".timeout({seconds}s)"));
         }
-        if let Some(retry) = action.modifiers.retry {
-            modifiers.push(format!(".retry({retry})"));
+        if let Some(retry) = &action.modifiers.retry {
+            modifiers.push(format_retry(retry));
         }
         if !action.modifiers.tags.is_empty() {
             let tags = action
@@ -619,6 +630,9 @@ impl Formatter {
 
     fn signal(&self, signal: &SignalStmt) -> String {
         let mut text = format!("signal {}", quote(&signal.name));
+        if let Some(key) = &signal.correlation_key {
+            text.push_str(&format!(" key {}", format_expr(key)));
+        }
         if !signal.metadata.is_empty() {
             text.push_str(&format!(
                 " {}",
@@ -662,8 +676,8 @@ impl Formatter {
 
     fn for_stmt(&mut self, for_stmt: &ForStmt) -> String {
         let mut header = format!("for {} in {}", for_stmt.var, format_expr(&for_stmt.items));
-        if let Some(limit) = for_stmt.limit {
-            header.push_str(&format!(" limit {limit}"));
+        if let Some(limit) = &for_stmt.limit {
+            header.push_str(&format!(" limit {}", format_expr(limit)));
         }
         header.push_str(" {");
         self.render_block(&header, &for_stmt.body, "}")
@@ -809,6 +823,36 @@ impl Formatter {
             out.push_str("    ");
         }
     }
+}
+
+/// render a function's surface signature — the parenthesized parameter list plus an optional
+/// `-> ret` — without the leading `fn <name>` or the body. used by the formatter and persisted as a
+/// decompile hint so the typed `fn` header can be reconstructed from the runtime form.
+pub(crate) fn format_fn_signature(function: &FunctionDef) -> String {
+    let params = function
+        .params
+        .iter()
+        .map(|param| {
+            let optional = if param.optional { "?" } else { "" };
+            let default = param
+                .default
+                .as_ref()
+                .map(|expr| format!(" = {}", format_expr(expr)))
+                .unwrap_or_default();
+            format!(
+                "{}{optional}: {}{default}",
+                param.name,
+                format_type(&param.ty)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret = function
+        .ret
+        .as_ref()
+        .map(|ty| format!(" -> {}", format_type(ty)))
+        .unwrap_or_default();
+    format!("({params}){ret}")
 }
 
 fn format_expr(expr: &Expr) -> String {
@@ -1351,6 +1395,25 @@ fn contains_object(expr: &Expr) -> bool {
 
 fn indent(level: usize) -> String {
     "    ".repeat(level)
+}
+
+// render a `.retry(...)` call, emitting only the non-default named args so a plain `.retry(3)`
+// round-trips unchanged.
+fn format_retry(retry: &RetryConfig) -> String {
+    let mut args = vec![retry.max_attempts.to_string()];
+    if let Some(base) = retry.backoff_base_seconds {
+        args.push(format!("backoff: {base}s"));
+    }
+    if let Some(max) = retry.backoff_max_seconds {
+        args.push(format!("max: {max}s"));
+    }
+    if retry.jitter {
+        args.push("jitter: true".to_string());
+    }
+    if let Some(on) = &retry.retry_on {
+        args.push(format!("on: {on}"));
+    }
+    format!(".retry({})", args.join(", "))
 }
 
 // a rendered statement spans multiple lines if its text, sans the trailing newline, contains one.

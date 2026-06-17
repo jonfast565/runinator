@@ -21,8 +21,8 @@ use helpers::{
     parse_params, pull_request_results, repo_owner_param, repo_param,
 };
 use params::{
-    CreatePrParams, DispatchParams, GitHubBaseParams, IssueNumberParams, MergePrParams,
-    PrNumberParams, RefParams,
+    AddAssigneesParams, AddCommentParams, CreatePrParams, DispatchParams, IssueNumberParams,
+    MergePrParams, PrNumberParams, RefParams, RequestReviewersParams, WorkflowRunsParams,
 };
 
 #[cfg(test)]
@@ -81,6 +81,43 @@ impl Provider for GitHubProvider {
                         ParameterMetadata::required("issue_number", RuninatorType::String),
                     ])
                     .with_results(json_results()),
+                ActionMetadata::new("add_comment", "Add a comment to an issue or pull request")
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::required("issue_number", RuninatorType::String),
+                        ParameterMetadata::required("body", RuninatorType::String),
+                    ])
+                    .with_results(json_results()),
+                ActionMetadata::new("request_reviewers", "Request reviewers on a pull request")
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::required("pull_number", RuninatorType::String),
+                        ParameterMetadata::optional(
+                            "reviewers",
+                            RuninatorType::array(RuninatorType::String),
+                        ),
+                        ParameterMetadata::optional(
+                            "team_reviewers",
+                            RuninatorType::array(RuninatorType::String),
+                        ),
+                    ])
+                    .with_results(json_results()),
+                ActionMetadata::new("add_assignees", "Add assignees to an issue or pull request")
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::required("issue_number", RuninatorType::String),
+                        ParameterMetadata::required(
+                            "assignees",
+                            RuninatorType::array(RuninatorType::String),
+                        ),
+                    ])
+                    .with_results(json_results()),
                 ActionMetadata::new("checks", "Read check runs for a reference")
                     .with_parameters(vec![
                         auth_param(),
@@ -118,7 +155,15 @@ impl Provider for GitHubProvider {
                     ])
                     .with_results(json_results()),
                 ActionMetadata::new("workflow_runs", "List actions workflow runs")
-                    .with_parameters(vec![auth_param(), repo_owner_param(), repo_param()])
+                    .with_parameters(vec![
+                        auth_param(),
+                        repo_owner_param(),
+                        repo_param(),
+                        ParameterMetadata::optional("branch", RuninatorType::String),
+                        ParameterMetadata::optional("event", RuninatorType::String),
+                        ParameterMetadata::optional("status", RuninatorType::String),
+                        ParameterMetadata::optional("workflow_id", RuninatorType::String),
+                    ])
                     .with_results(json_results()),
             ],
             metadata: ProviderRuntimeMetadata {
@@ -242,6 +287,51 @@ impl Provider for GitHubProvider {
                     .header("Accept", "application/vnd.github+json")
                     .send()?
             }
+            "add_comment" => {
+                let p: AddCommentParams = parse_params(&request)?;
+                let auth = format!("Bearer {}", p.base.token);
+                client
+                    .post(format!(
+                        "{api}/repos/{}/{}/issues/{}/comments",
+                        p.base.owner, p.base.repo, p.issue_number
+                    ))
+                    .header("Authorization", &auth)
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&json!({ "body": p.body }))
+                    .send()?
+            }
+            "request_reviewers" => {
+                let p: RequestReviewersParams = parse_params(&request)?;
+                if p.reviewers.is_empty() && p.team_reviewers.is_empty() {
+                    return Err(errors::MISSING_REVIEWERS.bare());
+                }
+                let auth = format!("Bearer {}", p.base.token);
+                client
+                    .post(format!(
+                        "{api}/repos/{}/{}/pulls/{}/requested_reviewers",
+                        p.base.owner, p.base.repo, p.pull_number
+                    ))
+                    .header("Authorization", &auth)
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&json!({
+                        "reviewers": p.reviewers,
+                        "team_reviewers": p.team_reviewers
+                    }))
+                    .send()?
+            }
+            "add_assignees" => {
+                let p: AddAssigneesParams = parse_params(&request)?;
+                let auth = format!("Bearer {}", p.base.token);
+                client
+                    .post(format!(
+                        "{api}/repos/{}/{}/issues/{}/assignees",
+                        p.base.owner, p.base.repo, p.issue_number
+                    ))
+                    .header("Authorization", &auth)
+                    .header("Accept", "application/vnd.github+json")
+                    .json(&json!({ "assignees": p.assignees }))
+                    .send()?
+            }
             "read_checks" | "checks" => {
                 let p: RefParams = parse_params(&request)?;
                 let auth = format!("Bearer {}", p.base.token);
@@ -284,10 +374,28 @@ impl Provider for GitHubProvider {
                     .send()?
             }
             "poll_workflow_runs" | "workflow_runs" => {
-                let p: GitHubBaseParams = parse_params(&request)?;
-                let auth = format!("Bearer {}", p.token);
+                let p: WorkflowRunsParams = parse_params(&request)?;
+                let auth = format!("Bearer {}", p.base.token);
+                let base_url = match &p.workflow_id {
+                    Some(workflow_id) => format!(
+                        "{api}/repos/{}/{}/actions/workflows/{}/runs",
+                        p.base.owner, p.base.repo, workflow_id
+                    ),
+                    None => format!("{api}/repos/{}/{}/actions/runs", p.base.owner, p.base.repo),
+                };
+                let mut filters: Vec<(&str, String)> = Vec::new();
+                if let Some(branch) = p.branch {
+                    filters.push(("branch", branch));
+                }
+                if let Some(event) = p.event {
+                    filters.push(("event", event));
+                }
+                if let Some(status) = p.status {
+                    filters.push(("status", status));
+                }
+                let url = reqwest::Url::parse_with_params(&base_url, &filters)?;
                 client
-                    .get(format!("{api}/repos/{}/{}/actions/runs", p.owner, p.repo))
+                    .get(url)
                     .header("Authorization", &auth)
                     .header("Accept", "application/vnd.github+json")
                     .send()?

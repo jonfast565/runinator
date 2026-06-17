@@ -13,16 +13,26 @@ pub struct Document {
     pub workflow: Workflow,
 }
 
-/// a top-level `fn name(params) -> ret = body` definition. the body is a single expression;
-/// `recursive` carries the `@recursive(max_depth: N)` cap when present.
+/// a top-level `fn name(params) -> ret = body` definition. the body is either a single expression
+/// or a compute-style statement block; `recursive` carries the `@recursive(max_depth: N)` cap when
+/// present.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
     pub name: String,
     pub params: Vec<FnParam>,
     pub ret: Option<TypeExpr>,
-    pub body: Box<Expr>,
+    pub body: FnBody,
     pub recursive: Option<u32>,
     pub span: Span,
+}
+
+/// a function body: a single expression (`= expr`) or a compute-style block of statements
+/// (`= { let …; … ; return e }`). block bodies reuse the compute-line grammar and lower to the same
+/// `$let`/`$return`/`$if` program form a `compute` block produces.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FnBody {
+    Expr(Box<Expr>),
+    Block(Vec<ComputeLine>),
 }
 
 /// a function parameter: a typed name, optionally marked `?` or given a `= default` (both make it
@@ -54,6 +64,8 @@ pub struct Workflow {
     pub start: Option<Target>,
     /// header `trigger cron "..."` declarations scheduling runs of this workflow.
     pub triggers: Vec<TriggerDecl>,
+    /// header `watch <cond> -> <target>` cancellation guards, evaluated on every reducer drive.
+    pub watches: Vec<WatchDecl>,
     /// header `type <Name> ...` declarations: reusable named types.
     pub type_decls: Vec<TypeDecl>,
     pub body: Block,
@@ -78,6 +90,13 @@ pub struct TriggerDecl {
     pub blackout_start: Option<Expr>,
     pub blackout_end: Option<Expr>,
     pub span: Span,
+}
+
+/// a header `watch <cond> -> <target>` guard: when `cond` holds, the run jumps to `handler`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WatchDecl {
+    pub cond: Cond,
+    pub handler: Target,
 }
 
 /// a header `import <path> (as <alias>)?` declaration. `path` is the dotted namespace
@@ -110,6 +129,8 @@ pub struct Stmt {
     pub label_type: Option<TypeExpr>,
     pub kind: StmtKind,
     pub transitions: TransitionClause,
+    /// `compensate <call>` on an action node: the compensating action run in reverse on saga rollback.
+    pub compensation: Option<Box<ActionStmt>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -187,10 +208,22 @@ pub enum Target {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Modifiers {
     pub timeout_seconds: Option<i64>,
-    pub retry: Option<i64>,
+    pub retry: Option<RetryConfig>,
     pub tags: Vec<String>,
     pub mcp: bool,
     pub reentry: Option<Reentry>,
+}
+
+/// `.retry(max, backoff: <s>, max: <s>, jitter: <bool>, on: any|failure|timeout)`. only `max` is
+/// required; the rest fall back to the model defaults (base 1s, cap 300s, no jitter, retry any).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryConfig {
+    pub max_attempts: i64,
+    pub backoff_base_seconds: Option<i64>,
+    pub backoff_max_seconds: Option<i64>,
+    pub jitter: bool,
+    /// `any` | `failure` | `timeout`; `None` keeps the default (`any`).
+    pub retry_on: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,6 +327,8 @@ pub struct GateStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalStmt {
     pub name: String,
+    /// `key <expr>`: a correlation value resolved at park time so external webhooks can route here.
+    pub correlation_key: Option<Expr>,
     pub metadata: Vec<(String, Expr)>,
 }
 
@@ -314,7 +349,10 @@ pub struct IfStmt {
 pub struct ForStmt {
     pub var: String,
     pub items: Expr,
-    pub limit: Option<i64>,
+    /// iteration cap. `None` is uncapped (`limit none` or no clause). a literal
+    /// integer lowers to the node's `max_iterations`; any other expression is
+    /// carried in the loop parameters and resolved at runtime.
+    pub limit: Option<Expr>,
     pub body: Block,
 }
 

@@ -3,6 +3,11 @@ use runinator_models::{errors::SendableError, runs::TaskExecutionResult};
 
 use crate::error::HTTP_ERROR;
 
+// builds the standard http-error for a non-success status and body snippet.
+pub(crate) fn http_status_error(status: reqwest::StatusCode, body: &str) -> SendableError {
+    HTTP_ERROR.error(format!("HTTP {status}: {body}"))
+}
+
 pub(crate) fn json_response(
     response: reqwest::blocking::Response,
 ) -> Result<TaskExecutionResult, SendableError> {

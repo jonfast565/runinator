@@ -104,7 +104,7 @@ fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, WdlError> {
                 }
             }
             Rule::type_expr => ret = Some(parse_type_expr(inner)?),
-            Rule::expr => body = Some(parse_expr(inner)?),
+            Rule::fn_body => body = Some(parse_fn_body(inner)?),
             _ => {}
         }
     }
@@ -113,10 +113,31 @@ fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, WdlError> {
         name,
         params,
         ret,
-        body: Box::new(body),
+        body,
         recursive,
         span,
     })
+}
+
+/// parse a function body: a single expression, or a compute-style statement block reusing the
+/// compute lines (`let`/`return`/`goto`/`if`/expr).
+fn parse_fn_body(pair: Pair<Rule>) -> Result<FnBody, WdlError> {
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::fn_block => {
+            let mut lines = Vec::new();
+            for line in inner.into_inner() {
+                if line.as_rule() == Rule::compute_line {
+                    lines.push(parse_compute_line(line)?);
+                }
+            }
+            Ok(FnBody::Block(lines))
+        }
+        Rule::expr => Ok(FnBody::Expr(Box::new(parse_expr(inner)?))),
+        other => Err(WdlError::lower(format!(
+            "unexpected function body {other:?}"
+        ))),
+    }
 }
 
 fn parse_fn_param(pair: Pair<Rule>) -> Result<FnParam, WdlError> {
@@ -199,6 +220,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut imports = Vec::new();
     let mut start = None;
     let mut triggers = Vec::new();
+    let mut watches = Vec::new();
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
     for inner in pair.into_inner() {
@@ -215,6 +237,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
             Rule::namespace_decl => namespace = Some(first_inner(inner)?.as_str().to_string()),
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
+            Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
@@ -231,9 +254,26 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         imports,
         start,
         triggers,
+        watches,
         type_decls,
         body,
         span,
+    })
+}
+
+fn parse_watch_decl(pair: Pair<Rule>) -> Result<WatchDecl, WdlError> {
+    let mut cond = None;
+    let mut handler = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::cond => cond = Some(parse_cond(inner)?),
+            Rule::target => handler = Some(parse_target(inner)?),
+            _ => {}
+        }
+    }
+    Ok(WatchDecl {
+        cond: cond.ok_or_else(|| WdlError::lower("watch missing condition"))?,
+        handler: handler.ok_or_else(|| WdlError::lower("watch missing handler target"))?,
     })
 }
 
@@ -467,6 +507,7 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
     let mut has_node = false;
     let mut kind = None;
     let mut transitions = TransitionClause::default();
+    let mut compensation = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::annotation => apply_annotation(&mut annotations, inner)?,
@@ -481,6 +522,9 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
                 }
             }
             Rule::stmt_body => kind = Some(parse_stmt_body(inner)?),
+            Rule::compensate_clause => {
+                compensation = Some(Box::new(parse_action(first_inner(inner)?)?));
+            }
             Rule::transitions => transitions = parse_transitions(inner)?,
             _ => {}
         }
@@ -510,6 +554,7 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         label_type,
         kind,
         transitions,
+        compensation,
     })
 }
 
@@ -538,6 +583,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::action_stmt => Ok(StmtKind::Action(parse_action(inner)?)),
         Rule::compute_stmt => Ok(StmtKind::Compute(parse_compute(inner)?)),
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
+        Rule::wait_cond_stmt => Ok(StmtKind::While(parse_wait_until(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
         Rule::output_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
         Rule::deliverable_stmt => Ok(StmtKind::Deliverable(parse_deliverable(inner)?)),
@@ -820,7 +866,27 @@ fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), Wdl
             modifiers.timeout_seconds = Some(expect_int(positional.first(), "timeout")?);
         }
         "retry" => {
-            modifiers.retry = Some(expect_int(positional.first(), "retry")?);
+            let find = |key: &str| named.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+            let backoff_base_seconds = find("backoff")
+                .map(|v| expect_int(Some(v), "retry backoff"))
+                .transpose()?;
+            let backoff_max_seconds = find("max")
+                .map(|v| expect_int(Some(v), "retry max"))
+                .transpose()?;
+            let jitter = match find("jitter") {
+                Some(value) => expect_bool(value, "retry jitter")?,
+                None => false,
+            };
+            let retry_on = find("on")
+                .map(|v| expect_ident_or_string(v, "retry on"))
+                .transpose()?;
+            modifiers.retry = Some(crate::ast::RetryConfig {
+                max_attempts: expect_int(positional.first(), "retry")?,
+                backoff_base_seconds,
+                backoff_max_seconds,
+                jitter,
+                retry_on,
+            });
         }
         "tags" => {
             for value in &positional {
@@ -1021,15 +1087,21 @@ fn parse_gate(pair: Pair<Rule>) -> Result<GateStmt, WdlError> {
 
 fn parse_signal(pair: Pair<Rule>) -> Result<SignalStmt, WdlError> {
     let mut name = String::new();
+    let mut correlation_key = None;
     let mut metadata = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::string => name = plain_string(inner)?,
+            Rule::signal_key => correlation_key = Some(parse_expr(first_inner(inner)?)?),
             Rule::object => metadata = parse_object_entries(inner)?,
             _ => {}
         }
     }
-    Ok(SignalStmt { name, metadata })
+    Ok(SignalStmt {
+        name,
+        correlation_key,
+        metadata,
+    })
 }
 
 fn parse_config(pair: Pair<Rule>) -> Result<ConfigStmt, WdlError> {
@@ -1101,8 +1173,15 @@ fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
         match inner.as_rule() {
             Rule::ident => var = inner.as_str().to_string(),
             Rule::expr => items = parse_expr(inner)?,
-            // `limit none` yields no integer child and means uncapped (limit stays None).
-            Rule::for_limit => limit = parse_optional_count(inner)?,
+            // `limit none` yields no expr child and means uncapped (limit stays None);
+            // `limit <expr>` carries an integer-valued expression.
+            Rule::for_limit_expr => {
+                for child in inner.into_inner() {
+                    if child.as_rule() == Rule::expr {
+                        limit = Some(parse_expr(child)?);
+                    }
+                }
+            }
             Rule::block => body = parse_block(inner)?,
             _ => {}
         }
@@ -1135,6 +1214,44 @@ fn parse_while(pair: Pair<Rule>, negate: bool) -> Result<WhileStmt, WdlError> {
         negate,
         limit,
         body,
+    })
+}
+
+/// desugar `wait until <cond> [every <dur>]` into `until <cond> { wait <interval> }`. the condition
+/// wait shares the loop runtime (a reentry-enabled condition node with a back-edge), so no new node
+/// kind or reducer path is needed; it is purely a terser surface for a bodyless poll wait.
+fn parse_wait_until(pair: Pair<Rule>) -> Result<WhileStmt, WdlError> {
+    const DEFAULT_WAIT_UNTIL_INTERVAL_SECONDS: i64 = 30;
+    let mut cond = None;
+    let mut interval = DEFAULT_WAIT_UNTIL_INTERVAL_SECONDS;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::cond => cond = Some(parse_cond(inner)?),
+            Rule::wait_every => {
+                let duration = first_inner(inner)?;
+                interval = parse_duration(duration.as_str(), span_of(&duration))?;
+            }
+            _ => {}
+        }
+    }
+    let wait = Stmt {
+        span: Span::default(),
+        annotations: Annotations::default(),
+        label: None,
+        label_type: None,
+        kind: StmtKind::Wait(WaitStmt {
+            amount: WaitAmount::Seconds(interval),
+            until_status: None,
+            initial_status: None,
+        }),
+        transitions: TransitionClause::default(),
+        compensation: None,
+    };
+    Ok(WhileStmt {
+        cond: cond.ok_or_else(|| WdlError::lower("wait until missing condition"))?,
+        negate: true,
+        limit: None,
+        body: vec![wait],
     })
 }
 
@@ -2099,6 +2216,24 @@ fn expect_string(value: &Expr, label: &str) -> Result<String, WdlError> {
             StrPart::Expr(_) => Err(WdlError::lower(format!("{label} expects a literal string"))),
         },
         _ => Err(WdlError::lower(format!("{label} expects a string"))),
+    }
+}
+
+fn expect_bool(value: &Expr, label: &str) -> Result<bool, WdlError> {
+    match &value.kind {
+        ExprKind::Bool(flag) => Ok(*flag),
+        _ => Err(WdlError::lower(format!("{label} expects a boolean"))),
+    }
+}
+
+/// accepts either a bare identifier (`failure`) or a literal string (`"failure"`).
+fn expect_ident_or_string(value: &Expr, label: &str) -> Result<String, WdlError> {
+    match &value.kind {
+        ExprKind::Path(segs) if segs.len() == 1 => match &segs[0] {
+            crate::ast::PathSeg::Key(key) => Ok(key.clone()),
+            crate::ast::PathSeg::Index(_) => expect_string(value, label),
+        },
+        _ => expect_string(value, label),
     }
 }
 

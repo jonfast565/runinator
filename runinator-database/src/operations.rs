@@ -1173,25 +1173,45 @@ where
         Ok(row.map(|row| mappers::row_to_workflow_node_run(&row)))
     }
 
+    async fn fetch_workflow_node_runs_by_status(
+        &self,
+        status: WorkflowStatus,
+    ) -> Result<Vec<WorkflowNodeRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_NODE_RUN_COLUMNS} FROM workflow_node_runs WHERE status = ? ORDER BY created_at, id"
+        )))
+        .bind(status.as_str())
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_workflow_node_run).collect())
+    }
+
     async fn claim_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,
         replica_id: Uuid,
         claimed_at: DateTime<Utc>,
-    ) -> Result<(), SendableError> {
-        self.pool()
+        stale_before: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        // compare-and-swap lease: only acquire when no live executor holds the slot. a redelivered
+        // or timeout-raced duplicate of the same node run thus cannot execute concurrently; the slot
+        // frees on release or once the prior claim ages past `stale_before` (the caller's deadline).
+        let result = self
+            .pool()
             .execute(
                 sqlx::query(&self.render(
                     "UPDATE workflow_node_runs
                      SET current_executor_replica_id = ?, executor_claimed_at = ?, executor_released_at = NULL
-                     WHERE id = ?",
+                     WHERE id = ?
+                       AND (current_executor_replica_id IS NULL OR executor_claimed_at < ?)",
                 ))
                 .bind(replica_id)
                 .bind(claimed_at.timestamp())
-                .bind(node_run_id),
+                .bind(node_run_id)
+                .bind(stale_before.timestamp()),
             )
             .await?;
-        Ok(())
+        Ok(result.affected() > 0)
     }
 
     async fn release_workflow_node_run_executor(

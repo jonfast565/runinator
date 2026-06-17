@@ -151,9 +151,22 @@ pub fn lower_document(
     if !lowerer.spreads.is_empty() {
         wdl.insert("spreads".into(), Value::Object(lowerer.spreads.clone()));
     }
+    // per-function surface signatures (`(params) -> ret`), recorded so decompile can reconstruct the
+    // typed `fn` headers the runtime `functions` form does not carry. the runtime ignores this hint.
+    if !document.functions.is_empty() {
+        let mut sigs = Map::new();
+        for def in &document.functions {
+            sigs.insert(
+                def.name.clone(),
+                Value::String(crate::format::format_fn_signature(def)),
+            );
+        }
+        wdl.insert("functions".into(), Value::Object(sigs));
+    }
     // header `trigger cron` declarations, carried as runtime data the web service materializes on
     // import (unlike the render-only `wdl` sidecar).
     let triggers = lowerer.lower_triggers(&workflow.triggers)?;
+    let watches = lowerer.lower_watches(&workflow.watches)?;
     // user `fn` definitions, lowered to runtime-evaluable expression bodies the engine calls.
     let functions = lowerer.lower_functions(&document.functions)?;
     let mut metadata = Map::new();
@@ -162,6 +175,9 @@ pub fn lower_document(
     }
     if !triggers.is_empty() {
         metadata.insert("triggers".into(), Value::Array(triggers));
+    }
+    if !watches.is_empty() {
+        metadata.insert("watches".into(), Value::Array(watches));
     }
     if !functions.is_empty() {
         metadata.insert("functions".into(), Value::Array(functions));
@@ -328,24 +344,42 @@ impl Lowerer {
         Ok(specs)
     }
 
+    /// lower header `watch <cond> -> <target>` guards into `metadata.watches`:
+    /// `[{ condition: <lowered cond>, handler: <node id> }]`. the reducer re-evaluates each on every
+    /// drive and jumps to the handler when the condition holds.
+    fn lower_watches(&self, watches: &[WatchDecl]) -> Result<Vec<Value>, WdlError> {
+        let mut specs = Vec::with_capacity(watches.len());
+        for watch in watches {
+            let mut spec = Map::new();
+            spec.insert("condition".into(), self.lower_cond(&watch.cond)?);
+            spec.insert(
+                "handler".into(),
+                Value::String(self.target_id(&watch.handler)),
+            );
+            specs.push(Value::Object(spec));
+        }
+        Ok(specs)
+    }
+
     /// lower user `fn` definitions into the `metadata.functions` runtime form:
-    /// `[{ name, params: [{name}], body: <expr>, recursive?: { max_depth } }]`. each body lowers
-    /// with its parameters registered as locals, so param references become `let` refs the engine
-    /// binds at call time.
+    /// `[{ name, params: [{name}], body|program, recursive?: { max_depth } }]`. an expression body
+    /// lowers to `body`; a block body lowers to a `program` array (the same `$let`/`$return`/`$if`
+    /// form a `compute` block produces). each body lowers with its parameters registered as locals,
+    /// so param references become `let` refs the engine binds at call time.
     fn lower_functions(&self, functions: &[FunctionDef]) -> Result<Vec<Value>, WdlError> {
         let mut out = Vec::with_capacity(functions.len());
         for def in functions {
-            let added: Vec<String> = def
-                .params
-                .iter()
-                .map(|param| param.name.clone())
-                .filter(|name| self.compute_locals.borrow_mut().insert(name.clone()))
-                .collect();
-            let body = self.lower_expr(&def.body);
-            for name in &added {
-                self.compute_locals.borrow_mut().remove(name);
+            // snapshot locals so per-function params and block locals never leak across functions.
+            let saved = self.compute_locals.borrow().clone();
+            for param in &def.params {
+                self.compute_locals.borrow_mut().insert(param.name.clone());
             }
-            let body = body?;
+            let (body_key, body_value) = match &def.body {
+                FnBody::Expr(expr) => ("body", self.lower_expr(expr)),
+                FnBody::Block(lines) => ("program", self.lower_fn_block(lines).map(Value::Array)),
+            };
+            self.compute_locals.replace(saved);
+            let body_value = body_value?;
             let params = def
                 .params
                 .iter()
@@ -359,7 +393,7 @@ impl Lowerer {
             let mut entry = Map::new();
             entry.insert("name".into(), Value::String(def.name.clone()));
             entry.insert("params".into(), Value::Array(params));
-            entry.insert("body".into(), body);
+            entry.insert(body_key.into(), body_value);
             if let Some(max_depth) = def.recursive {
                 entry.insert(
                     "recursive".into(),
@@ -543,10 +577,48 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
+        if let Some(compensation) = &stmt.compensation {
+            fields.push(("compensation", self.lower_action_object(compensation)?));
+        }
         self.apply_modifier_fields(&mut fields, &action.modifiers);
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "action", fields));
         Ok(())
+    }
+
+    /// lower a bare action call (provider/function/args/modifiers) into a `WorkflowAction`-shaped
+    /// object. used for `compensate` actions, which carry no node identity, transitions, or spreads.
+    fn lower_action_object(&mut self, action: &ActionStmt) -> Result<Value, WdlError> {
+        let flat = crate::desugar::flatten_entries(&action.args, &self.aliases)?;
+        let mut config = Map::new();
+        for (name, value) in &flat {
+            config.insert(name.clone(), self.lower_expr(value)?);
+        }
+        let mut obj = Map::new();
+        obj.insert("provider".into(), Value::String(action.provider.clone()));
+        obj.insert("function".into(), Value::String(action.function.clone()));
+        obj.insert(
+            "timeout_seconds".into(),
+            Value::from(action.modifiers.timeout_seconds.unwrap_or(60)),
+        );
+        obj.insert("configuration".into(), Value::Object(config));
+        if action.modifiers.mcp {
+            obj.insert("mcp_enabled".into(), Value::Bool(true));
+        }
+        if !action.modifiers.tags.is_empty() {
+            obj.insert(
+                "tags".into(),
+                Value::Array(
+                    action
+                        .modifiers
+                        .tags
+                        .iter()
+                        .map(|tag| Value::String(tag.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        Ok(Value::Object(obj))
     }
 
     fn lower_subflow(
@@ -786,6 +858,11 @@ impl Lowerer {
     ) -> Result<(), WdlError> {
         let mut params = Map::new();
         params.insert("name".into(), Value::String(signal.name.clone()));
+        if let Some(key) = &signal.correlation_key {
+            // lowered as an expression (often a ref like `params.ticket.key`); the reducer resolves
+            // it against the runtime context when the node parks.
+            params.insert("correlation_key".into(), self.lower_expr(key)?);
+        }
         let flat = crate::desugar::flatten_entries(&signal.metadata, &self.aliases)?;
         for (name, value) in &flat {
             params.insert(name.clone(), self.lower_expr(value)?);
@@ -853,9 +930,21 @@ impl Lowerer {
         fields: &mut Vec<(&'static str, Value)>,
         modifiers: &Modifiers,
     ) {
-        if let Some(retry) = modifiers.retry {
+        if let Some(retry) = &modifiers.retry {
             let mut obj = Map::new();
-            obj.insert("max_attempts".into(), Value::from(retry));
+            obj.insert("max_attempts".into(), Value::from(retry.max_attempts));
+            if let Some(base) = retry.backoff_base_seconds {
+                obj.insert("backoff_base_seconds".into(), Value::from(base));
+            }
+            if let Some(max) = retry.backoff_max_seconds {
+                obj.insert("backoff_max_seconds".into(), Value::from(max));
+            }
+            if retry.jitter {
+                obj.insert("jitter".into(), Value::Bool(true));
+            }
+            if let Some(on) = &retry.retry_on {
+                obj.insert("retry_on".into(), Value::from(on.clone()));
+            }
             fields.push(("retry", Value::Object(obj)));
         }
         if let Some(reentry) = &modifiers.reentry {

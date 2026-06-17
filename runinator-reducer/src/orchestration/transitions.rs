@@ -1,9 +1,7 @@
 use super::context::{runtime_context, set_step_output};
 use super::*;
+use runinator_models::workflows::WorkflowRetry;
 use uuid::Uuid;
-
-const RETRY_BACKOFF_BASE_SECONDS: i64 = 1;
-const RETRY_BACKOFF_MAX_SECONDS: i64 = 300;
 
 // --- shared db-direct reducer helpers -----------------------------------------
 
@@ -33,11 +31,21 @@ pub(super) async fn retry_or_transition<T: DatabaseImpl>(
     Ok(())
 }
 
-fn retry_backoff_delay(attempt: i64) -> chrono::Duration {
+/// exponential backoff from the node's retry config: `base * 2^(attempt-1)`, capped at `max`, with
+/// optional jitter spreading the delay into `[delay/2, delay]` so simultaneous retries disperse.
+fn retry_backoff_delay(retry: &WorkflowRetry, attempt: i64) -> chrono::Duration {
+    let base = retry.backoff_base_seconds.max(0);
+    let cap = retry.backoff_max_seconds.max(base);
     let exponent = attempt.saturating_sub(1).clamp(0, 30) as u32;
-    let seconds = RETRY_BACKOFF_BASE_SECONDS
+    let mut seconds = base
         .saturating_mul(2_i64.saturating_pow(exponent))
-        .clamp(RETRY_BACKOFF_BASE_SECONDS, RETRY_BACKOFF_MAX_SECONDS);
+        .clamp(base, cap);
+    if retry.jitter && seconds > 1 {
+        // cheap, dependency-free jitter: fold sub-second clock noise into the lower half.
+        let span = seconds / 2;
+        let noise = (Utc::now().timestamp_subsec_nanos() as i64) % (span + 1);
+        seconds = (seconds - span) + noise;
+    }
     chrono::Duration::seconds(seconds)
 }
 
@@ -218,7 +226,7 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
     message: Option<String>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Option<String>, SendableError> {
-    if retryable_status(status) && node_run.attempt < node.retry.max_attempts {
+    if node.retry.retry_on.retryable(status) && node_run.attempt < node.retry.max_attempts {
         schedule_node_retry(db, workflow_run, node, node_run, output_json, message).await?;
         return Ok(Some(node.id.clone()));
     }
@@ -286,7 +294,7 @@ async fn schedule_node_retry<T: DatabaseImpl>(
     message: Option<String>,
 ) -> Result<(), SendableError> {
     let next_attempt = node_run.attempt + 1;
-    let delay = retry_backoff_delay(node_run.attempt);
+    let delay = retry_backoff_delay(&node.retry, node_run.attempt);
     let ready_at = Utc::now() + delay;
     db.update_workflow_node_run(
         node_run.id,
@@ -328,10 +336,6 @@ async fn schedule_node_retry<T: DatabaseImpl>(
     db.enqueue_ready_node(event, node.id.clone(), ready_at)
         .await?;
     Ok(())
-}
-
-fn retryable_status(status: WorkflowStatus) -> bool {
-    matches!(status, WorkflowStatus::Failed | WorkflowStatus::TimedOut)
 }
 
 pub(super) async fn ensure_node_run<T: DatabaseImpl>(

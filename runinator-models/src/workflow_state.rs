@@ -30,9 +30,14 @@ pub struct WorkflowRunState {
     pub race: Option<RaceFrame>,
     #[serde(rename = "try", default, skip_serializing_if = "Option::is_none")]
     pub try_frame: Option<TryFrame>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compensation: Option<CompensationFrame>,
     /// dynamic per-run metadata bag accumulated by config nodes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_metadata: Option<Value>,
+    /// set once a workflow-level `watch` guard has fired, so it redirects to its handler at most once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub watch_fired: bool,
     /// preserves any keys not modeled above (e.g. wait/subflow node snapshots mirrored into state).
     #[serde(flatten)]
     pub extra: Map,
@@ -201,6 +206,19 @@ pub struct RaceFrame {
     pub remaining: Vec<String>,
 }
 
+/// `state.compensation` saga-rollback bookkeeping. populated when a run reaches a failed terminal
+/// while succeeded nodes carry `compensation` actions; the engine unwinds `remaining` in order
+/// (already reverse of completion), dispatching one compensation action at a time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompensationFrame {
+    /// origin node ids whose compensations still need to run, in execution order.
+    #[serde(default)]
+    pub remaining: Vec<String>,
+    /// the synthetic compensation node-run currently executing, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_run_id: Option<uuid::Uuid>,
+}
+
 /// `state.try` / try node-run phase bookkeeping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TryFrame {
@@ -292,10 +310,13 @@ pub struct GateState {
 }
 
 /// signal node-run state. carries the signal name the node is parked on so an inbound delivery can
-/// match the right waiting node.
+/// match the right waiting node. an optional resolved `correlation_key` (e.g. a ticket key or PR
+/// number) lets an external webhook route to the right parked run without knowing its run id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalState {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_key: Option<String>,
 }
 
 // node output payloads (serialized into the output_json carrier).

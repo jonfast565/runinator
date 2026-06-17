@@ -64,6 +64,12 @@ node deploy()
 **Chaining is configuration.** `.timeout(60s) .retry(3) .tags("ci","release") .mcp()
 .reentry(5)` on actions.
 
+`.retry(max, backoff: <dur>, max: <dur>, jitter: <bool>, on: any|failure|timeout)` — only `max`
+(attempt count) is required. `backoff` is the first-retry delay and doubles each attempt up to the
+`max` cap (defaults 1s/300s); `jitter` randomizes each delay into `[delay/2, delay]`; `on` narrows
+which terminal status retries (`failure` skips retrying timeouts, e.g. so a long, expensive action
+is not blindly re-run). Defaults preserve the historical behavior (exponential 1s→300s, retry any).
+
 **Node kinds**
 
 | WDL | JSON kind |
@@ -71,6 +77,8 @@ node deploy()
 | `node provider.fn(args).mods` | action |
 | `node spawn`/`node call "WF" reuse as ... with { }` | subflow (fire_and_forget / wait) |
 | `wait 30s until "ready"` | wait |
+| `wait until <cond> every 30s` | condition poll-wait (sugar for `until <cond> { wait 30s }`; `every` defaults to 30s) |
+| `signal "name" key <expr>` (event wait; `key` lets an external webhook route here by correlation value; bound by `@timeout(...)`) | signal |
 | `emit "type" { data }` (payload is any expression; parenthesize an event-less scalar: `emit (42)`) | emit |
 | `approve "..." type "..." { meta }` | approval |
 | `set name = ...` / `set meta { }` | config |
@@ -120,6 +128,32 @@ reducer, while an *effectful* call (`http_get`, `http_post`, `now`, `uuid`, `env
 error outside a `compute` block, since it must dispatch to a worker. A `compute { }` block is the
 only place effectful calls and multi-statement programs (`let` / `return` / `goto` / `if`) live;
 it lowers to `std.run` when pure and `std.exec` when effectful.
+
+### Functions (`fn`)
+
+Top-level `fn` definitions are reusable callables, hermetic over their parameters (only the params,
+plus any nested lambda params, are in scope — no `params.*`/`config.*`/step outputs). A body is
+either a single expression or a compute-style statement block:
+
+```
+fn label(id: string) -> string = "case-" ++ id            // expression body
+
+fn build(id: string, token: string) -> object = {         // block body
+    let resp = std.exec.http_get("https://api/cases/" ++ id)
+    return { id: id, status: resp.body.status }
+}
+```
+
+A block body reuses the `compute` lines (`let` / `return` / `if`, but **not** `goto` — a function is
+not a graph region) and lowers to the same program form; falling off the end without a `return`
+yields null (a void function). `@recursive(max_depth: N)` is required on any function that can reach
+itself directly or mutually.
+
+Functions may be **effectful** (call `std.exec.http_get`/`http_post`, read `secret.*`) — this is how
+an integration can be packaged as one reusable function. Like any effectful call, an effectful
+function may only be invoked inside a `compute` block (or another effectful body); calling it from a
+declarative position (a condition, a value reference, an action argument, a parameter default) is a
+semantic error, and any compute block that calls it dispatches to a worker (`std.exec`).
 
 ### Namespaces and imports
 
@@ -220,6 +254,35 @@ Triggers belong to their workflow, so they are carried inside the compiled defin
 workflow's pack-managed (`managed_by: wdl`) cron triggers with the declared set (idempotent on
 re-apply; manually-added triggers are left alone). This works for directory packs, not just `.wdlp`
 manifests, and they round-trip through decompile.
+
+**Watch guards**: a header `watch <cond> -> <target>` declares a workflow-level cancellation guard.
+The reducer re-evaluates every guard on each drive — *including while the run is parked* on a
+gate/signal/poll — and, the first time a condition holds, jumps the run to the handler node (fires at
+most once per run). This replaces copy-pasted "poll, then bail if state changed" checkpoints with one
+declaration that also catches the change mid-park. Guards lower to `definition.metadata.watches`
+(`[{ condition, handler }]`) and round-trip through decompile. The condition sees the same context as
+any other condition (params + node outputs), so a guard over live external state still needs a node
+that refreshes the watched value.
+
+```
+workflow "Ticket Work" v1 {
+    watch status_poll.fields.status.name != config.status.in_review -> handle_drift
+    ...
+}
+```
+
+**Compensation (saga)**: an action node may declare `compensate <provider.fn(args)>`. When a later
+step drives the run to a failed terminal (`fail`), the engine runs the recorded compensations of
+every already-succeeded node in reverse order before the run terminates `Failed`. Compensation
+parameters resolve against the live context, so a rollback can read the origin node's output (e.g. a
+created resource id). Rollback is best-effort: a failing compensation does not halt the unwind.
+
+```
+node deploy_api = github.dispatch(workflow_id: "deploy", ref: "main")
+    compensate github.dispatch(workflow_id: "rollback", ref: "main")
+```
+
+It lowers to the node's `compensation` (a `WorkflowAction`) and round-trips through decompile.
 
 **Annotations**: `@id("explicit")`, `@skip`, `@lock`, and `@timeout(300s)` for round-trip
 stability and node-level orchestration metadata. Action `.timeout(...)` remains the provider

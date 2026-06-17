@@ -63,6 +63,54 @@ fn metadata_includes_checks_summary_action() {
 }
 
 #[test]
+fn metadata_includes_collaboration_actions() {
+    let provider = GitHubProvider;
+    let metadata = provider.metadata();
+
+    for (function, param) in [
+        ("add_comment", "body"),
+        ("request_reviewers", "reviewers"),
+        ("add_assignees", "assignees"),
+    ] {
+        let action = metadata
+            .actions
+            .iter()
+            .find(|action| action.function_name == function)
+            .unwrap_or_else(|| panic!("{function} action is advertised"));
+        assert!(
+            action.parameters.iter().any(|p| p.name == param),
+            "{function} exposes {param}"
+        );
+    }
+}
+
+#[test]
+fn request_reviewers_requires_a_reviewer() {
+    let provider = GitHubProvider;
+    let request = ProviderExecutionRequest {
+        run_id: Some(uuid::Uuid::now_v7()),
+        action_name: "github".into(),
+        action_function: "request_reviewers".into(),
+        parameters: runinator_models::json!({
+            "token": "t",
+            "owner": "o",
+            "repo": "r",
+            "pull_number": "1"
+        }),
+        timeout_secs: 30,
+        artifact_dir: "".into(),
+        events_jsonl_path: "".into(),
+    };
+
+    let result = provider.execute_service(
+        request,
+        None,
+        runinator_plugin::cancel::CancellationToken::new(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn summarizes_check_runs() {
     let passed = summarize_check_runs(json!({
         "check_runs": [

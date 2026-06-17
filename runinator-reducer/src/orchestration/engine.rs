@@ -1,7 +1,8 @@
 use super::context::runtime_context;
 use super::*;
 use super::{
-    action, approval, basic, compute, context, control_flow, map, subflow, transitions, wait,
+    action, approval, basic, compensation, compute, context, control_flow, map, subflow,
+    transitions, wait,
 };
 use uuid::Uuid;
 
@@ -87,6 +88,24 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         && active_node_id == child.stop_node
     {
         map::finalize_map_child(db, &workflow_run, child, &node_runs).await?;
+        return Ok(ReadyNodeDisposition::Complete);
+    }
+    // workflow-level `watch` guards: re-evaluated on every drive (including while parked), so a
+    // state change a fixed checkpoint would miss still pre-empts the active node and jumps to the
+    // handler. fires at most once per run.
+    if let Some(handler) =
+        evaluate_watches(db, &workflow, &workflow_run, &node_runs, &active_node_id).await?
+    {
+        let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
+        run_state.watch_fired = true;
+        db.update_workflow_run_status(
+            workflow_run.id,
+            WorkflowStatus::Running,
+            Some(handler.clone()),
+            Some(run_state.to_state()),
+            Some(format!("watch guard fired; jumping to {handler}")),
+        )
+        .await?;
         return Ok(ReadyNodeDisposition::Complete);
     }
     let Some(node) = nodes.iter().find(|node| node.id == active_node_id) else {
@@ -268,22 +287,16 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
             .await?;
         }
         runinator_models::workflows::WorkflowNodeKind::Fail => {
-            transitions::ensure_completed_node_run(
+            // saga rollback: unwind compensations of succeeded nodes before terminating `Failed`.
+            return compensation::process_fail_node(
                 db,
+                &workflow,
                 &workflow_run,
                 node,
                 latest.as_ref(),
-                "fail_reached",
+                &node_runs,
             )
-            .await?;
-            db.update_workflow_run_status(
-                workflow_run.id,
-                WorkflowStatus::Failed,
-                Some(node.id.clone()),
-                None,
-                Some("Workflow reached fail node".into()),
-            )
-            .await?;
+            .await;
         }
         runinator_models::workflows::WorkflowNodeKind::Loop => {
             control_flow::process_loop_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
@@ -422,6 +435,45 @@ fn should_stop_inline_progress(
             WorkflowStatus::Running | WorkflowStatus::Waiting | WorkflowStatus::ApprovalRequired
         )
     })
+}
+
+/// evaluate the workflow's `metadata.watches` guards against the live run context. returns the
+/// handler node id of the first guard whose condition holds, or `None`. skips evaluation once a
+/// guard has already fired (`state.watch_fired`) and never redirects to the node already active.
+async fn evaluate_watches<T: DatabaseImpl>(
+    db: &T,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
+    workflow_run: &WorkflowRun,
+    node_runs: &[WorkflowNodeRun],
+    active_node_id: &str,
+) -> Result<Option<String>, SendableError> {
+    let Some(watches) = workflow
+        .definition
+        .metadata
+        .pointer("/watches")
+        .and_then(|value| value.as_array())
+    else {
+        return Ok(None);
+    };
+    if watches.is_empty() || WorkflowRunState::from_state(&workflow_run.state).watch_fired {
+        return Ok(None);
+    }
+    let context = runtime_context(db, workflow_run, node_runs).await;
+    for watch in watches {
+        let (Some(condition), Some(handler)) = (
+            watch.get("condition"),
+            watch.get("handler").and_then(|value| value.as_str()),
+        ) else {
+            continue;
+        };
+        if handler == active_node_id {
+            continue;
+        }
+        if runinator_workflows::evaluate_condition(condition, &context).unwrap_or(false) {
+            return Ok(Some(handler.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 /// true when the run's active node is an action node, the one node kind that parks the run `Running`

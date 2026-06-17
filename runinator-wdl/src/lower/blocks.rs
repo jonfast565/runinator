@@ -58,6 +58,19 @@ impl Lowerer {
         let mut params = Map::new();
         params.insert("items".into(), items);
 
+        // a literal cap becomes the typed `max_iterations` field; any other expression
+        // is carried in the loop parameters and resolved against the run context.
+        let mut literal_limit = None;
+        if let Some(limit) = &for_stmt.limit {
+            let lowered = self.lower_expr(limit)?;
+            match lowered.as_i64() {
+                Some(n) => literal_limit = Some(n),
+                None => {
+                    params.insert("max_iterations".into(), lowered);
+                }
+            }
+        }
+
         let mut transitions = Map::new();
         transitions.insert("next".into(), node_ref(&body_entry));
         transitions.insert("on_success".into(), node_ref(cont));
@@ -66,7 +79,7 @@ impl Lowerer {
             ("parameters", Value::Object(params)),
             ("transitions", Value::Object(transitions)),
         ];
-        if let Some(limit) = for_stmt.limit {
+        if let Some(limit) = literal_limit {
             fields.push(("max_iterations", Value::from(limit)));
         }
         self.apply_annotations(&mut fields, stmt);

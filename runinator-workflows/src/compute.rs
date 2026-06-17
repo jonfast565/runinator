@@ -138,7 +138,10 @@ pub fn run_program_with(
     }
 }
 
-fn run_block(
+/// run a sequence of compute statements against `context` at the given `env`. `let` bindings layer
+/// into the `let` slot; `return`/`goto` short-circuit with `Some(outcome)`, fallthrough yields
+/// `None`. user-function bodies reuse this so a block body evaluates exactly like a compute block.
+pub(crate) fn run_block(
     statements: &[ComputeStmt],
     context: &mut Value,
     env: EvalEnv,

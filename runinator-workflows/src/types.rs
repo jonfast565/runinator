@@ -163,6 +163,8 @@ pub struct ApprovalParameters {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalParameters {
     pub name: String,
+    /// unresolved correlation-key value (often a ref); the reducer resolves it at park time.
+    pub correlation_key: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]

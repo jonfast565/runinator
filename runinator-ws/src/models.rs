@@ -206,6 +206,16 @@ pub struct SignalDeliveryRequest {
     pub payload: Value,
 }
 
+/// inbound webhook that routes a signal to a parked node by business correlation key (e.g. a ticket
+/// key or PR number) rather than a run id, so external systems need not track run ids.
+#[derive(Debug, Deserialize)]
+pub struct WebhookSignalRequest {
+    pub name: String,
+    pub correlation_key: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct WorkflowRunReplayRequest {
     #[serde(default)]
@@ -250,6 +260,11 @@ pub struct WorkflowNodeRunInputRequest {
 pub struct WorkflowNodeRunExecutorClaimRequest {
     pub replica_id: Uuid,
     pub claimed_at: DateTime<Utc>,
+    /// claims older than this are treated as stale and may be stolen; the worker derives it from the
+    /// action timeout so a live executor is never preempted mid-run. defaults to `claimed_at` (steal
+    /// only truly unclaimed slots) when an older worker omits it.
+    #[serde(default)]
+    pub stale_before: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]

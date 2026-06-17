@@ -361,6 +361,78 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     })
 }
 
+/// route an inbound signal to a parked node by `(name, correlation_key)` across every run, so an
+/// external webhook (github/jira/ci) can resolve the right run without knowing its id. resolves the
+/// most recently parked match the same way as `deliver_signal`.
+pub async fn deliver_signal_by_correlation<T: DatabaseImpl>(
+    db: &T,
+    name: String,
+    correlation_key: String,
+    payload: Value,
+) -> Result<TaskResponse, SendableError> {
+    let waiting = db
+        .fetch_workflow_node_runs_by_status(WorkflowStatus::Waiting)
+        .await?;
+    let target = waiting
+        .iter()
+        .filter(|run| {
+            serde_json::from_value::<runinator_models::workflow_state::SignalState>(
+                run.state.clone().into(),
+            )
+            .map(|state| {
+                state.name == name
+                    && state.correlation_key.as_deref() == Some(correlation_key.as_str())
+            })
+            .unwrap_or(false)
+        })
+        .max_by_key(|run| run.created_at);
+    let Some(node_run) = target else {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!(
+                "No node is waiting for signal '{name}' with correlation key '{correlation_key}'"
+            ),
+        });
+    };
+    let workflow_run_id = node_run.workflow_run_id;
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Succeeded,
+        None,
+        None,
+        Some(runinator_models::json!({
+            "signal": name,
+            "correlation_key": correlation_key,
+            "payload": payload,
+        })),
+        None,
+        Some("signal_received".into()),
+        None,
+    )
+    .await?;
+    db.update_workflow_run_status(
+        workflow_run_id,
+        WorkflowStatus::Running,
+        Some(node_run.node_id.clone()),
+        None,
+        None,
+    )
+    .await?;
+    support::enqueue_node_ready(
+        db,
+        workflow_run_id,
+        node_run.node_id.clone(),
+        "signal_received",
+        Utc::now(),
+        runinator_models::json!({ "signal": name, "correlation_key": correlation_key }),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Signal '{name}' delivered to run {workflow_run_id}"),
+    })
+}
+
 pub async fn set_workflow_run_name<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

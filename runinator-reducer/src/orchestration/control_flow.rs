@@ -20,7 +20,13 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
         .iter()
         .filter(|run| run.node_id == node.id && run.status == WorkflowStatus::Succeeded)
         .count() as i64;
-    let max_iterations = node.max_iterations.unwrap_or(i64::MAX).max(0);
+    // an expression cap is resolved into the parameters; fall back to the typed field.
+    let max_iterations = parameters
+        .get("max_iterations")
+        .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|f| f as i64)))
+        .or(node.max_iterations)
+        .unwrap_or(i64::MAX)
+        .max(0);
     let index = prior_iterations;
     let exhausted = index >= items.len() as i64 || index >= max_iterations;
     // each iteration gets its own run so prior_iterations advances. reuse the latest only if it was

@@ -1,3 +1,4 @@
+mod comments;
 mod error;
 mod metadata;
 mod params;

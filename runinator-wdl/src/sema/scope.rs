@@ -47,8 +47,24 @@ pub(super) fn resolve_function_bodies(
         registry: crate::registry::FunctionRegistry::build(functions),
     };
     for def in functions {
-        let scope: Vec<String> = def.params.iter().map(|param| param.name.clone()).collect();
-        resolve_expr(&def.body, &symbols, &scope, ExprCtx::Compute, diagnostics);
+        let mut scope: Vec<String> = def.params.iter().map(|param| param.name.clone()).collect();
+        match &def.body {
+            crate::ast::FnBody::Expr(expr) => {
+                resolve_expr(expr, &symbols, &scope, ExprCtx::Compute, diagnostics);
+            }
+            // a block body resolves like a compute block, with the params already in scope. the
+            // `Function` context rejects any `goto` (a function body is not a graph region).
+            crate::ast::FnBody::Block(lines) => {
+                resolve_compute_block(
+                    lines,
+                    &symbols,
+                    &mut scope,
+                    def.span,
+                    diagnostics,
+                    BlockCtx::Function,
+                );
+            }
+        }
     }
 }
 
@@ -74,7 +90,7 @@ pub(super) fn analyze(
     if let Some(TypeExpr::Struct { fields, .. }) = &workflow.input {
         for field in fields {
             if let Some(default) = &field.default {
-                resolve_default_expr(default, diagnostics);
+                resolve_default_expr(default, &symbols.registry, diagnostics);
             }
         }
     }
@@ -232,6 +248,10 @@ fn resolve_stmt(
         }
         StmtKind::For(for_stmt) => {
             resolve_expr(&for_stmt.items, symbols, scope, ctx, diagnostics);
+            // the cap is evaluated before iterating, so it cannot see the loop var.
+            if let Some(limit) = &for_stmt.limit {
+                resolve_expr(limit, symbols, scope, ctx, diagnostics);
+            }
             scope.push(for_stmt.var.clone());
             resolve_block(&for_stmt.body, symbols, scope, diagnostics);
             scope.pop();
@@ -343,8 +363,24 @@ fn resolve_compute(
 ) {
     let effectful = crate::purity::block_is_effectful(&compute.body, &symbols.registry);
     let base = scope.len();
-    resolve_compute_block(&compute.body, symbols, scope, span, diagnostics, effectful);
+    resolve_compute_block(
+        &compute.body,
+        symbols,
+        scope,
+        span,
+        diagnostics,
+        BlockCtx::ComputeNode { effectful },
+    );
     scope.truncate(base);
+}
+
+/// where a compute-line block sits: a `compute` graph node (where `goto` jumps to another node, and
+/// is forbidden in an effectful block that dispatches to a worker) or a function body (not a graph
+/// region, so `goto` is always rejected).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockCtx {
+    ComputeNode { effectful: bool },
+    Function,
 }
 
 fn resolve_compute_block(
@@ -353,7 +389,7 @@ fn resolve_compute_block(
     scope: &mut Vec<String>,
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
-    effectful: bool,
+    ctx: BlockCtx,
 ) {
     use crate::ast::ComputeLine;
     // locals introduced at this block level, for duplicate detection.
@@ -373,22 +409,28 @@ fn resolve_compute_block(
             ComputeLine::Return(value) | ComputeLine::Expr(value) => {
                 resolve_expr(value, symbols, scope, ExprCtx::Compute, diagnostics);
             }
-            ComputeLine::Goto(target) => {
-                if effectful {
-                    diagnostics.push(Diagnostic::error(
-                        span,
-                        "goto is not allowed in an effectful compute block (it dispatches to a worker)",
-                    ));
+            ComputeLine::Goto(target) => match ctx {
+                BlockCtx::Function => diagnostics.push(Diagnostic::error(
+                    span,
+                    "goto is not allowed in a function body (it is not a graph region)",
+                )),
+                BlockCtx::ComputeNode { effectful } => {
+                    if effectful {
+                        diagnostics.push(Diagnostic::error(
+                            span,
+                            "goto is not allowed in an effectful compute block (it dispatches to a worker)",
+                        ));
+                    }
+                    if let crate::ast::Target::Label(label) = target
+                        && !symbols.labels.contains(label)
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            span,
+                            format!("compute goto references unknown label '{label}'"),
+                        ));
+                    }
                 }
-                if let crate::ast::Target::Label(label) = target
-                    && !symbols.labels.contains(label)
-                {
-                    diagnostics.push(Diagnostic::error(
-                        span,
-                        format!("compute goto references unknown label '{label}'"),
-                    ));
-                }
-            }
+            },
             ComputeLine::If {
                 cond,
                 then_branch,
@@ -396,9 +438,9 @@ fn resolve_compute_block(
             } => {
                 resolve_cond(cond, symbols, scope, ExprCtx::Compute, diagnostics);
                 let branch_start = scope.len();
-                resolve_compute_block(then_branch, symbols, scope, span, diagnostics, effectful);
+                resolve_compute_block(then_branch, symbols, scope, span, diagnostics, ctx);
                 scope.truncate(branch_start);
-                resolve_compute_block(else_branch, symbols, scope, span, diagnostics, effectful);
+                resolve_compute_block(else_branch, symbols, scope, span, diagnostics, ctx);
                 scope.truncate(branch_start);
             }
         }
@@ -515,14 +557,14 @@ fn resolve_expr(
                         args.len()
                     ),
                 ));
-            } else if ctx == ExprCtx::Declarative
-                && runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str())
-            {
+            } else if ctx == ExprCtx::Declarative && symbols.registry.is_effectful(name) {
                 // a declarative position is folded eagerly in the reducer, which cannot run side
-                // effects; an effectful call must live in a `compute` block (it dispatches to a worker).
+                // effects; an effectful call (intrinsic or user function) must live in a `compute`
+                // block (it dispatches to a worker).
+                let kind = if is_user { "function" } else { "intrinsic" };
                 diagnostics.push(Diagnostic::error(
                     expr.span,
-                    format!("effectful intrinsic '{name}' must be inside a compute block"),
+                    format!("effectful {kind} '{name}' must be inside a compute block"),
                 ));
             } else if let Err(err) = symbols.registry.resolve_args(name, args, named) {
                 // keyword/arity resolution errors (unknown keyword, missing required, gaps).
@@ -544,7 +586,11 @@ fn resolve_expr(
 }
 
 /// validate a workflow-parameter default expression: only `DEFAULT_ROOTS` may head a reference.
-fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
+fn resolve_default_expr(
+    expr: &Expr,
+    registry: &crate::registry::FunctionRegistry,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     match &expr.kind {
         ExprKind::Null
         | ExprKind::Bool(_)
@@ -556,7 +602,7 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         ExprKind::Str(parts) => {
             for part in parts {
                 if let StrPart::Expr(inner) = part {
-                    resolve_default_expr(inner, diagnostics);
+                    resolve_default_expr(inner, registry, diagnostics);
                 }
             }
         }
@@ -579,30 +625,30 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         }
         ExprKind::Array(items) => {
             for item in items {
-                resolve_default_expr(item, diagnostics);
+                resolve_default_expr(item, registry, diagnostics);
             }
         }
         ExprKind::Object(entries) => {
             for (_, value) in entries {
-                resolve_default_expr(value, diagnostics);
+                resolve_default_expr(value, registry, diagnostics);
             }
         }
         ExprKind::Concat(parts) | ExprKind::Coalesce(parts) => {
             for part in parts {
-                resolve_default_expr(part, diagnostics);
+                resolve_default_expr(part, registry, diagnostics);
             }
         }
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
-            resolve_default_expr(inner, diagnostics);
+            resolve_default_expr(inner, registry, diagnostics);
         }
         ExprKind::Compare { left, right, .. } => {
-            resolve_default_expr(left, diagnostics);
-            resolve_default_expr(right, diagnostics);
+            resolve_default_expr(left, registry, diagnostics);
+            resolve_default_expr(right, registry, diagnostics);
         }
         ExprKind::Ternary { cond, then, els } => {
-            resolve_default_expr(cond, diagnostics);
-            resolve_default_expr(then, diagnostics);
-            resolve_default_expr(els, diagnostics);
+            resolve_default_expr(cond, registry, diagnostics);
+            resolve_default_expr(then, registry, diagnostics);
+            resolve_default_expr(els, registry, diagnostics);
         }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
@@ -610,23 +656,29 @@ fn resolve_default_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
         | ExprKind::Div(parts)
         | ExprKind::Mod(parts) => {
             for part in parts {
-                resolve_default_expr(part, diagnostics);
+                resolve_default_expr(part, registry, diagnostics);
             }
         }
         ExprKind::Call {
             name, args, named, ..
         } => {
-            // defaults are evaluated eagerly at workflow start, so an effectful call is not allowed.
-            if runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.contains(&name.as_str()) {
+            // defaults are evaluated eagerly at workflow start, so an effectful call (intrinsic or
+            // user function) is not allowed.
+            if registry.is_effectful(name) {
+                let kind = if registry.is_user(name) {
+                    "function"
+                } else {
+                    "intrinsic"
+                };
                 diagnostics.push(Diagnostic::error(
                     expr.span,
                     format!(
-                        "effectful intrinsic '{name}' is not allowed in a workflow parameter default"
+                        "effectful {kind} '{name}' is not allowed in a workflow parameter default"
                     ),
                 ));
             }
             for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
-                resolve_default_expr(arg, diagnostics);
+                resolve_default_expr(arg, registry, diagnostics);
             }
         }
         // a lambda is a compute-only form; the default grammar (`= expr`) never produces one.

@@ -21,8 +21,19 @@ pub(crate) const UNSUPPORTED_ACTION: ErrorDescriptor = ErrorDescriptor::new(
     "Unsupported action",
 );
 
-pub(crate) const DICTIONARY: &[ErrorDescriptor] =
-    &[INVALID_PARAMS, INVALID_JSON, HTTP_ERROR, UNSUPPORTED_ACTION];
+pub(crate) const MISSING_REVIEWERS: ErrorDescriptor = ErrorDescriptor::new(
+    "GITHUB005",
+    "github.missing_reviewers",
+    "request_reviewers needs at least one reviewer or team_reviewer",
+);
+
+pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
+    INVALID_PARAMS,
+    INVALID_JSON,
+    HTTP_ERROR,
+    UNSUPPORTED_ACTION,
+    MISSING_REVIEWERS,
+];
 
 impl ProviderErrors for GitHubProvider {
     fn error_dictionary() -> &'static [ErrorDescriptor] {

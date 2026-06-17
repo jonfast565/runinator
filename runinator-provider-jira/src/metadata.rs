@@ -16,6 +16,41 @@ pub(crate) fn issue_key_param() -> ParameterMetadata {
     ParameterMetadata::required("key", RuninatorType::String)
 }
 
+pub(crate) fn comments_results() -> Vec<ResultMetadata> {
+    let comment_type = RuninatorType::open_structure(
+        [
+            ("id", RuninatorType::String),
+            ("author", RuninatorType::String),
+            ("created", RuninatorType::String),
+            ("text", RuninatorType::String),
+        ],
+        RuninatorType::Any,
+    );
+    let image_type = RuninatorType::open_structure(
+        [
+            ("filename", RuninatorType::String),
+            ("mime_type", RuninatorType::String),
+            ("source_url", RuninatorType::String),
+            ("path", RuninatorType::String),
+        ],
+        RuninatorType::Any,
+    );
+    vec![
+        ResultMetadata::new("text", RuninatorType::String).with_description(
+            "All comments rendered to plain text, ready to feed to an AI prompt.",
+        ),
+        ResultMetadata::new("comments", RuninatorType::array(comment_type))
+            .with_description("Parsed comments with author, timestamp, and rendered text."),
+        ResultMetadata::new("images", RuninatorType::array(image_type)).with_description(
+            "Image attachments downloaded for AI consumption, with local file paths.",
+        ),
+        ResultMetadata::new("comment_count", RuninatorType::Integer)
+            .with_description("Number of comments returned."),
+        ResultMetadata::new("image_count", RuninatorType::Integer)
+            .with_description("Number of image attachments downloaded."),
+    ]
+}
+
 pub(crate) fn jira_results() -> Vec<ResultMetadata> {
     let status_type =
         RuninatorType::open_structure([("name", RuninatorType::String)], RuninatorType::Any);

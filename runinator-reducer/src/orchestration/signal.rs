@@ -1,4 +1,4 @@
-use super::context::is_reentry_stale;
+use super::context::{is_reentry_stale, runtime_context};
 use super::transitions::{arm_node_timeout, time_out, timed_out, transition_from_node};
 use super::*;
 
@@ -56,7 +56,12 @@ pub(super) async fn process_signal_node<T: DatabaseImpl>(
             node.parameters.clone().into(),
         )
         .await?;
-    let state = SignalState { name: params.name };
+    let correlation_key =
+        resolve_correlation_key(db, workflow_run, node_runs, &params.correlation_key).await;
+    let state = SignalState {
+        name: params.name,
+        correlation_key,
+    };
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
@@ -77,4 +82,31 @@ pub(super) async fn process_signal_node<T: DatabaseImpl>(
     )
     .await?;
     arm_node_timeout(db, workflow_run.id, node).await
+}
+
+/// resolve a signal node's correlation-key value (often a `$ref` into the run context) into a flat
+/// string. a null/empty key yields `None`; numbers and other scalars coerce to their string form so
+/// an external webhook can match a ticket key, PR number, etc.
+async fn resolve_correlation_key<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node_runs: &[WorkflowNodeRun],
+    raw: &Value,
+) -> Option<String> {
+    if raw.is_null() {
+        return None;
+    }
+    let context = runtime_context(db, workflow_run, node_runs).await;
+    let resolved =
+        runinator_workflows::resolve_value_refs(raw, &context).unwrap_or_else(|_| raw.clone());
+    if let Some(text) = resolved.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(int) = resolved.as_i64() {
+        return Some(int.to_string());
+    }
+    if resolved.is_null() {
+        return None;
+    }
+    Some(resolved.to_string())
 }

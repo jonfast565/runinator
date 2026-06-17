@@ -679,3 +679,27 @@ fn workflow_bundle_uses_importer_shape() {
     assert!(value.get("workflows").is_some());
     assert!(value.get("triggers").is_some());
 }
+
+#[test]
+fn retry_class_selects_retryable_statuses() {
+    assert!(WorkflowRetryClass::Any.retryable(WorkflowStatus::Failed));
+    assert!(WorkflowRetryClass::Any.retryable(WorkflowStatus::TimedOut));
+    assert!(!WorkflowRetryClass::Any.retryable(WorkflowStatus::Succeeded));
+
+    assert!(WorkflowRetryClass::Failure.retryable(WorkflowStatus::Failed));
+    assert!(!WorkflowRetryClass::Failure.retryable(WorkflowStatus::TimedOut));
+
+    assert!(WorkflowRetryClass::Timeout.retryable(WorkflowStatus::TimedOut));
+    assert!(!WorkflowRetryClass::Timeout.retryable(WorkflowStatus::Failed));
+}
+
+#[test]
+fn retry_defaults_preserve_legacy_shape() {
+    // a bare `{ "max_attempts": 3 }` must still deserialize, defaulting the new fields.
+    let retry: WorkflowRetry = serde_json::from_value(json!({ "max_attempts": 3 })).unwrap();
+    assert_eq!(retry.max_attempts, 3);
+    assert_eq!(retry.backoff_base_seconds, 1);
+    assert_eq!(retry.backoff_max_seconds, 300);
+    assert!(!retry.jitter);
+    assert_eq!(retry.retry_on, WorkflowRetryClass::Any);
+}

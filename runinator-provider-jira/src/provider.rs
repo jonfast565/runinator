@@ -11,10 +11,14 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
+use crate::comments::jira_fetch_comments;
 use crate::error::{UNSUPPORTED_ACTION, http_error, validate_base_url};
-use crate::metadata::{base_param, email_param, issue_key_param, jira_results, token_param};
+use crate::metadata::{
+    base_param, comments_results, email_param, issue_key_param, jira_results, token_param,
+};
 use crate::params::{
-    JiraCommentParams, JiraIssueKeyParams, JiraSearchParams, JiraTransitionParams, parse_params,
+    JiraCommentParams, JiraCommentsParams, JiraIssueKeyParams, JiraSearchParams,
+    JiraTransitionParams, parse_params,
 };
 use crate::response::json_response;
 use crate::search::jira_search_all;
@@ -56,6 +60,18 @@ impl Provider for JiraProvider {
                         ParameterMetadata::required("body", RuninatorType::String),
                     ])
                     .with_results(jira_results()),
+                ActionMetadata::new(
+                    "comments",
+                    "Fetch and parse Jira issue comments (with images) for AI",
+                )
+                .with_parameters(vec![
+                    base_param(),
+                    token_param(),
+                    email_param(),
+                    issue_key_param(),
+                    ParameterMetadata::optional("download_dir", RuninatorType::String),
+                ])
+                .with_results(comments_results()),
                 ActionMetadata::new("transition", "Transition a Jira issue to a new status")
                     .with_parameters(vec![
                         base_param(),
@@ -118,6 +134,10 @@ impl Provider for JiraProvider {
                     .json(&json!({ "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": p.body }] }] } }))
                     .send()
                     .map_err(|e| http_error("jira comment request failed", e))?
+            }
+            "read_comments" | "comments" => {
+                let p: JiraCommentsParams = parse_params(&request)?;
+                return jira_fetch_comments(&client, &p, &request.artifact_dir);
             }
             "transition_item" | "transition" => {
                 let p: JiraTransitionParams = parse_params(&request)?;

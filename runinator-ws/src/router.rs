@@ -86,7 +86,7 @@ use crate::handlers::{
         analyze_wdl, compile_wdl, complete_wdl, decompile_to_wdl, evaluate_expression, format_wdl,
         import_wdl,
     },
-    webhook::webhook_wake,
+    webhook::{webhook_signal, webhook_wake},
     workflows::{
         delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
         get_workflow, get_workflows, import_workflow_bundle, upsert_workflow, validate_workflow,
@@ -484,6 +484,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/webhooks/wake",
             post(webhook_wake::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/webhooks/signal",
+            post(webhook_signal::<T>).layer(Extension(pool.clone())),
         )
         .route("/auth/config", get(auth_config))
         .route(

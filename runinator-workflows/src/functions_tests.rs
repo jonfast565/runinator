@@ -88,6 +88,64 @@ fn evaluates_recursive_factorial() {
     assert_eq!(result, Value::from(120));
 }
 
+// a block (program) body threads local `let` bindings and returns the final value: build(2, 3)
+// binds sum = add(a, b) then returns sum -> 5.
+#[test]
+fn evaluates_a_program_body_function() {
+    let functions = table(json!([
+        {
+            "name": "build",
+            "params": ["a", "b"],
+            "program": [
+                { "$let": "sum", "value": { "$call": "add", "args": [local_ref("a"), local_ref("b")] } },
+                { "$return": local_ref("sum") }
+            ]
+        }
+    ]));
+    let call = json!({ "$call": "build", "args": [2, 3] });
+    let result = resolve_value_refs_with_functions(&call, &json!({}), &functions).expect("eval");
+    assert_eq!(result, Value::from(5));
+}
+
+// a program body that never returns is a void function and yields null.
+#[test]
+fn program_body_without_return_is_void() {
+    let functions = table(json!([
+        {
+            "name": "noop",
+            "params": ["x"],
+            "program": [
+                { "$let": "y", "value": local_ref("x") }
+            ]
+        }
+    ]));
+    let call = json!({ "$call": "noop", "args": [7] });
+    let result = resolve_value_refs_with_functions(&call, &json!({}), &functions).expect("eval");
+    assert_eq!(result, Value::Null);
+}
+
+// the recursion limit still applies when the body is a program rather than an expression.
+#[test]
+fn program_body_recursion_fails_past_max_depth() {
+    let functions = table(json!([
+        {
+            "name": "loopy",
+            "params": ["n"],
+            "recursive": { "max_depth": 3 },
+            "program": [
+                { "$return": { "$call": "loopy", "args": [local_ref("n")] } }
+            ]
+        }
+    ]));
+    let call = json!({ "$call": "loopy", "args": [0] });
+    let err = resolve_value_refs_with_functions(&call, &json!({}), &functions)
+        .expect_err("should exceed recursion limit");
+    assert!(
+        err.to_string().contains("recursion limit"),
+        "unexpected error: {err}"
+    );
+}
+
 // a recursive function fails once it exceeds its declared max_depth.
 #[test]
 fn recursion_fails_past_max_depth() {

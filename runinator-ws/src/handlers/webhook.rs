@@ -4,8 +4,8 @@ use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 
-use crate::events::{EventSender, emit_workflow_run};
-use crate::models::{ApiResponse, WebhookWakeRequest};
+use crate::events::{AppEvent, EventSender, emit, emit_workflow_run};
+use crate::models::{ApiResponse, WebhookSignalRequest, WebhookWakeRequest};
 use crate::repository;
 use crate::responses::{api_error, not_found, task_response_success};
 use crate::websocket::merge_json;
@@ -80,4 +80,31 @@ pub(crate) async fn webhook_wake<T: DatabaseImpl>(
     }
     emit_workflow_run(&events, request.workflow_run_id);
     task_response_success("Webhook wake recorded")
+}
+
+/// route an inbound signal to a parked node by correlation key, without a run id. external systems
+/// (github/jira/ci) authenticate as a service principal and post `{ name, correlation_key, payload }`.
+pub(crate) async fn webhook_signal<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<WebhookSignalRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
+    match repository::deliver_signal_by_correlation(
+        db.as_ref(),
+        request.name,
+        request.correlation_key,
+        request.payload,
+    )
+    .await
+    {
+        Ok(response) => {
+            emit(&events, AppEvent::WorkflowRunActivity);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
 }

@@ -33,6 +33,10 @@ use tokio::{
 };
 
 use crate::output_sink::RunOutputSink;
+
+// grace added to an action's timeout before its executor lease is considered abandoned, so a worker
+// that is merely slow (clock skew, a long flush) is never preempted by a duplicate delivery.
+const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
 use broker::{broker_error, build_broker};
 use secrets::resolve_secret_refs;
 
@@ -457,6 +461,41 @@ async fn process_delivery(
         broker.clone(),
         tokio::runtime::Handle::current(),
     );
+    // acquire the execution lease before anything observable runs. a redelivered or timeout-raced
+    // duplicate of this node run loses the claim and is dropped here, so the action never executes
+    // twice concurrently. the lease is treated as abandoned once it ages past the action's deadline.
+    if let Some(replica_id) = replica_id {
+        let stale_before = Utc::now()
+            - chrono::Duration::seconds(action.timeout_seconds + EXECUTOR_LEASE_GRACE_SECONDS);
+        match api_client
+            .claim_workflow_node_run_executor(
+                command.workflow_node_run_id,
+                replica_id,
+                Utc::now(),
+                stale_before,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                info!(
+                    "Skipping duplicate delivery for node run {}: executor lease held elsewhere",
+                    command.workflow_node_run_id
+                );
+                in_flight.lock().await.remove(&command.workflow_run_id);
+                broker
+                    .ack(consumer_id, delivery.delivery_id)
+                    .await
+                    .map_err(|err| broker_error("ack", err))?;
+                return Ok(());
+            }
+            // fail-open on a transport error so a transient ws outage cannot wedge execution.
+            Err(err) => warn!(
+                "Failed to claim executor replica {} for node run {}: {}",
+                replica_id, command.workflow_node_run_id, err
+            ),
+        }
+    }
     if let Err(err) = sink
         .publish_status(WorkflowStatus::Running, None, None)
         .await
@@ -468,16 +507,6 @@ async fn process_delivery(
         in_flight.lock().await.remove(&command.workflow_run_id);
         nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
         return Err(broker_error("publish_result", err));
-    }
-    if let Some(replica_id) = replica_id
-        && let Err(err) = api_client
-            .claim_workflow_node_run_executor(command.workflow_node_run_id, replica_id, Utc::now())
-            .await
-    {
-        warn!(
-            "Failed to claim executor replica {} for node run {}: {}",
-            replica_id, command.workflow_node_run_id, err
-        );
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
         Ok(parameters) => parameters,

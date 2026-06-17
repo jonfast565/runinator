@@ -23,6 +23,11 @@ pub(crate) const INVALID_PARAMS: ErrorDescriptor =
     ErrorDescriptor::new("JIRA007", "jira.invalid_params", "Invalid parameters");
 pub(crate) const UNSUPPORTED_ACTION: ErrorDescriptor =
     ErrorDescriptor::new("JIRA008", "jira.unsupported_action", "Unsupported action");
+pub(crate) const IO_ERROR: ErrorDescriptor = ErrorDescriptor::new(
+    "JIRA009",
+    "jira.io",
+    "Failed to write a downloaded attachment",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     CONFIG,
@@ -33,6 +38,7 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     HTTP_ERROR,
     INVALID_PARAMS,
     UNSUPPORTED_ACTION,
+    IO_ERROR,
 ];
 
 impl ProviderErrors for JiraProvider {

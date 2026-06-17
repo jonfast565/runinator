@@ -3,6 +3,62 @@ use runinator_models::json;
 use runinator_models::runs::ProviderExecutionRequest;
 
 #[test]
+fn metadata_includes_comments_action() {
+    let provider = JiraProvider;
+    let metadata = provider.metadata();
+    let comments = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "comments")
+        .expect("comments action is advertised");
+    assert!(
+        comments
+            .results
+            .iter()
+            .any(|result| result.name == "images")
+    );
+    assert!(
+        comments
+            .parameters
+            .iter()
+            .any(|p| p.name == "download_dir" && !p.required)
+    );
+}
+
+#[test]
+fn renders_adf_comment_body_with_image() {
+    let body = serde_json::json!({
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    { "type": "text", "text": "Please fix the layout, see " },
+                    { "type": "text", "text": "this screenshot:" }
+                ]
+            },
+            {
+                "type": "mediaSingle",
+                "content": [
+                    { "type": "media", "attrs": { "type": "file", "id": "abc-123", "alt": "broken-button.png" } }
+                ]
+            }
+        ]
+    });
+    let rendered = crate::comments::render_comment_body(Some(&body));
+    assert!(rendered.contains("Please fix the layout, see this screenshot:"));
+    assert!(rendered.contains("[image: broken-button.png]"));
+}
+
+#[test]
+fn renders_legacy_string_comment_body() {
+    let body = serde_json::json!("  just a plain text comment  ");
+    let rendered = crate::comments::render_comment_body(Some(&body));
+    assert_eq!(rendered, "just a plain text comment");
+}
+
+#[test]
 fn test_jira_provider_missing_base_url() {
     let provider = JiraProvider;
     let request = ProviderExecutionRequest {

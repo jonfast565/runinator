@@ -233,7 +233,8 @@ pub fn parse_approval_parameters(node: &WorkflowNode) -> ApprovalParameters {
     }
 }
 
-/// parse a signal node's parameters. `name` is the signal the node parks on.
+/// parse a signal node's parameters. `name` is the signal the node parks on; `correlation_key`
+/// carries the (possibly unresolved) routing value the reducer resolves at park time.
 pub fn parse_signal_parameters(node: &WorkflowNode) -> SignalParameters {
     let name = node
         .parameters
@@ -241,7 +242,15 @@ pub fn parse_signal_parameters(node: &WorkflowNode) -> SignalParameters {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    SignalParameters { name }
+    let correlation_key = node
+        .parameters
+        .get("correlation_key")
+        .cloned()
+        .unwrap_or(Value::Null);
+    SignalParameters {
+        name,
+        correlation_key,
+    }
 }
 
 /// default seconds between gate re-checks while it stays closed.

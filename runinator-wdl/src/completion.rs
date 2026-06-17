@@ -44,11 +44,26 @@ pub struct WdlCompletionItem {
     pub is_snippet: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct CompletionContext {
     input: RuninatorType,
     bindings: BTreeMap<String, RuninatorType>,
     scoped: BTreeMap<String, RuninatorType>,
+    // namespace scope derived from the document's `import`s and `fn` definitions, mirroring
+    // namespace resolution so bare/aliased completions only offer in-scope names.
+    namespace: NamespaceScope,
+}
+
+/// the names a bare or aliased call may resolve to, gathered from imports and user functions.
+#[derive(Debug, Clone, Default)]
+struct NamespaceScope {
+    /// import alias -> the std module it targets (e.g. `s` -> `strings`). non-std aliases are
+    /// omitted because their namespaces have no completable compute members.
+    aliases: BTreeMap<String, String>,
+    /// intrinsic leaves callable bare because their std module was imported unaliased.
+    bare_intrinsics: BTreeSet<String>,
+    /// user-defined function names, always callable bare.
+    user_fns: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +104,9 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
         if path.head == "std" {
             return complete_std_path(path);
         }
+        if let Some(module) = context.namespace.aliases.get(&path.head) {
+            return complete_alias_path(&module.clone(), path);
+        }
         if let Some(response) = complete_path(path, &context) {
             return response;
         }
@@ -98,7 +116,7 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
         return complete_action_args(&request.providers, call);
     }
 
-    complete_providers(&request.providers, word.start, cursor)
+    complete_bare(&request.providers, &context, word.start, cursor)
 }
 
 fn empty_response(replace_start_byte: usize, replace_end_byte: usize) -> WdlCompletionResponse {
@@ -109,8 +127,11 @@ fn empty_response(replace_start_byte: usize, replace_end_byte: usize) -> WdlComp
     }
 }
 
-fn complete_providers(
+// complete a bare word: providers (for action positions) plus the in-scope bare names a namespaced
+// program can call without qualification (user functions and unaliased-imported intrinsics).
+fn complete_bare(
     providers: &[ProviderMetadata],
+    context: &CompletionContext,
     replace_start: usize,
     replace_end: usize,
 ) -> WdlCompletionResponse {
@@ -125,6 +146,29 @@ fn complete_providers(
             is_snippet: false,
         })
         .collect::<Vec<_>>();
+    for name in &context.namespace.user_fns {
+        items.push(WdlCompletionItem {
+            label: name.clone(),
+            kind: "function".into(),
+            detail: Some("function".into()),
+            documentation: None,
+            insert_text: name.clone(),
+            is_snippet: false,
+        });
+    }
+    for leaf in &context.namespace.bare_intrinsics {
+        let detail = runinator_workflows::intrinsic_module(leaf)
+            .map(|module| format!("std.{module}.{leaf}"))
+            .unwrap_or_else(|| "std".into());
+        items.push(WdlCompletionItem {
+            label: leaf.clone(),
+            kind: "function".into(),
+            detail: Some(detail),
+            documentation: None,
+            insert_text: leaf.clone(),
+            is_snippet: false,
+        });
+    }
     items.sort_by(|left, right| left.label.cmp(&right.label));
     WdlCompletionResponse {
         replace_start_byte: replace_start,
@@ -317,23 +361,7 @@ fn complete_std_path(path: PathContext) -> WdlCompletionResponse {
                 });
             }
         }
-        [module] => {
-            for leaf in runinator_workflows::PureIntrinsics::names()
-                .iter()
-                .chain(runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.iter())
-                .chain(runinator_workflows::HIGHER_ORDER_NAMES.iter())
-                .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(module.as_str()))
-            {
-                items.push(WdlCompletionItem {
-                    label: (*leaf).into(),
-                    kind: "function".into(),
-                    detail: Some(format!("std.{module}.{leaf}")),
-                    documentation: None,
-                    insert_text: (*leaf).into(),
-                    is_snippet: false,
-                });
-            }
-        }
+        [module] => items.extend(module_leaf_items(module)),
         _ => {}
     }
     items.sort_by(|left, right| left.label.cmp(&right.label));
@@ -342,6 +370,46 @@ fn complete_std_path(path: PathContext) -> WdlCompletionResponse {
         replace_end_byte: path.replace_end,
         items,
     }
+}
+
+// complete the leaves of a std module addressed through an import alias (`s.` -> strings leaves).
+fn complete_alias_path(module: &str, path: PathContext) -> WdlCompletionResponse {
+    // an alias binds a single module, so only the bare leaf is completable; deeper paths have none.
+    let mut items = if path.completed.is_empty() {
+        module_leaf_items(module)
+    } else {
+        Vec::new()
+    };
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    WdlCompletionResponse {
+        replace_start_byte: path.replace_start,
+        replace_end_byte: path.replace_end,
+        items,
+    }
+}
+
+// every intrinsic leaf name, across pure, effectful, and higher-order builtins.
+fn intrinsic_leaf_names() -> impl Iterator<Item = &'static str> {
+    runinator_workflows::PureIntrinsics::names()
+        .iter()
+        .chain(runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.iter())
+        .chain(runinator_workflows::HIGHER_ORDER_NAMES.iter())
+        .copied()
+}
+
+// completion items for every intrinsic leaf in a std module, labelled by their qualified name.
+fn module_leaf_items(module: &str) -> Vec<WdlCompletionItem> {
+    intrinsic_leaf_names()
+        .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(module))
+        .map(|leaf| WdlCompletionItem {
+            label: leaf.into(),
+            kind: "function".into(),
+            detail: Some(format!("std.{module}.{leaf}")),
+            documentation: None,
+            insert_text: leaf.into(),
+            is_snippet: false,
+        })
+        .collect()
 }
 
 fn complete_path(path: PathContext, context: &CompletionContext) -> Option<WdlCompletionResponse> {
@@ -457,11 +525,7 @@ fn completion_context(
         parse_document(&patched)
     });
     let Ok(document) = document else {
-        return CompletionContext {
-            input: RuninatorType::Any,
-            bindings: BTreeMap::new(),
-            scoped: BTreeMap::new(),
-        };
+        return CompletionContext::default();
     };
     let input = document
         .workflow
@@ -471,11 +535,53 @@ fn completion_context(
         .unwrap_or(RuninatorType::Any);
     let mut context = CompletionContext {
         input,
-        bindings: BTreeMap::new(),
-        scoped: BTreeMap::new(),
+        namespace: collect_namespace_scope(&document),
+        ..Default::default()
     };
     collect_block_context(&document.workflow.body, cursor, providers, &mut context);
     context
+}
+
+// gather the bare/aliased names in scope from the document's imports and user functions, mirroring
+// the namespace resolution pass so completion only offers names that resolve.
+fn collect_namespace_scope(document: &crate::ast::Document) -> NamespaceScope {
+    let mut scope = NamespaceScope {
+        user_fns: document
+            .functions
+            .iter()
+            .map(|function| function.name.clone())
+            .collect(),
+        ..Default::default()
+    };
+    for import in &document.workflow.imports {
+        let segments: Vec<&str> = import.path.split('.').collect();
+        let is_std = segments.first() == Some(&runinator_workflows::STD_NAMESPACE);
+        match (import.alias.as_deref(), segments.as_slice()) {
+            // `import std` opens every intrinsic leaf into bare scope.
+            (None, [ns]) if *ns == runinator_workflows::STD_NAMESPACE => {
+                scope
+                    .bare_intrinsics
+                    .extend(intrinsic_leaf_names().map(str::to_string));
+            }
+            // `import std.<module>` opens that module's leaves into bare scope.
+            (None, [_, module]) if is_std => {
+                scope.bare_intrinsics.extend(
+                    intrinsic_leaf_names()
+                        .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(*module))
+                        .map(str::to_string),
+                );
+            }
+            // `import std.<module> as alias` binds the alias to a completable std module.
+            (Some(alias), [_, module]) if is_std => {
+                scope
+                    .aliases
+                    .insert(alias.to_string(), (*module).to_string());
+            }
+            // bare or aliased non-std imports name workflow namespaces with no compute members.
+            _ => {}
+        }
+    }
+    scope
 }
 
 fn collect_block_context(

@@ -17,10 +17,14 @@ pub(crate) struct ParamSig {
     pub default: Option<Expr>,
 }
 
-/// a callable's signature plus whether it is a user-defined function (vs a native intrinsic).
+/// a callable's signature plus whether it is a user-defined function (vs a native intrinsic) and
+/// whether it is effectful. for an intrinsic, effectfulness comes from its metadata `pure` bit; for
+/// a user function it is inferred from the body (calls an effectful intrinsic, reads a secret, or
+/// transitively calls another effectful function).
 pub(crate) struct CallSig {
     pub params: Vec<ParamSig>,
     pub is_user: bool,
+    pub effectful: bool,
 }
 
 impl CallSig {
@@ -52,11 +56,14 @@ impl FunctionRegistry {
                     default: None,
                 })
                 .collect();
+            // an intrinsic's effectfulness is its metadata `pure` bit, the single source of truth
+            // shared with the runtime; the front end never re-enumerates pure/effectful names.
             sigs.insert(
                 action.function_name.clone(),
                 CallSig {
                     params,
                     is_user: false,
+                    effectful: !action.pure,
                 },
             );
         }
@@ -75,10 +82,36 @@ impl FunctionRegistry {
                 CallSig {
                     params,
                     is_user: true,
+                    effectful: false,
                 },
             );
         }
-        Self { sigs }
+        let mut registry = Self { sigs };
+        registry.compute_effectfulness(functions);
+        registry
+    }
+
+    /// mark each user function effectful when its body is effectful given the current flags, to a
+    /// fixpoint. effectfulness only ever flips false->true, so iterating until stable converges and
+    /// naturally propagates transitively (a function calling an effectful function becomes effectful).
+    fn compute_effectfulness(&mut self, functions: &[FunctionDef]) {
+        loop {
+            let mut changed = false;
+            for def in functions {
+                if self.is_effectful(&def.name) {
+                    continue;
+                }
+                if crate::purity::fn_body_is_effectful(&def.body, self) {
+                    if let Some(sig) = self.sigs.get_mut(&def.name) {
+                        sig.effectful = true;
+                    }
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 
     /// whether `name` is callable (intrinsic or user function).
@@ -89,6 +122,13 @@ impl FunctionRegistry {
     /// whether `name` is a user-defined function.
     pub(crate) fn is_user(&self, name: &str) -> bool {
         self.sigs.get(name).is_some_and(|sig| sig.is_user)
+    }
+
+    /// whether `name` is a known callable classified as effectful: a non-pure intrinsic (per its
+    /// metadata) or a user function whose body is effectful. an unknown name is not "known
+    /// effectful" here; callers that must route unknowns to the worker gate on `knows` first.
+    pub(crate) fn is_effectful(&self, name: &str) -> bool {
+        self.sigs.get(name).is_some_and(|sig| sig.effectful)
     }
 
     /// resolve a call's positional + named arguments into a single positional list in parameter

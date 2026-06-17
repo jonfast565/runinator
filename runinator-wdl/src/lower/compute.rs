@@ -67,6 +67,14 @@ impl Lowerer {
         Ok(())
     }
 
+    /// lower a function block body into the same `$let`/`$return`/`$if` program array a `compute`
+    /// block produces. the caller has already registered the function parameters as compute locals;
+    /// this adds the block's own `let`/lambda locals so bare references lower to `let` refs.
+    pub(super) fn lower_fn_block(&self, body: &[ComputeLine]) -> Result<Vec<Value>, WdlError> {
+        collect_locals(body, &mut self.compute_locals.borrow_mut());
+        self.lower_program(body)
+    }
+
     fn lower_program(&self, body: &[ComputeLine]) -> Result<Vec<Value>, WdlError> {
         body.iter()
             .map(|line| self.lower_compute_line(line))

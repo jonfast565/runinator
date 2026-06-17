@@ -68,7 +68,10 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
                 resolve_expr(default, &scope)?;
             }
         }
-        resolve_expr(&mut function.body, &scope)?;
+        match &mut function.body {
+            FnBody::Expr(expr) => resolve_expr(expr, &scope)?,
+            FnBody::Block(lines) => resolve_compute_block(lines, &scope)?,
+        }
     }
     for alias in document.workflow.aliases.iter_mut() {
         for (_, value) in alias.entries.iter_mut() {

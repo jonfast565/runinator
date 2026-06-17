@@ -970,23 +970,31 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
+    /// acquire the executor lease for a node run; `Ok(true)` means this worker won the claim and may
+    /// execute, `Ok(false)` means a live executor already holds it and this delivery is a duplicate.
+    /// `stale_before` is the cutoff past which an existing claim is considered abandoned.
     pub async fn claim_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,
         replica_id: Uuid,
         claimed_at: DateTime<Utc>,
-    ) -> Result<TaskResponse> {
+        stale_before: DateTime<Utc>,
+    ) -> Result<bool> {
         let url = self
             .build_url(&api_workflow_node_run_claim(node_run_id))
             .await?;
         let response = self
             .client
             .post(url.clone())
-            .json(&json!({ "replica_id": replica_id, "claimed_at": claimed_at }))
+            .json(&json!({
+                "replica_id": replica_id,
+                "claimed_at": claimed_at,
+                "stale_before": stale_before,
+            }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
+        Ok(response.json::<TaskResponse>().await?.success)
     }
 
     pub async fn release_workflow_node_run_executor(

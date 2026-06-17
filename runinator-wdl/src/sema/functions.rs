@@ -1,10 +1,12 @@
-// validation of top-level `fn` definitions: duplicate/shadowing names, pure bodies, body name
-// resolution, and the recursion rule (any function that can call itself, directly or mutually, must
-// carry an `@recursive(max_depth: N)` annotation).
+// validation of top-level `fn` definitions: duplicate/shadowing names, body name resolution, and the
+// recursion rule (any function that can call itself, directly or mutually, must carry an
+// `@recursive(max_depth: N)` annotation). function bodies may be effectful; the
+// effectful-call-in-pure-position rule is enforced where the call sits (declarative positions reject
+// effectful user functions), and the `goto` restriction is enforced in body resolution.
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::ast::{Expr, ExprKind, FunctionDef, StrPart};
+use crate::ast::{ComputeLine, Cond, CondKind, Expr, ExprKind, FnBody, FunctionDef, StrPart};
 use crate::errors::WdlError;
 use crate::registry::{FunctionRegistry, duplicate_errors};
 
@@ -17,19 +19,7 @@ pub(super) fn analyze(functions: &[FunctionDef], diagnostics: &mut Vec<Diagnosti
         }
     }
     let registry = FunctionRegistry::build(functions);
-    for def in functions {
-        // bodies are hermetic pure computations; an effectful call or secret read is rejected.
-        if crate::purity::expr_is_effectful(&def.body, &registry) {
-            diagnostics.push(Diagnostic::error(
-                def.span,
-                format!(
-                    "function '{}' body must be pure (no effectful intrinsics or secret reads)",
-                    def.name
-                ),
-            ));
-        }
-    }
-    // resolve body references against each function's parameters.
+    // resolve body references against each function's parameters (also enforces the goto rule).
     super::scope::resolve_function_bodies(functions, diagnostics);
     check_recursion(functions, &registry, diagnostics);
 }
@@ -44,7 +34,7 @@ fn check_recursion(
     let mut edges: HashMap<&str, BTreeSet<String>> = HashMap::new();
     for def in functions {
         let mut calls = BTreeSet::new();
-        collect_user_calls(&def.body, registry, &mut calls);
+        collect_user_calls_body(&def.body, registry, &mut calls);
         edges.insert(def.name.as_str(), calls);
     }
     for def in functions {
@@ -83,6 +73,57 @@ fn reaches_self(start: &str, edges: &HashMap<&str, BTreeSet<String>>) -> bool {
         }
     }
     false
+}
+
+/// collect the names of user functions called anywhere in a function body (expression or block).
+fn collect_user_calls_body(body: &FnBody, registry: &FunctionRegistry, out: &mut BTreeSet<String>) {
+    match body {
+        FnBody::Expr(expr) => collect_user_calls(expr, registry, out),
+        FnBody::Block(lines) => collect_user_calls_lines(lines, registry, out),
+    }
+}
+
+/// collect user-function calls across a block's compute lines, including nested `if` conditions and
+/// branches.
+fn collect_user_calls_lines(
+    lines: &[ComputeLine],
+    registry: &FunctionRegistry,
+    out: &mut BTreeSet<String>,
+) {
+    for line in lines {
+        match line {
+            ComputeLine::Let { value, .. }
+            | ComputeLine::Return(value)
+            | ComputeLine::Expr(value) => collect_user_calls(value, registry, out),
+            ComputeLine::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                collect_user_calls_cond(cond, registry, out);
+                collect_user_calls_lines(then_branch, registry, out);
+                collect_user_calls_lines(else_branch, registry, out);
+            }
+            ComputeLine::Goto(_) => {}
+        }
+    }
+}
+
+/// collect user-function calls across a compute-tier condition.
+fn collect_user_calls_cond(cond: &Cond, registry: &FunctionRegistry, out: &mut BTreeSet<String>) {
+    match &cond.kind {
+        CondKind::All(parts) | CondKind::Any(parts) => {
+            for part in parts {
+                collect_user_calls_cond(part, registry, out);
+            }
+        }
+        CondKind::Not(inner) => collect_user_calls_cond(inner, registry, out),
+        CondKind::Expr(expr) | CondKind::Exists(expr) => collect_user_calls(expr, registry, out),
+        CondKind::Cmp { left, right, .. } => {
+            collect_user_calls(left, registry, out);
+            collect_user_calls(right, registry, out);
+        }
+    }
 }
 
 /// collect the names of user functions called anywhere in `expr`.

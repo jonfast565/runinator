@@ -11,9 +11,14 @@ cond_document = { SOI ~ cond ~ EOI }
 compute_document = { SOI ~ compute_block ~ EOI }
 
 // a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
-// signature and a single-expression body. params reuse the parameter-field shape (`name: type` with an
-// optional `?` or `= default`).
-func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ expr }
+// signature and a body. params reuse the parameter-field shape (`name: type` with an optional `?`
+// or `= default`). the body after `=` is either a single expression or a compute-style statement
+// block `{ let …; … ; return e }` reusing the compute lines. an object literal `{ k: v }` still
+// parses as an expression because `compute_line` cannot consume the `:`; a brace body must hold at
+// least one statement so `{}` stays an empty object.
+func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ fn_body }
+fn_body      = { fn_block | expr }
+fn_block     = { "{" ~ compute_line+ ~ "}" }
 fn_recursive = { "@recursive" ~ "(" ~ "max_depth" ~ ":" ~ integer ~ ")" }
 fn_params    = { fn_param ~ ("," ~ fn_param)* ~ ","? }
 fn_param     = { ident ~ optional_mark? ~ ":" ~ type_expr ~ field_default? }
@@ -26,7 +31,7 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
 // subflow targets resolve unambiguously across packs; falls back to the pack name on import when
@@ -52,6 +57,11 @@ version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 // header trigger declarations. a `trigger cron "<expr>"` schedules runs of this workflow on the
 // cron expression; an optional `with { ... }` object supplies the run parameters. triggers belong to
 // their workflow, so they are carried inside the compiled definition and materialized on import.
+// a workflow-level cancellation guard: when `cond` holds, the run jumps to the handler node. it is
+// re-evaluated on every reducer drive (including while parked), so it catches state changes a fixed
+// checkpoint would miss. fires at most once per run.
+watch_decl = { "watch" ~ cond ~ "->" ~ target }
+
 trigger_decl = { "trigger" ~ "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
 trigger_option = { trigger_disabled | trigger_blackout }
 trigger_disabled = { "disabled" }
@@ -92,7 +102,12 @@ type_named   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // statements ---------------------------------------------------------------
 
-stmt = { annotation* ~ node_decl? ~ stmt_body ~ transitions? }
+stmt = { annotation* ~ node_decl? ~ stmt_body ~ compensate_clause? ~ transitions? }
+
+// `compensate <provider.fn(args)>` attaches a compensating action to an action node. when a later
+// step drives the run to a failed terminal, the engine runs the recorded compensations of every
+// already-succeeded node in reverse (saga rollback).
+compensate_clause = { "compensate" ~ action_stmt }
 
 annotation = { ann_id | ann_skip | ann_lock | ann_timeout }
 ann_id     = { "@id" ~ "(" ~ string ~ ")" }
@@ -118,6 +133,7 @@ stmt_body = {
   | try_stmt
   | race_stmt
   | map_stmt
+  | wait_cond_stmt
   | wait_stmt
   | output_stmt
   | deliverable_stmt
@@ -171,6 +187,11 @@ subflow_opt  = { "detached" | "reuse" | subflow_as }
 subflow_as   = { "as" ~ expr }
 subflow_with = { "with" ~ object }
 
+// `wait until <cond>` is a condition wait with no body: it parks, re-checks on the `every` interval
+// (default 30s), and proceeds once the condition holds. sugar for `until <cond> { wait <interval> }`.
+wait_cond_stmt = { "wait" ~ "until" ~ cond ~ wait_every? }
+wait_every     = { "every" ~ duration }
+
 wait_stmt   = { "wait" ~ wait_amount ~ wait_until? ~ wait_initial? }
 // a literal duration (`30s`) or an expression yielding seconds (`params.poll.interval`).
 wait_amount = { duration | expr }
@@ -201,9 +222,12 @@ gate_when    = { "when" ~ cond }
 gate_every   = { "every" ~ duration }
 gate_timeout = { "timeout" ~ duration }
 
-// pause until a named external signal is delivered to the run. the trailing object holds optional
-// metadata; the node timeout (via annotation) bounds the wait.
-signal_stmt  = { "signal" ~ string ~ object? }
+// pause until a named external signal is delivered to the run. the optional `key <expr>` binds a
+// correlation value (e.g. a ticket key or PR number) so an inbound webhook can route to this parked
+// run without knowing its run id. the trailing object holds optional metadata; the node timeout
+// (via annotation) bounds the wait.
+signal_stmt  = { "signal" ~ string ~ signal_key? ~ object? }
+signal_key   = { "key" ~ expr }
 
 config_stmt = { "set" ~ (config_name | config_meta) }
 config_name = { "name" ~ "=" ~ expr }
@@ -215,8 +239,13 @@ if_stmt    = { "if" ~ cond ~ block ~ else_if* ~ else_block? }
 else_if    = { "else" ~ "if" ~ cond ~ block }
 else_block = { "else" ~ block }
 
-for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit? ~ block }
+for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit_expr? ~ block }
 // `limit none` is the explicit form of an uncapped loop; `limit N` caps iterations.
+// the for loop's cap may be any expression yielding an integer (evaluated at runtime),
+// so `limit budget` works; `none` stays the explicit uncapped form.
+for_limit_expr = { "limit" ~ (limit_none | expr) }
+limit_none     = @{ "none" ~ !(ASCII_ALPHANUMERIC | "_") }
+// while/until caps stay literal safety bounds.
 for_limit  = { "limit" ~ (integer | "none") }
 
 // condition-driven loops. `while c {}` repeats the body while c holds; `until c {}` is

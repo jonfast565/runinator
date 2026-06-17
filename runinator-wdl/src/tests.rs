@@ -244,6 +244,192 @@ fn explicit_decompile_surfaces_every_implicit_part() {
 }
 
 #[test]
+fn retry_lowers_backoff_and_classification() {
+    let definition = compile(
+        r#"
+        workflow "Retry" v1 {
+            node go = console.run(command: "echo hi")
+                .retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+        }
+    "#,
+    );
+    let node = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .expect("action node");
+    assert_eq!(node.retry.max_attempts, 4);
+    assert_eq!(node.retry.backoff_base_seconds, 2);
+    assert_eq!(node.retry.backoff_max_seconds, 60);
+    assert!(node.retry.jitter);
+    assert_eq!(
+        node.retry.retry_on,
+        runinator_models::workflows::WorkflowRetryClass::Failure
+    );
+}
+
+#[test]
+fn compensation_lowers_and_round_trips() {
+    let definition = compile(
+        r#"
+        workflow "Saga" v1 {
+            node deploy = console.run(command: "deploy")
+                compensate console.run(command: "rollback")
+            node verify = console.run(command: "verify")
+        }
+    "#,
+    );
+    let deploy = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id == "deploy")
+        .expect("deploy node");
+    let compensation = deploy.compensation.as_ref().expect("compensation present");
+    assert_eq!(compensation.provider, "console");
+    assert_eq!(compensation.function, "run");
+
+    assert_round_trips_unordered(
+        r#"
+        workflow "Saga" v1 {
+            node deploy = console.run(command: "deploy")
+                compensate console.run(command: "rollback")
+            node verify = console.run(command: "verify")
+        }
+    "#,
+    );
+}
+
+#[test]
+fn watch_guard_lowers_to_metadata_and_round_trips() {
+    let definition = compile(
+        r#"
+        workflow "Watch" v1 {
+            params { status: string }
+            watch params.status != "In Review" -> handle_drift
+            node work = console.run(command: "echo work")
+            node handle_drift = console.run(command: "echo drift")
+        }
+    "#,
+    );
+    let watches = definition
+        .definition
+        .metadata
+        .pointer("/watches")
+        .and_then(|value| value.as_array())
+        .expect("watches metadata");
+    assert_eq!(watches.len(), 1);
+    assert_eq!(
+        watches[0].get("handler").and_then(|h| h.as_str()),
+        Some("handle_drift")
+    );
+    assert!(watches[0].get("condition").is_some());
+
+    assert_round_trips_unordered(
+        r#"
+        workflow "Watch" v1 {
+            params { status: string }
+            watch params.status != "In Review" -> handle_drift
+            node work = console.run(command: "echo work")
+            node handle_drift = console.run(command: "echo drift")
+        }
+    "#,
+    );
+}
+
+#[test]
+fn signal_correlation_key_lowers_and_round_trips() {
+    let definition = compile(
+        r#"
+        workflow "Sig" v1 {
+            params { ticket: { key: string } }
+            node seed = console.run(command: "echo go")
+            signal "github.review" key params.ticket.key
+            node after = console.run(command: "echo done")
+        }
+    "#,
+    );
+    let signal = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Signal)
+        .expect("signal node");
+    assert!(
+        signal.parameters.get("correlation_key").is_some(),
+        "correlation_key not lowered into signal params"
+    );
+
+    assert_round_trips_unordered(
+        r#"
+        workflow "Sig" v1 {
+            params { ticket: { key: string } }
+            node seed = console.run(command: "echo go")
+            signal "github.review" key params.ticket.key
+            node after = console.run(command: "echo done")
+        }
+    "#,
+    );
+}
+
+#[test]
+fn wait_until_desugars_to_condition_poll_loop() {
+    // the terse condition wait must compile to the same graph as the explicit poll loop.
+    let sugar = compile(
+        r#"
+        workflow "WaitUntil" v1 {
+            node seed = console.run(command: "echo go")
+            wait until seed.status == "ready" every 15s
+            node after = console.run(command: "echo done")
+        }
+    "#,
+    );
+    let explicit = compile(
+        r#"
+        workflow "WaitUntil" v1 {
+            node seed = console.run(command: "echo go")
+            until seed.status == "ready" {
+                wait 15s
+            }
+            node after = console.run(command: "echo done")
+        }
+    "#,
+    );
+    assert_eq!(
+        runinator_workflows::normalize_definition(sugar.definition),
+        runinator_workflows::normalize_definition(explicit.definition),
+        "wait-until sugar diverged from the explicit until-loop"
+    );
+}
+
+#[test]
+fn wait_until_defaults_interval() {
+    // omitting `every` must still compile to a valid poll loop (default interval).
+    let _ = compile(
+        r#"
+        workflow "WaitUntil" v1 {
+            node seed = console.run(command: "echo go")
+            wait until seed.status == "ready"
+            node after = console.run(command: "echo done")
+        }
+    "#,
+    );
+}
+
+#[test]
+fn retry_config_round_trips() {
+    assert_round_trips(
+        r#"
+        workflow "Retry" v1 {
+            node go = console.run(command: "echo hi")
+                .retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+        }
+    "#,
+    );
+}
+
+#[test]
 fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
     // a for-loop with no limit: the back-edge, the continuation, the block id, and `limit none`.
     let wdl = assert_round_trips_explicit(
@@ -893,6 +1079,55 @@ fn wrong_std_module_is_rejected() {
         message.contains("std.strings"),
         "expected a hint to the real module, got: {message}"
     );
+}
+
+#[test]
+fn for_loop_limit_literal_uses_typed_field() {
+    let src = r#"
+        workflow "LimitLit" v1 {
+            params { items: int[] }
+            for n in params.items limit 5 {
+                node console.run(command: string(n))
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let loop_node = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "loop")
+        .expect("loop node");
+    assert_eq!(loop_node["max_iterations"], 5);
+    assert_round_trips(src);
+}
+
+#[test]
+fn for_loop_limit_accepts_expression() {
+    // an expression cap is carried in the loop parameters (resolved at runtime) and
+    // round-trips back to `limit <expr>` through the decompiler.
+    let src = r#"
+        workflow "LimitExpr" v1 {
+            params { items: int[], budget: int }
+            for n in params.items limit params.budget {
+                node console.run(command: string(n))
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let loop_node = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "loop")
+        .expect("loop node");
+    assert!(
+        loop_node["parameters"]["max_iterations"].is_object(),
+        "expression cap should live in parameters: {loop_node}"
+    );
+    assert_round_trips(src);
 }
 
 #[test]
@@ -1951,6 +2186,137 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
 }
 
 #[test]
+fn pure_block_body_function_lowers_to_program_and_round_trips() {
+    let src = r#"
+        fn build(a: integer, b: integer) -> integer = {
+            let sum = std.math.add(a, b)
+            return sum
+        }
+
+        workflow "Fn" v1 {
+            node compute {
+                let total = build(params.x, params.y)
+                return total
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let functions = graph["metadata"]["functions"]
+        .as_array()
+        .expect("functions metadata");
+    assert_eq!(functions[0]["name"], "build");
+    // a block body lowers to a `program` array, not a single `body` expression.
+    assert!(functions[0]["program"].is_array(), "expected program body");
+    assert!(functions[0]["body"].is_null(), "expected no expr body");
+    // the surface signature is recorded for decompile.
+    assert_eq!(
+        graph["metadata"]["wdl"]["functions"]["build"],
+        "(a: integer, b: integer) -> integer"
+    );
+    // the caller is pure, so the compute block stays in-process (`std.run`).
+    let node = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["function"], "run");
+    assert_round_trips(src);
+}
+
+#[test]
+fn effectful_block_body_function_forces_caller_to_exec_and_round_trips() {
+    let src = r#"
+        fn fetch(url: string) -> object = {
+            let resp = std.exec.http_get(url)
+            return resp.body
+        }
+
+        workflow "Fetch" v1 {
+            node compute {
+                let data = fetch(params.url)
+                return data
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let functions = graph["metadata"]["functions"]
+        .as_array()
+        .expect("functions metadata");
+    assert!(functions[0]["program"].is_array(), "expected program body");
+    // calling an effectful function makes the enclosing compute block dispatch to the worker.
+    let node = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["function"], "exec");
+    assert_round_trips(src);
+}
+
+#[test]
+fn effectful_function_rejected_in_declarative_position() {
+    // an effectful function may only be called inside a compute block, never in an action argument.
+    let src = r#"
+        fn fetch(url: string) -> object = {
+            let resp = std.exec.http_get(url)
+            return resp.body
+        }
+
+        workflow "F" v1 {
+            node slack.send_message(text: fetch(params.url))
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("effectful"), "got: {message}");
+    assert!(message.contains("fetch"), "got: {message}");
+    assert!(message.contains("compute block"), "got: {message}");
+}
+
+#[test]
+fn goto_in_function_body_is_rejected() {
+    let src = r#"
+        fn bad(x: integer) -> integer = {
+            goto somewhere
+            return x
+        }
+
+        workflow "F" v1 {
+            node console.run(command: "x")
+        }
+    "#;
+    let message = expect_semantic_error(src);
+    assert!(message.contains("goto"), "got: {message}");
+    assert!(message.contains("function body"), "got: {message}");
+}
+
+#[test]
+fn block_body_function_surface_round_trips_through_formatter() {
+    let src = r#"
+        fn build(a: integer, b: integer) -> integer = {
+            let sum = add(a, b)
+            return sum
+        }
+
+        workflow "Fn" v1 {
+            node console.run(command: "go")
+        }
+    "#;
+    let formatted = format_str(src).expect("format");
+    assert!(
+        formatted.contains("fn build(a: integer, b: integer) -> integer = {"),
+        "{formatted}"
+    );
+    assert!(formatted.contains("let sum = add(a, b)"), "{formatted}");
+    assert!(formatted.contains("return sum"), "{formatted}");
+    // formatting is idempotent.
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+}
+
+#[test]
 fn recursive_function_requires_annotation() {
     let src = r#"
         fn loop(n: integer) = loop(n)
@@ -2777,6 +3143,73 @@ fn completes_provider_actions_after_dot() {
     );
     assert!(labels.contains(&"search".to_string()));
     assert!(labels.contains(&"transition".to_string()));
+}
+
+#[test]
+fn completes_aliased_std_module_leaves() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            import std.strings as s
+            node compute { return s.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"upper".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"add".to_string()),
+        "math leaked through strings alias: {labels:?}"
+    );
+}
+
+#[test]
+fn completes_bare_intrinsics_from_unaliased_import() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            import std.strings
+            node compute { return up<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"upper".to_string()), "labels: {labels:?}");
+    // a module that was not imported stays out of bare scope.
+    assert!(
+        !labels.contains(&"merge".to_string()),
+        "un-imported module leaked into bare scope: {labels:?}"
+    );
+}
+
+#[test]
+fn does_not_complete_unimported_intrinsics_bare() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node compute { return up<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(
+        !labels.contains(&"upper".to_string()),
+        "unqualified intrinsic offered without import: {labels:?}"
+    );
+}
+
+#[test]
+fn completes_user_functions_bare() {
+    let labels = completion_labels(
+        r#"
+        fn shout(text: string) -> string = text
+        workflow "Complete" v1 {
+            node compute { return sh<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"shout".to_string()), "labels: {labels:?}");
 }
 
 #[test]

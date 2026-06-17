@@ -25,12 +25,23 @@ pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     workflow_node_run_id: Uuid,
     replica_id: Uuid,
     claimed_at: DateTime<Utc>,
+    stale_before: DateTime<Utc>,
 ) -> Result<TaskResponse, SendableError> {
-    db.claim_workflow_node_run_executor(workflow_node_run_id, replica_id, claimed_at)
+    let acquired = db
+        .claim_workflow_node_run_executor(
+            workflow_node_run_id,
+            replica_id,
+            claimed_at,
+            stale_before,
+        )
         .await?;
     Ok(TaskResponse {
-        success: true,
-        message: "Workflow node run executor claimed".into(),
+        success: acquired,
+        message: if acquired {
+            "Workflow node run executor claimed".into()
+        } else {
+            "Workflow node run executor already held by a live executor".into()
+        },
     })
 }
 

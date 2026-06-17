@@ -9,11 +9,11 @@ use runinator_models::{
     orchestration::{GateKind, NewOrchestrationEvent, ReadyNodeRecord},
     value::{Map, Value},
     workflow_state::{
-        ApprovalRecord, ApprovalState, ConfigSummary, GateRecord, GateState, InputState,
-        JoinOutput, LoopFrame, LoopOutput, MapChild, MapChildState, MapFrame, MapOutput,
-        OutputPayload, ParallelFrame, ParallelOutput, RaceFrame, RaceOutput, SignalState,
-        SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame, WaitElapsedOutput,
-        WaitState, WorkflowContextHeader, WorkflowRunState,
+        ApprovalRecord, ApprovalState, CompensationFrame, ConfigSummary, GateRecord, GateState,
+        InputState, JoinOutput, LoopFrame, LoopOutput, MapChild, MapChildState, MapFrame,
+        MapOutput, OutputPayload, ParallelFrame, ParallelOutput, RaceFrame, RaceOutput,
+        SignalState, SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput, TryFrame,
+        WaitElapsedOutput, WaitState, WorkflowContextHeader, WorkflowRunState,
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -32,6 +32,7 @@ pub enum ReadyNodeDisposition {
 mod action;
 mod approval;
 mod basic;
+mod compensation;
 mod compute;
 mod context;
 mod control_flow;

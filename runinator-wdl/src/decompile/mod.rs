@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
-    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowTransitions, WorkflowWaitSeconds,
+    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowRetry, WorkflowRetryClass,
+    WorkflowTransitions, WorkflowWaitSeconds,
 };
 
 use crate::errors::WdlError;
@@ -96,6 +97,9 @@ pub fn decompile_definition(
         indent: 0,
     };
 
+    // top-level `fn` definitions render before the workflow block (document = func_def* ~ workflow).
+    decompiler.emit_functions(&read_functions(&graph.metadata))?;
+
     decompiler.line(&format!(
         "workflow {} v{} {{",
         quote(&definition.name),
@@ -107,6 +111,7 @@ pub fn decompile_definition(
         decompiler.line(&format!("namespace {namespace}"));
     }
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
+    decompiler.emit_watches(&read_watches(&graph.metadata))?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
 
@@ -145,6 +150,37 @@ pub fn decompile_definition(
 /// recover declared `let` types from the graph metadata sidecar at `/wdl/types` as rendered wdl
 /// type text. newer graphs store the surface string directly; older graphs stored a native
 /// `RuninatorType` schema, which is rendered back for compatibility.
+// render a `.retry(...)` modifier from the model, or `None` when every field is at its default and
+// `explicit` rendering is off. mirrors the WDL named-arg surface so compile->decompile round-trips.
+fn decompile_retry(retry: &WorkflowRetry, explicit: bool) -> Option<String> {
+    let on = match retry.retry_on {
+        WorkflowRetryClass::Any => None,
+        WorkflowRetryClass::Failure => Some("failure"),
+        WorkflowRetryClass::Timeout => Some("timeout"),
+    };
+    let custom = retry.backoff_base_seconds != 1
+        || retry.backoff_max_seconds != 300
+        || retry.jitter
+        || on.is_some();
+    if !explicit && retry.max_attempts <= 1 && !custom {
+        return None;
+    }
+    let mut args = vec![retry.max_attempts.to_string()];
+    if retry.backoff_base_seconds != 1 {
+        args.push(format!("backoff: {}s", retry.backoff_base_seconds));
+    }
+    if retry.backoff_max_seconds != 300 {
+        args.push(format!("max: {}s", retry.backoff_max_seconds));
+    }
+    if retry.jitter {
+        args.push("jitter: true".to_string());
+    }
+    if let Some(on) = on {
+        args.push(format!("on: {on}"));
+    }
+    Some(format!(".retry({})", args.join(", ")))
+}
+
 fn read_declared_types(metadata: &Value) -> HashMap<String, String> {
     let mut types = HashMap::new();
     let Some(entries) = metadata.pointer("/wdl/types").and_then(Value::as_object) else {
@@ -213,6 +249,15 @@ fn read_triggers(metadata: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// recover header `watch` guards from runtime metadata at `/watches`.
+fn read_watches(metadata: &Value) -> Vec<Value> {
+    metadata
+        .pointer("/watches")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// recover header alias declarations from the metadata sidecar at `/wdl/aliases`, preserving
 /// declaration order. each alias is a `(name, recipe-segments)` pair.
 fn read_alias_decls(metadata: &Value) -> Vec<(String, Vec<Value>)> {
@@ -241,6 +286,85 @@ fn read_spreads(metadata: &Value) -> HashMap<String, Vec<Value>> {
         }
     }
     spreads
+}
+
+/// a `fn` definition recovered for decompilation: its name, its surface signature (`(params) -> ret`,
+/// from the `/wdl/functions` hint), an optional recursion cap, and the lowered body form.
+struct FnEntry {
+    name: String,
+    signature: String,
+    recursive: Option<i64>,
+    body: FnBodyForm,
+}
+
+/// a recovered function body: a single lowered expression, or a `$let`/`$return`/`$if` program.
+enum FnBodyForm {
+    Expr(Value),
+    Program(Vec<Value>),
+}
+
+/// recover user `fn` definitions from the runtime `/functions` array, pairing each with its surface
+/// signature from the `/wdl/functions` hint (falling back to `any`-typed params for older graphs).
+fn read_functions(metadata: &Value) -> Vec<FnEntry> {
+    let Some(entries) = metadata.pointer("/functions").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let signatures = metadata
+        .pointer("/wdl/functions")
+        .and_then(Value::as_object);
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let object = entry.as_object()?;
+            let name = object.get("name").and_then(Value::as_str)?.to_string();
+            let recursive = object
+                .get("recursive")
+                .and_then(Value::as_object)
+                .and_then(|recursive| recursive.get("max_depth"))
+                .and_then(Value::as_i64);
+            let body = match object.get("program").and_then(Value::as_array) {
+                Some(program) => FnBodyForm::Program(program.clone()),
+                None => FnBodyForm::Expr(object.get("body").cloned().unwrap_or(Value::Null)),
+            };
+            let signature = signatures
+                .and_then(|map| map.get(&name))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| fallback_signature(object));
+            Some(FnEntry {
+                name,
+                signature,
+                recursive,
+                body,
+            })
+        })
+        .collect()
+}
+
+/// build an `any`-typed signature `(p1: any, p2: any)` from a function's parameter names, used when
+/// the `/wdl/functions` surface hint is absent (older graphs lowered before the hint existed).
+fn fallback_signature(object: &Map) -> String {
+    let params = object
+        .get("params")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|param| {
+                    param.as_str().map(str::to_string).or_else(|| {
+                        param
+                            .as_object()
+                            .and_then(|param| param.get("name"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                })
+                .map(|name| format!("{name}: any"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    format!("({params})")
 }
 
 impl<'a> Decompiler<'a> {
@@ -296,6 +420,34 @@ impl<'a> Decompiler<'a> {
     }
 
     /// emit header `trigger cron "..."` declarations recovered from runtime metadata.
+    /// emit recovered `fn` definitions ahead of the workflow block. an expression body renders
+    /// `= <expr>`; a block body renders `= { <compute lines> }` reusing the compute-line renderer.
+    fn emit_functions(&mut self, functions: &[FnEntry]) -> Result<(), WdlError> {
+        for function in functions {
+            if let Some(depth) = function.recursive {
+                self.line(&format!("@recursive(max_depth: {depth})"));
+            }
+            match &function.body {
+                FnBodyForm::Expr(value) => {
+                    let rendered = self.expr(value)?;
+                    self.line(&format!(
+                        "fn {}{} = {rendered}",
+                        function.name, function.signature
+                    ));
+                }
+                FnBodyForm::Program(program) => {
+                    let base = self.indent;
+                    let mut out = format!("fn {}{} = {{\n", function.name, function.signature);
+                    self.render_compute_lines(&mut out, program, base + 1)?;
+                    out.push_str(&"    ".repeat(base));
+                    out.push('}');
+                    self.line(&out);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn emit_triggers(&mut self, triggers: &[Value]) -> Result<(), WdlError> {
         if triggers.is_empty() {
             return Ok(());
@@ -324,6 +476,30 @@ impl<'a> Decompiler<'a> {
                 text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
             }
             self.line(&text);
+        }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit header `watch <cond> -> <target>` guards recovered from runtime metadata.
+    fn emit_watches(&mut self, watches: &[Value]) -> Result<(), WdlError> {
+        if watches.is_empty() {
+            return Ok(());
+        }
+        for watch in watches {
+            let condition = watch
+                .get("condition")
+                .ok_or_else(|| WdlError::Decompile("watch missing condition".into()))?;
+            let handler = watch
+                .get("handler")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("watch missing handler".into()))?;
+            let target = match handler {
+                "end" => "done".to_string(),
+                "fail" => "fail".to_string(),
+                other => other.to_string(),
+            };
+            self.line(&format!("watch {} -> {target}", self.cond(condition)?));
         }
         self.out.push('\n');
         Ok(())
@@ -722,8 +898,8 @@ impl<'a> Decompiler<'a> {
             if self.explicit || action.timeout_seconds != 60 {
                 modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
             }
-            if self.explicit || node.retry.max_attempts > 1 {
-                modifiers.push(format!(".retry({})", node.retry.max_attempts));
+            if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
+                modifiers.push(retry);
             }
             // a compute block always closes its brace on its own line, so the chain hugs it.
             out.push_str(&self.modifier_suffix(base, &modifiers, true));
@@ -887,8 +1063,8 @@ impl<'a> Decompiler<'a> {
         if self.explicit || action.timeout_seconds != 60 {
             modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
         }
-        if self.explicit || node.retry.max_attempts > 1 {
-            modifiers.push(format!(".retry({})", node.retry.max_attempts));
+        if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
+            modifiers.push(retry);
         }
         if !action.tags.is_empty() {
             let tags = action
@@ -906,7 +1082,33 @@ impl<'a> Decompiler<'a> {
             modifiers.push(format!(".reentry({})", node.reentry.max_visits));
         }
         text.push_str(&self.modifier_suffix(base, &modifiers, multiline));
+        if let Some(compensation) = &node.compensation {
+            text.push_str(&format!(
+                " compensate {}",
+                self.action_call_text(compensation, base)?
+            ));
+        }
         Ok(text)
+    }
+
+    /// render a bare `provider.function(args)` call from a `WorkflowAction` (used for `compensate`).
+    fn action_call_text(
+        &self,
+        action: &runinator_models::workflows::WorkflowAction,
+        base: usize,
+    ) -> Result<String, WdlError> {
+        let mut args = Vec::new();
+        if let Value::Object(config) = action.configuration.as_value() {
+            for (name, value) in config {
+                args.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
+            }
+        }
+        Ok(format!(
+            "{}.{}{}",
+            action.provider,
+            action.function,
+            self.call_args(&args, base)
+        ))
     }
 
     fn subflow_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -1082,6 +1284,10 @@ impl<'a> Decompiler<'a> {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let mut text = format!("signal {}", quote(name));
+        // the optional correlation key renders as `key <expr>` before any metadata object.
+        if let Some(key) = node.parameters.get("correlation_key") {
+            text.push_str(&format!(" key {}", self.expr(key)?));
+        }
         // remaining params render as the trailing metadata object.
         let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
@@ -1090,7 +1296,7 @@ impl<'a> Decompiler<'a> {
         } else if let Value::Object(params) = node.parameters.as_value() {
             let entries: Vec<(&str, &Value)> = params
                 .iter()
-                .filter(|(key, _)| key.as_str() != "name")
+                .filter(|(key, _)| key.as_str() != "name" && key.as_str() != "correlation_key")
                 .map(|(key, value)| (key.as_str(), value))
                 .collect();
             if !entries.is_empty() {
@@ -1138,8 +1344,15 @@ impl<'a> Decompiler<'a> {
         let mut header = format!("{}for {var} in {items_text}", self.block_id_prefix(node));
         match node.max_iterations {
             Some(limit) => header.push_str(&format!(" limit {limit}")),
-            None if self.explicit => header.push_str(" limit none"),
-            None => {}
+            None => match node.parameters.get("max_iterations") {
+                // an expression cap is carried in the loop parameters.
+                Some(limit) => {
+                    let limit_text = self.expr(limit)?;
+                    header.push_str(&format!(" limit {limit_text}"));
+                }
+                None if self.explicit => header.push_str(" limit none"),
+                None => {}
+            },
         }
         header.push_str(" {");
         self.line(&header);
