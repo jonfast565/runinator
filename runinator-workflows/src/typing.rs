@@ -494,9 +494,9 @@ fn infer_expression_type(
                 ))),
             }
         }
-        // intrinsic return types are checked by WDL sema against provider signatures; the
-        // declarative type pass treats a call result as unknown.
-        WorkflowExpression::Call { .. } => Ok(WorkflowType::Any),
+        WorkflowExpression::Call { name, .. } => Ok(crate::intrinsic_signature(name)
+            .and_then(|signature| signature.results.first().map(|result| result.ty.clone()))
+            .unwrap_or(WorkflowType::Any)),
         // a lambda is only valid as a higher-order argument; it carries no value type of its own.
         WorkflowExpression::Lambda { .. } => Ok(WorkflowType::Any),
         // a conditional resolves to the common type of its branches (the condition is not typed here).

@@ -42,7 +42,7 @@ workflow "Core Team SDLC Pipeline" v1 {
 
     // how many new tickets we may admit this tick: the cap minus what is already in
     // flight. a non-positive budget admits nothing (the reducer clamps to zero).
-    node budget = compute {
+    node budget: integer = compute {
         return sub(config.selection.max_in_flight, len(in_flight.issues))
     }
 

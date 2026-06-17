@@ -933,6 +933,34 @@ fn typed_validation_accepts_explicit_string_conversions() {
 }
 
 #[test]
+fn typed_validation_uses_intrinsic_return_type_in_conditions() {
+    let wf = typed_workflow(
+        schema_type(runinator_models::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        })),
+        runinator_models::json!({
+            "id": "checked",
+            "kind": "config",
+            "condition": {
+                "value": {
+                    "$call": "len",
+                    "args": [
+                        { "$ref": { "node": "make", "output": ["items"] } }
+                    ]
+                },
+                "greater_than": 0
+            },
+            "parameters": { "name": "done" },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    validate_workflow_with_providers(&wf, &[typed_provider()])
+        .expect("intrinsic result type should validate against condition operand");
+}
+
+#[test]
 fn typed_validation_rejects_opaque_json_traversal() {
     let wf = typed_workflow(
         schema_type(runinator_models::json!({

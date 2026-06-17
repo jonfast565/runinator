@@ -370,7 +370,7 @@ workflow "Ticket Work" v1 {
         )
             .timeout(30s)
             .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        node review_state = compute {
+        node review_state: { approved: integer, changes_requested: integer, two_plus: boolean, ready: boolean } = compute {
             let approved = len(filter(reviews, r => r.state == "APPROVED"))
             let changes = len(filter(reviews, r => r.state == "CHANGES_REQUESTED"))
             return {
@@ -513,7 +513,7 @@ workflow "Ticket Work" v1 {
     )
         .timeout(30s)
         .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-    node deploy_state = compute {
+    node deploy_state: { failed: integer } = compute {
         let runs = deploy_runs.workflow_runs
         return { failed: len(filter(runs, r => r.conclusion == "failure")) }
     }

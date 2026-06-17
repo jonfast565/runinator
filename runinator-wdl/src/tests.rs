@@ -1179,6 +1179,22 @@ fn compiles_checked_in_sdlc_ticket_workflow() {
             .and_then(Value::as_str),
         Some("array")
     );
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/review_state/fields/changes_requested/ty/type")
+            .and_then(Value::as_str),
+        Some("integer")
+    );
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/deploy_state/fields/failed/ty/type")
+            .and_then(Value::as_str),
+        Some("integer")
+    );
 }
 
 #[test]
@@ -1188,6 +1204,14 @@ fn compiles_checked_in_sdlc_pipeline_workflow() {
     let src = fs::read_to_string(&path).expect("read sdlc pipeline workflow");
     let definition = compile(&src);
     assert_eq!(definition.name, "Core Team SDLC Pipeline");
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/budget/type")
+            .and_then(Value::as_str),
+        Some("integer")
+    );
 }
 
 #[test]
