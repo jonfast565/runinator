@@ -86,3 +86,23 @@ not just a literal duration.
 
 `Core Team SDLC Pipeline` now declares a cron trigger in its WDL header, so the driver can be
 materialized as a scheduled workflow instead of being run manually after import.
+
+## Retry policy
+
+Network-bound nodes carry `.retry(...)` with jittered exponential backoff and an error class so a
+transient blip does not strand a long-running ticket. The class is chosen by side-effect safety:
+
+- **Reads** (`jira.poll`, `jira.search`, `jira.comments`, `github.reviews`, `github.checks_summary`,
+  `github.workflow_runs`, `git.diff`) retry `on: any` — they are idempotent, so repeating after a
+  timeout is safe.
+- **Idempotent writes** (`git.push`, `git.worktree`, `git.cleanup`, `slack.send_message`) retry
+  `on: failure` only — a timed-out attempt may already have applied, so a lost response is not
+  retried; a hard failure is.
+- **Non-idempotent writes** (`github.create_pr`, `github.merge_pr`, `jira.transition`,
+  `git.commit`, `github.add_comment`, `github.dispatch`, reviewer/assignee calls) carry **no**
+  retry; they keep their explicit `fail -> handle_failure` edge so a lost-response retry can never
+  double-apply. Redelivery of an in-flight action is separately guarded by the engine's executor
+  lease, so `create_pr`/`merge_pr` cannot be double-executed by a broker redelivery.
+
+The Claude agent steps (`ai-command.claude_code`) are deliberately not retried: they are expensive
+and non-idempotent.

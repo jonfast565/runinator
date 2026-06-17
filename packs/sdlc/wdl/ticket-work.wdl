@@ -80,6 +80,7 @@ workflow "Ticket Work" v1 {
         key: params.ticket.key
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
         fail -> handle_failure
     if status_precheck.fields.status.name != config.status.ready_for_dev {
         node precheck_note = jira.comment(
@@ -112,6 +113,7 @@ workflow "Ticket Work" v1 {
         path: config.git.worktree_root ++ "/" ++ params.ticket.key
     )
         .timeout(120s)
+        .retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
         fail -> handle_failure
 
     // push the empty branch first so github integrations have a ref to attach to.
@@ -121,6 +123,7 @@ workflow "Ticket Work" v1 {
         branch: config.branch.prefix ++ params.ticket.key
     )
         .timeout(60s)
+        .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
         fail -> handle_failure
 
     // pull the full comment thread (rendered to text, with any images saved into the
@@ -131,6 +134,7 @@ workflow "Ticket Work" v1 {
         download_dir: create_workspace.workspace ++ "/.jira-comments"
     )
         .timeout(120s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
     node implement_change: AnyResponse = ai-command.claude_code(
         ...claude_cfg,
@@ -150,6 +154,7 @@ workflow "Ticket Work" v1 {
         workspace: create_workspace.workspace
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if implement_diff.stdout.trim().len() == 0 {
         node no_change_note = jira.comment(
             ...jira_conn,
@@ -173,6 +178,7 @@ workflow "Ticket Work" v1 {
         branch: config.branch.prefix ++ params.ticket.key
     )
         .timeout(60s)
+        .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
         fail -> handle_failure
 
     node create_pr: PullRequest = github.create_pr(
@@ -211,6 +217,7 @@ workflow "Ticket Work" v1 {
         key: params.ticket.key
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if drift_after_integration.fields.status.name != config.status.in_review {
         node drift1_note = jira.comment(
             ...jira_conn,
@@ -238,6 +245,7 @@ workflow "Ticket Work" v1 {
         workspace: create_workspace.workspace
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if copilot_diff.stdout.trim().len() > 0 {
         node commit_copilot: GitCommandResult = git.commit(
             workspace: create_workspace.workspace,
@@ -250,6 +258,7 @@ workflow "Ticket Work" v1 {
             branch: config.branch.prefix ++ params.ticket.key
         )
             .timeout(60s)
+            .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
     }
 
     // -- phase 4: /claude review loop ----------------------------------------
@@ -268,6 +277,7 @@ workflow "Ticket Work" v1 {
         key: params.ticket.key
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if drift_after_claude.fields.status.name != config.status.in_review {
         node drift2_note = jira.comment(
             ...jira_conn,
@@ -299,6 +309,7 @@ workflow "Ticket Work" v1 {
         workspace: create_workspace.workspace
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if claude_diff.stdout.trim().len() > 0 {
         node commit_claude: GitCommandResult = git.commit(
             workspace: create_workspace.workspace,
@@ -311,6 +322,7 @@ workflow "Ticket Work" v1 {
             branch: config.branch.prefix ++ params.ticket.key
         )
             .timeout(60s)
+            .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
     }
 
     // -- phase 5: human review and merge -------------------------------------
@@ -337,6 +349,7 @@ workflow "Ticket Work" v1 {
             ref: create_pr.head.sha
         )
             .timeout(30s)
+            .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     }
     if ci.status == "passed" {
         node ci_ok = jira.comment(
@@ -356,6 +369,7 @@ workflow "Ticket Work" v1 {
             pull_number: string(create_pr.number)
         )
             .timeout(30s)
+            .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
         node review_state = compute {
             let approved = len(filter(reviews, r => r.state == "APPROVED"))
             let changes = len(filter(reviews, r => r.state == "CHANGES_REQUESTED"))
@@ -379,6 +393,7 @@ workflow "Ticket Work" v1 {
                 workspace: create_workspace.workspace
             )
                 .timeout(30s)
+                .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
             if review_diff.stdout.trim().len() > 0 {
                 node commit_review: GitCommandResult = git.commit(
                     workspace: create_workspace.workspace,
@@ -391,6 +406,7 @@ workflow "Ticket Work" v1 {
                     branch: config.branch.prefix ++ params.ticket.key
                 )
                     .timeout(60s)
+                    .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
             }
         }
     }
@@ -415,6 +431,7 @@ workflow "Ticket Work" v1 {
         key: params.ticket.key
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     if drift_premerge.fields.status.name != config.status.in_review {
         node drift3_note = jira.comment(
             ...jira_conn,
@@ -439,6 +456,7 @@ workflow "Ticket Work" v1 {
         workspace: create_workspace.workspace
     )
         .timeout(60s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
     node impact = compute {
         let files = split(merged_diff.stdout, "\n")
@@ -494,6 +512,7 @@ workflow "Ticket Work" v1 {
         branch: config.github.base_branch
     )
         .timeout(30s)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     node deploy_state = compute {
         let runs = deploy_runs.workflow_runs
         return { failed: len(filter(runs, r => r.conclusion == "failure")) }
@@ -530,6 +549,7 @@ workflow "Ticket Work" v1 {
         text: ":rocket: " ++ params.ticket.key ++ " deployed and moved to Ready for Testing."
     )
         .timeout(15s)
+        .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
 
     // park on QA. react to whatever status QA lands on. claude on a re-picked run
     // reads the full comment history to determine the course of action.
@@ -542,6 +562,7 @@ workflow "Ticket Work" v1 {
             key: params.ticket.key
         )
             .timeout(30s)
+            .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
     }
 
     match qa.fields.status.name {
@@ -551,6 +572,7 @@ workflow "Ticket Work" v1 {
                 text: ":white_check_mark: " ++ params.ticket.key ++ " passed QA and is Done."
             )
                 .timeout(15s)
+                .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
                 -> cleanup_workspace
         }
         config.status.ready_for_dev -> {
@@ -594,6 +616,7 @@ workflow "Ticket Work" v1 {
         text: ":x: SDLC automation failed on " ++ params.ticket.key ++ "."
     )
         .timeout(15s)
+        .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
         -> cleanup_workspace
 
     // drift: a human changed the status. do not fight it; just stop and clean up.
@@ -602,6 +625,7 @@ workflow "Ticket Work" v1 {
         text: ":warning: SDLC automation halted on " ++ params.ticket.key ++ " due to a manual JIRA status change."
     )
         .timeout(15s)
+        .retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
         -> cleanup_workspace
 
     node cleanup_workspace: GitCommandResult = git.cleanup(
@@ -609,5 +633,6 @@ workflow "Ticket Work" v1 {
         path: create_workspace.workspace
     )
         .timeout(60s)
+        .retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
         -> done
 }

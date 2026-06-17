@@ -28,7 +28,7 @@ workflow "Core Team SDLC Pipeline" v1 {
         jql: config.jira.ready_jql
     )
         .timeout(120s)
-        .retry(3)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
     // tickets the automation already owns and is moving through the pipeline. jira
     // is the source of truth for the concurrency cap, so no self-referential api
@@ -38,7 +38,7 @@ workflow "Core Team SDLC Pipeline" v1 {
         jql: config.jira.in_flight_jql
     )
         .timeout(120s)
-        .retry(3)
+        .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
     // how many new tickets we may admit this tick: the cap minus what is already in
     // flight. a non-positive budget admits nothing (the reducer clamps to zero).
