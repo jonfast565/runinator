@@ -5448,6 +5448,7 @@ dependencies = [
  "runinator-models",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-workflows",
  "serde_json",
  "thiserror 2.0.18",
 ]

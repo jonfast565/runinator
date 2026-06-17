@@ -2502,6 +2502,54 @@ fn compute_rejects_bad_argument_type() {
 }
 
 #[test]
+fn compute_lambda_uses_collection_item_type_for_field_access() {
+    let src = r#"
+        workflow "LambdaTypes" v1 {
+            params { users: { id: string }[] }
+            node compute {
+                return std.collections.map(params.users, u => u.missing)
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(
+        message.contains("unknown field 'missing'"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn compute_lambda_result_drives_higher_order_return_type() {
+    let src = r#"
+        workflow "LambdaReturn" v1 {
+            params { users: { id: string }[] }
+            node compute {
+                let ids: integer[] = std.collections.map(params.users, u => u.id)
+                return ids
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'ids'"), "got: {message}");
+    assert!(message.contains("expects array"), "got: {message}");
+}
+
+#[test]
+fn compute_predicate_lambda_must_return_boolean() {
+    let src = r#"
+        workflow "LambdaPredicate" v1 {
+            params { users: { id: string }[] }
+            node compute {
+                return std.collections.filter(params.users, u => u.id)
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("boolean"), "got: {message}");
+    assert!(message.contains("string"), "got: {message}");
+}
+
+#[test]
 fn compute_accepts_well_typed_program() {
     // a correctly typed program with annotations and a call result flows cleanly.
     let src = r#"

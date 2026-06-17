@@ -65,6 +65,8 @@ pub fn validate_workflow(
         return Err(WorkflowValidationError::MissingEndNode);
     }
 
+    let node_map: HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
     for node in &nodes {
         if node.kind == WorkflowNodeKind::Action && node.action.is_none() {
             return Err(WorkflowValidationError::MissingAction(
@@ -106,38 +108,16 @@ pub fn validate_workflow(
         validate_condition(&node.condition)?;
         validate_control_node_parameters(node)?;
         for target in transition_targets(&node.transitions) {
-            if !ids.contains(target.as_str()) {
-                return Err(WorkflowValidationError::MissingTransition {
-                    node: node.id.as_str().to_string(),
-                    target: target.into_string(),
-                });
-            }
+            validate_node_ref(node, &target, NodeReferenceRole::Transition, &node_map)?;
         }
-        for target in parameter_targets(node)? {
-            if !ids.contains(target.as_str()) {
-                return Err(WorkflowValidationError::MissingTransition {
-                    node: node.id.as_str().to_string(),
-                    target: target.into_string(),
-                });
-            }
-        }
+        validate_parameter_node_refs(node, &node_map)?;
         for reference in value_refs(node)? {
-            if let WorkflowRefSource::NodeOutput(target) = reference.source
-                && !ids.contains(target.as_str())
-            {
-                return Err(WorkflowValidationError::MissingTransition {
-                    node: node.id.as_str().to_string(),
-                    target: target.into_string(),
-                });
+            if let WorkflowRefSource::NodeOutput(target) = reference.source {
+                validate_node_ref(node, &target, NodeReferenceRole::NodeOutput, &node_map)?;
             }
         }
-        if let Some(target) = node.reentry.on_exhausted.as_ref()
-            && !ids.contains(target.as_str())
-        {
-            return Err(WorkflowValidationError::MissingTransition {
-                node: node.id.as_str().to_string(),
-                target: target.clone().into_string(),
-            });
+        if let Some(target) = node.reentry.on_exhausted.as_ref() {
+            validate_node_ref(node, target, NodeReferenceRole::ReentryExhausted, &node_map)?;
         }
     }
 
@@ -145,6 +125,177 @@ pub fn validate_workflow(
     validate_map_concurrency_bodies(&nodes)?;
 
     Ok((start, nodes))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NodeReferenceRole {
+    Transition,
+    SwitchCase,
+    SwitchDefault,
+    ParallelBranch,
+    JoinWaitFor,
+    TryBody,
+    TryCatch,
+    TryFinally,
+    MapTarget,
+    RaceBranch,
+    NodeOutput,
+    ReentryExhausted,
+}
+
+impl NodeReferenceRole {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Transition => "transition",
+            Self::SwitchCase => "switch case target",
+            Self::SwitchDefault => "switch default target",
+            Self::ParallelBranch => "parallel branch",
+            Self::JoinWaitFor => "join wait_for",
+            Self::TryBody => "try body",
+            Self::TryCatch => "try catch",
+            Self::TryFinally => "try finally",
+            Self::MapTarget => "map target",
+            Self::RaceBranch => "race branch",
+            Self::NodeOutput => "node output reference",
+            Self::ReentryExhausted => "reentry on_exhausted",
+        }
+    }
+
+    fn expected(self) -> &'static str {
+        match self {
+            Self::Transition | Self::SwitchCase | Self::SwitchDefault | Self::ReentryExhausted => {
+                "a non-start node"
+            }
+            Self::ParallelBranch
+            | Self::JoinWaitFor
+            | Self::TryBody
+            | Self::TryCatch
+            | Self::TryFinally
+            | Self::MapTarget
+            | Self::RaceBranch => "a runnable, non-terminal node",
+            Self::NodeOutput => "an output-producing node",
+        }
+    }
+
+    fn accepts(self, kind: &WorkflowNodeKind) -> bool {
+        match self {
+            Self::Transition | Self::SwitchCase | Self::SwitchDefault | Self::ReentryExhausted => {
+                *kind != WorkflowNodeKind::Start
+            }
+            Self::ParallelBranch
+            | Self::JoinWaitFor
+            | Self::TryBody
+            | Self::TryCatch
+            | Self::TryFinally
+            | Self::MapTarget
+            | Self::RaceBranch => is_runnable_entry_kind(kind),
+            Self::NodeOutput => is_output_producing_kind(kind),
+        }
+    }
+}
+
+fn validate_parameter_node_refs(
+    node: &WorkflowNode,
+    node_map: &HashMap<&str, &WorkflowNode>,
+) -> Result<(), WorkflowValidationError> {
+    match node.kind {
+        WorkflowNodeKind::Switch => {
+            let params = crate::parameters::parse_switch_parameters(node)?;
+            for case in params.cases {
+                validate_node_ref(node, &case.target, NodeReferenceRole::SwitchCase, node_map)?;
+            }
+            if let Some(target) = params.default {
+                validate_node_ref(node, &target, NodeReferenceRole::SwitchDefault, node_map)?;
+            }
+        }
+        WorkflowNodeKind::Parallel => {
+            let params = crate::parameters::parse_parallel_parameters(node)?;
+            for branch in params.branches {
+                validate_node_ref(node, &branch, NodeReferenceRole::ParallelBranch, node_map)?;
+            }
+        }
+        WorkflowNodeKind::Join => {
+            let params = crate::parameters::parse_join_parameters(node)?;
+            for target in params.wait_for {
+                validate_node_ref(node, &target, NodeReferenceRole::JoinWaitFor, node_map)?;
+            }
+        }
+        WorkflowNodeKind::Try => {
+            let params = crate::parameters::parse_try_parameters(node)?;
+            validate_node_ref(node, &params.body, NodeReferenceRole::TryBody, node_map)?;
+            if let Some(target) = params.catch {
+                validate_node_ref(node, &target, NodeReferenceRole::TryCatch, node_map)?;
+            }
+            if let Some(target) = params.finally {
+                validate_node_ref(node, &target, NodeReferenceRole::TryFinally, node_map)?;
+            }
+        }
+        WorkflowNodeKind::Map => {
+            let params = parse_map_parameters(node)?;
+            validate_node_ref(node, &params.target, NodeReferenceRole::MapTarget, node_map)?;
+        }
+        WorkflowNodeKind::Race => {
+            let params = crate::parameters::parse_race_parameters(node)?;
+            for branch in params.branches {
+                validate_node_ref(node, &branch, NodeReferenceRole::RaceBranch, node_map)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_node_ref(
+    node: &WorkflowNode,
+    target: &WorkflowNodeRef,
+    role: NodeReferenceRole,
+    node_map: &HashMap<&str, &WorkflowNode>,
+) -> Result<(), WorkflowValidationError> {
+    let Some(target_node) = node_map.get(target.as_str()) else {
+        return Err(WorkflowValidationError::MissingTransition {
+            node: node.id.as_str().to_string(),
+            target: target.as_str().to_string(),
+        });
+    };
+    if role.accepts(&target_node.kind) {
+        return Ok(());
+    }
+    Err(WorkflowValidationError::InvalidNodeReferenceType {
+        node: node.id.as_str().to_string(),
+        reference: role.label().to_string(),
+        target: target.as_str().to_string(),
+        target_kind: format!("{:?}", target_node.kind),
+        expected: role.expected().to_string(),
+    })
+}
+
+fn is_runnable_entry_kind(kind: &WorkflowNodeKind) -> bool {
+    !matches!(
+        kind,
+        WorkflowNodeKind::Start | WorkflowNodeKind::End | WorkflowNodeKind::Fail
+    )
+}
+
+fn is_output_producing_kind(kind: &WorkflowNodeKind) -> bool {
+    matches!(
+        kind,
+        WorkflowNodeKind::Action
+            | WorkflowNodeKind::Approval
+            | WorkflowNodeKind::Wait
+            | WorkflowNodeKind::Switch
+            | WorkflowNodeKind::Gate
+            | WorkflowNodeKind::Signal
+            | WorkflowNodeKind::Loop
+            | WorkflowNodeKind::Parallel
+            | WorkflowNodeKind::Join
+            | WorkflowNodeKind::Map
+            | WorkflowNodeKind::Race
+            | WorkflowNodeKind::Output
+            | WorkflowNodeKind::Deliverable
+            | WorkflowNodeKind::Input
+            | WorkflowNodeKind::Subflow
+            | WorkflowNodeKind::Config
+    )
 }
 
 /// a concurrent `map` body runs as an isolated child run, so for `concurrency > 1` the body must be a

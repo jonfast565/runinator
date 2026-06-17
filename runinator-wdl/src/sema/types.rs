@@ -14,6 +14,7 @@ use super::Diagnostic;
 
 /// the typing environment: the workflow parameter type, declared named types, and active loop/map
 /// and compute-local variable types.
+#[derive(Clone)]
 struct Env {
     input: RuninatorType,
     named: NamedTypes,
@@ -277,6 +278,10 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
         ExprKind::Call {
             name, args, named, ..
         } => {
+            if runinator_workflows::is_higher_order(name) {
+                let _ = infer_higher_order_call_type(name, args, env, expr.span, diagnostics);
+                return;
+            }
             // check each positional argument against the intrinsic's declared parameter type,
             // skipping opaque (`any`) types on either side to avoid false positives on refs.
             if let Some(sig) = runinator_workflows::intrinsic_signature(name) {
@@ -438,15 +443,224 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
                 RuninatorType::Any
             }
         }
-        // a call's result type comes from the intrinsic signature (its first declared result).
-        ExprKind::Call { name, .. } => runinator_workflows::intrinsic_signature(name)
-            .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
-            .unwrap_or(RuninatorType::Any),
+        // a call's result type comes from the intrinsic signature or, for higher-order intrinsics,
+        // from the collection and lambda argument types.
+        ExprKind::Call { name, args, .. } => {
+            if runinator_workflows::is_higher_order(name) {
+                infer_higher_order_call_type(name, args, env, expr.span, diagnostics)
+            } else {
+                runinator_workflows::intrinsic_signature(name)
+                    .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
+                    .unwrap_or(RuninatorType::Any)
+            }
+        }
         // a lambda carries no value type of its own.
         ExprKind::Lambda { .. } => RuninatorType::Any,
         // spreads are expanded before sema runs; treat as untyped if one is reached.
         ExprKind::Spread(_) => RuninatorType::Any,
     }
+}
+
+fn infer_higher_order_call_type(
+    name: &str,
+    args: &[Expr],
+    env: &Env,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> RuninatorType {
+    let Some(collection) = args.first() else {
+        diagnostics.push(Diagnostic::error(
+            span,
+            format!("'{name}' is missing a collection argument"),
+        ));
+        return RuninatorType::Any;
+    };
+    let collection_type = infer_expr(collection, env, diagnostics);
+    let item_type = collection_item_type(name, &collection_type, collection.span, diagnostics);
+    match name {
+        "map" => {
+            let body_type =
+                infer_lambda_type(name, args.get(1), &[(0, item_type)], env, span, diagnostics);
+            RuninatorType::array(body_type)
+        }
+        "flat_map" => {
+            let body_type =
+                infer_lambda_type(name, args.get(1), &[(0, item_type)], env, span, diagnostics);
+            match body_type {
+                RuninatorType::Array(inner) => RuninatorType::array(*inner),
+                other => RuninatorType::array(other),
+            }
+        }
+        "filter" => {
+            let body_type = infer_lambda_type(
+                name,
+                args.get(1),
+                &[(0, item_type.clone())],
+                env,
+                span,
+                diagnostics,
+            );
+            check_assignable(
+                &body_type,
+                &RuninatorType::Boolean,
+                "'filter' lambda",
+                args.get(1).map(|arg| arg.span).unwrap_or(span),
+                diagnostics,
+            );
+            RuninatorType::array(item_type)
+        }
+        "find" => {
+            let body_type = infer_lambda_type(
+                name,
+                args.get(1),
+                &[(0, item_type.clone())],
+                env,
+                span,
+                diagnostics,
+            );
+            check_assignable(
+                &body_type,
+                &RuninatorType::Boolean,
+                "'find' lambda",
+                args.get(1).map(|arg| arg.span).unwrap_or(span),
+                diagnostics,
+            );
+            RuninatorType::Union(vec![item_type, RuninatorType::Null])
+        }
+        "any" | "all" => {
+            let body_type =
+                infer_lambda_type(name, args.get(1), &[(0, item_type)], env, span, diagnostics);
+            check_assignable(
+                &body_type,
+                &RuninatorType::Boolean,
+                &format!("'{name}' lambda"),
+                args.get(1).map(|arg| arg.span).unwrap_or(span),
+                diagnostics,
+            );
+            RuninatorType::Boolean
+        }
+        "sort_by" => {
+            let body_type = infer_lambda_type(
+                name,
+                args.get(1),
+                &[(0, item_type.clone())],
+                env,
+                span,
+                diagnostics,
+            );
+            require_orderable(
+                &body_type,
+                args.get(1).map(|arg| arg.span).unwrap_or(span),
+                diagnostics,
+            );
+            RuninatorType::array(item_type)
+        }
+        "reduce" => {
+            let accumulator_type = args
+                .get(1)
+                .map(|arg| infer_expr(arg, env, diagnostics))
+                .unwrap_or_else(|| {
+                    diagnostics.push(Diagnostic::error(
+                        span,
+                        "'reduce' is missing an initial accumulator argument",
+                    ));
+                    RuninatorType::Any
+                });
+            let body_type = infer_lambda_type(
+                name,
+                args.get(2),
+                &[(0, accumulator_type.clone()), (1, item_type)],
+                env,
+                span,
+                diagnostics,
+            );
+            if let Some(result_type) = common_type(&accumulator_type, &body_type) {
+                return result_type;
+            }
+            check_assignable(
+                &body_type,
+                &accumulator_type,
+                "'reduce' lambda",
+                args.get(2).map(|arg| arg.span).unwrap_or(span),
+                diagnostics,
+            );
+            accumulator_type
+        }
+        _ => RuninatorType::Any,
+    }
+}
+
+fn collection_item_type(
+    name: &str,
+    ty: &RuninatorType,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> RuninatorType {
+    match ty {
+        RuninatorType::Array(item) => (**item).clone(),
+        RuninatorType::Any | RuninatorType::Union(_) => RuninatorType::Any,
+        other => {
+            diagnostics.push(Diagnostic::error(
+                span,
+                format!("'{name}' expects an array, got {}", other.describe()),
+            ));
+            RuninatorType::Any
+        }
+    }
+}
+
+fn common_type(left: &RuninatorType, right: &RuninatorType) -> Option<RuninatorType> {
+    if left == right {
+        return Some(left.clone());
+    }
+    if matches!(left, RuninatorType::Any) || matches!(right, RuninatorType::Any) {
+        return Some(RuninatorType::Any);
+    }
+    if left.is_numeric() && right.is_numeric() {
+        return Some(RuninatorType::Number);
+    }
+    None
+}
+
+fn infer_lambda_type(
+    name: &str,
+    expr: Option<&Expr>,
+    bindings: &[(usize, RuninatorType)],
+    env: &Env,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> RuninatorType {
+    let Some(expr) = expr else {
+        diagnostics.push(Diagnostic::error(
+            span,
+            format!("'{name}' is missing a lambda argument"),
+        ));
+        return RuninatorType::Any;
+    };
+    let ExprKind::Lambda { params, body } = &expr.kind else {
+        diagnostics.push(Diagnostic::error(
+            expr.span,
+            format!("'{name}' requires a lambda argument"),
+        ));
+        return RuninatorType::Any;
+    };
+    let required = bindings.len();
+    if params.len() != required {
+        diagnostics.push(Diagnostic::error(
+            expr.span,
+            format!(
+                "'{name}' lambda expects {required} parameter(s), got {}",
+                params.len()
+            ),
+        ));
+        return RuninatorType::Any;
+    }
+    let mut scoped = env.clone();
+    for (index, ty) in bindings {
+        scoped.scope.push((params[*index].clone(), ty.clone()));
+    }
+    check_expr(body, &scoped, diagnostics);
+    infer_expr(body, &scoped, diagnostics)
 }
 
 fn infer_path(

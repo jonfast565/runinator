@@ -72,6 +72,16 @@ pub enum WorkflowValidationError {
     IntrinsicError { name: String, message: String },
     #[error("WORKFLOW027 - compute goto target '{0}' is invalid")]
     InvalidGotoTarget(String),
+    #[error(
+        "WORKFLOW028 - workflow node '{node}' {reference} references node '{target}' of kind {target_kind}, expected {expected}"
+    )]
+    InvalidNodeReferenceType {
+        node: String,
+        reference: String,
+        target: String,
+        target_kind: String,
+        expected: String,
+    },
 }
 
 // numbered error dictionary for the workflow validator.
@@ -207,6 +217,11 @@ pub const INVALID_GOTO_TARGET: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.invalid_goto_target",
     "Compute goto target is invalid",
 );
+pub const INVALID_NODE_REFERENCE_TYPE: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW028",
+    "workflow.invalid_node_reference_type",
+    "Node reference targets an invalid node kind",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
@@ -236,6 +251,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     UNKNOWN_INTRINSIC,
     INTRINSIC_ERROR,
     INVALID_GOTO_TARGET,
+    INVALID_NODE_REFERENCE_TYPE,
 ];
 
 impl EngineErrors for WorkflowValidationError {

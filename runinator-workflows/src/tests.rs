@@ -58,6 +58,108 @@ fn rejects_missing_transition_target() {
 }
 
 #[test]
+fn rejects_transition_targeting_start_node() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "build" } } },
+            {
+                "id": "build",
+                "kind": "action",
+                "action": { "provider": "console", "function": "run", "timeout_seconds": 60, "configuration": {} },
+                "transitions": { "on_success": { "$node": "start" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidNodeReferenceType { .. })
+    ));
+}
+
+#[test]
+fn rejects_control_body_entry_targeting_terminal_node() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "batch" } } },
+            {
+                "id": "batch",
+                "kind": "map",
+                "parameters": {
+                    "items": [1, 2],
+                    "target": { "$node": "done" }
+                },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidNodeReferenceType { .. })
+    ));
+}
+
+#[test]
+fn rejects_node_output_ref_to_non_output_node() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "route" } } },
+            {
+                "id": "route",
+                "kind": "condition",
+                "transitions": { "next": { "$node": "consume" } }
+            },
+            {
+                "id": "consume",
+                "kind": "output",
+                "parameters": {
+                    "data": { "$ref": { "node": "route", "output": ["ok"] } }
+                },
+                "transitions": { "next": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    assert!(matches!(
+        validate_workflow(&wf),
+        Err(WorkflowValidationError::InvalidNodeReferenceType { .. })
+    ));
+}
+
+#[test]
+fn accepts_node_output_ref_to_approval_node() {
+    let wf = workflow(runinator_models::json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "approve" } } },
+            {
+                "id": "approve",
+                "kind": "approval",
+                "transitions": { "on_success": { "$node": "record" } }
+            },
+            {
+                "id": "record",
+                "kind": "output",
+                "parameters": {
+                    "data": { "$ref": { "node": "approve", "output": ["approved"] } }
+                },
+                "transitions": { "next": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]
+    }));
+
+    validate_workflow(&wf).expect("approval nodes produce completion output");
+}
+
+#[test]
 fn validates_subflow_target_by_id_or_name() {
     let named = workflow(runinator_models::json!({
         "start": "start",
@@ -933,6 +1035,35 @@ fn typed_validation_accepts_explicit_string_conversions() {
 }
 
 #[test]
+fn typed_validation_allows_string_conversion_from_any() {
+    let wf = typed_workflow(
+        schema_type(runinator_models::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        })),
+        runinator_models::json!({
+            "id": "checked",
+            "kind": "action",
+            "action": {
+                "provider": "check",
+                "function": "check",
+                "configuration": {
+                    "config": {
+                        "$to_string": { "$ref": { "node": "make", "output": ["payload"] } }
+                    }
+                }
+            },
+            "transitions": { "next": { "$node": "done" } }
+        }),
+    );
+
+    let mut provider = check_provider(RuninatorType::String);
+    provider.name = "check".into();
+    validate_workflow_with_providers(&wf, &[typed_provider(), provider])
+        .expect("any values may be converted to strings at runtime");
+}
+
+#[test]
 fn typed_validation_uses_intrinsic_return_type_in_conditions() {
     let wf = typed_workflow(
         schema_type(runinator_models::json!({
@@ -996,6 +1127,63 @@ fn typed_validation_checks_action_parameter_types() {
     );
 
     assert!(validate_workflow_with_providers(&wf, &[typed_provider()]).is_err());
+}
+
+#[test]
+fn typed_validation_infers_higher_order_map_result_type() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": {
+            "$call": "map",
+            "args": [
+                { "$ref": { "params": ["users"] } },
+                {
+                    "$lambda": {
+                        "params": ["u"],
+                        "body": { "$ref": { "let": ["u", "id"] } }
+                    }
+                }
+            ]
+        }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "users",
+        RuninatorField::required(RuninatorType::array(RuninatorType::typed_structure([(
+            "id",
+            RuninatorField::required(RuninatorType::String),
+        )]))),
+    )]);
+
+    let provider = check_provider(RuninatorType::array(RuninatorType::String));
+    validate_workflow_with_providers(&wf, &[provider])
+        .expect("map result should resolve to string[]");
+}
+
+#[test]
+fn typed_validation_rejects_higher_order_map_result_mismatch() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": {
+            "$call": "map",
+            "args": [
+                { "$ref": { "params": ["users"] } },
+                {
+                    "$lambda": {
+                        "params": ["u"],
+                        "body": { "$ref": { "let": ["u", "id"] } }
+                    }
+                }
+            ]
+        }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "users",
+        RuninatorField::required(RuninatorType::array(RuninatorType::typed_structure([(
+            "id",
+            RuninatorField::required(RuninatorType::String),
+        )]))),
+    )]);
+
+    let provider = check_provider(RuninatorType::array(RuninatorType::Integer));
+    assert!(validate_workflow_with_providers(&wf, &[provider]).is_err());
 }
 
 #[test]

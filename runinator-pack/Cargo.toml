@@ -10,3 +10,6 @@ runinator-utilities = { path = "../runinator-utilities" }
 runinator-wdl = { path = "../runinator-wdl" }
 serde_json = "1"
 thiserror = "2.0.18"
+
+[dev-dependencies]
+runinator-workflows = { path = "../runinator-workflows" }
