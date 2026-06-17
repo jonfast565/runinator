@@ -52,6 +52,9 @@ pub fn validate_workflow_types(
                 .insert(node.id.as_str().to_string(), output_type);
         }
     }
+    for (node_id, output_type) in declared_node_output_types(workflow)? {
+        context.node_outputs.insert(node_id, output_type);
+    }
     for node in nodes {
         if matches!(node.kind, WorkflowNodeKind::Loop | WorkflowNodeKind::Map)
             && let Some(output_type) = collection_node_output_type(node, &context)?
@@ -71,6 +74,32 @@ pub fn validate_workflow_types(
     }
 
     Ok(())
+}
+
+fn declared_node_output_types(
+    workflow: &WorkflowDefinition,
+) -> Result<HashMap<String, WorkflowType>, WorkflowValidationError> {
+    let Some(entries) = workflow
+        .definition
+        .metadata
+        .pointer("/wdl/type_hints")
+        .and_then(Value::as_object)
+    else {
+        return Ok(HashMap::new());
+    };
+
+    let mut types = HashMap::new();
+    for (node_id, value) in entries {
+        let json: serde_json::Value = value.clone().into();
+        let ty = serde_json::from_value::<WorkflowType>(json).map_err(|err| {
+            WorkflowValidationError::TypeError(format!(
+                "workflow metadata.wdl.type_hints['{}'] is invalid: {}",
+                node_id, err
+            ))
+        })?;
+        types.insert(node_id.clone(), ty);
+    }
+    Ok(types)
 }
 
 fn validate_provider_metadata_set(

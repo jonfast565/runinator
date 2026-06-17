@@ -458,7 +458,7 @@ workflow "Ticket Work" v1 {
         .timeout(60s)
         .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
-    node impact = compute {
+    node impact: { api: boolean, dashboards: boolean, lambdas: string[] } = compute {
         let files = split(merged_diff.stdout, "\n")
         return {
             api: any(files, f => f.starts_with(config.deploy.api_prefix)),

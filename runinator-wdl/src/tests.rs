@@ -1131,12 +1131,54 @@ fn for_loop_limit_accepts_expression() {
 }
 
 #[test]
+fn typed_compute_output_hint_validates_loop_items() {
+    let src = r#"
+        workflow "TypedComputeLoop" v1 {
+            node impact: { lambdas: string[] } = compute {
+                return { lambdas: ["one", "two"] }
+            }
+            for lambda_path in impact.lambdas limit none {
+                node console.run(command: lambda_path)
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let providers = vec![
+        ProviderMetadata {
+            name: "std".into(),
+            actions: vec![ActionMetadata::new("run", "compute").with_parameters(vec![
+                ParameterMetadata::required("program", RuninatorType::Any),
+            ])],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+        ProviderMetadata {
+            name: "console".into(),
+            actions: vec![ActionMetadata::new("run", "console").with_parameters(vec![
+                ParameterMetadata::optional("command", RuninatorType::Any),
+            ])],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+    ];
+
+    runinator_workflows::validate_workflow_with_providers(&definition, &providers)
+        .expect("declared compute output type should drive loop item typing");
+}
+
+#[test]
 fn compiles_checked_in_sdlc_ticket_workflow() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/ticket-work.wdl");
     let src = fs::read_to_string(&path).expect("read sdlc ticket workflow");
     let definition = compile(&src);
     assert_eq!(definition.name, "Ticket Work");
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/impact/fields/lambdas/ty/type")
+            .and_then(Value::as_str),
+        Some("array")
+    );
 }
 
 #[test]

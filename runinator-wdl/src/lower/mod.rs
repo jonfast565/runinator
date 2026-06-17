@@ -36,8 +36,10 @@ struct Lowerer {
     fail_id: String,
     scope: Vec<VarBinding>,
     // declared `let <id>: <type>` annotations, kept for graph metadata so decompile can
-    // re-emit them. each value is the lossless native form of a RuninatorType.
+    // re-emit the authored surface form.
     declared_types: Vec<(String, Value)>,
+    // machine-readable declared node output types consumed by backend validation.
+    declared_type_hints: Vec<(String, Value)>,
     // header alias declarations, used to expand `...alias` spreads while lowering.
     aliases: AliasTable,
     // per-node `...alias` spread recipes (node id -> recipe segments), kept for graph metadata so
@@ -103,9 +105,8 @@ pub fn lower_document(
     let mut definition = Map::new();
     definition.insert("start".into(), Value::String(lowerer.start_id.clone()));
     definition.insert("nodes".into(), Value::Array(nodes));
-    // the `wdl` sidecar carries render-only hints (declared types, alias declarations, and
-    // per-node spread recipes) that let decompile reproduce the original source; the runtime
-    // ignores it.
+    // the `wdl` sidecar carries source hints that let decompile reproduce the original source and
+    // backend validation consume declared node output types.
     let mut wdl = Map::new();
     if !lowerer.declared_types.is_empty() {
         let mut types_map = Map::new();
@@ -113,6 +114,13 @@ pub fn lower_document(
             types_map.insert(id.clone(), value.clone());
         }
         wdl.insert("types".into(), Value::Object(types_map));
+    }
+    if !lowerer.declared_type_hints.is_empty() {
+        let mut hints_map = Map::new();
+        for (id, value) in &lowerer.declared_type_hints {
+            hints_map.insert(id.clone(), value.clone());
+        }
+        wdl.insert("type_hints".into(), Value::Object(hints_map));
     }
     // named `type <Name>` declarations, recorded as name-preserving surface strings so a
     // declaration that references another declared type keeps that name on decompile.
@@ -247,6 +255,7 @@ impl Lowerer {
             fail_id: "fail".to_string(),
             scope: Vec::new(),
             declared_types: Vec::new(),
+            declared_type_hints: Vec::new(),
             aliases: AliasTable::new(),
             spreads: Map::new(),
             compute_locals: std::cell::RefCell::new(HashSet::new()),
@@ -415,10 +424,14 @@ impl Lowerer {
         };
         // validate the annotation resolves, but record its name-preserving surface form so a
         // declared `type` reference (e.g. `let x: Cart`) decompiles back to the name, not its shape.
-        types::lower_type_with(type_expr, &self.named_types)?;
+        let ty = types::lower_type_with(type_expr, &self.named_types)?;
         let rendered = crate::format::format_type(type_expr);
         self.declared_types
             .push((id.to_string(), Value::String(rendered)));
+        let hint = serde_json::to_value(&ty)
+            .map(Value::from)
+            .map_err(|err| WdlError::lower(format!("failed to encode type hint: {err}")))?;
+        self.declared_type_hints.push((id.to_string(), hint));
         Ok(())
     }
 
