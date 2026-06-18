@@ -382,7 +382,7 @@ fn runinator_type_imports_json_schema_edge_shapes() {
     );
     assert_eq!(
         RuninatorType::from_json_schema(&crate::json!({ "enum": ["open", "closed"] })),
-        RuninatorType::String
+        RuninatorType::Enum(vec![Value::from("open"), Value::from("closed")])
     );
     assert_eq!(
         RuninatorType::from_json_schema(&crate::json!({ "const": 1 })),
@@ -633,6 +633,79 @@ fn runinator_type_reports_specific_union_validation_errors() {
     assert_eq!(err.path, "$.name");
     assert_eq!(err.expected, "string");
     assert_eq!(err.actual, "integer");
+}
+
+#[test]
+fn runinator_type_refinements_round_trip_and_validate() {
+    let ty = RuninatorType::typed_structure([
+        (
+            "env",
+            RuninatorField::required(RuninatorType::Enum(vec![
+                Value::from("dev"),
+                Value::from("prod"),
+            ])),
+        ),
+        (
+            "retries",
+            RuninatorField::required(RuninatorType::Range {
+                base: Box::new(RuninatorType::Integer),
+                min: Some(Value::from(0)),
+                max: Some(Value::from(10)),
+            }),
+        ),
+        ("delay", RuninatorField::required(RuninatorType::Duration)),
+    ]);
+
+    let encoded = serde_json::to_value(&ty).unwrap();
+    let decoded: RuninatorType = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded, ty);
+
+    ty.validate_value(&Value::from(
+        json!({ "env": "dev", "retries": 3, "delay": 60 }),
+    ))
+    .expect("valid refined value");
+    assert!(
+        ty.validate_value(&Value::from(
+            json!({ "env": "qa", "retries": 3, "delay": 60 })
+        ))
+        .is_err()
+    );
+    assert!(
+        ty.validate_value(&Value::from(
+            json!({ "env": "dev", "retries": 11, "delay": 60 })
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn runinator_type_refinement_assignability_is_checked() {
+    let small = RuninatorType::Range {
+        base: Box::new(RuninatorType::Integer),
+        min: Some(Value::from(0)),
+        max: Some(Value::from(5)),
+    };
+    let wide = RuninatorType::Range {
+        base: Box::new(RuninatorType::Integer),
+        min: Some(Value::from(0)),
+        max: Some(Value::from(10)),
+    };
+
+    small
+        .validate_assignable_to(&wide)
+        .expect("narrow range assigns to wider range");
+    assert!(wide.validate_assignable_to(&small).is_err());
+    RuninatorType::Enum(vec![Value::from("dev")])
+        .validate_assignable_to(&RuninatorType::Enum(vec![
+            Value::from("dev"),
+            Value::from("prod"),
+        ]))
+        .expect("enum subset assigns");
+    assert!(
+        RuninatorType::String
+            .validate_assignable_to(&small)
+            .is_err()
+    );
 }
 
 #[test]

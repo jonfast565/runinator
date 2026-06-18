@@ -51,6 +51,8 @@ pub struct Workflow {
     pub version: Option<SemVer>,
     /// top-level workflow parameters, surfaced in source as `params { ... }`.
     pub input: Option<TypeExpr>,
+    /// optional typed value produced in the subflow snapshot `state` field.
+    pub output: Option<TypeExpr>,
     /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
     /// action calls by `...name` spreads during desugaring.
     pub aliases: Vec<Alias>,
@@ -606,6 +608,12 @@ pub enum CmpOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr {
     Named(String),
+    Enum(Vec<runinator_models::value::Value>),
+    Range {
+        base: Box<TypeExpr>,
+        min: Option<runinator_models::value::Value>,
+        max: Option<runinator_models::value::Value>,
+    },
     Array(Box<TypeExpr>),
     Map(Box<TypeExpr>),
     Struct {

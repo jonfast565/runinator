@@ -58,7 +58,15 @@ impl Formatter {
             .version
             .map(|version| format!(" v{version}"))
             .unwrap_or_default();
-        self.line(&format!("workflow {}{version} {{", quote(&workflow.name)));
+        let returns = workflow
+            .output
+            .as_ref()
+            .map(|ty| format!(" returns {}", format_type(ty)))
+            .unwrap_or_default();
+        self.line(&format!(
+            "workflow {}{version}{returns} {{",
+            quote(&workflow.name)
+        ));
         self.indent += 1;
         if let Some(input) = &workflow.input {
             self.params(input);
@@ -1274,6 +1282,20 @@ fn format_path(segs: &[PathSeg]) -> String {
 pub(crate) fn format_type(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Named(name) => name.clone(),
+        TypeExpr::Enum(values) => format!(
+            "enum[{}]",
+            values
+                .iter()
+                .map(format_type_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TypeExpr::Range { base, min, max } => format!(
+            "{} range {}..{}",
+            format_type(base),
+            min.as_ref().map(format_type_value).unwrap_or_default(),
+            max.as_ref().map(format_type_value).unwrap_or_default()
+        ),
         TypeExpr::Array(inner) => format!("{}[]", format_type(inner)),
         TypeExpr::Map(inner) => format!("map<{}>", format_type(inner)),
         TypeExpr::Struct { fields, additional } => {
@@ -1291,6 +1313,13 @@ pub(crate) fn format_type(ty: &TypeExpr) -> String {
             .map(format_type)
             .collect::<Vec<_>>()
             .join(" | "),
+    }
+}
+
+fn format_type_value(value: &runinator_models::value::Value) -> String {
+    match value {
+        runinator_models::value::Value::String(text) => quote(text),
+        other => other.to_string(),
     }
 }
 

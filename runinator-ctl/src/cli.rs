@@ -4,6 +4,7 @@ use uuid::Uuid;
 use clap::{Parser, Subcommand, ValueEnum};
 use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
+use runinator_wdl::TypePolicy;
 
 /// cli-facing semantic-version bump level, mapped to the shared `SemVerBump`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -37,6 +38,23 @@ impl From<CliSettingKind> for SettingKind {
         match kind {
             CliSettingKind::Secret => SettingKind::Secret,
             CliSettingKind::Config => SettingKind::Config,
+        }
+    }
+}
+
+/// cli-facing WDL typing policy.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliTyping {
+    #[default]
+    Strict,
+    Permissive,
+}
+
+impl From<CliTyping> for TypePolicy {
+    fn from(policy: CliTyping) -> Self {
+        match policy {
+            CliTyping::Strict => TypePolicy::Strict,
+            CliTyping::Permissive => TypePolicy::Permissive,
         }
     }
 }
@@ -173,6 +191,9 @@ pub enum WdlCommands {
         file: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// WDL type checking policy. Use permissive only for legacy investigation.
+        #[arg(long, value_enum, default_value_t = CliTyping::Strict)]
+        typing: CliTyping,
     },
     /// Decompile a workflow definition JSON file back into .wdl source.
     Decompile {
@@ -193,7 +214,12 @@ pub enum WdlCommands {
         check: bool,
     },
     /// Parse, lower, and validate a .wdl file, printing any diagnostics.
-    Check { file: PathBuf },
+    Check {
+        file: PathBuf,
+        /// WDL type checking policy. Use permissive only for legacy investigation.
+        #[arg(long, value_enum, default_value_t = CliTyping::Strict)]
+        typing: CliTyping,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -3,7 +3,9 @@
 // decompile a WorkflowDefinition back to wdl text. the runtime is unchanged; this crate
 // is purely an author-time front end.
 
+use runinator_models::providers::ProviderMetadata;
 use runinator_models::semver::SemVer;
+use runinator_models::types::{RuninatorField, RuninatorType};
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,25 @@ pub struct CompileOptions {
     pub default_version: SemVer,
     /// directory used to resolve `file("...")` includes.
     pub source_dir: Option<PathBuf>,
+    /// provider metadata available while compiling, used to infer action output types.
+    pub providers: Vec<ProviderMetadata>,
+    /// strictness for author-time type diagnostics.
+    pub type_policy: TypePolicy,
+    /// pack-local or caller-supplied workflow signatures used to type subflow calls.
+    pub workflow_signatures: Vec<WorkflowSignature>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypePolicy {
+    Strict,
+    Permissive,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowSignature {
+    pub name: String,
+    pub input: RuninatorType,
+    pub output: RuninatorType,
 }
 
 /// the supported standalone WDL fragment surfaces.
@@ -62,6 +83,9 @@ impl Default for CompileOptions {
             enabled: false,
             default_version: SemVer::default(),
             source_dir: None,
+            providers: Vec::new(),
+            type_policy: TypePolicy::Strict,
+            workflow_signatures: Vec::new(),
         }
     }
 }
@@ -70,6 +94,61 @@ impl Default for CompileOptions {
 /// compile; warnings are dropped (use `compile_str_with_diagnostics` to inspect them).
 pub fn compile_str(src: &str, options: &CompileOptions) -> Result<WorkflowDefinition, WdlError> {
     compile_str_with_diagnostics(src, options).map(|(definition, _)| definition)
+}
+
+pub fn workflow_signature_from_source(src: &str) -> Result<Vec<WorkflowSignature>, WdlError> {
+    let document = parse_document(src)?;
+    let workflow = &document.workflow;
+    let named = lower::types::resolve_named_types(&workflow.type_decls)?;
+    let input = match &workflow.input {
+        Some(input) => lower_signature_input_type(input, &named)?,
+        None => RuninatorType::Any,
+    };
+    let output = match &workflow.output {
+        Some(output) => lower::types::lower_type_with(output, &named)?,
+        None => RuninatorType::Any,
+    };
+    let mut signatures = vec![WorkflowSignature {
+        name: workflow.name.clone(),
+        input: input.clone(),
+        output: output.clone(),
+    }];
+    if let Some(namespace) = &workflow.namespace {
+        signatures.push(WorkflowSignature {
+            name: format!("{namespace}.{}", workflow.name),
+            input,
+            output,
+        });
+    }
+    Ok(signatures)
+}
+
+fn lower_signature_input_type(
+    type_expr: &ast::TypeExpr,
+    named: &lower::types::NamedTypes,
+) -> Result<RuninatorType, WdlError> {
+    let ast::TypeExpr::Struct { fields, additional } = type_expr else {
+        return lower::types::lower_type_with(type_expr, named);
+    };
+    let mut mapped = std::collections::BTreeMap::new();
+    for field in fields {
+        let ty = lower::types::lower_type_with(&field.ty, named)?;
+        let runinator_field = if field.optional || field.default.is_some() {
+            RuninatorField::optional(ty)
+        } else {
+            RuninatorField::required(ty)
+        };
+        mapped.insert(field.name.clone(), runinator_field);
+    }
+    let additional = additional
+        .as_ref()
+        .map(|ty| lower::types::lower_type_with(ty, named))
+        .transpose()?
+        .map(Box::new);
+    Ok(RuninatorType::Struct {
+        fields: mapped,
+        additional,
+    })
 }
 
 /// like `compile_str`, but also returns the advisory (warning) diagnostics. semantic errors
@@ -85,7 +164,12 @@ pub fn compile_str_with_diagnostics(
     // sugared form to record `...alias` spreads for the decompile sidecar.
     let mut desugared = document.clone();
     desugar::desugar(&mut desugared)?;
-    let diagnostics = sema::analyze(&desugared);
+    let diagnostics = sema::analyze_with_options(
+        &desugared,
+        &options.providers,
+        options.type_policy,
+        &options.workflow_signatures,
+    );
     if let Some(error) = sema::first_error(&diagnostics) {
         return Err(WdlError::semantic(error.span, error.message.clone()));
     }
@@ -103,10 +187,32 @@ pub fn compile_str_with_diagnostics(
 /// still surfaces as `WdlError::Parse`. Each `Diagnostic` can be rendered against the source
 /// with `Diagnostic::render`.
 pub fn analyze_source(src: &str) -> Result<Vec<Diagnostic>, WdlError> {
+    analyze_source_with_providers(src, &[])
+}
+
+/// parse and run every semantic pass with provider metadata available for action result typing.
+pub fn analyze_source_with_providers(
+    src: &str,
+    providers: &[ProviderMetadata],
+) -> Result<Vec<Diagnostic>, WdlError> {
+    analyze_source_with_options(src, providers, TypePolicy::Strict, &[])
+}
+
+pub fn analyze_source_with_options(
+    src: &str,
+    providers: &[ProviderMetadata],
+    type_policy: TypePolicy,
+    workflow_signatures: &[WorkflowSignature],
+) -> Result<Vec<Diagnostic>, WdlError> {
     let mut document = parse_document(src)?;
     namespace::resolve(&mut document)?;
     desugar::desugar(&mut document)?;
-    Ok(sema::analyze(&document))
+    Ok(sema::analyze_with_options(
+        &document,
+        providers,
+        type_policy,
+        workflow_signatures,
+    ))
 }
 
 /// parse wdl source and render it with canonical whitespace and indentation.

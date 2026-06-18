@@ -131,8 +131,14 @@ pub fn build_router<T: DatabaseImpl>(
             post(validate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(API_WDL_COMPLETE, post(complete_wdl))
-        .route(API_WDL_COMPILE, post(compile_wdl))
-        .route(API_WDL_ANALYZE, post(analyze_wdl))
+        .route(
+            API_WDL_COMPILE,
+            post(compile_wdl::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            API_WDL_ANALYZE,
+            post(analyze_wdl::<T>).layer(Extension(pool.clone())),
+        )
         .route(API_WDL_FORMAT, post(format_wdl))
         .route(API_WDL_DECOMPILE, post(decompile_to_wdl))
         .route(API_WDL_EVALUATE, post(evaluate_expression))

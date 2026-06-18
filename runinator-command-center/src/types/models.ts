@@ -141,7 +141,10 @@ export type RuninatorType =
   | { type: "boolean" }
   | { type: "integer" }
   | { type: "number" }
+  | { type: "duration" }
   | { type: "string" }
+  | { type: "enum"; values: any[] }
+  | { type: "range"; base: RuninatorType; min?: any; max?: any }
   | { type: "array"; items: RuninatorType }
   | { type: "map"; values: RuninatorType }
   | { type: "struct"; fields: Record<string, RuninatorField>; additional?: RuninatorType }

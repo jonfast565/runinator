@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use runinator_models::bundles::SecretBundle;
+use runinator_models::providers::ProviderMetadata;
 use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
+use runinator_wdl::WorkflowSignature;
 
 use crate::errors::{PackError, Result};
 
@@ -147,15 +149,24 @@ fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
 // compile a wdl pack source into a workflow bundle: a single .wdl, a .wdlp manifest, or a
 // directory of .wdl files.
 pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
+    load_workflow_bundle_with_providers(path, &[])
+}
+
+// compile a wdl pack source with supplemental provider metadata. built-in provider metadata is
+// always included so local/offline pack compilation matches the worker's built-in action catalog.
+pub fn load_workflow_bundle_with_providers(
+    path: &Path,
+    providers: &[ProviderMetadata],
+) -> Result<WorkflowBundle> {
     if path.is_dir() {
-        return load_wdl_directory(path);
+        return load_wdl_directory(path, providers);
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => load_wdl_pack_manifest(path),
+        Some("wdlp") => load_wdl_pack_manifest(path, providers),
         Some("wdl") => {
             let data = fs::read_to_string(path)?;
-            let definition = compile_wdl(path, &data, SemVer::default())?;
+            let definition = compile_wdl_with_providers(path, &data, SemVer::default(), providers)?;
             Ok(WorkflowBundle {
                 workflows: vec![definition],
                 triggers: Vec::new(),
@@ -171,10 +182,32 @@ pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
 // format and compile one .wdl source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
 pub fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
+    compile_wdl_with_providers(path, data, default_version, &[])
+}
+
+pub fn compile_wdl_with_providers(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+    providers: &[ProviderMetadata],
+) -> Result<WorkflowDefinition> {
+    compile_wdl_with_signatures(path, data, default_version, providers, &[])
+}
+
+fn compile_wdl_with_signatures(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+    providers: &[ProviderMetadata],
+    workflow_signatures: &[WorkflowSignature],
+) -> Result<WorkflowDefinition> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
+        providers: compile_providers(providers),
+        workflow_signatures: workflow_signatures.to_vec(),
+        ..runinator_wdl::CompileOptions::default()
     };
     let formatted = runinator_wdl::format_str(data).map_err(|e| {
         PackError::compile(format!(
@@ -195,8 +228,74 @@ pub fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<W
     Ok(definition)
 }
 
+fn collect_workflow_signatures(paths: &[PathBuf]) -> Result<Vec<WorkflowSignature>> {
+    collect_workflow_signatures_with_current(paths, None, None)
+}
+
+fn collect_workflow_signatures_with_current(
+    paths: &[PathBuf],
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+) -> Result<Vec<WorkflowSignature>> {
+    let mut signatures = Vec::new();
+    for path in paths {
+        let data;
+        let source = if Some(path.as_path()) == current_path {
+            match current_source {
+                Some(source) => source,
+                None => {
+                    data = fs::read_to_string(path)?;
+                    &data
+                }
+            }
+        } else {
+            data = fs::read_to_string(path)?;
+            &data
+        };
+        let mut source_signatures =
+            runinator_wdl::workflow_signature_from_source(source).map_err(|e| {
+                PackError::compile(format!(
+                    "failed to read workflow signature from {}:\n{}",
+                    path.display(),
+                    e.render(source)
+                ))
+            })?;
+        signatures.append(&mut source_signatures);
+    }
+    Ok(signatures)
+}
+
+/// collect sibling workflow signatures for strict single-file wdl tooling.
+pub fn wdl_context_workflow_signatures(
+    path: &Path,
+    current_source: Option<&str>,
+) -> Result<Vec<WorkflowSignature>> {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdl") {
+        return Ok(Vec::new());
+    }
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut paths = wdl_directory_paths(dir)?;
+    if !paths.iter().any(|candidate| candidate == path) {
+        paths.push(path.to_path_buf());
+        paths.sort();
+    }
+    collect_workflow_signatures_with_current(&paths, Some(path), current_source)
+}
+
+fn compile_providers(providers: &[ProviderMetadata]) -> Vec<ProviderMetadata> {
+    let mut merged = std::collections::BTreeMap::new();
+    for provider in runinator_provider_catalog::metadata() {
+        merged.insert(provider.name.clone(), provider);
+    }
+    for provider in providers {
+        merged.insert(provider.name.clone(), provider.clone());
+    }
+    merged.into_values().collect()
+}
+
 // compile every *.wdl in a directory (sorted for deterministic ids) into one bundle.
-fn load_wdl_directory(dir: &Path) -> Result<WorkflowBundle> {
+fn load_wdl_directory(dir: &Path, providers: &[ProviderMetadata]) -> Result<WorkflowBundle> {
     let wdl_paths = wdl_directory_paths(dir)?;
     if wdl_paths.is_empty() {
         return Err(PackError::source(format!(
@@ -205,10 +304,17 @@ fn load_wdl_directory(dir: &Path) -> Result<WorkflowBundle> {
         )));
     }
 
+    let workflow_signatures = collect_workflow_signatures(&wdl_paths)?;
     let mut workflows = Vec::with_capacity(wdl_paths.len());
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)?;
-        workflows.push(compile_wdl(wdl_path, &data, SemVer::default())?);
+        workflows.push(compile_wdl_with_signatures(
+            wdl_path,
+            &data,
+            SemVer::default(),
+            providers,
+            &workflow_signatures,
+        )?);
     }
     Ok(WorkflowBundle {
         workflows,
@@ -230,7 +336,7 @@ fn wdl_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
 
 // resolve a .wdlp manifest: compile each referenced .wdl (relative to the manifest) and
 // pass through any declared triggers.
-fn load_wdl_pack_manifest(path: &Path) -> Result<WorkflowBundle> {
+fn load_wdl_pack_manifest(path: &Path, providers: &[ProviderMetadata]) -> Result<WorkflowBundle> {
     let data = fs::read_to_string(path)?;
     let manifest: Value = serde_json::from_str(&data)?;
     let version = manifest
@@ -247,10 +353,17 @@ fn load_wdl_pack_manifest(path: &Path) -> Result<WorkflowBundle> {
 
     let entries = wdl_pack_manifest_paths_from_value(path, &manifest)?;
 
+    let workflow_signatures = collect_workflow_signatures(&entries)?;
     let mut workflows = Vec::with_capacity(entries.len());
     for wdl_path in entries {
         let source = fs::read_to_string(&wdl_path)?;
-        workflows.push(compile_wdl(&wdl_path, &source, version)?);
+        workflows.push(compile_wdl_with_signatures(
+            &wdl_path,
+            &source,
+            version,
+            providers,
+            &workflow_signatures,
+        )?);
     }
 
     let triggers = match manifest.get("triggers").cloned() {

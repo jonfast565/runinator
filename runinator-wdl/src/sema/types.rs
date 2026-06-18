@@ -4,11 +4,17 @@
 // sources, orderable comparison operands, and `string()`/`json()` argument kinds. action and
 // subflow results, `prev`, and `run` are `Any`, so references through them stay permissive.
 
-use runinator_models::types::RuninatorType;
+use std::collections::{HashMap, HashSet};
+
+use runinator_models::{
+    providers::{ActionMetadata, ProviderMetadata},
+    types::RuninatorType,
+};
 
 use crate::ast::*;
 use crate::errors::Span;
 use crate::lower::types::{NamedTypes, lower_type_with, resolve_named_types};
+use crate::{TypePolicy, WorkflowSignature};
 
 use super::Diagnostic;
 
@@ -18,11 +24,23 @@ use super::Diagnostic;
 struct Env {
     input: RuninatorType,
     named: NamedTypes,
+    node_outputs: HashMap<String, RuninatorType>,
+    provider_actions: HashMap<(String, String), ActionMetadata>,
+    provider_catalog_present: bool,
+    type_policy: TypePolicy,
+    workflow_signatures: HashMap<String, WorkflowSignature>,
     scope: Vec<(String, RuninatorType)>,
 }
 
-pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
-    // resolve declared type names (ignoring cycle/duplicate errors, which scope/lowering report) so
+pub(super) fn analyze(
+    workflow: &Workflow,
+    providers: &[ProviderMetadata],
+    type_policy: TypePolicy,
+    workflow_signatures: &[WorkflowSignature],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    report_duplicate_type_decls(workflow, diagnostics);
+    // resolve declared type names (ignoring cycle errors, which lowering reports) so
     // parameter and annotation types referencing them type-check against the resolved shape.
     let named = resolve_named_types(&workflow.type_decls).unwrap_or_default();
     let input = workflow
@@ -30,12 +48,133 @@ pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
         .as_ref()
         .and_then(|type_expr| lower_type_with(type_expr, &named).ok())
         .unwrap_or(RuninatorType::Any);
+    let provider_actions = provider_actions(providers);
+    let workflow_signatures = workflow_signatures
+        .iter()
+        .cloned()
+        .map(|signature| (signature.name.clone(), signature))
+        .collect::<HashMap<_, _>>();
+    let node_outputs = node_output_types(
+        &workflow.body,
+        &provider_actions,
+        &named,
+        &workflow_signatures,
+    );
     let mut env = Env {
         input,
         named,
+        provider_actions: provider_actions
+            .iter()
+            .map(|(key, value)| (key.clone(), (*value).clone()))
+            .collect(),
+        provider_catalog_present: !providers.is_empty(),
+        type_policy,
+        workflow_signatures,
         scope: Vec::new(),
+        node_outputs,
     };
     check_block(&workflow.body, &mut env, diagnostics);
+}
+
+fn report_duplicate_type_decls(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
+    let mut seen = HashSet::new();
+    for decl in &workflow.type_decls {
+        if !seen.insert(decl.name.as_str()) {
+            diagnostics.push(Diagnostic::error(
+                decl.span,
+                format!("duplicate type declaration '{}'", decl.name),
+            ));
+        }
+    }
+}
+
+fn provider_actions(
+    providers: &[ProviderMetadata],
+) -> HashMap<(String, String), &runinator_models::providers::ActionMetadata> {
+    providers
+        .iter()
+        .flat_map(|provider| {
+            provider.actions.iter().map(move |action| {
+                (
+                    (provider.name.clone(), action.function_name.clone()),
+                    action,
+                )
+            })
+        })
+        .collect()
+}
+
+fn node_output_types(
+    block: &Block,
+    provider_actions: &HashMap<(String, String), &ActionMetadata>,
+    named: &NamedTypes,
+    workflow_signatures: &HashMap<String, WorkflowSignature>,
+) -> HashMap<String, RuninatorType> {
+    let mut out = HashMap::new();
+    collect_node_output_types(
+        block,
+        provider_actions,
+        named,
+        workflow_signatures,
+        &mut out,
+    );
+    out
+}
+
+fn collect_node_output_types(
+    block: &Block,
+    provider_actions: &HashMap<(String, String), &ActionMetadata>,
+    named: &NamedTypes,
+    workflow_signatures: &HashMap<String, WorkflowSignature>,
+    out: &mut HashMap<String, RuninatorType>,
+) {
+    for stmt in block {
+        if let Some(id) = super::effective_id(stmt) {
+            let ty = stmt
+                .label_type
+                .as_ref()
+                .and_then(|ty| lower_type_with(ty, named).ok())
+                .or_else(|| match &stmt.kind {
+                    StmtKind::Action(action) => provider_actions
+                        .get(&(action.provider.clone(), action.function.clone()))
+                        .filter(|metadata| !metadata.results.is_empty())
+                        .map(|metadata| metadata.results_type()),
+                    StmtKind::Subflow(subflow) => Some(subflow_output_type(
+                        subflow,
+                        workflow_signatures.get(&subflow.workflow_name),
+                    )),
+                    _ => None,
+                });
+            if let Some(ty) = ty {
+                out.insert(id.to_string(), ty);
+            }
+        }
+        for child in super::child_blocks(&stmt.kind) {
+            collect_node_output_types(child, provider_actions, named, workflow_signatures, out);
+        }
+    }
+}
+
+fn subflow_output_type(
+    subflow: &SubflowStmt,
+    signature: Option<&WorkflowSignature>,
+) -> RuninatorType {
+    let state = if subflow.detached {
+        RuninatorType::Any
+    } else {
+        signature
+            .map(|signature| signature.output.clone())
+            .unwrap_or(RuninatorType::Any)
+    };
+    RuninatorType::structure([
+        ("subflow_run_id", RuninatorType::String),
+        ("subflow_workflow_id", RuninatorType::String),
+        ("run_name", RuninatorType::String),
+        ("reused", RuninatorType::Boolean),
+        ("status", RuninatorType::String),
+        ("state", state),
+        ("parameters", RuninatorType::Any),
+    ])
 }
 
 fn check_block(block: &Block, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
@@ -45,8 +184,10 @@ fn check_block(block: &Block, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) 
 }
 
 fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
+    check_label_type(stmt, env, diagnostics);
     match &stmt.kind {
         StmtKind::Action(action) => {
+            check_action(action, stmt.span, env, diagnostics);
             for (_, value) in &action.args {
                 check_expr(value, env, diagnostics);
             }
@@ -57,6 +198,7 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
             env.scope.truncate(base);
         }
         StmtKind::Subflow(subflow) => {
+            check_subflow(subflow, stmt.span, env, diagnostics);
             if let Some(run_name) = &subflow.run_name {
                 check_expr(run_name, env, diagnostics);
             }
@@ -174,6 +316,111 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
     }
 }
 
+fn check_label_type(stmt: &Stmt, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(label_type) = &stmt.label_type else {
+        return;
+    };
+    let declared = lower_type_with(label_type, &env.named).unwrap_or(RuninatorType::Any);
+    let inferred = match &stmt.kind {
+        StmtKind::Action(action) => env
+            .provider_actions
+            .get(&(action.provider.clone(), action.function.clone()))
+            .map(ActionMetadata::results_type),
+        StmtKind::Subflow(subflow) => Some(subflow_output_type(
+            subflow,
+            env.workflow_signatures.get(&subflow.workflow_name),
+        )),
+        _ => None,
+    };
+    if let Some(inferred) = inferred {
+        check_assignable(
+            &inferred,
+            &declared,
+            "node output annotation",
+            stmt.span,
+            diagnostics,
+        );
+    }
+}
+
+fn check_action(action: &ActionStmt, span: Span, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
+    let key = (action.provider.clone(), action.function.clone());
+    let Some(metadata) = env.provider_actions.get(&key) else {
+        if env.provider_catalog_present && env.type_policy == TypePolicy::Strict {
+            diagnostics.push(Diagnostic::error(
+                span,
+                format!(
+                    "unknown provider action '{}.{}'",
+                    action.provider, action.function
+                ),
+            ));
+        }
+        return;
+    };
+
+    let params = metadata
+        .parameters
+        .iter()
+        .map(|param| (param.name.as_str(), param))
+        .collect::<HashMap<_, _>>();
+    for param in &metadata.parameters {
+        if param.required && action.args.iter().all(|(name, _)| name != &param.name) {
+            diagnostics.push(Diagnostic::error(
+                span,
+                format!(
+                    "action '{}.{}' is missing required parameter '{}'",
+                    action.provider, action.function, param.name
+                ),
+            ));
+        }
+    }
+    for (name, value) in &action.args {
+        let Some(param) = params.get(name.as_str()) else {
+            diagnostics.push(Diagnostic::error(
+                value.span,
+                format!(
+                    "unknown parameter '{}' for action '{}.{}'",
+                    name, action.provider, action.function
+                ),
+            ));
+            continue;
+        };
+        let actual = infer_expr(value, env, diagnostics);
+        check_assignable(
+            &actual,
+            &param.ty,
+            &format!("action parameter '{}'", param.name),
+            value.span,
+            diagnostics,
+        );
+    }
+}
+
+fn check_subflow(subflow: &SubflowStmt, span: Span, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(signature) = env.workflow_signatures.get(&subflow.workflow_name) else {
+        if env.type_policy == TypePolicy::Strict {
+            diagnostics.push(Diagnostic::error(
+                span,
+                format!("unknown subflow target '{}'", subflow.workflow_name),
+            ));
+        }
+        return;
+    };
+    let actual = RuninatorType::structure(
+        subflow
+            .params
+            .iter()
+            .map(|(name, value)| (name.clone(), infer_expr(value, env, diagnostics))),
+    );
+    check_assignable(
+        &actual,
+        &signature.input,
+        &format!("subflow '{}' parameters", subflow.workflow_name),
+        span,
+        diagnostics,
+    );
+}
+
 /// require an iterable source and return its element type (`Any` when unknown).
 fn check_iterable(
     items: &Expr,
@@ -203,7 +450,16 @@ fn check_cond(cond: &Cond, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
         CondKind::Not(inner) => check_cond(inner, env, diagnostics),
-        CondKind::Expr(expr) => check_expr(expr, env, diagnostics),
+        CondKind::Expr(expr) => {
+            let ty = infer_expr(expr, env, diagnostics);
+            check_assignable(
+                &ty,
+                &RuninatorType::Boolean,
+                "condition",
+                expr.span,
+                diagnostics,
+            );
+        }
         CondKind::Exists(expr) => check_expr(expr, env, diagnostics),
         CondKind::Cmp { left, op, right } => {
             let left_ty = infer_expr(left, env, diagnostics);
@@ -256,14 +512,34 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(part, env, diagnostics);
             }
         }
-        ExprKind::ToJson(inner) | ExprKind::Neg(inner) => check_expr(inner, env, diagnostics),
+        ExprKind::ToJson(inner) => {
+            let ty = infer_expr(inner, env, diagnostics);
+            if !matches!(
+                ty,
+                RuninatorType::Array(_)
+                    | RuninatorType::Map(_)
+                    | RuninatorType::Struct { .. }
+                    | RuninatorType::Any
+                    | RuninatorType::Union(_)
+            ) {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!("json() expects a composite value, got {}", ty.describe()),
+                ));
+            }
+        }
+        ExprKind::Neg(inner) => {
+            let ty = infer_expr(inner, env, diagnostics);
+            require_numeric(&ty, inner.span, diagnostics);
+        }
         ExprKind::Add(parts)
         | ExprKind::Sub(parts)
         | ExprKind::Mul(parts)
         | ExprKind::Div(parts)
         | ExprKind::Mod(parts) => {
             for part in parts {
-                check_expr(part, env, diagnostics);
+                let ty = infer_expr(part, env, diagnostics);
+                require_numeric(&ty, part.span, diagnostics);
             }
         }
         ExprKind::Compare { left, right, .. } => {
@@ -271,9 +547,26 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
             check_expr(right, env, diagnostics);
         }
         ExprKind::Ternary { cond, then, els } => {
-            check_expr(cond, env, diagnostics);
-            check_expr(then, env, diagnostics);
-            check_expr(els, env, diagnostics);
+            let cond_ty = infer_expr(cond, env, diagnostics);
+            check_assignable(
+                &cond_ty,
+                &RuninatorType::Boolean,
+                "ternary condition",
+                cond.span,
+                diagnostics,
+            );
+            let then_ty = infer_expr(then, env, diagnostics);
+            let els_ty = infer_expr(els, env, diagnostics);
+            if common_type(&then_ty, &els_ty).is_none() {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!(
+                        "ternary branches have incompatible types {} and {}",
+                        then_ty.describe(),
+                        els_ty.describe()
+                    ),
+                ));
+            }
         }
         ExprKind::Call {
             name, args, named, ..
@@ -380,15 +673,59 @@ fn check_assignable(
     if matches!(actual, RuninatorType::Any) || matches!(expected, RuninatorType::Any) {
         return;
     }
-    if actual.validate_assignable_to(expected).is_err() {
-        diagnostics.push(Diagnostic::error(
-            span,
-            format!(
-                "{label} expects {}, got {}",
-                expected.describe(),
-                actual.describe()
-            ),
-        ));
+    if let Err(violation) = validate_author_assignable(actual, expected) {
+        diagnostics.push(Diagnostic::error(span, violation.message_with_label(label)));
+    }
+}
+
+fn validate_author_assignable(
+    actual: &RuninatorType,
+    expected: &RuninatorType,
+) -> Result<(), runinator_models::types::TypeViolation> {
+    if matches!(actual, RuninatorType::Any) || matches!(expected, RuninatorType::Any) {
+        return Ok(());
+    }
+    match (actual, expected) {
+        (
+            RuninatorType::Struct {
+                fields: actual_fields,
+                additional: actual_additional,
+            },
+            RuninatorType::Struct {
+                fields: expected_fields,
+                additional: expected_additional,
+            },
+        ) => {
+            for (key, expected_field) in expected_fields {
+                let Some(actual_field) = actual_fields.get(key) else {
+                    if expected_field.required {
+                        return actual.validate_assignable_to(expected);
+                    }
+                    continue;
+                };
+                validate_author_assignable(&actual_field.ty, &expected_field.ty)?;
+            }
+            for (key, actual_field) in actual_fields {
+                if expected_fields.contains_key(key) {
+                    continue;
+                }
+                let Some(expected_additional) = expected_additional else {
+                    return actual.validate_assignable_to(expected);
+                };
+                validate_author_assignable(&actual_field.ty, expected_additional)?;
+            }
+            if let (Some(actual_additional), Some(expected_additional)) =
+                (actual_additional, expected_additional)
+            {
+                validate_author_assignable(actual_additional, expected_additional)?;
+            }
+            Ok(())
+        }
+        (RuninatorType::Array(actual), RuninatorType::Array(expected))
+        | (RuninatorType::Map(actual), RuninatorType::Map(expected)) => {
+            validate_author_assignable(actual, expected)
+        }
+        _ => actual.validate_assignable_to(expected),
     }
 }
 
@@ -405,15 +742,43 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ExprKind::Concat(_) => RuninatorType::String,
         ExprKind::ToString(_) => RuninatorType::String,
         ExprKind::ToJson(_) => RuninatorType::String,
-        ExprKind::Coalesce(_) => RuninatorType::Any,
+        ExprKind::Coalesce(parts) => {
+            let mut resolved = None;
+            for part in parts {
+                let ty = infer_expr(part, env, diagnostics);
+                if ty == RuninatorType::Null {
+                    continue;
+                }
+                resolved = Some(match resolved {
+                    None => ty,
+                    Some(existing) => common_type(&existing, &ty).unwrap_or(RuninatorType::Any),
+                });
+            }
+            resolved.unwrap_or(RuninatorType::Null)
+        }
         ExprKind::Array(items) => {
             let mut element: Option<RuninatorType> = None;
             for item in items {
                 let item_ty = infer_expr(item, env, diagnostics);
                 match &element {
                     None => element = Some(item_ty),
-                    Some(existing) if *existing == item_ty => {}
-                    Some(_) => return RuninatorType::array(RuninatorType::Any),
+                    Some(existing) => {
+                        if let Some(common) = common_type(existing, &item_ty) {
+                            element = Some(common);
+                        } else {
+                            if env.type_policy == TypePolicy::Strict {
+                                diagnostics.push(Diagnostic::error(
+                                    item.span,
+                                    format!(
+                                        "array item type {} is incompatible with {}",
+                                        item_ty.describe(),
+                                        existing.describe()
+                                    ),
+                                ));
+                            }
+                            return RuninatorType::array(RuninatorType::Any);
+                        }
+                    }
                 }
             }
             RuninatorType::array(element.unwrap_or(RuninatorType::Any))
@@ -425,23 +790,26 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ),
         ExprKind::Path(segs) => infer_path(segs, env, expr.span, diagnostics),
         // arithmetic yields a number; intrinsic call results are author-time opaque.
-        ExprKind::Add(_)
-        | ExprKind::Sub(_)
-        | ExprKind::Mul(_)
-        | ExprKind::Div(_)
-        | ExprKind::Mod(_)
-        | ExprKind::Neg(_) => RuninatorType::Number,
+        ExprKind::Add(parts)
+        | ExprKind::Sub(parts)
+        | ExprKind::Mul(parts)
+        | ExprKind::Div(parts)
+        | ExprKind::Mod(parts) => numeric_result_type(parts, env, diagnostics),
+        ExprKind::Neg(inner) => {
+            let ty = infer_expr(inner, env, diagnostics);
+            if ty == RuninatorType::Integer {
+                RuninatorType::Integer
+            } else {
+                RuninatorType::Number
+            }
+        }
         // a relational comparison resolves to a boolean.
         ExprKind::Compare { .. } => RuninatorType::Boolean,
         // a ternary resolves to its branches' common type, or `any` when they differ.
         ExprKind::Ternary { then, els, .. } => {
             let then_ty = infer_expr(then, env, diagnostics);
             let els_ty = infer_expr(els, env, diagnostics);
-            if then_ty == els_ty {
-                then_ty
-            } else {
-                RuninatorType::Any
-            }
+            common_type(&then_ty, &els_ty).unwrap_or(RuninatorType::Any)
         }
         // a call's result type comes from the intrinsic signature or, for higher-order intrinsics,
         // from the collection and lambda argument types.
@@ -613,6 +981,12 @@ fn common_type(left: &RuninatorType, right: &RuninatorType) -> Option<RuninatorT
     if left == right {
         return Some(left.clone());
     }
+    if let RuninatorType::Range { base, .. } = left {
+        return common_type(base, right);
+    }
+    if let RuninatorType::Range { base, .. } = right {
+        return common_type(left, base);
+    }
     if matches!(left, RuninatorType::Any) || matches!(right, RuninatorType::Any) {
         return Some(RuninatorType::Any);
     }
@@ -620,6 +994,25 @@ fn common_type(left: &RuninatorType, right: &RuninatorType) -> Option<RuninatorT
         return Some(RuninatorType::Number);
     }
     None
+}
+
+fn numeric_result_type(
+    parts: &[Expr],
+    env: &Env,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> RuninatorType {
+    let mut all_integer = true;
+    for part in parts {
+        let ty = infer_expr(part, env, diagnostics);
+        if !matches!(ty, RuninatorType::Integer | RuninatorType::Duration) {
+            all_integer = false;
+        }
+    }
+    if all_integer {
+        RuninatorType::Integer
+    } else {
+        RuninatorType::Number
+    }
 }
 
 fn infer_lambda_type(
@@ -673,12 +1066,15 @@ fn infer_path(
         return RuninatorType::Any;
     };
     let rest = &segs[1..];
-    // a loop/map variable shadows everything else; params is the only other typed root.
+    // a loop/map variable shadows everything else; params and typed node outputs follow.
     if let Some((_, ty)) = env.scope.iter().rev().find(|(name, _)| name == head) {
         return navigate(ty.clone(), rest, head, span, diagnostics);
     }
     if head == "params" {
         return navigate(env.input.clone(), rest, head, span, diagnostics);
+    }
+    if let Some(ty) = env.node_outputs.get(head) {
+        return navigate(ty.clone(), rest, head, span, diagnostics);
     }
     // prev/run/node references are opaque author-time.
     RuninatorType::Any
@@ -736,10 +1132,14 @@ fn navigate(
 }
 
 fn require_orderable(ty: &RuninatorType, span: Span, diagnostics: &mut Vec<Diagnostic>) {
+    if let RuninatorType::Range { base, .. } = ty {
+        return require_orderable(base, span, diagnostics);
+    }
     let orderable = matches!(
         ty,
         RuninatorType::Integer
             | RuninatorType::Number
+            | RuninatorType::Duration
             | RuninatorType::String
             | RuninatorType::Any
             | RuninatorType::Union(_)
@@ -748,6 +1148,25 @@ fn require_orderable(ty: &RuninatorType, span: Span, diagnostics: &mut Vec<Diagn
         diagnostics.push(Diagnostic::error(
             span,
             format!("cannot order operand of type {}", ty.describe()),
+        ));
+    }
+}
+
+fn require_numeric(ty: &RuninatorType, span: Span, diagnostics: &mut Vec<Diagnostic>) {
+    if let RuninatorType::Range { base, .. } = ty {
+        return require_numeric(base, span, diagnostics);
+    }
+    if !matches!(
+        ty,
+        RuninatorType::Integer
+            | RuninatorType::Number
+            | RuninatorType::Duration
+            | RuninatorType::Any
+            | RuninatorType::Union(_)
+    ) {
+        diagnostics.push(Diagnostic::error(
+            span,
+            format!("arithmetic operand must be numeric, got {}", ty.describe()),
         ));
     }
 }

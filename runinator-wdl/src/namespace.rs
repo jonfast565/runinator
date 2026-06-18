@@ -373,12 +373,13 @@ fn resolve_type_defaults(ty: &mut TypeExpr, scope: &Scope) -> Result<(), WdlErro
             }
         }
         TypeExpr::Array(inner) | TypeExpr::Map(inner) => resolve_type_defaults(inner, scope)?,
+        TypeExpr::Range { base, .. } => resolve_type_defaults(base, scope)?,
         TypeExpr::Union(variants) => {
             for variant in variants.iter_mut() {
                 resolve_type_defaults(variant, scope)?;
             }
         }
-        TypeExpr::Named(_) => {}
+        TypeExpr::Named(_) | TypeExpr::Enum(_) => {}
     }
     Ok(())
 }

@@ -239,10 +239,19 @@ impl McpServer {
                 // a full pack: one or more WDL sources plus optional `.wdls` secrets, compiled
                 // client-side into a single pack zip.
                 let sources = collect_wdl_sources(&arguments)?;
+                let workflow_signatures = sources
+                    .iter()
+                    .flat_map(|source| {
+                        runinator_wdl::workflow_signature_from_source(source).unwrap_or_default()
+                    })
+                    .collect::<Vec<_>>();
                 let options = runinator_wdl::CompileOptions {
                     enabled: true,
                     default_version: runinator_models::semver::SemVer::default(),
                     source_dir: None,
+                    providers: runinator_provider_catalog::metadata(),
+                    workflow_signatures,
+                    ..runinator_wdl::CompileOptions::default()
                 };
                 let mut workflows = Vec::with_capacity(sources.len());
                 for source in &sources {

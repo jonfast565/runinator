@@ -12,6 +12,7 @@ use runinator_models::{
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
+use runinator_wdl::WorkflowSignature;
 use serde::Serialize;
 use tauri::State;
 
@@ -336,10 +337,22 @@ fn compile_wdl(
     data: &str,
     default_version: SemVer,
 ) -> CommandResult<WorkflowDefinition> {
+    compile_wdl_with_signatures(path, data, default_version, &[])
+}
+
+fn compile_wdl_with_signatures(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+    workflow_signatures: &[WorkflowSignature],
+) -> CommandResult<WorkflowDefinition> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
+        providers: runinator_provider_catalog::metadata(),
+        workflow_signatures: workflow_signatures.to_vec(),
+        ..runinator_wdl::CompileOptions::default()
     };
     let formatted = runinator_wdl::format_str(data).map_err(|err| {
         command_error(format!(
@@ -359,6 +372,24 @@ fn compile_wdl(
     Ok(definition)
 }
 
+fn collect_workflow_signatures(paths: &[PathBuf]) -> CommandResult<Vec<WorkflowSignature>> {
+    let mut signatures = Vec::new();
+    for path in paths {
+        let data =
+            fs::read_to_string(path).map_err(|err| CommandError::Unexpected(err.to_string()))?;
+        let mut source_signatures =
+            runinator_wdl::workflow_signature_from_source(&data).map_err(|err| {
+                command_error(format!(
+                    "failed to read workflow signature from {}:\n{}",
+                    path.display(),
+                    err.render(&data)
+                ))
+            })?;
+        signatures.append(&mut source_signatures);
+    }
+    Ok(signatures)
+}
+
 fn load_wdl_directory(dir: &Path) -> CommandResult<WorkflowBundle> {
     let wdl_paths = wdl_directory_paths(dir)?;
     if wdl_paths.is_empty() {
@@ -367,11 +398,17 @@ fn load_wdl_directory(dir: &Path) -> CommandResult<WorkflowBundle> {
             dir.display()
         )));
     }
+    let workflow_signatures = collect_workflow_signatures(&wdl_paths)?;
     let mut workflows = Vec::with_capacity(wdl_paths.len());
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)
             .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-        workflows.push(compile_wdl(wdl_path, &data, SemVer::default())?);
+        workflows.push(compile_wdl_with_signatures(
+            wdl_path,
+            &data,
+            SemVer::default(),
+            &workflow_signatures,
+        )?);
     }
     Ok(WorkflowBundle {
         workflows,
@@ -410,11 +447,17 @@ fn load_wdl_pack_manifest(path: &Path) -> CommandResult<WorkflowBundle> {
         .unwrap_or_default();
     let paths = wdl_pack_manifest_paths_from_value(path, &manifest)?;
 
+    let workflow_signatures = collect_workflow_signatures(&paths)?;
     let mut workflows = Vec::with_capacity(paths.len());
     for wdl_path in paths {
         let source = fs::read_to_string(&wdl_path)
             .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-        workflows.push(compile_wdl(&wdl_path, &source, version)?);
+        workflows.push(compile_wdl_with_signatures(
+            &wdl_path,
+            &source,
+            version,
+            &workflow_signatures,
+        )?);
     }
 
     let triggers = match manifest.get("triggers").cloned() {

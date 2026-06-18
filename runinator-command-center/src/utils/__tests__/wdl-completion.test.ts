@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { CompletionContext } from "@codemirror/autocomplete";
+import { EditorState } from "@codemirror/state";
+import { wdlCompletion, wdlStaticCompletionLabels } from "../codemirror-lang-wdl";
 import {
   buildWdlCompletionRequest,
   completionResponseToCodeMirror,
@@ -82,6 +85,47 @@ describe("wdl completion adapter", () => {
     expect(utf8ByteOffsetToUtf16Offset(source, byteOffset)).toBe(offset);
   });
 });
+
+describe("wdl language completions", () => {
+  it("includes recent workflow language surfaces in the static vocabulary", () => {
+    expect(wdlStaticCompletionLabels).toEqual(expect.arrayContaining([
+      "fn",
+      "import std",
+      "returns",
+      "watch",
+      "gate condition",
+      "signal",
+      "compensate",
+      "enum",
+      "range",
+      "lambda"
+    ]));
+  });
+
+  it("completes std modules and module functions without provider metadata", async () => {
+    const modules = await completeLabels("workflow \"x\" { node compute { return std.<> }");
+    expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
+
+    const functions = await completeLabels("workflow \"x\" { node compute { return std.strings.<> }");
+    expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
+    expect(functions).toContain("upper");
+    expect(functions).not.toContain("http_get");
+  });
+
+  it("completes fluent method names after a value dot", async () => {
+    const labels = await completeLabels("workflow \"x\" { node console.run(command: params.name.<> }");
+
+    expect(labels).toEqual(expect.arrayContaining(["upper", "trim", "map", "http_get"]));
+  });
+});
+
+async function completeLabels(source: string): Promise<string[]> {
+  const cursor = source.indexOf("<>");
+  const doc = cursor >= 0 ? source.replace("<>", "") : source;
+  const state = EditorState.create({ doc });
+  const result = await wdlCompletion(new CompletionContext(state, cursor >= 0 ? cursor : doc.length, true));
+  return result?.options.map((option) => option.label) ?? [];
+}
 
 function provider(): ProviderMetadata {
   return {

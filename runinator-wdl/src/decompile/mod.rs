@@ -100,10 +100,14 @@ pub fn decompile_definition(
     // top-level `fn` definitions render before the workflow block (document = func_def* ~ workflow).
     decompiler.emit_functions(&read_functions(&graph.metadata))?;
 
+    let returns = read_output_type(&graph.metadata)
+        .map(|ty| format!(" returns {}", expr::render_type(&ty)))
+        .unwrap_or_default();
     decompiler.line(&format!(
-        "workflow {} v{} {{",
+        "workflow {} v{}{} {{",
         quote(&definition.name),
-        definition.version
+        definition.version,
+        returns
     ));
     decompiler.indent += 1;
     decompiler.emit_params(&definition.input_type)?;
@@ -221,6 +225,11 @@ fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
                 .map(|ty| (name.clone(), expr::render_type(&ty)))
         })
         .collect()
+}
+
+fn read_output_type(metadata: &Value) -> Option<runinator_models::types::RuninatorType> {
+    let value = metadata.pointer("/wdl/output_type")?.clone();
+    serde_json::from_value(value.into()).ok()
 }
 
 /// recover surface-form overrides for top-level workflow parameter fields at `/wdl/input_types`.

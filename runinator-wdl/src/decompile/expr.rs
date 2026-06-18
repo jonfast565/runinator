@@ -473,7 +473,22 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
         RuninatorType::Boolean => "boolean".into(),
         RuninatorType::Integer => "integer".into(),
         RuninatorType::Number => "number".into(),
+        RuninatorType::Duration => "duration".into(),
         RuninatorType::String => "string".into(),
+        RuninatorType::Enum(values) => format!(
+            "enum[{}]",
+            values
+                .iter()
+                .map(render_type_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        RuninatorType::Range { base, min, max } => format!(
+            "{} range {}..{}",
+            render_type(base),
+            min.as_ref().map(render_type_value).unwrap_or_default(),
+            max.as_ref().map(render_type_value).unwrap_or_default()
+        ),
         RuninatorType::Any => "any".into(),
         RuninatorType::Array(inner) => format!("{}[]", render_type(inner)),
         RuninatorType::Map(inner) => format!("map<{}>", render_type(inner)),
@@ -495,6 +510,13 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
             }
             format!("{{ {} }}", parts.join(", "))
         }
+    }
+}
+
+fn render_type_value(value: &runinator_models::value::Value) -> String {
+    match value {
+        runinator_models::value::Value::String(text) => quote(text),
+        other => other.to_string(),
     }
 }
 

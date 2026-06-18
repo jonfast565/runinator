@@ -310,6 +310,11 @@ function matchesType(value: unknown, ty: RuninatorType): boolean {
   if (ty.type === "boolean") return typeof value === "boolean";
   if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value);
   if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value);
+  if (ty.type === "duration") return typeof value === "number" && Number.isInteger(value);
+  if (ty.type === "enum") return ty.values.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value));
+  if (ty.type === "range") return matchesType(value, ty.base)
+    && (ty.min === undefined || (typeof value === "number" && value >= ty.min))
+    && (ty.max === undefined || (typeof value === "number" && value <= ty.max));
   if (ty.type === "array") return Array.isArray(value);
   if (ty.type === "map" || ty.type === "struct") return isPlainRecord(value);
   if (ty.type === "union") return ty.variants.some((variant) => matchesType(value, variant));
@@ -319,7 +324,9 @@ function matchesType(value: unknown, ty: RuninatorType): boolean {
 function defaultValueForType(ty: RuninatorType): unknown {
   if (ty.type === "string") return "";
   if (ty.type === "boolean") return false;
-  if (ty.type === "integer" || ty.type === "number") return 0;
+  if (ty.type === "integer" || ty.type === "number" || ty.type === "duration") return 0;
+  if (ty.type === "enum") return ty.values[0] ?? null;
+  if (ty.type === "range") return ty.min ?? defaultValueForType(ty.base);
   if (ty.type === "array") return [];
   if (ty.type === "map" || ty.type === "struct") return {};
   if (ty.type === "union") return defaultValueForType(ty.variants[0] ?? { type: "any" });
@@ -336,6 +343,8 @@ function describeType(ty: RuninatorType | undefined, depth = 0): string {
   if (ty.type === "array") return `${describeType(ty.items, depth + 1)}[]`;
   if (ty.type === "map") return `map<string, ${describeType(ty.values, depth + 1)}>`;
   if (ty.type === "union") return ty.variants.map((variant) => describeType(variant, depth + 1)).join(" | ");
+  if (ty.type === "enum") return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+  if (ty.type === "range") return `${describeType(ty.base, depth + 1)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
   if (ty.type !== "struct") return ty.type;
   const entries = Object.entries(ty.fields);
   if (depth > 0 || entries.length > 3) return "struct";

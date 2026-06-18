@@ -153,6 +153,8 @@ function describeType(ty: RuninatorType | undefined, depth = 0): string {
   if (ty.type === "array") return `${describeType(ty.items, depth + 1)}[]`;
   if (ty.type === "map") return `map<string, ${describeType(ty.values, depth + 1)}>`;
   if (ty.type === "union") return ty.variants.map((variant) => describeType(variant, depth + 1)).join(" | ");
+  if (ty.type === "enum") return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+  if (ty.type === "range") return `${describeType(ty.base, depth + 1)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
   if (ty.type !== "struct") return ty.type;
   const entries = Object.entries(ty.fields);
   if (depth > 0 || entries.length > 3) return "struct";
@@ -199,6 +201,15 @@ function validateValueType(value: unknown, ty: RuninatorType | undefined, label:
   if (ty.type === "boolean") return typeof value === "boolean" ? "" : `${label} must be true or false`;
   if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be an integer`;
   if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value) ? "" : `${label} must be a number`;
+  if (ty.type === "duration") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be a duration in seconds`;
+  if (ty.type === "enum") return ty.values.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value)) ? "" : `${label} must be one of ${describeType(ty)}`;
+  if (ty.type === "range") {
+    const baseError = validateValueType(value, ty.base, label);
+    if (baseError) return baseError;
+    if (typeof value === "number" && ty.min !== undefined && value < ty.min) return `${label} must be at least ${ty.min}`;
+    if (typeof value === "number" && ty.max !== undefined && value > ty.max) return `${label} must be at most ${ty.max}`;
+    return "";
+  }
   if (ty.type === "array") {
     if (!Array.isArray(value)) return `${label} must be a list`;
     for (let i = 0; i < value.length; i++) {

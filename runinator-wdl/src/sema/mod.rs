@@ -17,6 +17,9 @@ mod types;
 
 use crate::ast::{Block, Document, Stmt, StmtKind};
 use crate::errors::Span;
+use runinator_models::providers::ProviderMetadata;
+
+use crate::{TypePolicy, WorkflowSignature};
 
 /// whether a diagnostic blocks compilation or is merely advisory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +69,23 @@ impl Diagnostic {
 
 /// run every semantic pass and collect their diagnostics in priority order.
 pub fn analyze(document: &Document) -> Vec<Diagnostic> {
+    analyze_with_providers(document, &[])
+}
+
+/// run semantic analysis with provider metadata for action result typing.
+pub fn analyze_with_providers(
+    document: &Document,
+    providers: &[ProviderMetadata],
+) -> Vec<Diagnostic> {
+    analyze_with_options(document, providers, TypePolicy::Strict, &[])
+}
+
+pub fn analyze_with_options(
+    document: &Document,
+    providers: &[ProviderMetadata],
+    type_policy: TypePolicy,
+    workflow_signatures: &[WorkflowSignature],
+) -> Vec<Diagnostic> {
     let workflow = &document.workflow;
     let mut diagnostics = Vec::new();
 
@@ -74,7 +94,13 @@ pub fn analyze(document: &Document) -> Vec<Diagnostic> {
     // pass 1+2: build the label table, then resolve references and scopes against it.
     scope::analyze(workflow, &document.functions, &mut diagnostics);
     // pass 3: type-check expressions, conditions, and `let` annotations.
-    types::analyze(workflow, &mut diagnostics);
+    types::analyze(
+        workflow,
+        providers,
+        type_policy,
+        workflow_signatures,
+        &mut diagnostics,
+    );
     // pass 4: flag structurally unreachable statements (warnings only).
     reachability::analyze(workflow, &mut diagnostics);
 

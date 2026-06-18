@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -147,7 +148,14 @@ pub enum RuninatorType {
     Boolean,
     Integer,
     Number,
+    Duration,
     String,
+    Enum(Vec<Value>),
+    Range {
+        base: Box<RuninatorType>,
+        min: Option<Value>,
+        max: Option<Value>,
+    },
     Array(Box<RuninatorType>),
     Map(Box<RuninatorType>),
     Struct {
@@ -224,7 +232,7 @@ impl RuninatorType {
             return Self::from_json_value(value);
         }
         if let Some(values) = object.get("enum").and_then(Value::as_array) {
-            return Self::dedupe_union(values.iter().map(Self::from_json_value));
+            return Self::Enum(values.clone());
         }
         if let Some(variants) = object.get("oneOf").and_then(Value::as_array) {
             return Self::dedupe_union(variants.iter().map(Self::from_json_schema));
@@ -265,6 +273,18 @@ impl RuninatorType {
             Some("object") => Self::from_object_schema(object),
             _ => Self::Any,
         };
+        if matches!(schema_type, Some("integer"))
+            && object.get("format").and_then(Value::as_str) == Some("duration-seconds")
+        {
+            ty = Self::Duration;
+        }
+        if object.contains_key("minimum") || object.contains_key("maximum") {
+            ty = Self::Range {
+                base: Box::new(ty),
+                min: object.get("minimum").cloned(),
+                max: object.get("maximum").cloned(),
+            };
+        }
         if matches!(object.get("nullable"), Some(Value::Bool(true))) && ty != Self::Null {
             ty = Self::dedupe_union([ty, Self::Null]);
         }
@@ -282,7 +302,21 @@ impl RuninatorType {
             Self::Boolean => crate::json!({ "type": "boolean" }),
             Self::Integer => crate::json!({ "type": "integer" }),
             Self::Number => crate::json!({ "type": "number" }),
+            Self::Duration => crate::json!({ "type": "integer", "format": "duration-seconds" }),
             Self::String => crate::json!({ "type": "string" }),
+            Self::Enum(values) => crate::json!({ "enum": values }),
+            Self::Range { base, min, max } => {
+                let mut object = base.to_json_schema();
+                if let Value::Object(map) = &mut object {
+                    if let Some(min) = min {
+                        map.insert("minimum".into(), min.clone());
+                    }
+                    if let Some(max) = max {
+                        map.insert("maximum".into(), max.clone());
+                    }
+                }
+                object
+            }
             Self::Array(items) => crate::json!({
                 "type": "array",
                 "items": items.to_json_schema(),
@@ -324,7 +358,10 @@ impl RuninatorType {
             Self::Boolean => "boolean",
             Self::Integer => "integer",
             Self::Number => "number",
+            Self::Duration => "duration",
             Self::String => "string",
+            Self::Enum(_) => "enum",
+            Self::Range { .. } => "range",
             Self::Array(_) => "array",
             Self::Map(_) => "map",
             Self::Struct { .. } => "struct",
@@ -345,13 +382,13 @@ impl RuninatorType {
     }
 
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Self::Integer | Self::Number)
+        matches!(self, Self::Integer | Self::Number | Self::Duration)
     }
 
     pub fn is_primitive(&self) -> bool {
         matches!(
             self,
-            Self::Boolean | Self::Integer | Self::Number | Self::String
+            Self::Boolean | Self::Integer | Self::Number | Self::Duration | Self::String
         )
     }
 
@@ -374,7 +411,31 @@ impl RuninatorType {
             Self::Boolean if value.is_boolean() => Ok(()),
             Self::Integer if value.as_i64().is_some() || value.as_u64().is_some() => Ok(()),
             Self::Number if value.is_number() => Ok(()),
+            Self::Duration if value.as_i64().is_some() || value.as_u64().is_some() => Ok(()),
             Self::String if value.is_string() => Ok(()),
+            Self::Enum(values) if values.contains(value) => Ok(()),
+            Self::Range { base, min, max } => {
+                base.validate_value_at(value, path)?;
+                if let Some(min) = min
+                    && compare_values(value, min).is_some_and(|ordering| ordering.is_lt())
+                {
+                    return Err(TypeViolation::new(
+                        path,
+                        self.describe(),
+                        actual_type(value),
+                    ));
+                }
+                if let Some(max) = max
+                    && compare_values(value, max).is_some_and(|ordering| ordering.is_gt())
+                {
+                    return Err(TypeViolation::new(
+                        path,
+                        self.describe(),
+                        actual_type(value),
+                    ));
+                }
+                Ok(())
+            }
             Self::Array(item_type) => {
                 let Some(items) = value.as_array() else {
                     return Err(TypeViolation::new(
@@ -476,10 +537,73 @@ impl RuninatorType {
         if self == expected || matches!(expected, Self::Any) {
             return Ok(());
         }
-        if matches!((self, expected), (Self::Integer, Self::Number)) {
+        if matches!(
+            (self, expected),
+            (Self::Integer, Self::Number)
+                | (Self::Duration, Self::Integer)
+                | (Self::Duration, Self::Number)
+                | (Self::Integer, Self::Duration)
+        ) {
             return Ok(());
         }
         match (self, expected) {
+            (Self::Enum(actual), Self::Enum(expected_values)) => {
+                if actual.iter().all(|value| expected_values.contains(value)) {
+                    return Ok(());
+                }
+                Err(TypeViolation::new(
+                    path,
+                    expected.describe(),
+                    self.describe(),
+                ))
+            }
+            (Self::Enum(actual), expected) => {
+                for value in actual {
+                    expected.validate_value_at(value, path)?;
+                }
+                Ok(())
+            }
+            (actual, Self::Range { base, min, max }) => {
+                actual.validate_assignable_to_at(base, path)?;
+                match actual {
+                    Self::Range {
+                        min: actual_min,
+                        max: actual_max,
+                        ..
+                    } => {
+                        if !range_bounds_within(
+                            actual_min.as_ref(),
+                            actual_max.as_ref(),
+                            min.as_ref(),
+                            max.as_ref(),
+                        ) {
+                            return Err(TypeViolation::new(
+                                path,
+                                expected.describe(),
+                                actual.describe(),
+                            ));
+                        }
+                        Ok(())
+                    }
+                    Self::Enum(values) => {
+                        for value in values {
+                            Self::Range {
+                                base: base.clone(),
+                                min: min.clone(),
+                                max: max.clone(),
+                            }
+                            .validate_value_at(value, path)?;
+                        }
+                        Ok(())
+                    }
+                    _ => Err(TypeViolation::new(
+                        path,
+                        expected.describe(),
+                        actual.describe(),
+                    )),
+                }
+            }
+            (Self::Range { base, .. }, expected) => base.validate_assignable_to_at(expected, path),
             (Self::Array(actual), Self::Array(expected)) => {
                 path.push("[*]".into());
                 let result = actual.validate_assignable_to_at(expected, path);
@@ -789,8 +913,32 @@ impl RuninatorType {
             return Ok(Self::from_json_schema(&Value::Object(object.clone())));
         };
         match type_name {
-            "null" | "boolean" | "integer" | "number" | "string" | "any" | "json" => {
+            "null" | "boolean" | "integer" | "number" | "duration" | "string" | "any" | "json" => {
                 Self::from_type_name(type_name).ok_or_else(|| format!("unknown type '{type_name}'"))
+            }
+            "enum" => {
+                let values = object
+                    .get("values")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .ok_or_else(|| "enum values must be an array".to_string())?;
+                if values.is_empty() {
+                    return Err("enum values must not be empty".into());
+                }
+                Ok(Self::Enum(values))
+            }
+            "range" => {
+                let base = object
+                    .get("base")
+                    .cloned()
+                    .map(Self::from_native_value)
+                    .transpose()?
+                    .unwrap_or(Self::Integer);
+                Ok(Self::Range {
+                    base: Box::new(base),
+                    min: object.get("min").cloned(),
+                    max: object.get("max").cloned(),
+                })
             }
             "array" => Ok(Self::array(
                 object
@@ -856,6 +1004,7 @@ impl RuninatorType {
             "boolean" => Some(Self::Boolean),
             "integer" => Some(Self::Integer),
             "number" => Some(Self::Number),
+            "duration" => Some(Self::Duration),
             "string" => Some(Self::String),
             "any" | "json" => Some(Self::Any),
             _ => None,
@@ -888,7 +1037,25 @@ impl RuninatorType {
             Self::Boolean => crate::json!({ "type": "boolean" }),
             Self::Integer => crate::json!({ "type": "integer" }),
             Self::Number => crate::json!({ "type": "number" }),
+            Self::Duration => crate::json!({ "type": "duration" }),
             Self::String => crate::json!({ "type": "string" }),
+            Self::Enum(values) => crate::json!({
+                "type": "enum",
+                "values": values,
+            }),
+            Self::Range { base, min, max } => {
+                let mut object = Map::from_iter([
+                    ("type".into(), Value::String("range".into())),
+                    ("base".into(), base.to_native_value()),
+                ]);
+                if let Some(min) = min {
+                    object.insert("min".into(), min.clone());
+                }
+                if let Some(max) = max {
+                    object.insert("max".into(), max.clone());
+                }
+                Value::Object(object)
+            }
             Self::Array(items) => crate::json!({
                 "type": "array",
                 "items": items.to_native_value(),
@@ -949,6 +1116,14 @@ fn reject_unsupported_schema(schema: &Value, path: &str) -> Result<(), String> {
     ] {
         if object.contains_key(key) {
             return Err(format!("{path}.{key} is not supported"));
+        }
+    }
+    if let Some(values) = object.get("enum") {
+        let Some(values) = values.as_array() else {
+            return Err(format!("{path}.enum must be an array"));
+        };
+        if values.is_empty() {
+            return Err(format!("{path}.enum must not be empty"));
         }
     }
     if let Some(schema_type) = object.get("type") {
@@ -1048,4 +1223,37 @@ fn best_type_violation(current: Option<TypeViolation>, candidate: TypeViolation)
 
 fn path_specificity(path: &str) -> usize {
     path.matches('.').count() + path.matches('[').count()
+}
+
+fn compare_values(left: &Value, right: &Value) -> Option<Ordering> {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => left.as_f64()?.partial_cmp(&right.as_f64()?),
+        (Value::String(left), Value::String(right)) => Some(left.cmp(right)),
+        _ => None,
+    }
+}
+
+fn range_bounds_within(
+    actual_min: Option<&Value>,
+    actual_max: Option<&Value>,
+    expected_min: Option<&Value>,
+    expected_max: Option<&Value>,
+) -> bool {
+    if let (Some(actual_min), Some(expected_min)) = (actual_min, expected_min)
+        && compare_values(actual_min, expected_min).is_some_and(|ordering| ordering.is_lt())
+    {
+        return false;
+    }
+    if expected_min.is_some() && actual_min.is_none() {
+        return false;
+    }
+    if let (Some(actual_max), Some(expected_max)) = (actual_max, expected_max)
+        && compare_values(actual_max, expected_max).is_some_and(|ordering| ordering.is_gt())
+    {
+        return false;
+    }
+    if expected_max.is_some() && actual_max.is_none() {
+        return false;
+    }
+    true
 }

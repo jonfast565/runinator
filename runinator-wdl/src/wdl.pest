@@ -31,7 +31,8 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
 // subflow targets resolve unambiguously across packs; falls back to the pack name on import when
@@ -91,10 +92,17 @@ type_field   = { (ident | string) ~ optional_mark? ~ ":" ~ type_expr ~ ","? }
 optional_mark = { "?" }
 
 type_expr    = { type_union }
-type_union   = { type_postfix ~ ("|" ~ type_postfix)* }
+type_union   = { type_range ~ ("|" ~ type_range)* }
+type_range   = { type_postfix ~ ("range" ~ range_bounds)? }
+range_bounds = { range_min? ~ ".." ~ range_max? }
+range_min    = { type_bound }
+range_max    = { type_bound }
+type_bound   = { duration | number }
 type_postfix = { type_atom ~ array_suffix* }
 array_suffix = { "[" ~ "]" }
-type_atom    = { type_map | type_struct | type_named }
+type_atom    = { type_enum | type_map | type_struct | type_named }
+type_enum    = { "enum" ~ "[" ~ enum_lit ~ ("," ~ enum_lit)* ~ ","? ~ "]" }
+enum_lit     = { string | number | boolean | null_lit }
 type_map     = { "map" ~ "<" ~ type_expr ~ ">" }
 type_struct  = { "{" ~ type_field* ~ type_additional? ~ "}" }
 type_additional = { "..." ~ ":" ~ type_expr ~ ","? }

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 runinator-models = { path = "../runinator-models" }
+runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-wdl = { path = "../runinator-wdl" }
 serde_json = "1"

@@ -3,27 +3,10 @@ workflow "Core Team SDLC Pipeline" v1 {
 
     import std
 
-    type JiraIssue = {
-        key: string,
-        fields: {
-            summary: string,
-            status: {
-                name: string,
-                ...: any
-            },
-            ...: any
-        },
-        ...: any
-    }
-    type JiraSearchResult = {
-        issues: JiraIssue[],
-        ...: any
-    }
-
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
     // fresh work waiting in Ready for Development.
-    node tickets: JiraSearchResult = jira.search(
+    node tickets = jira.search(
         ...jira_conn,
         jql: config.jira.ready_jql
     )
@@ -33,7 +16,7 @@ workflow "Core Team SDLC Pipeline" v1 {
     // tickets the automation already owns and is moving through the pipeline. jira
     // is the source of truth for the concurrency cap, so no self-referential api
     // call is needed.
-    node in_flight: JiraSearchResult = jira.search(
+    node in_flight = jira.search(
         ...jira_conn,
         jql: config.jira.in_flight_jql
     )

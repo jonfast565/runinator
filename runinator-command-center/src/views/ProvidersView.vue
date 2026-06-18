@@ -183,6 +183,10 @@ function describeType(ty: RuninatorType | undefined, depth = 0): string {
       return `map<${describeType(ty.values, depth + 1)}>`;
     case "union":
       return ty.variants.map((variant) => describeType(variant, depth + 1)).join(" | ");
+    case "enum":
+      return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+    case "range":
+      return `${describeType(ty.base, depth + 1)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
     case "struct": {
       const entries = Object.entries(ty.fields);
       if (depth > 0 || entries.length > 4) return "struct";

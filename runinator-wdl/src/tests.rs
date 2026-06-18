@@ -1,7 +1,8 @@
 use crate::{
     CompileOptions, DecompileOptions, WdlCompletionRequest, WdlCompletionResponse, WdlError,
-    WdlFragmentKind, analyze_source, compile_str, compile_str_with_diagnostics, complete_source,
-    decompile, decompile_with, evaluate_fragment, format_str, parse_document, validate_fragment,
+    WdlFragmentKind, WorkflowSignature, analyze_source, compile_str, compile_str_with_diagnostics,
+    complete_source, decompile, decompile_with, evaluate_fragment, format_str, parse_document,
+    validate_fragment, workflow_signature_from_source,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
@@ -19,7 +20,34 @@ fn expect_semantic(src: &str) -> (crate::Span, String) {
 }
 
 fn compile(src: &str) -> runinator_models::workflows::WorkflowDefinition {
-    compile_str(src, &CompileOptions::default()).expect("compile")
+    compile_str(src, &default_test_options()).expect("compile")
+}
+
+fn compile_with_providers(src: &str) -> runinator_models::workflows::WorkflowDefinition {
+    let options = CompileOptions {
+        providers: runinator_provider_catalog::metadata(),
+        workflow_signatures: test_workflow_signatures(),
+        ..CompileOptions::default()
+    };
+    compile_str(src, &options).expect("compile with providers")
+}
+
+fn default_test_options() -> CompileOptions {
+    CompileOptions {
+        workflow_signatures: test_workflow_signatures(),
+        ..CompileOptions::default()
+    }
+}
+
+fn test_workflow_signatures() -> Vec<WorkflowSignature> {
+    ["Ticket Work", "Child", "core_sdlc.ticket_work"]
+        .into_iter()
+        .map(|name| WorkflowSignature {
+            name: name.to_string(),
+            input: RuninatorType::Any,
+            output: RuninatorType::Any,
+        })
+        .collect()
 }
 
 fn action_config_value<'a>(
@@ -139,7 +167,7 @@ fn ordered(text: &str, first: &str, second: &str) -> bool {
 fn assert_round_trips(src: &str) {
     let first = compile(src);
     let wdl = decompile(&first).expect("decompile");
-    let second = compile_str(&wdl, &CompileOptions::default())
+    let second = compile_str(&wdl, &default_test_options())
         .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{wdl}"));
     let normalized_first = runinator_workflows::normalize_definition(first.definition.clone());
     let normalized_second = runinator_workflows::normalize_definition(second.definition.clone());
@@ -155,7 +183,7 @@ fn assert_round_trips(src: &str) {
 fn assert_round_trips_unordered(src: &str) {
     let first = compile(src);
     let wdl = decompile(&first).expect("decompile");
-    let second = compile_str(&wdl, &CompileOptions::default())
+    let second = compile_str(&wdl, &default_test_options())
         .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{wdl}"));
 
     let sorted_nodes = |definition: &runinator_models::workflows::WorkflowGraph| {
@@ -190,7 +218,7 @@ fn assert_round_trips_unordered(src: &str) {
 fn assert_round_trips_explicit(src: &str) -> String {
     let first = compile(src);
     let wdl = decompile_with(&first, &DecompileOptions { explicit: true }).expect("decompile");
-    let second = compile_str(&wdl, &CompileOptions::default())
+    let second = compile_str(&wdl, &default_test_options())
         .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- explicit ---\n{wdl}"));
 
     let sorted_nodes = |definition: &runinator_models::workflows::WorkflowGraph| {
@@ -1169,7 +1197,7 @@ fn compiles_checked_in_sdlc_ticket_workflow() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/ticket-work.wdl");
     let src = fs::read_to_string(&path).expect("read sdlc ticket workflow");
-    let definition = compile(&src);
+    let definition = compile_with_providers(&src);
     assert_eq!(definition.name, "Ticket Work");
     assert_eq!(
         definition
@@ -1202,7 +1230,7 @@ fn compiles_checked_in_sdlc_pipeline_workflow() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../packs/sdlc/wdl/core-team-sdlc-pipeline.wdl");
     let src = fs::read_to_string(&path).expect("read sdlc pipeline workflow");
-    let definition = compile(&src);
+    let definition = compile_with_providers(&src);
     assert_eq!(definition.name, "Core Team SDLC Pipeline");
     assert_eq!(
         definition
@@ -1371,6 +1399,7 @@ fn lowers_file_include_relative_to_source_dir() {
     "#;
     let options = CompileOptions {
         source_dir: Some(dir.clone()),
+        providers: Vec::new(),
         ..CompileOptions::default()
     };
     let definition = compile_str(src, &options).expect("compile with include");
@@ -1406,6 +1435,7 @@ fn file_include_cannot_escape_source_dir() {
     "#;
     let options = CompileOptions {
         source_dir: Some(std::env::temp_dir()),
+        providers: Vec::new(),
         ..CompileOptions::default()
     };
     match compile_str(src, &options) {
@@ -1450,6 +1480,7 @@ fn dir_include_lists_top_level_by_default() {
     "#;
     let options = CompileOptions {
         source_dir: Some(dir.clone()),
+        providers: Vec::new(),
         ..CompileOptions::default()
     };
     let definition = compile_str(src, &options).expect("compile with dir");
@@ -1470,6 +1501,7 @@ fn dir_include_recurses_with_relative_paths() {
     "#;
     let options = CompileOptions {
         source_dir: Some(dir.clone()),
+        providers: Vec::new(),
         ..CompileOptions::default()
     };
     let definition = compile_str(src, &options).expect("compile with recursive dir");
@@ -1494,6 +1526,7 @@ fn dir_include_depth_cap_stops_descent() {
     "#;
     let options = CompileOptions {
         source_dir: Some(dir.clone()),
+        providers: Vec::new(),
         ..CompileOptions::default()
     };
     let definition = compile_str(src, &options).expect("compile with depth cap");
@@ -1736,7 +1769,7 @@ fn round_trips_truthy_conditions() {
             } else {
                 node console.run(command: "no")
             }
-            while 1 + 1 limit 1 {
+            while 1 + 1 > 0 limit 1 {
                 node console.run(command: "loop")
             }
         }
@@ -2531,7 +2564,10 @@ fn compute_lambda_result_drives_higher_order_return_type() {
     "#;
     let (_, message) = expect_semantic(src);
     assert!(message.contains("compute local 'ids'"), "got: {message}");
-    assert!(message.contains("expects array"), "got: {message}");
+    assert!(
+        message.contains("expected integer, got string"),
+        "got: {message}"
+    );
 }
 
 #[test]
@@ -3070,6 +3106,203 @@ fn rejects_cyclic_type_decls() {
         }
     "#;
     assert!(compile_str(src, &CompileOptions::default()).is_err());
+}
+
+#[test]
+fn rejects_duplicate_type_decls_semantically() {
+    let src = r#"
+        workflow "DuplicateTypes" v1 {
+            type Payload = string
+            type Payload = integer
+            node console.run(command: "go")
+        }
+    "#;
+    let diagnostics = analyze_source(src).expect("analyze");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.is_error()
+                && diagnostic
+                    .message
+                    .contains("duplicate type declaration 'Payload'")
+        }),
+        "diagnostics: {diagnostics:?}"
+    );
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("duplicate type declaration 'Payload'"));
+}
+
+#[test]
+fn provider_metadata_infers_action_result_types() {
+    let src = r#"
+        workflow "ProviderTypes" v1 {
+            node tickets = jira.search(jql: "project = RUNI")
+            for ticket in tickets.issues limit none {
+                node console.run(command: ticket.key)
+            }
+        }
+    "#;
+    let issue_type =
+        RuninatorType::open_structure([("key", RuninatorType::String)], RuninatorType::Any);
+    let providers = vec![
+        ProviderMetadata {
+            name: "jira".into(),
+            actions: vec![
+                ActionMetadata::new("search", "Search Jira issues")
+                    .with_results(vec![ResultMetadata::new(
+                        "issues",
+                        RuninatorType::array(issue_type),
+                    )])
+                    .with_parameters(vec![ParameterMetadata::required(
+                        "jql",
+                        RuninatorType::String,
+                    )]),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+        ProviderMetadata {
+            name: "console".into(),
+            actions: vec![
+                ActionMetadata::new("run", "Run command").with_parameters(vec![
+                    ParameterMetadata::required("command", RuninatorType::Any),
+                ]),
+            ],
+            metadata: ProviderRuntimeMetadata::default(),
+        },
+    ];
+    let options = CompileOptions {
+        providers,
+        ..CompileOptions::default()
+    };
+    let definition = compile_str(src, &options).expect("compile with provider metadata");
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/tickets/fields/issues/ty/type")
+            .and_then(Value::as_str),
+        Some("array")
+    );
+}
+
+#[test]
+fn constrained_types_and_returns_lower_and_round_trip() {
+    let src = r#"
+        workflow "Typed" v1 returns { url: string, env: enum["dev", "prod"] } {
+            params {
+                env: enum["dev", "prod"]
+                retries: integer range 0..10
+                delay: duration range 1s..1h
+            }
+            node console.run(command: "ok")
+        }
+    "#;
+    let definition = compile(src);
+    assert_eq!(
+        definition
+            .input_type
+            .to_json_schema()
+            .pointer("/properties/env/enum/0"),
+        Some(&Value::from("dev"))
+    );
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/output_type/fields/url/ty/type")
+            .and_then(Value::as_str),
+        Some("string")
+    );
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(wdl.contains("returns {"), "{wdl}");
+    assert!(wdl.contains("url: string"), "{wdl}");
+    assert!(wdl.contains("env: enum[\"dev\", \"prod\"]"), "{wdl}");
+    assert!(wdl.contains("integer range 0..10"), "{wdl}");
+    assert!(wdl.contains("duration range 1..3600"), "{wdl}");
+}
+
+#[test]
+fn strict_provider_arguments_are_checked() {
+    let providers = vec![ProviderMetadata {
+        name: "demo".into(),
+        actions: vec![ActionMetadata::new("run", "Run demo").with_parameters(vec![
+            ParameterMetadata::required("count", RuninatorType::Integer),
+        ])],
+        metadata: ProviderRuntimeMetadata::default(),
+    }];
+    let options = CompileOptions {
+        providers,
+        ..CompileOptions::default()
+    };
+
+    let missing = compile_str(r#"workflow "Bad" v1 { node demo.run() }"#, &options).unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .contains("missing required parameter 'count'"),
+        "{missing}"
+    );
+    let wrong = compile_str(
+        r#"workflow "Bad" v1 { node demo.run(count: "no") }"#,
+        &options,
+    )
+    .unwrap_err();
+    assert!(
+        wrong.to_string().contains("expected integer, got string"),
+        "{wrong}"
+    );
+    let unknown = compile_str(
+        r#"workflow "Bad" v1 { node demo.run(count: 1, extra: 2) }"#,
+        &options,
+    )
+    .unwrap_err();
+    assert!(
+        unknown.to_string().contains("unknown parameter 'extra'"),
+        "{unknown}"
+    );
+}
+
+#[test]
+fn strict_subflow_requires_signature_and_types_state() {
+    let parent = r#"
+        workflow "Parent" v1 {
+            node child = call "Child" with { id: "RUNI-1" }
+            node console.run(command: child.state.url)
+        }
+    "#;
+    let err = compile_str(parent, &CompileOptions::default()).unwrap_err();
+    assert!(
+        err.to_string().contains("unknown subflow target 'Child'"),
+        "{err}"
+    );
+
+    let child = r#"
+        workflow "Child" v1 returns { url: string } {
+            params { id: string }
+            node console.run(command: params.id)
+        }
+    "#;
+    let options = CompileOptions {
+        workflow_signatures: workflow_signature_from_source(child).expect("child signature"),
+        ..CompileOptions::default()
+    };
+    compile_str(parent, &options).expect("typed subflow state compiles");
+
+    let bad_state = r#"
+        workflow "Parent" v1 {
+            node child = call "Child" with { id: "RUNI-1" }
+            node console.run(command: child.state.missing)
+        }
+    "#;
+    let err = compile_str(bad_state, &options).unwrap_err();
+    assert!(err.to_string().contains("unknown field 'missing'"), "{err}");
+
+    let bad_params = r#"workflow "Parent" v1 { node call "Child" with { id: 7 } }"#;
+    let err = compile_str(bad_params, &options).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("subflow 'Child' parameters expected string, got integer"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -3874,7 +4107,7 @@ fn later_entry_overrides_spread() {
 fn assert_alias_round_trips(src: &str) -> String {
     let first = compile(src);
     let wdl = decompile(&first).expect("decompile");
-    let second = compile_str(&wdl, &CompileOptions::default())
+    let second = compile_str(&wdl, &default_test_options())
         .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{wdl}"));
     assert_eq!(
         runinator_workflows::normalize_definition(first.definition),

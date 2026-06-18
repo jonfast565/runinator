@@ -1,15 +1,28 @@
 //! hover shows the wdl error-dictionary code and summary for the tightest diagnostic covering the
 //! cursor, plus its message.
 
+use std::path::Path;
+
 use runinator_wdl::errors::DICTIONARY;
-use runinator_wdl::{Diagnostic as WdlDiagnostic, WdlError, analyze_source};
+use runinator_wdl::{Diagnostic as WdlDiagnostic, WdlError, analyze_source_with_options};
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
 use crate::position::position_to_byte;
 
-pub fn hover(text: &str, position: Position) -> Option<Hover> {
+pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hover> {
     let offset = position_to_byte(text, position);
-    let (code, message) = match analyze_source(text) {
+    let providers = runinator_provider_catalog::metadata();
+    let workflow_signatures = path
+        .and_then(|path| {
+            runinator_pack::source::wdl_context_workflow_signatures(path, Some(text)).ok()
+        })
+        .unwrap_or_default();
+    let (code, message) = match analyze_source_with_options(
+        text,
+        &providers,
+        runinator_wdl::TypePolicy::Strict,
+        &workflow_signatures,
+    ) {
         Ok(diagnostics) => {
             let diagnostic = tightest(&diagnostics, offset)?;
             ("WDL003", diagnostic.message.clone())

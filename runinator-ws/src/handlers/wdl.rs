@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authz;
 use crate::events::{AppEvent, EventSender, emit};
+use crate::handlers::providers::provider_metadata_from_items;
 use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, bad_request};
@@ -78,11 +79,16 @@ pub(crate) struct DiagnosticSummary {
     pub message: String,
 }
 
-pub(crate) async fn compile_wdl(
+pub(crate) async fn compile_wdl<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(request): Json<CompileWdlRequest>,
 ) -> Result<Json<WorkflowDefinition>, (StatusCode, String)> {
+    let providers = fetch_provider_metadata(db.as_ref())
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
     let options = CompileOptions {
         enabled: request.enabled,
+        providers,
         ..CompileOptions::default()
     };
     runinator_wdl::compile_str(&request.source, &options)
@@ -103,8 +109,13 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
             return reply;
         }
     }
+    let providers = match fetch_provider_metadata(db.as_ref()).await {
+        Ok(providers) => providers,
+        Err(err) => return api_error(err),
+    };
     let options = CompileOptions {
         enabled: request.enabled,
+        providers,
         ..CompileOptions::default()
     };
     let mut workflow = match runinator_wdl::compile_str(&request.source, &options) {
@@ -137,18 +148,26 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
     }
 }
 
-pub(crate) async fn analyze_wdl(
+pub(crate) async fn analyze_wdl<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
     Json(request): Json<WdlSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
     let source = request.source;
+    let providers = fetch_provider_metadata(db.as_ref())
+        .await
+        .unwrap_or_default();
     if let Some(kind) = request.fragment {
-        return match runinator_wdl::validate_fragment(&source, kind, &CompileOptions::default()) {
+        let options = CompileOptions {
+            providers,
+            ..CompileOptions::default()
+        };
+        return match runinator_wdl::validate_fragment(&source, kind, &options) {
             Ok(_) => Json(Vec::new()),
             Err(err) => Json(vec![wdl_error_to_summary(err, &source)]),
         };
     }
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
-    let diagnostics = match runinator_wdl::analyze_source(&source) {
+    let diagnostics = match runinator_wdl::analyze_source_with_providers(&source, &providers) {
         Ok(diagnostics) => diagnostics,
         Err(err) => return Json(vec![wdl_error_to_summary(err, &source)]),
     };
@@ -171,6 +190,15 @@ pub(crate) async fn analyze_wdl(
         })
         .collect();
     Json(summaries)
+}
+
+async fn fetch_provider_metadata<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Vec<runinator_models::providers::ProviderMetadata>, String> {
+    let items = repository::fetch_catalog_items(db, Some("provider_metadata".into()))
+        .await
+        .map_err(|err| err.to_string())?;
+    provider_metadata_from_items(items).map_err(|err| err.to_string())
 }
 
 pub(crate) async fn format_wdl(

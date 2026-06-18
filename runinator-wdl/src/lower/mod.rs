@@ -11,6 +11,7 @@ pub(crate) mod types;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use runinator_models::providers::{ActionMetadata, ProviderMetadata};
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 
@@ -55,6 +56,8 @@ struct Lowerer {
     source_dir: Option<PathBuf>,
     // the callable registry (intrinsics + user functions), used to resolve keyword arguments.
     registry: crate::registry::FunctionRegistry,
+    // provider actions available at compile time, used to generate action output type hints.
+    provider_actions: std::collections::HashMap<(String, String), ActionMetadata>,
 }
 
 pub fn lower_document(
@@ -66,6 +69,7 @@ pub fn lower_document(
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
     lowerer.registry = crate::registry::FunctionRegistry::build(&document.functions);
+    lowerer.provider_actions = provider_actions(&options.providers);
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = crate::desugar::collect_aliases(&workflow.aliases)?;
@@ -135,6 +139,13 @@ pub fn lower_document(
             );
         }
         wdl.insert("type_decls".into(), Value::Object(decls));
+    }
+    if let Some(output) = &workflow.output {
+        let ty = lowerer.lower_named_type(output)?;
+        let value = serde_json::to_value(&ty)
+            .map(Value::from)
+            .map_err(|err| WdlError::lower(format!("failed to encode output type: {err}")))?;
+        wdl.insert("output_type".into(), value);
     }
     // surface-form overrides for top-level workflow parameter fields whose type references a
     // declared name, so `params { cart: Cart }` decompiles back to the name instead of the
@@ -262,6 +273,7 @@ impl Lowerer {
             named_types: std::collections::BTreeMap::new(),
             source_dir: None,
             registry: crate::registry::FunctionRegistry::build(&[]),
+            provider_actions: std::collections::HashMap::new(),
         }
     }
 
@@ -435,6 +447,28 @@ impl Lowerer {
         Ok(())
     }
 
+    fn record_generated_type_hint(
+        &mut self,
+        id: &str,
+        action: &ActionStmt,
+    ) -> Result<(), WdlError> {
+        let Some(metadata) = self
+            .provider_actions
+            .get(&(action.provider.clone(), action.function.clone()))
+        else {
+            return Ok(());
+        };
+        if metadata.results.is_empty() {
+            return Ok(());
+        }
+        let ty = metadata.results_type();
+        let hint = serde_json::to_value(&ty)
+            .map(Value::from)
+            .map_err(|err| WdlError::lower(format!("failed to encode type hint: {err}")))?;
+        self.declared_type_hints.push((id.to_string(), hint));
+        Ok(())
+    }
+
     /// lower a sequence of statements, wiring each forward edge to the next statement's
     /// entry (or `cont` after the last). returns the block's entry node id.
     fn lower_block(&mut self, block: &[Stmt], cont: &str) -> Result<String, WdlError> {
@@ -551,6 +585,9 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), WdlError> {
         self.record_declared_type(id, stmt)?;
+        if stmt.label_type.is_none() {
+            self.record_generated_type_hint(id, action)?;
+        }
         // expand `...alias` spreads for the graph, and record the authored form for resugaring.
         let flat = crate::desugar::flatten_entries(&action.args, &self.aliases)?;
         let mut config = Map::new();
@@ -1062,6 +1099,22 @@ impl Lowerer {
     }
 }
 
+fn provider_actions(
+    providers: &[ProviderMetadata],
+) -> std::collections::HashMap<(String, String), ActionMetadata> {
+    providers
+        .iter()
+        .flat_map(|provider| {
+            provider.actions.iter().map(move |action| {
+                (
+                    (provider.name.clone(), action.function_name.clone()),
+                    action.clone(),
+                )
+            })
+        })
+        .collect()
+}
+
 // free helpers --------------------------------------------------------------
 
 fn node(id: &str, kind: &str, fields: Vec<(&str, Value)>) -> Value {
@@ -1087,6 +1140,8 @@ fn type_expr_uses_declared_name(
 ) -> bool {
     match ty {
         TypeExpr::Named(name) => named.contains_key(name),
+        TypeExpr::Enum(_) => false,
+        TypeExpr::Range { base, .. } => type_expr_uses_declared_name(base, named),
         TypeExpr::Array(inner) | TypeExpr::Map(inner) => type_expr_uses_declared_name(inner, named),
         TypeExpr::Union(variants) => variants
             .iter()

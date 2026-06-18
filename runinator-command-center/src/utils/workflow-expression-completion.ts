@@ -22,10 +22,14 @@ function expressionCompletions(context?: WorkflowExpressionEditorContext): Compl
     snippetCompletion("run", "run.${field}", "variable", "workflow state reference"),
     snippetCompletion("config", "config.${field}", "variable", "configuration reference"),
     snippetCompletion("secret", "secret.${scope}.${name}", "variable", "secret reference"),
+    snippetCompletion("true", "true", "constant", "boolean literal"),
+    snippetCompletion("false", "false", "constant", "boolean literal"),
+    snippetCompletion("null", "null", "constant", "null literal"),
     snippetCompletion("string", "string(${value})", "function", "convert scalar to string"),
     snippetCompletion("json", "json(${value})", "function", "convert object or array to JSON text"),
     snippetCompletion("concat", "${left} ++ ${right}", "function", "string concatenation"),
     snippetCompletion("coalesce", "${left} ?? ${right}", "function", "first non-null value"),
+    snippetCompletion("secret URI", "\"secret://${scope}/${name}\"", "constant", "secret URI literal"),
     snippetCompletion("object", "{ ${key}: ${value} }", "constant", "object literal"),
     snippetCompletion("array", "[${items}]", "constant", "array literal")
   ];

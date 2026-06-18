@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::{load_pack_settings, load_workflow_bundle, pack_source_files};
+use super::{
+    load_pack_settings, load_workflow_bundle, pack_source_files, wdl_context_workflow_signatures,
+};
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -172,6 +174,79 @@ fn directory_pack_loads_wdls_settings() {
     assert_eq!(settings.secrets.len(), 2);
     assert_eq!(settings.secrets[0].scope, "app");
     assert_eq!(settings.secrets[0].name, "token");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_pack_types_pack_local_subflows() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join(format!(
+        "runinator_typed_subflow_pack_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("temp pack dir");
+    fs::write(
+        dir.join("child.wdl"),
+        r#"workflow "Child" v1 returns { url: string } {
+  params { id: string }
+  node console.run(command: params.id)
+}
+"#,
+    )
+    .expect("write child");
+    fs::write(
+        dir.join("parent.wdl"),
+        r#"workflow "Parent" v1 {
+  node child = call "Child" with { id: "RUNI-1" }
+  node console.run(command: child.state.url)
+}
+"#,
+    )
+    .expect("write parent");
+
+    let bundle = load_workflow_bundle(&dir).expect("directory pack should type subflow");
+    assert_eq!(bundle.workflows.len(), 2);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn wdl_context_signatures_include_sibling_workflows() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join(format!(
+        "runinator_wdl_context_signatures_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("temp pack dir");
+    fs::write(
+        dir.join("child.wdl"),
+        r#"workflow "Child" v1 {
+  params { id: string }
+  node console.run(command: params.id)
+}
+"#,
+    )
+    .expect("write child");
+
+    let parent_path = dir.join("parent.wdl");
+    let parent = r#"workflow "Parent" v1 {
+  node child = call "Child" with { id: "RUNI-1" }
+}
+"#;
+    let signatures =
+        wdl_context_workflow_signatures(&parent_path, Some(parent)).expect("context signatures");
+
+    assert!(signatures.iter().any(|signature| signature.name == "Child"));
+    assert!(
+        signatures
+            .iter()
+            .any(|signature| signature.name == "Parent")
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

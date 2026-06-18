@@ -212,6 +212,9 @@ not read files.
 
 **Parameter typing**: `{ a: string, b?: integer, c: string[], d: map<string>, e: A | B }`
 maps to `RuninatorType`. Open structs use `...: type`, e.g. `{ known: string, ...: any }`.
+Refined forms are available for author-time constraints: `enum["dev", "prod"]`,
+`integer range 0..10`, `number range 0.0..1.0`, and `duration range 1s..1h`
+(open-ended ranges such as `integer range 0..` are allowed).
 
 **Parameter defaults**: a top-level parameter field may carry a default — `name: type = expr` — used
 when the field is omitted at run start:
@@ -291,6 +294,19 @@ command timeout; `@timeout(...)` maps to the workflow node timeout.
 **Typed bindings**: `node tickets: { issues: any[] } = jira.search(...)` annotates a step's
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
+
+**Workflow returns**: a workflow may declare the state shape a waiting subflow call exposes:
+
+```
+workflow "Deploy" v1 returns { url: string, env: enum["dev", "prod"] } {
+    params { env: enum["dev", "prod"] }
+    node console.run(command: params.env)
+}
+```
+
+The compiled definition stores this under `definition.metadata.wdl.output_type`; the runtime wire
+model is unchanged. A parent `call` sees the type at `child.state`, while `spawn` remains
+fire-and-forget metadata.
 
 **Argument aliases**: shared arguments can be named once in the workflow header and spread with
 `...name`, so a connection's `base_url`/`email`/`token` are written once instead of on every call:
@@ -376,10 +392,11 @@ four checks:
 - **Scope correctness** — loop/map variables are only visible inside their body; duplicate
   or reserved (`start`/`end`/`fail`) node ids are rejected.
 - **Type checking** — reuses the `RuninatorType` algebra: `params.*` field access is checked
-  against the declared parameter type, `for`/`map` sources must be iterable, ordering
-  comparisons need orderable operands, and `string(x)` rejects composite values. Action,
-  subflow, `prev`, and `run` references are `any` (no provider metadata author-time), so
-  references through them stay permissive.
+  against the declared parameter type, action arguments are checked against provider metadata,
+  provider results type step outputs, subflow `with` parameters and `state` are checked when a
+  workflow signature is available, `for`/`map` sources must be iterable, boolean contexts require
+  booleans, ordering comparisons need orderable operands, and `string(x)`/`json(x)` reject
+  incompatible values. `prev` and `run` references remain runtime-only and opaque.
 - **Reachability** — statements that follow a terminator (`fail`, or a step whose happy-path
   arrow diverts the linear successor) and are not targeted by any transition are flagged.
   Reachability findings are **warnings**, not errors.
@@ -405,11 +422,14 @@ rich rendering).
 ## CLI
 
 ```
-runinatorctl wdl compile  workflow.wdl [-o out.json]
+runinatorctl wdl compile  workflow.wdl [-o out.json] [--typing strict|permissive]
 runinatorctl wdl decompile workflow.json [-o out.wdl] [--explicit]
 runinatorctl wdl format   workflow.wdl [-o out.wdl] [--check]
-runinatorctl wdl check    workflow.wdl
+runinatorctl wdl check    workflow.wdl [--typing strict|permissive]
 ```
+
+WDL commands default to `--typing strict`. `--typing permissive` exists only for legacy
+investigation; pack import paths keep strict typing.
 
 `runinatorctl workflows apply` also accepts `.wdl` files, `.wdlp` manifests, and
 directories of `.wdl` files directly alongside JSON packs. The ctl compiles the pack
@@ -417,6 +437,9 @@ client-side, zips the compiled artifacts (`workflows.json` + optional `secrets.j
 uploads a single `application/zip` to the web service's `/packs/import` endpoint — compilation
 never happens on the backend. With no path argument, `workflows apply` falls back to the
 `~/.runinator/workflows` folder (honoring `RUNINATOR_HOME`) if it exists.
+Directory and `.wdlp` pack compilation runs in two passes: first it reads every workflow signature,
+then it compiles each workflow with the full pack-local signature table so subflow calls are typed
+before upload.
 
 Re-applying a pack updates what changed: ctl stamps each compiled workflow / secret with its source
 file's mtime, so the web service's newer-wins reconciliation overwrites an edited file and skips an

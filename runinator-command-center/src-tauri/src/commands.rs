@@ -236,6 +236,7 @@ pub async fn save_workflow_wdl(
 pub fn compile_wdl(source: String, enabled: bool) -> CommandResult<WorkflowDefinition> {
     let options = CompileOptions {
         enabled,
+        providers: runinator_provider_catalog::metadata(),
         ..CompileOptions::default()
     };
     runinator_wdl::compile_str(&source, &options)
@@ -244,8 +245,9 @@ pub fn compile_wdl(source: String, enabled: bool) -> CommandResult<WorkflowDefin
 
 #[tauri::command]
 pub fn analyze_wdl(source: String) -> CommandResult<Vec<DiagnosticSummary>> {
+    let providers = runinator_provider_catalog::metadata();
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
-    let diagnostics = match runinator_wdl::analyze_source(&source) {
+    let diagnostics = match runinator_wdl::analyze_source_with_providers(&source, &providers) {
         Ok(diagnostics) => diagnostics,
         Err(err) => return Ok(vec![wdl_error_to_summary(err, &source)]),
     };

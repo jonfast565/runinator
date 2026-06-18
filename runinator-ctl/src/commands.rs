@@ -23,8 +23,8 @@ use runinator_pack::source as pack;
 
 use crate::{
     cli::{
-        ApprovalCommands, ArtifactCommands, Cli, Commands, ProviderCommands, RunCommands,
-        SettingsCommands, TriggerCommands, WdlCommands, WorkflowCommands,
+        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, ProviderCommands,
+        RunCommands, SettingsCommands, TriggerCommands, WdlCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -262,7 +262,8 @@ async fn apply_workflow_source(
     // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
-        let bundle = pack::load_workflow_bundle(file)?;
+        let providers = client.fetch_providers().await.unwrap_or_default();
+        let bundle = pack::load_workflow_bundle_with_providers(file, &providers)?;
         // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
@@ -460,10 +461,20 @@ fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
 
 fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
     match command {
-        WdlCommands::Compile { file, output } => {
+        WdlCommands::Compile {
+            file,
+            output,
+            typing,
+        } => {
             let source = fs::read_to_string(file)?;
             let options = runinator_wdl::CompileOptions {
                 source_dir: file.parent().map(Path::to_path_buf),
+                providers: runinator_provider_catalog::metadata(),
+                type_policy: (*typing).into(),
+                workflow_signatures: runinator_pack::source::wdl_context_workflow_signatures(
+                    file,
+                    Some(&source),
+                )?,
                 ..runinator_wdl::CompileOptions::default()
             };
             let definition = runinator_wdl::compile_str(&source, &options)
@@ -522,15 +533,25 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
                 None => print!("{formatted}"),
             }
         }
-        WdlCommands::Check { file } => {
+        WdlCommands::Check { file, typing } => {
             let source = fs::read_to_string(file)?;
             // analyze first so every error and warning is reported, not just the first.
-            let diagnostics =
-                runinator_wdl::analyze_source(&source).map_err(|e| err(e.render(&source)))?;
+            let providers = runinator_provider_catalog::metadata();
+            let type_policy = (*typing).into();
+            let workflow_signatures =
+                runinator_pack::source::wdl_context_workflow_signatures(file, Some(&source))?;
+            let diagnostics = runinator_wdl::analyze_source_with_options(
+                &source,
+                &providers,
+                type_policy,
+                &workflow_signatures,
+            )
+            .map_err(|e| err(e.render(&source)))?;
             let error_count = diagnostics.iter().filter(|d| d.is_error()).count();
             if json_output {
                 return output::json(&json!({
                     "ok": error_count == 0,
+                    "typing": typing.label(),
                     "diagnostics": diagnostics
                         .iter()
                         .map(|d| json!({
@@ -554,6 +575,9 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
             // no errors: run the full compile (validator included) for the summary line.
             let options = runinator_wdl::CompileOptions {
                 source_dir: file.parent().map(Path::to_path_buf),
+                providers,
+                type_policy,
+                workflow_signatures,
                 ..runinator_wdl::CompileOptions::default()
             };
             let definition = runinator_wdl::compile_str(&source, &options)
@@ -562,6 +586,15 @@ fn wdl(command: &WdlCommands, json_output: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+impl CliTyping {
+    fn label(self) -> &'static str {
+        match self {
+            CliTyping::Strict => "strict",
+            CliTyping::Permissive => "permissive",
+        }
+    }
 }
 
 async fn runs(client: &Client, command: &RunCommands, json_output: bool) -> Result<()> {

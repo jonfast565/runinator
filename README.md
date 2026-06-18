@@ -65,7 +65,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once, so the workflow pack configured in `runinator-supervisor.json` is pushed into the API after the web service starts. The checked-in local config imports the WDL pack manifest at `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files before sending the bundle to the API. It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. (Built-in provider metadata is registered separately: the worker self-publishes it to the web service on startup.) If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once, so the workflow pack configured in `runinator-supervisor.json` is pushed into the API after the web service starts. The checked-in local config imports the WDL pack manifest at `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files before sending the bundle to the API. It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync

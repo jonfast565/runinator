@@ -54,6 +54,8 @@ pub(crate) fn resolve_named_types(decls: &[TypeDecl]) -> Result<NamedTypes, WdlE
 fn type_refs_resolved(ty: &TypeExpr, named: &NamedTypes) -> bool {
     match ty {
         TypeExpr::Named(name) => is_primitive_type_name(name) || named.contains_key(name),
+        TypeExpr::Enum(_) => true,
+        TypeExpr::Range { base, .. } => type_refs_resolved(base, named),
         TypeExpr::Array(inner) | TypeExpr::Map(inner) => type_refs_resolved(inner, named),
         TypeExpr::Union(variants) => variants.iter().all(|v| type_refs_resolved(v, named)),
         TypeExpr::Struct { fields, additional } => {
@@ -75,6 +77,7 @@ fn is_primitive_type_name(name: &str) -> bool {
             | "float"
             | "boolean"
             | "bool"
+            | "duration"
             | "null"
             | "any"
             | "json"
@@ -91,6 +94,12 @@ pub(crate) fn lower_type_with(
 ) -> Result<RuninatorType, WdlError> {
     match type_expr {
         TypeExpr::Named(name) => Ok(named_type(name, named)),
+        TypeExpr::Enum(values) => Ok(RuninatorType::Enum(values.clone())),
+        TypeExpr::Range { base, min, max } => Ok(RuninatorType::Range {
+            base: Box::new(lower_type_with(base, named)?),
+            min: min.clone(),
+            max: max.clone(),
+        }),
         TypeExpr::Array(inner) => Ok(RuninatorType::Array(Box::new(lower_type_with(
             inner, named,
         )?))),
@@ -131,6 +140,7 @@ fn named_type(name: &str, named: &NamedTypes) -> RuninatorType {
         "string" => RuninatorType::String,
         "integer" | "int" => RuninatorType::Integer,
         "number" | "float" => RuninatorType::Number,
+        "duration" => RuninatorType::Duration,
         "boolean" | "bool" => RuninatorType::Boolean,
         "null" => RuninatorType::Null,
         "any" | "json" => RuninatorType::Any,

@@ -162,5 +162,7 @@ export function describeType(ty: RuninatorType | undefined): string {
   if (ty.type === "array") return `${describeType(ty.items)}[]`;
   if (ty.type === "map") return `map<string, ${describeType(ty.values)}>`;
   if (ty.type === "union") return ty.variants.map(describeType).join(" | ");
+  if (ty.type === "enum") return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+  if (ty.type === "range") return `${describeType(ty.base)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
   return ty.type;
 }

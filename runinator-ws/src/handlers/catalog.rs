@@ -7,6 +7,7 @@ use runinator_models::errors::SendableError;
 use runinator_models::json;
 use runinator_models::value::Value;
 
+use crate::handlers::providers::provider_catalog_item;
 use crate::models::{ApiResponse, CatalogQuery};
 use crate::repository;
 use crate::responses::{api_error, not_found};
@@ -47,6 +48,10 @@ pub(crate) async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), 
     for raw in [include_str!("../../../packs/sdlc/sdlc.wdlp")] {
         let item = wdl_pack_catalog_item(raw)?;
         db.upsert_catalog_item(item).await?;
+    }
+    for provider in runinator_provider_catalog::metadata() {
+        db.upsert_catalog_item(provider_catalog_item(&provider))
+            .await?;
     }
     Ok(())
 }

@@ -16,21 +16,11 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 
 runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }
-runinator-provider-aws = { path = "../runinator-provider-aws" }
-runinator-provider-sql = { path = "../runinator-provider-sql" }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker" }
-runinator-provider-jira = { path = "../runinator-provider-jira" }
-runinator-provider-github = { path = "../runinator-provider-github" }
-runinator-provider-slack = { path = "../runinator-provider-slack" }
-runinator-provider-git = { path = "../runinator-provider-git" }
-runinator-provider-ai = { path = "../runinator-provider-ai" }
-runinator-provider-approval = { path = "../runinator-provider-approval" }
-runinator-provider-console = { path = "../runinator-provider-console" }
-runinator-provider-email = { path = "../runinator-provider-email" }
-runinator-provider-std = { path = "../runinator-provider-std" }
+runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [features]
 kafka = ["runinator-broker/kafka"]

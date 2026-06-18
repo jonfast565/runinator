@@ -13,8 +13,8 @@ use chrono::Utc;
 use config::parse_config;
 use log::{error, info, warn};
 use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_provider,
-    register_replica_session, spawn_replica_heartbeat,
+    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
+    spawn_replica_heartbeat,
 };
 use runinator_broker::{Broker, ControlDelivery};
 use runinator_comm::ControlKind;
@@ -72,7 +72,6 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let _heartbeat = replica_session
         .clone()
         .map(|session| spawn_replica_heartbeat(api_client.clone(), session, shutdown.clone()));
-    publish_provider_metadata(&api_client, replica_session.as_ref()).await;
     let mut worker_task = {
         let broker = broker.clone();
         let libraries = Arc::clone(&libraries);
@@ -194,8 +193,6 @@ fn build_api_client(
         .map_err(|err| errors::API_CLIENT.error(err))
 }
 
-// register the built-in providers with the web service on startup. best-effort: a failure here
-// is logged but does not stop the worker, which can still execute already-registered providers.
 async fn register_worker_replica(
     api_client: &AsyncApiClient<StaticLocator>,
     config: &config::Config,
@@ -219,36 +216,6 @@ async fn register_worker_replica(
         },
     )
     .await
-}
-
-async fn publish_provider_metadata(
-    api_client: &AsyncApiClient<StaticLocator>,
-    replica_session: Option<&ReplicaSession>,
-) {
-    let bundle = provider_repository::metadata_bundle();
-    let count = bundle.providers.len();
-    match api_client.import_provider_bundle(&bundle).await {
-        Ok(imported) => {
-            info!(
-                "Registered {} provider(s) with the web service",
-                imported.providers.len()
-            );
-            if let Some(replica_session) = replica_session {
-                for provider in imported.providers {
-                    if let Err(err) =
-                        register_replica_provider(api_client, replica_session, provider).await
-                    {
-                        warn!(
-                            "Failed to register replica provider ownership for replica {}: {}",
-                            replica_session.replica_id(),
-                            err
-                        );
-                    }
-                }
-            }
-        }
-        Err(err) => warn!("Failed to register provider bundle ({count} provider(s)): {err}"),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

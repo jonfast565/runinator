@@ -83,8 +83,13 @@ function defaultValueForInputType(ty: RuninatorType): unknown {
     case "boolean":
       return false;
     case "integer":
+    case "duration":
     case "number":
       return 0;
+    case "enum":
+      return ty.values[0] ?? null;
+    case "range":
+      return ty.min ?? defaultValueForInputType(ty.base);
     case "array":
       return [];
     case "map":
@@ -172,6 +177,15 @@ export function validateJsonValueType(value: unknown, ty: RuninatorType | undefi
   if (ty.type === "boolean") return typeof value === "boolean" ? "" : `${label} must be true or false`;
   if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be an integer`;
   if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value) ? "" : `${label} must be a number`;
+  if (ty.type === "duration") return typeof value === "number" && Number.isInteger(value) ? "" : `${label} must be a duration in seconds`;
+  if (ty.type === "enum") return ty.values.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value)) ? "" : `${label} must be one of ${ty.values.map((item) => JSON.stringify(item)).join(", ")}`;
+  if (ty.type === "range") {
+    const baseError = validateJsonValueType(value, ty.base, label);
+    if (baseError) return baseError;
+    if (typeof value === "number" && ty.min !== undefined && value < ty.min) return `${label} must be at least ${ty.min}`;
+    if (typeof value === "number" && ty.max !== undefined && value > ty.max) return `${label} must be at most ${ty.max}`;
+    return "";
+  }
   if (ty.type === "array") {
     if (!Array.isArray(value)) return `${label} must be a list`;
     for (let index = 0; index < value.length; index++) {

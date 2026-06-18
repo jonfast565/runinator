@@ -431,6 +431,10 @@ function renderType(ty: RuninatorType | null | undefined): string {
       return "struct";
     case "union":
       return ty.variants.map(renderType).join(" | ");
+    case "enum":
+      return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+    case "range":
+      return `${renderType(ty.base)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
     default:
       return ty.type;
   }

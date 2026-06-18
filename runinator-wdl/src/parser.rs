@@ -6,6 +6,7 @@ use pest::iterators::Pair;
 use pest_derive::Parser;
 
 use runinator_models::semver::SemVer;
+use runinator_models::value::Value;
 
 use crate::ast::*;
 use crate::errors::{Span, WdlError};
@@ -215,6 +216,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
     let mut name = String::new();
     let mut version = None;
     let mut input = None;
+    let mut output = None;
     let mut aliases = Vec::new();
     let mut namespace = None;
     let mut imports = Vec::new();
@@ -233,6 +235,15 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                         WdlError::syntax(span, format!("invalid version: {err}"))
                     })?);
             }
+            Rule::returns_decl => {
+                let ty = inner
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::type_expr)
+                    .ok_or_else(|| {
+                        WdlError::syntax(span, "returns declaration is missing a type")
+                    })?;
+                output = Some(parse_type_expr(ty)?);
+            }
             Rule::params_block => input = Some(parse_params_block(inner)?),
             Rule::namespace_decl => namespace = Some(first_inner(inner)?.as_str().to_string()),
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
@@ -249,6 +260,7 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         name,
         version,
         input,
+        output,
         aliases,
         namespace,
         imports,
@@ -423,13 +435,56 @@ fn parse_type_expr(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
 fn parse_type_union(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
     let mut variants = pair
         .into_inner()
-        .filter(|p| p.as_rule() == Rule::type_postfix)
-        .map(parse_type_postfix)
+        .filter(|p| p.as_rule() == Rule::type_range)
+        .map(parse_type_range)
         .collect::<Result<Vec<_>, _>>()?;
     if variants.len() == 1 {
         return Ok(variants.remove(0));
     }
     Ok(TypeExpr::Union(variants))
+}
+
+fn parse_type_range(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
+    let span = span_of(&pair);
+    let mut inner = pair.into_inner();
+    let base = inner
+        .next()
+        .ok_or_else(|| WdlError::syntax(span, "range type is missing a base type"))
+        .and_then(parse_type_postfix)?;
+    let Some(bounds_pair) = inner.find(|p| p.as_rule() == Rule::range_bounds) else {
+        return Ok(base);
+    };
+    let mut min = None;
+    let mut max = None;
+    for bound in bounds_pair.into_inner() {
+        match bound.as_rule() {
+            Rule::range_min => min = Some(parse_type_bound(first_inner(bound)?)?),
+            Rule::range_max => max = Some(parse_type_bound(first_inner(bound)?)?),
+            _ => {}
+        }
+    }
+    Ok(TypeExpr::Range {
+        base: Box::new(base),
+        min,
+        max,
+    })
+}
+
+fn parse_type_bound(pair: Pair<Rule>) -> Result<Value, WdlError> {
+    let span = span_of(&pair);
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::duration => Ok(Value::from(parse_duration(inner.as_str(), span)?)),
+        Rule::number if inner.as_str().contains('.') => {
+            let value = inner
+                .as_str()
+                .parse::<f64>()
+                .map_err(|_| WdlError::syntax(span, "invalid range bound"))?;
+            Ok(Value::from(value))
+        }
+        Rule::number => Ok(Value::from(parse_i64(inner.as_str(), span)?)),
+        _ => Err(WdlError::syntax(span, "invalid range bound")),
+    }
 }
 
 fn parse_type_postfix(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
@@ -456,9 +511,38 @@ fn parse_type_atom(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
             let value = first_inner(inner)?;
             Ok(TypeExpr::Map(Box::new(parse_type_expr(value)?)))
         }
+        Rule::type_enum => parse_type_enum(inner),
         Rule::type_struct => parse_type_struct(inner),
         Rule::type_named => Ok(TypeExpr::Named(inner.as_str().to_string())),
         other => Err(WdlError::lower(format!("unexpected type atom {other:?}"))),
+    }
+}
+
+fn parse_type_enum(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
+    let values = pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::enum_lit)
+        .map(parse_enum_lit)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(TypeExpr::Enum(values))
+}
+
+fn parse_enum_lit(pair: Pair<Rule>) -> Result<Value, WdlError> {
+    let span = span_of(&pair);
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::string => Ok(Value::String(plain_string(inner)?)),
+        Rule::number if inner.as_str().contains('.') => {
+            let value = inner
+                .as_str()
+                .parse::<f64>()
+                .map_err(|_| WdlError::syntax(span, "invalid enum number"))?;
+            Ok(Value::from(value))
+        }
+        Rule::number => Ok(Value::from(parse_i64(inner.as_str(), span)?)),
+        Rule::boolean => Ok(Value::Bool(inner.as_str() == "true")),
+        Rule::null_lit => Ok(Value::Null),
+        _ => Err(WdlError::syntax(span, "invalid enum literal")),
     }
 }
 

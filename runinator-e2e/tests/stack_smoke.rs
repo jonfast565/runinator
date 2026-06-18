@@ -235,15 +235,14 @@ impl StackHarness {
         };
         harness.supervisor("start")?;
         harness.wait_for_web().await?;
-        // the worker self-publishes the built-in provider bundle on startup; without it, workflow
+        // the web service seeds built-in provider metadata on startup; without it, workflow
         // validation rejects every action node (e.g. unknown provider action 'Console.run'). wait
-        // for that registration to land before importing workflows.
+        // for the catalog seed to land before importing workflows.
         harness.wait_for_providers().await?;
         Ok(harness)
     }
 
-    /// poll the web service until the worker has registered at least one provider, mirroring how the
-    /// supervisor stack relies on the worker's startup self-publish for action validation.
+    /// poll the web service until the built-in provider catalog has been seeded.
     async fn wait_for_providers(&self) -> E2eResult<()> {
         let client = self.api_client()?;
         for _ in 0..60 {
@@ -252,7 +251,7 @@ impl StackHarness {
                 _ => sleep(Duration::from_secs(1)).await,
             }
         }
-        Err("worker did not register providers in time".into())
+        Err("provider catalog was not seeded in time".into())
     }
 
     /// run `runinatorctl workflows apply` once against the given workflows file (a .json bundle,

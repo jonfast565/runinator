@@ -56,7 +56,8 @@ impl Backend {
             self.client.publish_diagnostics(uri, Vec::new(), None).await;
             return;
         }
-        let diagnostics = diagnostics::compute(&text, check_lowering);
+        let path = uri.to_file_path().ok();
+        let diagnostics = diagnostics::compute(&text, path.as_deref(), check_lowering);
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
@@ -188,8 +189,10 @@ impl LanguageServer for Backend {
         let Some(text) = self.documents.get(&uri) else {
             return Ok(None);
         };
+        let path = uri.to_file_path().ok();
         Ok(hover::hover(
             &text,
+            path.as_deref(),
             params.text_document_position_params.position,
         ))
     }

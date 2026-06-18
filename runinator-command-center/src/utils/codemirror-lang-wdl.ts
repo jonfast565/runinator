@@ -13,8 +13,10 @@ import {
 } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import {
-  completeFromList,
   snippetCompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
   type CompletionSource,
 } from "@codemirror/autocomplete";
 
@@ -28,19 +30,21 @@ const DECL_KW = new Set([
 const CONTROL_KW = new Set([
   "if", "else", "for", "while", "until", "match", "when", "parallel", "race", "try", "catch",
   "finally", "map", "branch", "join", "wait", "output", "deliverable", "approve", "fail",
-  "subflow", "spawn", "call", "compute", "return", "goto", "edges",
+  "subflow", "spawn", "call", "compute", "return", "goto", "edges", "gate", "signal",
+  "watch", "compensate",
 ]);
 // clause/option words that modify a statement.
 const MODIFIER_KW = new Set([
   "with", "as", "initial", "limit", "concurrency", "detached", "reuse", "disabled", "blackout",
-  "to", "cron", "winner", "name", "meta",
+  "to", "cron", "winner", "name", "meta", "returns", "every", "timeout", "key", "priority",
+  "max_depth",
 ]);
 // word-form comparison/membership operators.
 const OP_KW = new Set(["exists", "contains", "in", "starts_with", "ends_with"]);
 // outcome labels, only highlighted as such when they precede a `->` transition.
 const OUTCOMES = new Set(["ok", "next", "fail", "timeout", "reject"]);
 // constant-like policy/target atoms.
-const ATOMS = new Set(["all", "any", "first_success", "done", "none"]);
+const ATOMS = new Set(["all", "any", "first_success", "done", "none", "manual", "condition", "external"]);
 // coercion and compile-time intrinsics, highlighted as functions only when called.
 const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);
 // reference roots that are never keywords.
@@ -50,7 +54,31 @@ const PURE_REFS = new Set(["run", "loop", "state", "item"]);
 const ROOT_KEYWORDS = new Set(["params", "config", "secret", "workflow", "std"]);
 // primitive type names. surfaced for completion, and colored inside type-position contexts
 // (after `type`/`:` in a type field, `node x:`/`let x:` annotations) where they are unambiguous.
-const TYPES = ["any", "boolean", "integer", "map", "number", "string"];
+const TYPES = ["any", "boolean", "bool", "duration", "float", "int", "integer", "json", "map", "null", "number", "string"];
+
+const STD_MODULES = [
+  "math",
+  "strings",
+  "collections",
+  "objects",
+  "encoding",
+  "logic",
+  "dates",
+  "regex",
+  "exec",
+] as const;
+
+const STD_INTRINSICS: { label: string; module: typeof STD_MODULES[number] }[] = [
+  ...["add", "sub", "mul", "div", "mod", "floor", "ceil", "round", "min", "max", "parse_int", "parse_float"].map((label) => ({ label, module: "math" as const })),
+  ...["lower", "upper", "trim", "split", "join", "replace", "substring", "starts_with", "ends_with"].map((label) => ({ label, module: "strings" as const })),
+  ...["len", "keys", "values", "contains", "at", "has", "sum", "sort", "reverse", "unique", "flatten", "slice", "first", "last", "append", "range", "map", "filter", "find", "any", "all", "reduce", "sort_by", "flat_map"].map((label) => ({ label, module: "collections" as const })),
+  ...["merge", "pick", "omit", "entries", "from_entries"].map((label) => ({ label, module: "objects" as const })),
+  ...["parse_json", "base64_encode", "base64_decode"].map((label) => ({ label, module: "encoding" as const })),
+  ...["eq", "ne", "gt", "lt", "gte", "lte", "not", "and", "or", "default"].map((label) => ({ label, module: "logic" as const })),
+  ...["format_date", "parse_date", "add_duration", "date_diff"].map((label) => ({ label, module: "dates" as const })),
+  ...["regex_match", "regex_replace", "regex_extract"].map((label) => ({ label, module: "regex" as const })),
+  ...["http_get", "http_post", "now", "uuid", "env"].map((label) => ({ label, module: "exec" as const })),
+];
 
 // completion vocabulary spans every group so suggestions stay broad.
 const KEYWORDS = new Set([
@@ -398,14 +426,129 @@ const snippets = [
     type: "function",
     detail: "provider action node",
   }),
+  snippetCompletion('fn ${name}(${arg}: ${type}) -> ${return_type} = ${value}', {
+    label: "fn",
+    type: "function",
+    detail: "function definition",
+  }),
+  snippetCompletion('import std.${module} as ${alias}', {
+    label: "import std",
+    type: "keyword",
+    detail: "standard-library import",
+  }),
+  snippetCompletion('trigger cron "${cron}" with { ${} }', {
+    label: "trigger cron",
+    type: "keyword",
+    detail: "cron trigger",
+  }),
+  snippetCompletion("watch ${condition} -> ${target}", {
+    label: "watch",
+    type: "keyword",
+    detail: "workflow guard",
+  }),
+  snippetCompletion("gate condition when ${condition} every ${interval} timeout ${deadline}", {
+    label: "gate condition",
+    type: "keyword",
+    detail: "condition gate",
+  }),
+  snippetCompletion('signal "${name}" key ${correlation}', {
+    label: "signal",
+    type: "keyword",
+    detail: "external signal wait",
+  }),
+  snippetCompletion("compensate ${provider}.${action}(${args})", {
+    label: "compensate",
+    type: "keyword",
+    detail: "compensating action",
+  }),
+  snippetCompletion("type ${Name} {\n\t${field}: ${type}\n}", {
+    label: "type struct",
+    type: "type",
+    detail: "named struct type",
+  }),
+  snippetCompletion("enum[${value}]", {
+    label: "enum",
+    type: "type",
+    detail: "enum type",
+  }),
+  snippetCompletion("${integer} range ${0}..${10}", {
+    label: "range",
+    type: "type",
+    detail: "bounded type",
+  }),
+  snippetCompletion("${item} => ${expr}", {
+    label: "lambda",
+    type: "function",
+    detail: "lambda expression",
+  }),
 ];
 
-const wdlCompletion: CompletionSource = completeFromList([
-  ...snippets,
-  ...keywordCompletions,
-]);
+const moduleCompletions: Completion[] = STD_MODULES.map((label) => ({
+  label,
+  type: "module",
+  detail: "std module",
+}));
 
-/// codemirror language support for wdl: highlighting + keyword/snippet completion.
+const intrinsicCompletions: Completion[] = STD_INTRINSICS.map(({ label, module }) => ({
+  label,
+  type: "function",
+  detail: `std.${module}.${label}`,
+}));
+
+function intrinsicCompletionsFor(module: string): Completion[] {
+  return intrinsicCompletions.filter((completion) => completion.detail === `std.${module}.${completion.label}`);
+}
+
+export const wdlStaticCompletionLabels = [
+  ...new Set([
+    ...snippets.map((completion) => completion.label),
+    ...keywordCompletions.map((completion) => completion.label),
+    ...moduleCompletions.map((completion) => completion.label),
+    ...intrinsicCompletions.map((completion) => completion.label),
+  ]),
+].sort();
+
+export const wdlCompletion: CompletionSource = (context: CompletionContext): CompletionResult | null => {
+  const word = context.matchBefore(/[A-Za-z_][A-Za-z0-9_-]*/);
+  const tokenStart = word?.from ?? context.pos;
+  const beforeToken = context.state.sliceDoc(0, tokenStart);
+  const stdModule = beforeToken.match(/\bstd\.([A-Za-z_][A-Za-z0-9_]*)\.$/);
+  const afterDot = /\.$/.test(beforeToken);
+
+  if (!context.explicit && !word && !afterDot) return null;
+
+  if (stdModule) {
+    return {
+      from: tokenStart,
+      options: intrinsicCompletionsFor(stdModule[1]),
+      validFor: /^[A-Za-z_][A-Za-z0-9_]*$/,
+    };
+  }
+
+  if (/\bstd\.$/.test(beforeToken)) {
+    return {
+      from: tokenStart,
+      options: moduleCompletions,
+      validFor: /^[A-Za-z_][A-Za-z0-9_]*$/,
+    };
+  }
+
+  if (afterDot) {
+    return {
+      from: tokenStart,
+      options: intrinsicCompletions,
+      validFor: /^[A-Za-z_][A-Za-z0-9_]*$/,
+    };
+  }
+
+  return {
+    from: word?.from ?? context.pos,
+    options: [...snippets, ...keywordCompletions],
+    validFor: /^[A-Za-z_][A-Za-z0-9_-]*$/,
+  };
+};
+
+// codemirror language support for wdl: highlighting + keyword/snippet completion.
 export function wdl(providerCompletion?: CompletionSource): LanguageSupport {
   return new LanguageSupport(wdlParser, [
     syntaxHighlighting(wdlHighlightStyle),
