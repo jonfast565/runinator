@@ -259,6 +259,10 @@
       <path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6z" />
       <polyline points="9,12 11,14 15,10" />
     </template>
+    <template v-else-if="name === 'user'">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </template>
     <template v-else-if="name === 'grid'">
       <rect x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -298,7 +302,7 @@ export type IconName =
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
   | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
   | "bolt" | "clock" | "hourglass" | "branch" | "switch" | "loop" | "parallel" | "join"
-  | "shield" | "grid" | "race" | "emit" | "output";
+  | "shield" | "user" | "grid" | "race" | "emit" | "output";
 
 const props = withDefaults(
   defineProps<{ name: IconName | string; size?: number | string; strokeWidth?: number | string }>(),

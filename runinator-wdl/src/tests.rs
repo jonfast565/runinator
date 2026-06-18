@@ -89,12 +89,20 @@ fn lists_included_file_paths() {
 }
 
 fn completion_labels(src: &str, marker: &str) -> Vec<String> {
+    completion_labels_with_providers(src, marker, completion_providers())
+}
+
+fn completion_labels_with_providers(
+    src: &str,
+    marker: &str,
+    providers: Vec<ProviderMetadata>,
+) -> Vec<String> {
     let cursor = src.find(marker).expect("marker");
     let source = src.replacen(marker, "", 1);
     complete_source(WdlCompletionRequest {
         source,
         cursor_byte: cursor,
-        providers: completion_providers(),
+        providers,
         settings: Vec::new(),
     })
     .items
@@ -3511,6 +3519,36 @@ fn completes_std_modules_and_functions() {
     assert!(
         !functions.contains(&"add".to_string()),
         "math leaked into strings: {functions:?}"
+    );
+}
+
+#[test]
+fn completes_std_modules_when_std_provider_metadata_exists() {
+    let mut providers = completion_providers();
+    providers.push(ProviderMetadata {
+        name: "std".into(),
+        actions: vec![
+            ActionMetadata::new("run", "evaluate a pure compute program"),
+            ActionMetadata::new("exec", "execute an effectful compute program"),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    });
+    let modules = completion_labels_with_providers(
+        r#"
+        workflow "Complete" v1 {
+            node compute { return std.<> }
+        }
+    "#,
+        "<>",
+        providers,
+    );
+    assert!(
+        modules.contains(&"collections".to_string()),
+        "std provider metadata hid std modules: {modules:?}"
+    );
+    assert!(
+        !modules.contains(&"run".to_string()),
+        "std provider actions leaked into std module completion: {modules:?}"
     );
 }
 

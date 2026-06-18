@@ -3214,6 +3214,16 @@ where
             .bind(id)
             .execute(self.pool())
             .await?;
+        sqlx::query(&self.render("DELETE FROM team_members WHERE user_id = ?"))
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        sqlx::query(&self.render(
+            "DELETE FROM resource_grants WHERE principal_type = 'user' AND principal_id = ?",
+        ))
+        .bind(id)
+        .execute(self.pool())
+        .await?;
         sqlx::query(&self.render("DELETE FROM users WHERE id = ?"))
             .bind(id)
             .execute(self.pool())
@@ -3261,6 +3271,16 @@ where
         Ok(row.map(|row| mappers::row_to_api_key_record(&row)))
     }
 
+    async fn fetch_api_key(&self, id: Uuid) -> Result<Option<ApiKeyRecord>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE id = ?",
+        ))
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_api_key_record(&row)))
+    }
+
     async fn list_api_keys(&self, user_id: Option<Uuid>) -> Result<Vec<ApiKey>, SendableError> {
         let columns = "id, name, user_id, is_service, key_prefix, last_used_at, expires_at, disabled, created_at";
         let rows = match user_id {
@@ -3290,6 +3310,38 @@ where
             .execute(self.pool())
             .await?;
         Ok(())
+    }
+
+    async fn update_api_key(
+        &self,
+        id: Uuid,
+        name: Option<String>,
+        expires_at: Option<Option<DateTime<Utc>>>,
+        disabled: Option<bool>,
+    ) -> Result<ApiKey, SendableError> {
+        let Some(record) = self.fetch_api_key(id).await? else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("API key {id} not found"),
+            )));
+        };
+        let mut key = record.key;
+        let next_name = name.unwrap_or_else(|| key.name.clone());
+        let next_expires_at = expires_at.unwrap_or(key.expires_at);
+        let next_disabled = disabled.unwrap_or(key.disabled);
+        sqlx::query(
+            &self.render("UPDATE api_keys SET name = ?, expires_at = ?, disabled = ? WHERE id = ?"),
+        )
+        .bind(&next_name)
+        .bind(next_expires_at.map(|t| t.timestamp()))
+        .bind(next_disabled)
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        key.name = next_name;
+        key.expires_at = next_expires_at;
+        key.disabled = next_disabled;
+        Ok(key)
     }
 
     async fn touch_api_key(&self, id: Uuid, last_used_at: i64) -> Result<(), SendableError> {
@@ -3364,6 +3416,30 @@ where
         })
     }
 
+    async fn update_team(&self, id: Uuid, name: String) -> Result<Team, SendableError> {
+        let Some(current) = self
+            .list_teams()
+            .await?
+            .into_iter()
+            .find(|team| team.id == Some(id))
+        else {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Team {id} not found"),
+            )));
+        };
+        sqlx::query(&self.render("UPDATE teams SET name = ? WHERE id = ?"))
+            .bind(&name)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(Team {
+            id: Some(id),
+            name,
+            created_at: current.created_at,
+        })
+    }
+
     async fn list_teams(&self) -> Result<Vec<Team>, SendableError> {
         let rows =
             sqlx::query(&self.render("SELECT id, name, created_at FROM teams ORDER BY name"))
@@ -3423,6 +3499,34 @@ where
             .iter()
             .map(|row| row.get::<Uuid, _>("team_id"))
             .collect())
+    }
+
+    async fn list_user_teams(&self, user_id: Uuid) -> Result<Vec<Team>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT t.id, t.name, t.created_at \
+             FROM teams t \
+             INNER JOIN team_members tm ON tm.team_id = t.id \
+             WHERE tm.user_id = ? \
+             ORDER BY t.name",
+        ))
+        .bind(user_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_team).collect())
+    }
+
+    async fn list_team_members(&self, team_id: Uuid) -> Result<Vec<User>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT u.id, u.username, u.email, u.is_admin, u.disabled, u.created_at, u.updated_at \
+             FROM users u \
+             INNER JOIN team_members tm ON tm.user_id = u.id \
+             WHERE tm.team_id = ? \
+             ORDER BY u.username",
+        ))
+        .bind(team_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_user).collect())
     }
 
     async fn create_grant(&self, grant: Grant) -> Result<Grant, SendableError> {

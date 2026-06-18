@@ -1,5 +1,51 @@
 export type JsonRecord = Record<string, any>;
 
+export type PermissionLevel = "view" | "run" | "edit" | "own";
+export type PrincipalType = "user" | "team";
+
+export interface User {
+  id: string | null;
+  username: string;
+  email?: string | null;
+  is_admin: boolean;
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Team {
+  id: string | null;
+  name: string;
+  created_at: string;
+}
+
+export interface Grant {
+  id: string | null;
+  resource_type: "workflow" | string;
+  resource_id: string;
+  principal_type: PrincipalType;
+  principal_id: string;
+  permission: PermissionLevel;
+  created_at: string;
+}
+
+export interface ApiKey {
+  id: string | null;
+  name: string;
+  user_id?: string | null;
+  is_service: boolean;
+  key_prefix: string;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  disabled: boolean;
+  created_at: string;
+}
+
+export interface CreateApiKeyResponse {
+  api_key: ApiKey;
+  secret: string;
+}
+
 export type WorkflowNodeKind =
   | "start"
   | "action"

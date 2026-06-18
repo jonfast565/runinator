@@ -3,7 +3,7 @@ use crate::interfaces::DatabaseImpl;
 use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::{
-    auth::{Grant, Permission, PrincipalType, ResourceType},
+    auth::{ApiKey, ApiKeyRecord, Grant, Permission, PrincipalType, ResourceType},
     runs::NewRunChunk,
     settings::SettingKind,
     workflows::{
@@ -1129,9 +1129,19 @@ async fn users_grants_and_teams_round_trip() {
     // teams: membership feeds team-scoped grants.
     let team = db.create_team("ops".into()).await.unwrap();
     let team_id = team.id.unwrap();
+    let updated_team = db.update_team(team_id, "platform".into()).await.unwrap();
+    assert_eq!(updated_team.name, "platform");
     db.add_team_member(team_id, user_id).await.unwrap();
     db.add_team_member(team_id, user_id).await.unwrap(); // idempotent
     assert_eq!(db.list_user_team_ids(user_id).await.unwrap(), vec![team_id]);
+    assert_eq!(
+        db.list_user_teams(user_id).await.unwrap()[0].name,
+        "platform"
+    );
+    assert_eq!(
+        db.list_team_members(team_id).await.unwrap()[0].username,
+        "alice"
+    );
     db.create_grant(Grant {
         id: None,
         resource_type: ResourceType::Workflow,
@@ -1149,4 +1159,59 @@ async fn users_grants_and_teams_round_trip() {
         .unwrap();
     assert_eq!(team_grants.len(), 1);
     assert_eq!(team_grants[0].permission, Permission::Run);
+}
+
+#[tokio::test]
+async fn api_keys_support_admin_lookup_update_and_revoke() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-api-keys-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let user = db
+        .create_user("api-user".into(), None, false, None)
+        .await
+        .unwrap();
+    let user_id = user.id.unwrap();
+    let key_id = Uuid::now_v7();
+    let expires_at = Utc::now() + Duration::days(1);
+    let key = db
+        .create_api_key(ApiKeyRecord {
+            key: ApiKey {
+                id: Some(key_id),
+                name: "initial".into(),
+                user_id: Some(user_id),
+                is_service: false,
+                key_prefix: "testprefix".into(),
+                last_used_at: None,
+                expires_at: Some(expires_at),
+                disabled: false,
+                created_at: Utc::now(),
+            },
+            is_admin: false,
+            key_hash: "hash".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(key.id, Some(key_id));
+
+    let fetched = db.fetch_api_key(key_id).await.unwrap().unwrap();
+    assert_eq!(fetched.key.name, "initial");
+    assert_eq!(fetched.key_hash, "hash");
+
+    let updated = db
+        .update_api_key(key_id, Some("renamed".into()), Some(None), Some(true))
+        .await
+        .unwrap();
+    assert_eq!(updated.name, "renamed");
+    assert_eq!(updated.expires_at, None);
+    assert!(updated.disabled);
+
+    db.revoke_api_key(key_id).await.unwrap();
+    let revoked = db.fetch_api_key(key_id).await.unwrap().unwrap();
+    assert!(revoked.key.disabled);
+
+    let _ = std::fs::remove_file(path);
 }

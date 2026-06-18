@@ -3,12 +3,17 @@ import { isTauriRuntime } from "./tauriRuntime";
 import { apiBaseUrl, invokeViaHttp, setHttpAuthToken } from "./httpRuntime";
 import type {
   JsonRecord,
+  ApiKey,
+  CreateApiKeyResponse,
   CredentialSummary,
   DevPackApplyResult,
   DevPackInspectResult,
   DevPackTextFile,
   GateRecord,
+  Grant,
   Notification,
+  PermissionLevel,
+  PrincipalType,
   ProviderMetadata,
   ReplicaListResponse,
   RunArtifact,
@@ -19,6 +24,8 @@ import type {
   ScheduledTask,
   ServiceStatus,
   TaskResponse,
+  Team,
+  User,
   WdlCompletionRequest,
   WdlCompletionResponse,
   WdlDiagnostic,
@@ -100,6 +107,115 @@ export async function createWorkflowGrant(
 
 export async function revokeWorkflowGrant(workflowId: string, grantId: string) {
   return command<any>("revoke_workflow_grant", { workflowId, grantId });
+}
+
+export interface CreateUserInput {
+  username: string;
+  password: string;
+  email?: string | null;
+  is_admin?: boolean;
+}
+
+export interface UpdateUserInput {
+  email?: string | null;
+  password?: string | null;
+  is_admin?: boolean | null;
+  disabled?: boolean | null;
+}
+
+export interface CreateApiKeyInput {
+  name: string;
+  user_id?: string | null;
+  is_service?: boolean;
+  expires_at?: string | null;
+}
+
+export interface UpdateApiKeyInput {
+  name?: string | null;
+  expires_at?: string | null;
+  disabled?: boolean | null;
+}
+
+export async function listUsers() {
+  return command<User[]>("list_users");
+}
+
+export async function createUser(request: CreateUserInput) {
+  return command<User>("create_user", { request });
+}
+
+export async function updateUser(userId: string, request: UpdateUserInput) {
+  return command<User>("update_user", { userId, request });
+}
+
+export async function deleteUser(userId: string) {
+  return command<TaskResponse>("delete_user", { userId });
+}
+
+export async function listTeams() {
+  return command<Team[]>("list_teams");
+}
+
+export async function createTeam(name: string) {
+  return command<Team>("create_team", { name });
+}
+
+export async function updateTeam(teamId: string, name: string) {
+  return command<Team>("update_team", { teamId, name });
+}
+
+export async function deleteTeam(teamId: string) {
+  return command<TaskResponse>("delete_team", { teamId });
+}
+
+export async function listTeamMembers(teamId: string) {
+  return command<User[]>("list_team_members", { teamId });
+}
+
+export async function listUserTeams(userId: string) {
+  return command<Team[]>("list_user_teams", { userId });
+}
+
+export async function addTeamMember(teamId: string, userId: string) {
+  return command<TaskResponse>("add_team_member", { teamId, userId });
+}
+
+export async function removeTeamMember(teamId: string, userId: string) {
+  return command<TaskResponse>("remove_team_member", { teamId, userId });
+}
+
+export async function listApiKeys() {
+  return command<ApiKey[]>("list_api_keys");
+}
+
+export async function createApiKey(request: CreateApiKeyInput) {
+  return command<CreateApiKeyResponse>("create_api_key", { request });
+}
+
+export async function updateApiKey(keyId: string, request: UpdateApiKeyInput) {
+  return command<ApiKey>("update_api_key", { keyId, request });
+}
+
+export async function revokeApiKey(keyId: string) {
+  return command<TaskResponse>("revoke_api_key", { keyId });
+}
+
+export async function rotateApiKey(keyId: string) {
+  return command<CreateApiKeyResponse>("rotate_api_key", { keyId });
+}
+
+export async function grantWorkflowAccess(
+  workflowId: string,
+  principalType: PrincipalType,
+  principalId: string,
+  permission: PermissionLevel
+) {
+  return command<Grant>("create_workflow_grant", {
+    workflowId,
+    principalType,
+    principalId,
+    permission
+  });
 }
 
 export async function getServiceStatus() {

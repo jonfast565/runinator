@@ -91,6 +91,12 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
         return empty_response(word.start, cursor);
     }
 
+    if let Some(path) = path_context(&source, cursor)
+        && path.head == "std"
+    {
+        return complete_std_path(path);
+    }
+
     if let Some(action) = action_member_context(&source, cursor)
         && find_provider(&request.providers, &action.provider).is_some()
     {

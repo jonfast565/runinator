@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { fetchReplicas as fetchReplicasApi } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
+import { useAuthStore } from "./auth";
 import type { ReplicaCounts, ReplicaRecord } from "../types/models";
 import type { AppTab, NavSection } from "../types/app";
 
@@ -37,6 +38,12 @@ export const navSections: NavSection[] = [
       { tab: "Gates", label: "Gates", icon: "gate" },
       { tab: "Secrets", label: "Config & Secrets", icon: "key" }
     ]
+  },
+  {
+    label: "Admin",
+    items: [
+      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true }
+    ]
   }
 ];
 
@@ -44,8 +51,16 @@ export const tabs: AppTab[] = navSections.flatMap((section) => section.items.map
 
 // nav sections with desktop-only items dropped when running in the hosted web app.
 export function visibleNavSections(): NavSection[] {
-  if (isTauriRuntime()) return navSections;
-  return navSections
+  const auth = useAuthStore();
+  const canSeeAdmin = !auth.required || auth.user?.is_admin === true;
+  const sections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => !item.adminOnly || canSeeAdmin)
+    }))
+    .filter((section) => section.items.length > 0);
+  if (isTauriRuntime()) return sections;
+  return sections
     .map((section) => ({ ...section, items: section.items.filter((item) => !item.desktopOnly) }))
     .filter((section) => section.items.length > 0);
 }

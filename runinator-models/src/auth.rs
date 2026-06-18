@@ -113,6 +113,11 @@ pub struct CreateTeamRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct UpdateTeamRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AddTeamMemberRequest {
     pub user_id: Uuid,
 }
@@ -274,9 +279,21 @@ pub struct UpdateUserRequest {
 pub struct CreateApiKeyRequest {
     pub name: String,
     #[serde(default)]
+    pub user_id: Option<Uuid>,
+    #[serde(default)]
     pub is_service: bool,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateApiKeyRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<Option<DateTime<Utc>>>,
+    #[serde(default)]
+    pub disabled: Option<bool>,
 }
 
 /// returned once on creation; `secret` is the only time the raw key is shown.

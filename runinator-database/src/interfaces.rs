@@ -725,6 +725,12 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         record: ApiKeyRecord,
     ) -> impl Future<Output = Result<ApiKey, SendableError>> + Send;
 
+    /// Fetch an api key (incl. hash) by id for administration.
+    fn fetch_api_key(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<ApiKeyRecord>, SendableError>> + Send;
+
     /// Fetch an api key (incl. hash) by its public prefix for verification.
     fn fetch_api_key_by_prefix(
         &self,
@@ -739,6 +745,15 @@ pub trait DatabaseImpl: Send + Sync + 'static {
 
     /// Disable (revoke) an api key.
     fn revoke_api_key(&self, id: Uuid) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Update api key metadata.
+    fn update_api_key(
+        &self,
+        id: Uuid,
+        name: Option<String>,
+        expires_at: Option<Option<DateTime<Utc>>>,
+        disabled: Option<bool>,
+    ) -> impl Future<Output = Result<ApiKey, SendableError>> + Send;
 
     /// Record an api key's last-used timestamp (best effort).
     fn touch_api_key(
@@ -774,6 +789,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn create_team(&self, name: String)
     -> impl Future<Output = Result<Team, SendableError>> + Send;
 
+    /// Rename a team.
+    fn update_team(
+        &self,
+        id: Uuid,
+        name: String,
+    ) -> impl Future<Output = Result<Team, SendableError>> + Send;
+
     /// List all teams.
     fn list_teams(&self) -> impl Future<Output = Result<Vec<Team>, SendableError>> + Send;
 
@@ -799,6 +821,18 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         user_id: Uuid,
     ) -> impl Future<Output = Result<Vec<Uuid>, SendableError>> + Send;
+
+    /// The teams a user belongs to.
+    fn list_user_teams(
+        &self,
+        user_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<Team>, SendableError>> + Send;
+
+    /// The users assigned to a team.
+    fn list_team_members(
+        &self,
+        team_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<User>, SendableError>> + Send;
 
     /// Create or update (by resource+principal) a grant.
     fn create_grant(

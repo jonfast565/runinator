@@ -10,7 +10,9 @@ export type AppTab =
   | "Events"
   | "ExternalItems"
   | "Gates"
-  | "Secrets";
+  | "Secrets"
+  | "Users"
+  | "Permissions";
 
 export interface ResourceEndpoint {
   label: string;
@@ -24,6 +26,8 @@ export interface NavItem {
   endpoint?: string;
   // only available in the tauri desktop client; hidden in the hosted web app.
   desktopOnly?: boolean;
+  // only available to admins, or to auth-disabled stacks where every caller is an admin.
+  adminOnly?: boolean;
 }
 
 export interface NavSection {

@@ -161,6 +161,185 @@ pub async fn revoke_workflow_grant(
 }
 
 #[tauri::command]
+pub async fn list_users(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Value>> {
+    get_json(&state, "users").await
+}
+
+#[tauri::command]
+pub async fn create_user(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "users", &request).await
+}
+
+#[tauri::command]
+pub async fn update_user(
+    state: State<'_, CommandCenterState>,
+    user_id: Uuid,
+    request: Value,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("users/{user_id}")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&request)
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_user(
+    state: State<'_, CommandCenterState>,
+    user_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("users/{user_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn list_teams(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Value>> {
+    get_json(&state, "teams").await
+}
+
+#[tauri::command]
+pub async fn create_team(
+    state: State<'_, CommandCenterState>,
+    name: String,
+) -> CommandResult<Value> {
+    post_json(&state, "teams", &json!({ "name": name })).await
+}
+
+#[tauri::command]
+pub async fn update_team(
+    state: State<'_, CommandCenterState>,
+    team_id: Uuid,
+    name: String,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("teams/{team_id}")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&json!({ "name": name }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_team(
+    state: State<'_, CommandCenterState>,
+    team_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("teams/{team_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn list_team_members(
+    state: State<'_, CommandCenterState>,
+    team_id: Uuid,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, &format!("teams/{team_id}/members")).await
+}
+
+#[tauri::command]
+pub async fn list_user_teams(
+    state: State<'_, CommandCenterState>,
+    user_id: Uuid,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, &format!("users/{user_id}/teams")).await
+}
+
+#[tauri::command]
+pub async fn add_team_member(
+    state: State<'_, CommandCenterState>,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("teams/{team_id}/members"),
+        &json!({ "user_id": user_id }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn remove_team_member(
+    state: State<'_, CommandCenterState>,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("teams/{team_id}/members/{user_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn list_api_keys(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Value>> {
+    get_json(&state, "api_keys").await
+}
+
+#[tauri::command]
+pub async fn create_api_key(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "api_keys", &request).await
+}
+
+#[tauri::command]
+pub async fn update_api_key(
+    state: State<'_, CommandCenterState>,
+    key_id: Uuid,
+    request: Value,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("api_keys/{key_id}")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&request)
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn revoke_api_key(
+    state: State<'_, CommandCenterState>,
+    key_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("api_keys/{key_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn rotate_api_key(
+    state: State<'_, CommandCenterState>,
+    key_id: Uuid,
+) -> CommandResult<Value> {
+    post_json(&state, &format!("api_keys/{key_id}/rotate"), &json!({})).await
+}
+
+#[tauri::command]
 pub async fn fetch_workflows(
     state: State<'_, CommandCenterState>,
 ) -> CommandResult<Vec<WorkflowDefinition>> {

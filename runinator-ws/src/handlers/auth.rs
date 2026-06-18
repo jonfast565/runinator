@@ -6,7 +6,8 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AddTeamMemberRequest, ApiKey, ApiKeyRecord, AuthContext, AuthSession, CreateApiKeyRequest,
     CreateApiKeyResponse, CreateGrantRequest, CreateTeamRequest, CreateUserRequest, Grant,
-    LoginRequest, LoginResponse, Permission, RefreshRequest, ResourceType, UpdateUserRequest, User,
+    LoginRequest, LoginResponse, Permission, RefreshRequest, ResourceType, UpdateApiKeyRequest,
+    UpdateTeamRequest, UpdateUserRequest, User,
 };
 use runinator_models::value::Value;
 use serde::Serialize;
@@ -45,6 +46,29 @@ fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
     } else {
         Err(forbidden("admin privileges required"))
     }
+}
+
+async fn enabled_admin_count<T: DatabaseImpl>(db: &T) -> Result<usize, Reply> {
+    db.list_users()
+        .await
+        .map(|users| {
+            users
+                .iter()
+                .filter(|user| user.is_admin && !user.disabled)
+                .count()
+        })
+        .map_err(|err| api_error(err.to_string()))
+}
+
+async fn would_remove_last_enabled_admin<T: DatabaseImpl>(
+    db: &T,
+    user: &User,
+    demote: bool,
+) -> Result<bool, Reply> {
+    if !user.is_admin || user.disabled || !demote {
+        return Ok(false);
+    }
+    Ok(enabled_admin_count(db).await? <= 1)
 }
 
 fn json_value<T: Serialize>(value: &T) -> Result<Value, Reply> {
@@ -271,6 +295,18 @@ pub(crate) async fn update_user<T: DatabaseImpl>(
     if let Err(reply) = require_admin(&ctx) {
         return reply;
     }
+    let current = match db.fetch_user(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found("user not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let demotes_enabled_admin = request.is_admin == Some(false) || request.disabled == Some(true);
+    match would_remove_last_enabled_admin(db.as_ref(), &current, demotes_enabled_admin).await {
+        Ok(true) => return forbidden("cannot remove the last enabled admin user"),
+        Ok(false) => {}
+        Err(reply) => return reply,
+    }
+    let password_changed = request.password.is_some();
     if let Some(password) = request.password {
         let hash = match hash_password(&password) {
             Ok(hash) => hash,
@@ -284,7 +320,14 @@ pub(crate) async fn update_user<T: DatabaseImpl>(
         .update_user(user_id, request.email, request.is_admin, request.disabled)
         .await
     {
-        Ok(user) => ok_value(&user),
+        Ok(user) => {
+            if password_changed || user.disabled {
+                if let Err(err) = db.revoke_user_sessions(user_id).await {
+                    return api_error(err.to_string());
+                }
+            }
+            ok_value(&user)
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -296,6 +339,16 @@ pub(crate) async fn delete_user<T: DatabaseImpl>(
 ) -> Reply {
     if let Err(reply) = require_admin(&ctx) {
         return reply;
+    }
+    let current = match db.fetch_user(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found("user not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    match would_remove_last_enabled_admin(db.as_ref(), &current, true).await {
+        Ok(true) => return forbidden("cannot delete the last enabled admin user"),
+        Ok(false) => {}
+        Err(reply) => return reply,
     }
     match db.delete_user(user_id).await {
         Ok(()) => task_response_success("User deleted"),
@@ -325,10 +378,32 @@ pub(crate) async fn create_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateApiKeyRequest>,
 ) -> Reply {
-    // only admins may mint service (account-less, trusted) keys; others get a personal key.
+    // only admins may mint service keys or keys for another user.
     let is_service = request.is_service && ctx.is_admin;
-    let user_id = if is_service { None } else { ctx.principal_id };
-    let is_admin = if is_service { true } else { ctx.is_admin };
+    let user_id = if is_service {
+        None
+    } else if ctx.is_admin {
+        request.user_id.or(ctx.principal_id)
+    } else {
+        ctx.principal_id
+    };
+    let owner = if let Some(user_id) = user_id {
+        match db.fetch_user(user_id).await {
+            Ok(Some(user)) => Some(user),
+            Ok(None) => return not_found("user not found"),
+            Err(err) => return api_error(err.to_string()),
+        }
+    } else {
+        None
+    };
+    let is_admin = if is_service {
+        true
+    } else {
+        owner
+            .as_ref()
+            .map(|user| user.is_admin)
+            .unwrap_or(ctx.is_admin)
+    };
     let generated = new_api_key();
     let key = ApiKey {
         id: Some(Uuid::new_v4()),
@@ -351,6 +426,68 @@ pub(crate) async fn create_api_key<T: DatabaseImpl>(
             api_key: stored,
             secret: generated.secret,
         }),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn update_api_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(key_id): Path<Uuid>,
+    Json(request): Json<UpdateApiKeyRequest>,
+) -> Reply {
+    if let Err(reply) = require_admin(&ctx) {
+        return reply;
+    }
+    match db
+        .update_api_key(key_id, request.name, request.expires_at, request.disabled)
+        .await
+    {
+        Ok(key) => ok_value(&key),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn rotate_api_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(key_id): Path<Uuid>,
+) -> Reply {
+    if let Err(reply) = require_admin(&ctx) {
+        return reply;
+    }
+    let current = match db.fetch_api_key(key_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("api key not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let generated = new_api_key();
+    let key = ApiKey {
+        id: Some(Uuid::new_v4()),
+        name: current.key.name,
+        user_id: current.key.user_id,
+        is_service: current.key.is_service,
+        key_prefix: generated.prefix,
+        last_used_at: None,
+        expires_at: current.key.expires_at,
+        disabled: false,
+        created_at: Utc::now(),
+    };
+    let record = ApiKeyRecord {
+        key,
+        is_admin: current.is_admin,
+        key_hash: generated.key_hash,
+    };
+    match db.create_api_key(record).await {
+        Ok(stored) => {
+            if let Err(err) = db.revoke_api_key(key_id).await {
+                return api_error(err.to_string());
+            }
+            ok_value(&CreateApiKeyResponse {
+                api_key: stored,
+                secret: generated.secret,
+            })
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -454,6 +591,23 @@ pub(crate) async fn list_teams<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn list_user_teams<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(user_id): Path<Uuid>,
+) -> Reply {
+    if let Err(reply) = require_admin(&ctx) {
+        return reply;
+    }
+    match db.list_user_teams(user_id).await {
+        Ok(teams) => match teams.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(reply) => reply,
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn create_team<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -463,6 +617,21 @@ pub(crate) async fn create_team<T: DatabaseImpl>(
         return reply;
     }
     match db.create_team(request.name).await {
+        Ok(team) => ok_value(&team),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn update_team<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(team_id): Path<Uuid>,
+    Json(request): Json<UpdateTeamRequest>,
+) -> Reply {
+    if let Err(reply) = require_admin(&ctx) {
+        return reply;
+    }
+    match db.update_team(team_id, request.name).await {
         Ok(team) => ok_value(&team),
         Err(err) => api_error(err.to_string()),
     }
@@ -478,6 +647,23 @@ pub(crate) async fn delete_team<T: DatabaseImpl>(
     }
     match db.delete_team(team_id).await {
         Ok(()) => task_response_success("Team deleted"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn list_team_members<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(team_id): Path<Uuid>,
+) -> Reply {
+    if let Err(reply) = require_admin(&ctx) {
+        return reply;
+    }
+    match db.list_team_members(team_id).await {
+        Ok(users) => match users.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(reply) => reply,
+        },
         Err(err) => api_error(err.to_string()),
     }
 }

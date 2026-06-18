@@ -2116,13 +2116,26 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
         "/users/{id}",
         "Auth",
         "Delete a user",
-        "Admin endpoint that deletes a local user.",
+        "Admin endpoint that deletes a local user unless it is the last enabled admin.",
         false,
         None,
         &[],
         200,
         "user deleted",
         Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/users/{id}/teams",
+        "Auth",
+        "List user teams",
+        "Admin endpoint that lists the teams a user belongs to.",
+        false,
+        None,
+        &[],
+        200,
+        "user teams",
+        Example::Team,
     ),
     endpoint(
         "get",
@@ -2162,6 +2175,32 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
         200,
         "api key revoked",
         Example::TaskResponse,
+    ),
+    endpoint(
+        "patch",
+        "/api_keys/{id}",
+        "Auth",
+        "Update an API key",
+        "Admin endpoint that updates API key metadata such as name, expiry, or disabled state.",
+        false,
+        json_body("API key update payload.", Example::ApiKey),
+        &[],
+        200,
+        "updated api key",
+        Example::ApiKeyList,
+    ),
+    endpoint(
+        "post",
+        "/api_keys/{id}/rotate",
+        "Auth",
+        "Rotate an API key",
+        "Admin endpoint that disables an API key and returns a replacement secret once.",
+        false,
+        None,
+        &[],
+        200,
+        "rotated api key and secret",
+        Example::ApiKey,
     ),
     endpoint(
         "get",
@@ -2240,6 +2279,32 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
         200,
         "team deleted",
         Example::TaskResponse,
+    ),
+    endpoint(
+        "patch",
+        "/teams/{id}",
+        "Auth",
+        "Update a team",
+        "Admin endpoint that renames a team.",
+        false,
+        json_body("Team update payload.", Example::Team),
+        &[],
+        200,
+        "team updated",
+        Example::Team,
+    ),
+    endpoint(
+        "get",
+        "/teams/{id}/members",
+        "Auth",
+        "List team members",
+        "Admin endpoint that lists users assigned to a team.",
+        false,
+        None,
+        &[],
+        200,
+        "team members",
+        Example::UserList,
     ),
     endpoint(
         "post",
@@ -2619,10 +2684,10 @@ fn example_value(example: Example) -> Option<Value> {
         Example::User => user_example(),
         Example::UserList => json!([user_example()]),
         Example::ApiKey => {
-            json!({ "name": "local automation", "is_service": false, "expires_at": null })
+            json!({ "name": "local automation", "user_id": UUID_EXAMPLE, "is_service": false, "expires_at": null })
         }
         Example::ApiKeyList => {
-            json!([{ "id": UUID_EXAMPLE, "name": "local automation", "key_prefix": "runi_live_1234", "disabled": false }])
+            json!([{ "id": UUID_EXAMPLE, "name": "local automation", "user_id": UUID_EXAMPLE, "is_service": false, "key_prefix": "runi_live_1234", "expires_at": null, "disabled": false }])
         }
         Example::Grant => {
             json!({ "principal_type": "user", "principal_id": UUID_EXAMPLE, "permission": "view" })

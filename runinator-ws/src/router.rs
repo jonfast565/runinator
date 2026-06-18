@@ -31,9 +31,10 @@ use crate::handlers::{
     },
     auth::{
         add_team_member, auth_config, create_api_key, create_team, create_user,
-        create_workflow_grant, delete_team, delete_user, list_api_keys, list_teams, list_users,
-        list_workflow_grants, login, logout, me, refresh, remove_team_member, revoke_api_key,
-        revoke_workflow_grant, update_user,
+        create_workflow_grant, delete_team, delete_user, list_api_keys, list_team_members,
+        list_teams, list_user_teams, list_users, list_workflow_grants, login, logout, me, refresh,
+        remove_team_member, revoke_api_key, revoke_workflow_grant, rotate_api_key, update_api_key,
+        update_team, update_user,
     },
     automation::{
         approve_request, close_gate, create_approval, create_automation_event,
@@ -522,6 +523,10 @@ pub fn build_router<T: DatabaseImpl>(
                 .layer(Extension(pool.clone())),
         )
         .route(
+            "/users/{id}/teams",
+            get(list_user_teams::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/api_keys",
             get(list_api_keys::<T>)
                 .post(create_api_key::<T>)
@@ -529,7 +534,13 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .route(
             "/api_keys/{id}",
-            delete(revoke_api_key::<T>).layer(Extension(pool.clone())),
+            patch(update_api_key::<T>)
+                .delete(revoke_api_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys/{id}/rotate",
+            post(rotate_api_key::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/grants",
@@ -549,11 +560,15 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .route(
             "/teams/{id}",
-            delete(delete_team::<T>).layer(Extension(pool.clone())),
+            patch(update_team::<T>)
+                .delete(delete_team::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/teams/{id}/members",
-            post(add_team_member::<T>).layer(Extension(pool.clone())),
+            get(list_team_members::<T>)
+                .post(add_team_member::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/teams/{id}/members/{user_id}",

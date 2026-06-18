@@ -18,6 +18,7 @@
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SecretsView v-show="app.activeTab === 'Secrets'" />
+    <PermissionsView v-if="app.activeTab === 'Permissions'" />
   </AppShell>
 </template>
 
@@ -37,6 +38,7 @@ import { useResourcesStore } from "./stores/resources";
 import { useSecretsStore } from "./stores/secrets";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
+import { usePermissionsStore } from "./stores/permissions";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
 import ReplicasView from "./views/ReplicasView.vue";
@@ -49,6 +51,7 @@ import EventsView from "./views/EventsView.vue";
 import ExternalItemsView from "./views/ExternalItemsView.vue";
 import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
+import PermissionsView from "./views/PermissionsView.vue";
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -59,6 +62,7 @@ const artifacts = useArtifactsStore();
 const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
+const permissions = usePermissionsStore();
 useEventStream();
 
 let unlistenUrl: (() => void) | undefined;
@@ -141,6 +145,8 @@ watch(
     if (tab === "Secrets") secrets.refreshSecrets();
     if (tab === "Artifacts") artifacts.refreshArtifacts();
     if (tab === "Notifications") notifications.refreshNotifications();
+    if (tab === "Users") permissions.refreshAll();
+    if (tab === "Permissions") permissions.refreshAll();
     if (isResourceTab(tab)) {
       const endpoint = endpointForTab(tab);
       if (endpoint) void resources.refreshResourcesFor(endpoint);
@@ -181,6 +187,7 @@ function clearBackendState() {
   notifications.clearNotifications();
   secrets.clearSecrets();
   providers.clearProviders();
+  permissions.clearPermissions();
   app.clearReplicaState();
 }
 

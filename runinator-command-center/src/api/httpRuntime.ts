@@ -87,6 +87,72 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `workflows/${escape(arg<string>(args, "workflowId"))}/grants/${escape(arg<string>(args, "grantId"))}`
   },
+  list_users: { method: "GET", path: () => "users" },
+  create_user: {
+    method: "POST",
+    path: () => "users",
+    body: (args) => arg(args, "request")
+  },
+  update_user: {
+    method: "PATCH",
+    path: (args) => `users/${escape(arg<string>(args, "userId"))}`,
+    body: (args) => arg(args, "request")
+  },
+  delete_user: {
+    method: "DELETE",
+    path: (args) => `users/${escape(arg<string>(args, "userId"))}`
+  },
+  list_teams: { method: "GET", path: () => "teams" },
+  create_team: {
+    method: "POST",
+    path: () => "teams",
+    body: (args) => ({ name: arg(args, "name") })
+  },
+  update_team: {
+    method: "PATCH",
+    path: (args) => `teams/${escape(arg<string>(args, "teamId"))}`,
+    body: (args) => ({ name: arg(args, "name") })
+  },
+  delete_team: {
+    method: "DELETE",
+    path: (args) => `teams/${escape(arg<string>(args, "teamId"))}`
+  },
+  list_team_members: {
+    method: "GET",
+    path: (args) => `teams/${escape(arg<string>(args, "teamId"))}/members`
+  },
+  list_user_teams: {
+    method: "GET",
+    path: (args) => `users/${escape(arg<string>(args, "userId"))}/teams`
+  },
+  add_team_member: {
+    method: "POST",
+    path: (args) => `teams/${escape(arg<string>(args, "teamId"))}/members`,
+    body: (args) => ({ user_id: arg(args, "userId") })
+  },
+  remove_team_member: {
+    method: "DELETE",
+    path: (args) => `teams/${escape(arg<string>(args, "teamId"))}/members/${escape(arg<string>(args, "userId"))}`
+  },
+  list_api_keys: { method: "GET", path: () => "api_keys" },
+  create_api_key: {
+    method: "POST",
+    path: () => "api_keys",
+    body: (args) => arg(args, "request")
+  },
+  update_api_key: {
+    method: "PATCH",
+    path: (args) => `api_keys/${escape(arg<string>(args, "keyId"))}`,
+    body: (args) => arg(args, "request")
+  },
+  revoke_api_key: {
+    method: "DELETE",
+    path: (args) => `api_keys/${escape(arg<string>(args, "keyId"))}`
+  },
+  rotate_api_key: {
+    method: "POST",
+    path: (args) => `api_keys/${escape(arg<string>(args, "keyId"))}/rotate`
+  },
   fetch_workflows: { method: "GET", path: () => "workflows" },
   save_workflow: {
     method: (args) => (arg<{ id?: string | null }>(args, "workflow").id != null ? "PATCH" : "POST"),

@@ -41,9 +41,10 @@ import { useResourcesStore } from "../../stores/resources";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { AppTab } from "../../types/app";
+import { computed } from "vue";
 
 const app = useAppStore();
-const sections = visibleNavSections();
+const sections = computed(() => visibleNavSections());
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
