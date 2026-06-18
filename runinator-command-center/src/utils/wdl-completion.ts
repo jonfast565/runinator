@@ -1,6 +1,7 @@
 import { snippet, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { completeWdl } from "../api/commandCenterApi";
 import type { ProviderMetadata, WdlCompletionRequest, WdlCompletionResponse, WdlSettingRef } from "../types/models";
+import { wdlCompletion } from "./codemirror-lang-wdl";
 
 export function wdlProviderCompletionSource(
   providers: () => ProviderMetadata[],
@@ -14,8 +15,7 @@ export function wdlProviderCompletionSource(
       const response = await completeWdl(request);
       result = completionResponseToCodeMirror(source, response);
     } catch {
-      const word = context.matchBefore(/[\w.-]+/);
-      return context.explicit ? { from: word?.from ?? context.pos, options: [] } : null;
+      return wdlCompletion(context);
     }
     if (!result.options.length && !context.explicit) return null;
     return result;
@@ -57,7 +57,7 @@ export function utf8ByteOffsetToUtf16Offset(source: string, byteOffset: number):
 function itemToCompletion(item: WdlCompletionResponse["items"][number]): Completion {
   const completion: Completion = {
     label: item.label,
-    type: item.kind,
+    type: completionType(item.kind),
     detail: item.detail ?? undefined,
     info: item.documentation ?? undefined
   };
@@ -67,4 +67,23 @@ function itemToCompletion(item: WdlCompletionResponse["items"][number]): Complet
     completion.apply = item.insert_text;
   }
   return completion;
+}
+
+function completionType(kind: string): Completion["type"] {
+  switch (kind) {
+    case "edge":
+      return "constant";
+    case "local":
+      return "variable";
+    case "node":
+      return "interface";
+    case "provider":
+    case "setting-scope":
+      return "namespace";
+    case "setting":
+    case "target":
+      return "property";
+    default:
+      return kind as Completion["type"];
+  }
 }

@@ -49,6 +49,7 @@ struct CompletionContext {
     input: RuninatorType,
     bindings: BTreeMap<String, RuninatorType>,
     scoped: BTreeMap<String, RuninatorType>,
+    labels: BTreeSet<String>,
     // namespace scope derived from the document's `import`s and `fn` definitions, mirroring
     // namespace resolution so bare/aliased completions only offer in-scope names.
     namespace: NamespaceScope,
@@ -75,6 +76,11 @@ struct ActionCallContext {
     used_args: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone)]
+struct CompletionSpanContext {
+    replace_start: usize,
+}
+
 /// complete wdl at a byte cursor using provider metadata and local type context.
 pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
     let source = request.source;
@@ -97,6 +103,12 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
     }
 
     let context = completion_context(&source, cursor, &request.providers);
+    if let Some(target) = transition_target_context(&source, cursor) {
+        return complete_transition_targets(&context, target.replace_start, cursor);
+    }
+    if let Some(edge) = edge_outcome_context(&source, cursor) {
+        return complete_edge_outcomes(edge.replace_start, cursor);
+    }
     if let Some(path) = path_context(&source, cursor) {
         if path.head == "config" || path.head == "secret" {
             return complete_setting_path(&request.settings, path);
@@ -138,7 +150,7 @@ fn complete_bare(
     let mut items = construct_completion_items();
     items.extend(providers.iter().map(|provider| WdlCompletionItem {
         label: provider.name.clone(),
-        kind: "class".into(),
+        kind: "provider".into(),
         detail: Some("provider".into()),
         documentation: None,
         insert_text: provider.name.clone(),
@@ -167,6 +179,99 @@ fn complete_bare(
             is_snippet: false,
         });
     }
+    for label in &context.labels {
+        items.push(WdlCompletionItem {
+            label: label.clone(),
+            kind: "node".into(),
+            detail: Some("node".into()),
+            documentation: None,
+            insert_text: label.clone(),
+            is_snippet: false,
+        });
+    }
+    for name in context.scoped.keys() {
+        items.push(WdlCompletionItem {
+            label: name.clone(),
+            kind: "local".into(),
+            detail: Some("local".into()),
+            documentation: None,
+            insert_text: name.clone(),
+            is_snippet: false,
+        });
+    }
+    dedupe_completion_items(&mut items);
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    WdlCompletionResponse {
+        replace_start_byte: replace_start,
+        replace_end_byte: replace_end,
+        items,
+    }
+}
+
+fn dedupe_completion_items(items: &mut Vec<WdlCompletionItem>) {
+    let mut seen = BTreeSet::new();
+    items.retain(|item| seen.insert(item.label.clone()));
+}
+
+fn complete_edge_outcomes(replace_start: usize, replace_end: usize) -> WdlCompletionResponse {
+    let mut items = [
+        ("ok", "success edge", "ok -> ${target}"),
+        ("fail", "failure edge", "fail -> ${target}"),
+        ("timeout", "timeout edge", "timeout -> ${target}"),
+        ("reject", "approval rejection edge", "reject -> ${target}"),
+        ("next", "next edge", "next -> ${target}"),
+        ("when", "predicate edge", "when ${condition} -> ${target}"),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text)| WdlCompletionItem {
+        label: label.into(),
+        kind: "edge".into(),
+        detail: Some(detail.into()),
+        documentation: None,
+        insert_text: insert_text.into(),
+        is_snippet: true,
+    })
+    .collect::<Vec<_>>();
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    WdlCompletionResponse {
+        replace_start_byte: replace_start,
+        replace_end_byte: replace_end,
+        items,
+    }
+}
+
+fn complete_transition_targets(
+    context: &CompletionContext,
+    replace_start: usize,
+    replace_end: usize,
+) -> WdlCompletionResponse {
+    let mut items = vec![
+        WdlCompletionItem {
+            label: "done".into(),
+            kind: "target".into(),
+            detail: Some("terminal target".into()),
+            documentation: None,
+            insert_text: "done".into(),
+            is_snippet: false,
+        },
+        WdlCompletionItem {
+            label: "fail".into(),
+            kind: "target".into(),
+            detail: Some("terminal target".into()),
+            documentation: None,
+            insert_text: "fail".into(),
+            is_snippet: false,
+        },
+    ];
+    items.extend(context.labels.iter().map(|label| WdlCompletionItem {
+        label: label.clone(),
+        kind: "node".into(),
+        detail: Some("node target".into()),
+        documentation: None,
+        insert_text: label.clone(),
+        is_snippet: false,
+    }));
+    dedupe_completion_items(&mut items);
     items.sort_by(|left, right| left.label.cmp(&right.label));
     WdlCompletionResponse {
         replace_start_byte: replace_start,
@@ -455,11 +560,16 @@ fn complete_setting_path(settings: &[SettingSummary], path: PathContext) -> WdlC
     } else {
         format!("{} setting", kind.as_str())
     };
+    let item_kind = if path.completed.is_empty() {
+        "setting-scope"
+    } else {
+        "setting"
+    };
     let items = labels
         .into_iter()
         .map(|label| WdlCompletionItem {
             label: label.clone(),
-            kind: "variable".into(),
+            kind: item_kind.into(),
             detail: Some(detail.clone()),
             documentation: None,
             insert_text: label,
@@ -705,11 +815,64 @@ fn completion_context(
         .unwrap_or(RuninatorType::Any);
     let mut context = CompletionContext {
         input,
+        labels: collect_labels(&document.workflow.body),
         namespace: collect_namespace_scope(&document),
         ..Default::default()
     };
     collect_block_context(&document.workflow.body, cursor, providers, &mut context);
     context
+}
+
+fn collect_labels(block: &Block) -> BTreeSet<String> {
+    let mut labels = BTreeSet::new();
+    collect_block_labels(block, &mut labels);
+    labels
+}
+
+fn collect_block_labels(block: &Block, labels: &mut BTreeSet<String>) {
+    for stmt in block {
+        if let Some(id) = stmt.annotations.id.as_deref().or(stmt.label.as_deref()) {
+            labels.insert(id.to_string());
+        }
+        for child in completion_child_blocks(&stmt.kind) {
+            collect_block_labels(child, labels);
+        }
+    }
+}
+
+fn completion_child_blocks(kind: &StmtKind) -> Vec<&Block> {
+    match kind {
+        StmtKind::If(if_stmt) => {
+            let mut blocks: Vec<&Block> = if_stmt.arms.iter().map(|(_, body)| body).collect();
+            if let Some(else_block) = &if_stmt.else_block {
+                blocks.push(else_block);
+            }
+            blocks
+        }
+        StmtKind::For(for_stmt) => vec![&for_stmt.body],
+        StmtKind::While(while_stmt) => vec![&while_stmt.body],
+        StmtKind::Map(map_stmt) => vec![&map_stmt.body],
+        StmtKind::Match(match_stmt) => {
+            let mut blocks: Vec<&Block> = match_stmt.arms.iter().map(|arm| &arm.body).collect();
+            if let Some(default) = &match_stmt.default {
+                blocks.push(default);
+            }
+            blocks
+        }
+        StmtKind::Parallel(parallel) => parallel.branches.iter().collect(),
+        StmtKind::Race(race) => race.branches.iter().collect(),
+        StmtKind::Try(try_stmt) => {
+            let mut blocks = vec![&try_stmt.body];
+            if let Some(catch) = &try_stmt.catch {
+                blocks.push(catch);
+            }
+            if let Some(finally) = &try_stmt.finally {
+                blocks.push(finally);
+            }
+            blocks
+        }
+        _ => Vec::new(),
+    }
 }
 
 // gather the bare/aliased names in scope from the document's imports and user functions, mirroring
@@ -986,6 +1149,94 @@ fn action_signature(action: &ActionMetadata) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("({params})")
+}
+
+fn transition_target_context(source: &str, cursor: usize) -> Option<CompletionSpanContext> {
+    let word = current_word(source, cursor);
+    let before_word = &source[..word.start];
+    if before_word.trim_end().ends_with("->") || previous_word(before_word) == Some("goto") {
+        return Some(CompletionSpanContext {
+            replace_start: word.start,
+        });
+    }
+    None
+}
+
+fn edge_outcome_context(source: &str, cursor: usize) -> Option<CompletionSpanContext> {
+    let word = current_word(source, cursor);
+    if transition_target_context(source, cursor).is_some() {
+        return None;
+    }
+    if inside_edges_block(source, word.start) {
+        return Some(CompletionSpanContext {
+            replace_start: word.start,
+        });
+    }
+
+    let line_start = source[..word.start]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let prefix = source[line_start..word.start].trim_end();
+    if prefix.is_empty() || prefix.ends_with("->") {
+        return None;
+    }
+    let trimmed = prefix.trim_start();
+    if trimmed.starts_with("node ") && completed_statement_prefix(trimmed) {
+        return Some(CompletionSpanContext {
+            replace_start: word.start,
+        });
+    }
+    None
+}
+
+fn completed_statement_prefix(prefix: &str) -> bool {
+    prefix.ends_with(')') || prefix.ends_with('}') || prefix.ends_with('"')
+}
+
+fn inside_edges_block(source: &str, cursor: usize) -> bool {
+    let Some(edges_start) = source[..cursor].rfind("edges") else {
+        return false;
+    };
+    if !is_keyword_at(source, edges_start, "edges") {
+        return false;
+    }
+    let Some(open_rel) = source[edges_start..cursor].find('{') else {
+        return false;
+    };
+    let open = edges_start + open_rel;
+    let mut depth = 0usize;
+    for byte in source[open..cursor].bytes() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth > 0
+}
+
+fn is_keyword_at(source: &str, start: usize, keyword: &str) -> bool {
+    let end = start + keyword.len();
+    let before_ok = start == 0 || !is_ident_continue(source.as_bytes()[start - 1]);
+    let after_ok = source
+        .as_bytes()
+        .get(end)
+        .is_none_or(|byte| !is_ident_continue(*byte));
+    before_ok && after_ok
+}
+
+fn previous_word(source: &str) -> Option<&str> {
+    let bytes = source.as_bytes();
+    let mut end = source.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && is_ident_continue(bytes[start - 1]) {
+        start -= 1;
+    }
+    (start < end).then_some(&source[start..end])
 }
 
 #[derive(Debug, Clone)]

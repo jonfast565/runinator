@@ -76,6 +76,47 @@ describe("wdl completion adapter", () => {
     expect(typeof result.options[0].apply).toBe("function");
   });
 
+  it("maps semantic wdl kinds to distinct codemirror completion icon types", () => {
+    const response: WdlCompletionResponse = {
+      replace_start_byte: 0,
+      replace_end_byte: 0,
+      items: [
+        {
+          label: "ok",
+          kind: "edge",
+          detail: "success edge",
+          documentation: null,
+          insert_text: "ok -> ${target}",
+          is_snippet: true
+        },
+        {
+          label: "cleanup",
+          kind: "node",
+          detail: "node target",
+          documentation: null,
+          insert_text: "cleanup",
+          is_snippet: false
+        },
+        {
+          label: "console",
+          kind: "provider",
+          detail: "provider",
+          documentation: null,
+          insert_text: "console",
+          is_snippet: false
+        }
+      ]
+    };
+
+    const result = completionResponseToCodeMirror("", response);
+
+    expect(result.options.map((option) => [option.label, option.type])).toEqual([
+      ["ok", "constant"],
+      ["cleanup", "interface"],
+      ["console", "namespace"]
+    ]);
+  });
+
   it("round trips byte and editor offsets around non-ascii text", () => {
     const source = "a☃b";
     const offset = 2;
@@ -133,7 +174,7 @@ describe("wdl language completions", () => {
     expect(functions).not.toContain("http_get");
   });
 
-  it("registers provider and language completion as separate editor sources", async () => {
+  it("uses the rust-backed completion source when one is supplied", async () => {
     const source = "workflow \"x\" { node compute { return std.";
     const providerSource: CompletionSource = () => ({
       from: source.length,
@@ -145,17 +186,11 @@ describe("wdl language completions", () => {
     });
     const sources = state.languageDataAt("autocomplete", source.length) as CompletionSource[];
 
-    expect(sources).toHaveLength(2);
+    expect(sources).toHaveLength(1);
 
-    const labels = (
-      await Promise.all(
-        sources.map(async (completionSource) => {
-          const result = await completionSource(new CompletionContext(state, source.length, false));
-          return result?.options.map((option) => option.label) ?? [];
-        })
-      )
-    ).flat();
-    expect(labels).toEqual(expect.arrayContaining(["provider-sentinel", "strings", "collections", "exec"]));
+    const result = await sources[0](new CompletionContext(state, source.length, false));
+    const labels = result?.options.map((option) => option.label) ?? [];
+    expect(labels).toEqual(["provider-sentinel"]);
   });
 });
 

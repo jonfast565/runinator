@@ -52,10 +52,17 @@ fn to_item(range: Range, item: &WdlCompletionItem) -> CompletionItem {
 fn map_kind(kind: &str) -> CompletionItemKind {
     match kind {
         "class" => CompletionItemKind::CLASS,
+        "edge" => CompletionItemKind::EVENT,
         "function" => CompletionItemKind::FUNCTION,
         "keyword" => CompletionItemKind::KEYWORD,
+        "local" => CompletionItemKind::VARIABLE,
         "module" => CompletionItemKind::MODULE,
+        "node" => CompletionItemKind::REFERENCE,
         "property" => CompletionItemKind::PROPERTY,
+        "provider" => CompletionItemKind::MODULE,
+        "setting" => CompletionItemKind::PROPERTY,
+        "setting-scope" => CompletionItemKind::MODULE,
+        "target" => CompletionItemKind::ENUM_MEMBER,
         "type" => CompletionItemKind::TYPE_PARAMETER,
         "variable" => CompletionItemKind::VARIABLE,
         _ => CompletionItemKind::TEXT,

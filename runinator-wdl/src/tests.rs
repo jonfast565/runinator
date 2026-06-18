@@ -3596,6 +3596,123 @@ fn completes_user_functions_bare() {
 }
 
 #[test]
+fn completes_node_labels_bare() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+            output "tickets" { total: <> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(
+        labels.contains(&"tickets".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn completes_node_labels_as_transition_targets() {
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node first = console.run(command: "one") -> <>
+            node cleanup = console.run(command: "cleanup")
+        }
+    "#,
+        "<>",
+    );
+    assert!(
+        labels.contains(&"cleanup".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn completes_edge_outcomes_in_edges_blocks() {
+    let response = complete_source(WdlCompletionRequest {
+        source: r#"
+        workflow "Complete" v1 {
+            node first = console.run(command: "one")
+            edges {
+                <>
+            }
+            node cleanup = console.run(command: "cleanup")
+        }
+    "#
+        .replace("<>", ""),
+        cursor_byte: r#"
+        workflow "Complete" v1 {
+            node first = console.run(command: "one")
+            edges {
+                <>
+            }
+            node cleanup = console.run(command: "cleanup")
+        }
+    "#
+        .find("<>")
+        .expect("marker"),
+        providers: completion_providers(),
+        settings: Vec::new(),
+    });
+    let labels = response
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"ok"), "labels: {labels:?}");
+    assert!(labels.contains(&"when"), "labels: {labels:?}");
+    assert!(response.items.iter().any(|item| item.label == "ok"
+        && item.kind == "edge"
+        && item.is_snippet
+        && item.insert_text == "ok -> ${target}"));
+}
+
+#[test]
+fn completes_terminal_and_node_targets_after_arrow() {
+    let response = complete_source(WdlCompletionRequest {
+        source: r#"
+        workflow "Complete" v1 {
+            node first = console.run(command: "one") -> <>
+            node cleanup = console.run(command: "cleanup")
+        }
+    "#
+        .replace("<>", ""),
+        cursor_byte: r#"
+        workflow "Complete" v1 {
+            node first = console.run(command: "one") -> <>
+            node cleanup = console.run(command: "cleanup")
+        }
+    "#
+        .find("<>")
+        .expect("marker"),
+        providers: completion_providers(),
+        settings: Vec::new(),
+    });
+    let labels = response
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"done"), "labels: {labels:?}");
+    assert!(labels.contains(&"fail"), "labels: {labels:?}");
+    assert!(labels.contains(&"cleanup"), "labels: {labels:?}");
+    assert!(
+        response
+            .items
+            .iter()
+            .any(|item| item.label == "cleanup" && item.kind == "node")
+    );
+    assert!(
+        response
+            .items
+            .iter()
+            .any(|item| item.label == "done" && item.kind == "target")
+    );
+}
+
+#[test]
 fn completes_missing_action_arguments() {
     let response = complete_source(WdlCompletionRequest {
         source: r#"

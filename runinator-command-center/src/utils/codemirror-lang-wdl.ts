@@ -550,12 +550,7 @@ export const wdlCompletion: CompletionSource = (context: CompletionContext): Com
 
 // codemirror language support for wdl: highlighting + keyword/snippet completion.
 export function wdl(providerCompletion?: CompletionSource): LanguageSupport {
-  const autocomplete = providerCompletion
-    ? [
-        wdlParser.data.of({ autocomplete: providerCompletion }),
-        wdlParser.data.of({ autocomplete: wdlCompletion }),
-      ]
-    : wdlParser.data.of({ autocomplete: wdlCompletion });
+  const autocomplete = wdlParser.data.of({ autocomplete: providerCompletion ?? wdlCompletion });
   return new LanguageSupport(wdlParser, [
     syntaxHighlighting(wdlHighlightStyle),
     autocomplete,
