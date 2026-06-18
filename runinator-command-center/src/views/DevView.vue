@@ -154,6 +154,7 @@
           title="WDL"
           :providers="providers.providers"
           :settings="secrets.secrets"
+          :source-path="selectedFilePath"
         />
         <JsonEditor
           v-else-if="selectedIsJson"

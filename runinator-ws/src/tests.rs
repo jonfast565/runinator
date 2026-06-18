@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::Json;
+use axum::{Extension, Json};
 use runinator_broker::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -379,15 +379,19 @@ async fn wdl_evaluate_accepts_source_fragments() {
 
 #[tokio::test]
 async fn wdl_analyze_validates_source_fragments() {
-    let Json(diagnostics) =
-        crate::handlers::wdl::analyze_wdl(Json(crate::handlers::wdl::WdlSourceRequest {
+    let (db, path) = test_db().await;
+    let Json(diagnostics) = crate::handlers::wdl::analyze_wdl(
+        Extension(Arc::new(db)),
+        Json(crate::handlers::wdl::WdlSourceRequest {
             source: "params.count >".into(),
             fragment: Some(WdlFragmentKind::Condition),
-        }))
-        .await;
+        }),
+    )
+    .await;
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].severity, "error");
+    let _ = std::fs::remove_file(path);
 }
 
 #[tokio::test]

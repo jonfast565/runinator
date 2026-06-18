@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { completionKeymap, startCompletion } from "@codemirror/autocomplete";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec } from "@codemirror/state";
 import { keymap, type ViewUpdate } from "@codemirror/view";
 import { EditorView, basicSetup } from "codemirror";
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
@@ -140,7 +140,17 @@ onMounted(() => {
     extensions: [
       basicSetup,
       wdl(workflowExpressionCompletionSource(() => props.context)),
-      keymap.of(completionKeymap),
+      Prec.high(keymap.of([
+        ...completionKeymap,
+        {
+          key: "Tab",
+          run(editor) {
+            if (props.readonly) return false;
+            editor.dispatch(editor.state.replaceSelection("    "));
+            return true;
+          }
+        }
+      ])),
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) updateLoweredJson(update.state.doc.toString());

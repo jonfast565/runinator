@@ -5,10 +5,11 @@ use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
+    types::RuninatorType,
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
-use runinator_wdl::{CompileOptions, Severity, WdlError, WdlFragmentKind};
+use runinator_wdl::{CompileOptions, Severity, WdlError, WdlFragmentKind, WorkflowSignature};
 use serde::{Deserialize, Serialize};
 
 use crate::authz;
@@ -86,9 +87,13 @@ pub(crate) async fn compile_wdl<T: DatabaseImpl>(
     let providers = fetch_provider_metadata(db.as_ref())
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
+    let workflow_signatures = workflow_signatures_for_compile(db.as_ref(), &request.source)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
     let options = CompileOptions {
         enabled: request.enabled,
         providers,
+        workflow_signatures,
         ..CompileOptions::default()
     };
     runinator_wdl::compile_str(&request.source, &options)
@@ -113,9 +118,15 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
         Ok(providers) => providers,
         Err(err) => return api_error(err),
     };
+    let workflow_signatures =
+        match workflow_signatures_for_compile(db.as_ref(), &request.source).await {
+            Ok(signatures) => signatures,
+            Err(err) => return api_error(err),
+        };
     let options = CompileOptions {
         enabled: request.enabled,
         providers,
+        workflow_signatures,
         ..CompileOptions::default()
     };
     let mut workflow = match runinator_wdl::compile_str(&request.source, &options) {
@@ -167,7 +178,15 @@ pub(crate) async fn analyze_wdl<T: DatabaseImpl>(
         };
     }
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
-    let diagnostics = match runinator_wdl::analyze_source_with_providers(&source, &providers) {
+    let workflow_signatures = workflow_signatures_for_compile(db.as_ref(), &source)
+        .await
+        .unwrap_or_default();
+    let diagnostics = match runinator_wdl::analyze_source_with_options(
+        &source,
+        &providers,
+        runinator_wdl::TypePolicy::Strict,
+        &workflow_signatures,
+    ) {
         Ok(diagnostics) => diagnostics,
         Err(err) => return Json(vec![wdl_error_to_summary(err, &source)]),
     };
@@ -199,6 +218,41 @@ async fn fetch_provider_metadata<T: DatabaseImpl>(
         .await
         .map_err(|err| err.to_string())?;
     provider_metadata_from_items(items).map_err(|err| err.to_string())
+}
+
+async fn workflow_signatures_for_compile<T: DatabaseImpl>(
+    db: &T,
+    source: &str,
+) -> Result<Vec<WorkflowSignature>, String> {
+    let mut signatures = db
+        .fetch_workflows()
+        .await
+        .map_err(|err| err.to_string())?
+        .iter()
+        .flat_map(workflow_signatures_from_definition)
+        .collect::<Vec<_>>();
+    if let Ok(mut source_signatures) = runinator_wdl::workflow_signature_from_source(source) {
+        signatures.append(&mut source_signatures);
+    }
+    Ok(signatures)
+}
+
+fn workflow_signatures_from_definition(workflow: &WorkflowDefinition) -> Vec<WorkflowSignature> {
+    let input = workflow.input_type.clone();
+    let output = RuninatorType::Any;
+    let mut signatures = vec![WorkflowSignature {
+        name: workflow.name.clone(),
+        input: input.clone(),
+        output: output.clone(),
+    }];
+    if let Some(namespace) = &workflow.namespace {
+        signatures.push(WorkflowSignature {
+            name: format!("{namespace}.{}", workflow.name),
+            input,
+            output,
+        });
+    }
+    signatures
 }
 
 pub(crate) async fn format_wdl(

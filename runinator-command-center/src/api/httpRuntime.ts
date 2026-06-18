@@ -254,7 +254,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   analyze_wdl: {
     method: "POST",
     path: () => "wdl/analyze",
-    body: (args) => ({ source: arg(args, "source") })
+    body: (args) => ({ source: arg(args, "source"), source_path: argOpt(args, "sourcePath") ?? null })
   },
   format_wdl: {
     method: "POST",

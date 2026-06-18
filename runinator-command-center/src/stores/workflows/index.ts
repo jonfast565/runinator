@@ -101,6 +101,8 @@ import { useProvidersStore } from "../providers";
 export { buildInputSkeleton, newWorkflowDraft, newWorkflowTriggerDraft } from "./helpers";
 import { useResourcesStore } from "../resources";
 
+const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
+
 export const useWorkflowsStore = defineStore("workflows", () => {
   const workflows = ref<WorkflowDefinition[]>([]);
   const selectedWorkflowId = ref<string | null>(null);
@@ -1610,7 +1612,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   }
 
   function scheduleWorkflowWdlSync() {
-    void syncWorkflowWdl();
+    if (workflowWdlSyncTimer) clearTimeout(workflowWdlSyncTimer);
+    workflowWdlSyncTimer = setTimeout(() => {
+      workflowWdlSyncTimer = null;
+      void syncWorkflowWdl();
+    }, WORKFLOW_WDL_SYNC_DELAY_MS);
   }
 
   function scheduleWorkflowWdlRefresh() {
@@ -1670,6 +1676,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   // compile the wdl editor contents into the draft definition. mirrors syncWorkflowJson:
   // on a compile error we keep the wdl text and surface the message rather than clobbering.
   async function syncWorkflowWdl(): Promise<boolean> {
+    if (workflowWdlSyncTimer) {
+      clearTimeout(workflowWdlSyncTimer);
+      workflowWdlSyncTimer = null;
+    }
     let compiled: WorkflowDefinition;
     const previousUi = isJsonObject(workflowDraft.definition?.ui) ? cloneJson(workflowDraft.definition.ui) : null;
     try {

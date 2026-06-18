@@ -53,7 +53,10 @@ fn map_kind(kind: &str) -> CompletionItemKind {
     match kind {
         "class" => CompletionItemKind::CLASS,
         "function" => CompletionItemKind::FUNCTION,
+        "keyword" => CompletionItemKind::KEYWORD,
+        "module" => CompletionItemKind::MODULE,
         "property" => CompletionItemKind::PROPERTY,
+        "type" => CompletionItemKind::TYPE_PARAMETER,
         "variable" => CompletionItemKind::VARIABLE,
         _ => CompletionItemKind::TEXT,
     }

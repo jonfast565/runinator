@@ -373,21 +373,59 @@ fn compile_wdl_with_signatures(
 }
 
 fn collect_workflow_signatures(paths: &[PathBuf]) -> CommandResult<Vec<WorkflowSignature>> {
+    collect_workflow_signatures_with_current(paths, None, None)
+}
+
+fn collect_workflow_signatures_with_current(
+    paths: &[PathBuf],
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+) -> CommandResult<Vec<WorkflowSignature>> {
     let mut signatures = Vec::new();
     for path in paths {
-        let data =
-            fs::read_to_string(path).map_err(|err| CommandError::Unexpected(err.to_string()))?;
+        let data;
+        let source = if Some(path.as_path()) == current_path {
+            match current_source {
+                Some(source) => source,
+                None => {
+                    data = fs::read_to_string(path)
+                        .map_err(|err| CommandError::Unexpected(err.to_string()))?;
+                    &data
+                }
+            }
+        } else {
+            data = fs::read_to_string(path)
+                .map_err(|err| CommandError::Unexpected(err.to_string()))?;
+            &data
+        };
         let mut source_signatures =
-            runinator_wdl::workflow_signature_from_source(&data).map_err(|err| {
+            runinator_wdl::workflow_signature_from_source(source).map_err(|err| {
                 command_error(format!(
                     "failed to read workflow signature from {}:\n{}",
                     path.display(),
-                    err.render(&data)
+                    err.render(source)
                 ))
             })?;
         signatures.append(&mut source_signatures);
     }
     Ok(signatures)
+}
+
+pub(crate) fn wdl_context_workflow_signatures(
+    path: &Path,
+    current_source: Option<&str>,
+) -> CommandResult<Vec<WorkflowSignature>> {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdl") {
+        return Ok(Vec::new());
+    }
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut paths = wdl_directory_paths(dir)?;
+    if !paths.iter().any(|candidate| candidate == path) {
+        paths.push(path.to_path_buf());
+        paths.sort();
+    }
+    collect_workflow_signatures_with_current(&paths, Some(path), current_source)
 }
 
 fn load_wdl_directory(dir: &Path) -> CommandResult<WorkflowBundle> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CompletionContext } from "@codemirror/autocomplete";
+import { CompletionContext, type CompletionSource } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
-import { wdlCompletion, wdlStaticCompletionLabels } from "../codemirror-lang-wdl";
+import { wdl, wdlCompletion, wdlStaticCompletionLabels } from "../codemirror-lang-wdl";
 import {
   buildWdlCompletionRequest,
   completionResponseToCodeMirror,
@@ -117,13 +117,53 @@ describe("wdl language completions", () => {
 
     expect(labels).toEqual(expect.arrayContaining(["upper", "trim", "map", "http_get"]));
   });
+
+  it("offers identifier completions during normal typing", async () => {
+    const labels = await completeLabels("workflow \"x\" { wo", false);
+
+    expect(labels).toEqual(expect.arrayContaining(["workflow", "watch"]));
+  });
+
+  it("offers dot completions during normal typing", async () => {
+    const modules = await completeLabels("workflow \"x\" { node compute { return std.", false);
+    expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
+
+    const functions = await completeLabels("workflow \"x\" { node compute { return std.strings.", false);
+    expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
+    expect(functions).not.toContain("http_get");
+  });
+
+  it("registers provider and language completion as separate editor sources", async () => {
+    const source = "workflow \"x\" { node compute { return std.";
+    const providerSource: CompletionSource = () => ({
+      from: source.length,
+      options: [{ label: "provider-sentinel" }]
+    });
+    const state = EditorState.create({
+      doc: source,
+      extensions: [wdl(providerSource)]
+    });
+    const sources = state.languageDataAt("autocomplete", source.length) as CompletionSource[];
+
+    expect(sources).toHaveLength(2);
+
+    const labels = (
+      await Promise.all(
+        sources.map(async (completionSource) => {
+          const result = await completionSource(new CompletionContext(state, source.length, false));
+          return result?.options.map((option) => option.label) ?? [];
+        })
+      )
+    ).flat();
+    expect(labels).toEqual(expect.arrayContaining(["provider-sentinel", "strings", "collections", "exec"]));
+  });
 });
 
-async function completeLabels(source: string): Promise<string[]> {
+async function completeLabels(source: string, explicit = true): Promise<string[]> {
   const cursor = source.indexOf("<>");
   const doc = cursor >= 0 ? source.replace("<>", "") : source;
   const state = EditorState.create({ doc });
-  const result = await wdlCompletion(new CompletionContext(state, cursor >= 0 ? cursor : doc.length, true));
+  const result = await wdlCompletion(new CompletionContext(state, cursor >= 0 ? cursor : doc.length, explicit));
   return result?.options.map((option) => option.label) ?? [];
 }
 

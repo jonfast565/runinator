@@ -42,7 +42,9 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
-import { Compartment, EditorState } from '@codemirror/state';
+import { completionKeymap, startCompletion } from '@codemirror/autocomplete';
+import { Compartment, EditorState, Prec } from '@codemirror/state';
+import { keymap, type ViewUpdate } from '@codemirror/view';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
 import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
@@ -56,6 +58,7 @@ const props = defineProps<{
   title?: string;
   providers?: ProviderMetadata[];
   settings?: CredentialSummary[];
+  sourcePath?: string | null;
 }>();
 
 // map stored credential summaries to completion setting refs, defaulting unkinded entries to secret.
@@ -79,6 +82,7 @@ let view: EditorView | null = null;
 const title = props.title ?? "WDL";
 const app = useAppStore();
 let diagnosticsRequest = 0;
+const WDL_LINT_DELAY_MS = 1500;
 
 const diagnosticCounts = computed(() => ({
   errors: diagnostics.value.filter((diagnostic) => diagnostic.severity === "error").length,
@@ -120,11 +124,11 @@ const wdlLinter = linter(async (linterView): Promise<Diagnostic[]> => {
       message: diagnostic.message,
     };
   });
-});
+}, { delay: WDL_LINT_DELAY_MS });
 
 async function refreshDiagnostics(source: string): Promise<WdlDiagnostic[]> {
   const request = ++diagnosticsRequest;
-  const nextDiagnostics = await analyzeWdl(source);
+  const nextDiagnostics = await analyzeWdl(source, props.sourcePath);
   if (request === diagnosticsRequest) {
     diagnostics.value = nextDiagnostics;
   }
@@ -169,6 +173,17 @@ onMounted(() => {
     doc: props.modelValue,
     extensions: [
       basicSetup,
+      Prec.high(keymap.of([
+        ...completionKeymap,
+        {
+          key: "Tab",
+          run(editor) {
+            if (props.readonly) return false;
+            editor.dispatch(editor.state.replaceSelection("    "));
+            return true;
+          }
+        }
+      ])),
       wdl(wdlProviderCompletionSource(() => props.providers ?? [], settingRefs)),
       wdlLinter,
       editableCompartment.of(EditorView.editable.of(!props.readonly)),
@@ -176,6 +191,7 @@ onMounted(() => {
         if (update.docChanged) {
           emit('update:modelValue', update.state.doc.toString());
         }
+        if (!props.readonly && shouldStartCompletion(update)) startCompletion(update.view);
       }),
       EditorView.theme({
         "&": { height: "100%" },
@@ -207,6 +223,15 @@ onBeforeUnmount(() => {
     view.destroy();
   }
 });
+
+function shouldStartCompletion(update: ViewUpdate): boolean {
+  if (!update.docChanged) return false;
+  if (!update.transactions.some((transaction) => transaction.isUserEvent("input"))) return false;
+  const head = update.state.selection.main.head;
+  if (head <= 0) return false;
+  const previous = update.state.sliceDoc(head - 1, head);
+  return /[\w.]/.test(previous);
+}
 </script>
 
 <style scoped>

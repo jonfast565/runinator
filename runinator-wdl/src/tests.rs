@@ -3442,6 +3442,42 @@ fn completes_provider_names_at_action_position() {
 }
 
 #[test]
+fn completes_language_constructs_at_bare_position() {
+    let response = complete_source(WdlCompletionRequest {
+        source: r#"
+        workflow "Complete" v1 {
+            <>
+        }
+    "#
+        .replace("<>", ""),
+        cursor_byte: r#"
+        workflow "Complete" v1 {
+            <>
+        }
+    "#
+        .find("<>")
+        .expect("marker"),
+        providers: completion_providers(),
+        settings: Vec::new(),
+    });
+    let labels = response
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"node"), "labels: {labels:?}");
+    assert!(labels.contains(&"compute"), "labels: {labels:?}");
+    assert!(labels.contains(&"if"), "labels: {labels:?}");
+    assert!(labels.contains(&"for"), "labels: {labels:?}");
+    assert!(labels.contains(&"trigger cron"), "labels: {labels:?}");
+    assert!(labels.contains(&"gate condition"), "labels: {labels:?}");
+    assert!(response.items.iter().any(|item| item.label == "node"
+        && item.kind == "keyword"
+        && item.is_snippet
+        && item.insert_text.contains("provider")));
+}
+
+#[test]
 fn completes_std_modules_and_functions() {
     let modules = completion_labels(
         r#"

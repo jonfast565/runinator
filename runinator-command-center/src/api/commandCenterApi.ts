@@ -170,8 +170,8 @@ export async function compileWdl(source: string, enabled: boolean) {
   return command<WorkflowDefinition>("compile_wdl", { source, enabled });
 }
 
-export async function analyzeWdl(source: string) {
-  return command<WdlDiagnostic[]>("analyze_wdl", { source });
+export async function analyzeWdl(source: string, sourcePath?: string | null) {
+  return command<WdlDiagnostic[]>("analyze_wdl", { source, sourcePath: sourcePath ?? null });
 }
 
 export async function completeWdl(request: WdlCompletionRequest) {

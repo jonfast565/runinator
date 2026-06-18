@@ -135,17 +135,15 @@ fn complete_bare(
     replace_start: usize,
     replace_end: usize,
 ) -> WdlCompletionResponse {
-    let mut items = providers
-        .iter()
-        .map(|provider| WdlCompletionItem {
-            label: provider.name.clone(),
-            kind: "class".into(),
-            detail: Some("provider".into()),
-            documentation: None,
-            insert_text: provider.name.clone(),
-            is_snippet: false,
-        })
-        .collect::<Vec<_>>();
+    let mut items = construct_completion_items();
+    items.extend(providers.iter().map(|provider| WdlCompletionItem {
+        label: provider.name.clone(),
+        kind: "class".into(),
+        detail: Some("provider".into()),
+        documentation: None,
+        insert_text: provider.name.clone(),
+        is_snippet: false,
+    }));
     for name in &context.namespace.user_fns {
         items.push(WdlCompletionItem {
             label: name.clone(),
@@ -175,6 +173,178 @@ fn complete_bare(
         replace_end_byte: replace_end,
         items,
     }
+}
+
+fn construct_completion_items() -> Vec<WdlCompletionItem> {
+    const CONSTRUCTS: &[(&str, &str, &str, &str, bool)] = &[
+        (
+            "workflow",
+            "keyword",
+            "workflow scaffold",
+            "workflow \"${name}\" {\n    params {\n        ${}\n    }\n\n    ${}\n}",
+            true,
+        ),
+        (
+            "node",
+            "keyword",
+            "provider action node",
+            "node ${name} = ${provider}.${action}(${args})",
+            true,
+        ),
+        (
+            "compute",
+            "keyword",
+            "compute block",
+            "node ${name} = compute {\n    return ${value}\n}",
+            true,
+        ),
+        (
+            "if",
+            "keyword",
+            "conditional block",
+            "if ${condition} {\n    ${}\n}",
+            true,
+        ),
+        (
+            "for",
+            "keyword",
+            "for loop",
+            "for ${item} in ${collection} {\n    ${}\n}",
+            true,
+        ),
+        (
+            "while",
+            "keyword",
+            "while loop",
+            "while ${condition} {\n    ${}\n}",
+            true,
+        ),
+        (
+            "match",
+            "keyword",
+            "match block",
+            "match ${value} {\n    ${case} -> {\n        ${}\n    }\n}",
+            true,
+        ),
+        (
+            "parallel",
+            "keyword",
+            "parallel branches",
+            "parallel {\n    branch ${name} {\n        ${}\n    }\n}",
+            true,
+        ),
+        (
+            "try",
+            "keyword",
+            "try/catch block",
+            "try {\n    ${}\n} catch {\n    ${}\n}",
+            true,
+        ),
+        (
+            "call",
+            "keyword",
+            "subflow call",
+            "node ${name} = call \"${workflow}\" with {\n    ${}\n}",
+            true,
+        ),
+        (
+            "spawn",
+            "keyword",
+            "detached subflow",
+            "node ${name} = spawn \"${workflow}\" with {\n    ${}\n}",
+            true,
+        ),
+        (
+            "wait",
+            "keyword",
+            "wait node",
+            "node ${name} = wait ${duration}",
+            true,
+        ),
+        (
+            "output",
+            "keyword",
+            "output node",
+            "output \"${name}\" { ${key}: ${value} }",
+            true,
+        ),
+        (
+            "deliverable",
+            "keyword",
+            "deliverable node",
+            "deliverable \"${name}\" { ${key}: ${value} }",
+            true,
+        ),
+        (
+            "type",
+            "type",
+            "named struct type",
+            "type ${Name} {\n    ${field}: ${type}\n}",
+            true,
+        ),
+        (
+            "fn",
+            "function",
+            "function definition",
+            "fn ${name}(${arg}: ${type}) -> ${return_type} = ${value}",
+            true,
+        ),
+        (
+            "import std",
+            "keyword",
+            "standard-library import",
+            "import std.${module}",
+            true,
+        ),
+        (
+            "trigger cron",
+            "keyword",
+            "cron trigger",
+            "trigger cron \"${cron}\" with { ${} }",
+            true,
+        ),
+        (
+            "watch",
+            "keyword",
+            "workflow guard",
+            "watch ${condition} -> ${target}",
+            true,
+        ),
+        (
+            "gate condition",
+            "keyword",
+            "condition gate",
+            "gate condition when ${condition} every ${interval} timeout ${deadline}",
+            true,
+        ),
+        (
+            "signal",
+            "keyword",
+            "external signal wait",
+            "signal \"${name}\" key ${correlation}",
+            true,
+        ),
+        (
+            "compensate",
+            "keyword",
+            "compensating action",
+            "compensate ${provider}.${action}(${args})",
+            true,
+        ),
+    ];
+    CONSTRUCTS
+        .iter()
+        .map(
+            |(label, kind, detail, insert_text, is_snippet)| WdlCompletionItem {
+                label: (*label).into(),
+                kind: (*kind).into(),
+                detail: Some((*detail).into()),
+                documentation: None,
+                insert_text: (*insert_text).into(),
+                is_snippet: *is_snippet,
+            },
+        )
+        .collect()
 }
 
 fn complete_actions(
