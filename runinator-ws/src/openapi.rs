@@ -192,6 +192,7 @@ enum Example {
     WdlSource,
     WdlCompile,
     WdlCompletion,
+    WdlHover,
     WdlDiagnostics,
     WdlDecompile,
     WdlEvaluate,
@@ -593,6 +594,22 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
         200,
         "completion candidates",
         Example::WdlCompletion,
+    ),
+    endpoint(
+        "post",
+        "/wdl/hover",
+        "WDL",
+        "Hover WDL source",
+        "Returns editor hover documentation and type information for a WDL source buffer and cursor position.",
+        false,
+        json_body(
+            "Hover request with WDL source, cursor byte offset, and optional metadata.",
+            Example::WdlCompletion,
+        ),
+        &[],
+        200,
+        "hover information",
+        Example::WdlHover,
     ),
     endpoint(
         "post",
@@ -2596,7 +2613,10 @@ fn example_value(example: Example) -> Option<Value> {
             json!({ "source": "workflow hello {\n  task echo uses std.echo\n}\n", "enabled": true })
         }
         Example::WdlCompletion => {
-            json!({ "source": "workflow hello {\n  ", "position": { "line": 2, "character": 2 } })
+            json!({ "source": "workflow hello {\n  ", "cursor_byte": 19, "providers": [], "settings": [] })
+        }
+        Example::WdlHover => {
+            json!({ "range_start_byte": 18, "range_end_byte": 24, "title": "params", "kind": "parameter root", "detail": "{ name: string }", "documentation": "Workflow input parameters." })
         }
         Example::WdlDiagnostics => {
             json!([{ "start": 0, "end": 4, "line": 1, "column": 1, "severity": "warning", "message": "example diagnostic" }])

@@ -367,6 +367,22 @@ export interface WdlCompletionItem {
   is_snippet: boolean;
 }
 
+export interface WdlHoverRequest {
+  source: string;
+  cursor_byte: number;
+  providers: ProviderMetadata[];
+  settings?: WdlSettingRef[];
+}
+
+export interface WdlHoverResponse {
+  range_start_byte: number;
+  range_end_byte: number;
+  title: string;
+  kind: string;
+  detail?: string | null;
+  documentation?: string | null;
+}
+
 export type WorkflowTriggerKind = "cron" | "manual";
 
 export interface WorkflowTrigger {

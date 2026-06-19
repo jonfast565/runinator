@@ -1,8 +1,9 @@
 use crate::{
     CompileOptions, DecompileOptions, WdlCompletionRequest, WdlCompletionResponse, WdlError,
-    WdlFragmentKind, WorkflowSignature, analyze_source, compile_str, compile_str_with_diagnostics,
-    complete_source, decompile, decompile_with, evaluate_fragment, format_str, parse_document,
-    validate_fragment, workflow_signature_from_source,
+    WdlFragmentKind, WdlHoverRequest, WdlHoverResponse, WorkflowSignature, analyze_source,
+    compile_str, compile_str_with_diagnostics, complete_source, decompile, decompile_with,
+    evaluate_fragment, format_str, hover_source, parse_document, validate_fragment,
+    workflow_signature_from_source,
 };
 use runinator_models::providers::{
     ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, ResultMetadata,
@@ -90,6 +91,18 @@ fn lists_included_file_paths() {
 
 fn completion_labels(src: &str, marker: &str) -> Vec<String> {
     completion_labels_with_providers(src, marker, completion_providers())
+}
+
+fn hover_at(src: &str, marker: &str) -> WdlHoverResponse {
+    let cursor = src.find(marker).expect("marker");
+    let source = src.replacen(marker, "", 1);
+    hover_source(WdlHoverRequest {
+        source,
+        cursor_byte: cursor,
+        providers: completion_providers(),
+        settings: Vec::new(),
+    })
+    .expect("hover")
 }
 
 fn completion_labels_with_providers(
@@ -3483,6 +3496,54 @@ fn completes_language_constructs_at_bare_position() {
         && item.kind == "keyword"
         && item.is_snippet
         && item.insert_text.contains("provider")));
+}
+
+#[test]
+fn hovers_provider_action_docs_and_signature() {
+    let hover = hover_at(
+        r#"
+        workflow "Hover" v1 {
+            node search = jira.<>search(base_url: "", token: "", jql: "project = RUNI")
+        }
+    "#,
+        "<>",
+    );
+    assert_eq!(hover.title, "jira.search");
+    assert_eq!(hover.kind, "action");
+    assert_eq!(hover.documentation.as_deref(), Some("Search Jira issues"));
+    assert!(
+        hover
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("jql: string") && detail.contains("struct")),
+        "detail: {:?}",
+        hover.detail
+    );
+}
+
+#[test]
+fn hovers_inferred_node_result_field_type() {
+    let hover = hover_at(
+        r#"
+        workflow "Hover" v1 {
+            node search = jira.search(base_url: "", token: "", jql: "project = RUNI")
+            node inspect = compute {
+                return search.<>issues
+            }
+        }
+    "#,
+        "<>",
+    );
+    assert_eq!(hover.title, "issues");
+    assert_eq!(hover.kind, "field");
+    assert!(
+        hover
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("optional") && detail.contains("[]")),
+        "detail: {:?}",
+        hover.detail
+    );
 }
 
 #[test]

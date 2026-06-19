@@ -17,6 +17,7 @@ mod decompile;
 mod desugar;
 pub mod errors;
 mod format;
+mod hover;
 mod includes;
 pub(crate) mod lower;
 mod namespace;
@@ -38,6 +39,7 @@ pub use sema::{Diagnostic, Severity};
 pub use completion::{
     WdlCompletionItem, WdlCompletionRequest, WdlCompletionResponse, complete_source,
 };
+pub use hover::{WdlHoverRequest, WdlHoverResponse, hover_source};
 
 /// options that fill in the WorkflowDefinition fields that the source does not carry.
 #[derive(Debug, Clone)]

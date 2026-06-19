@@ -312,6 +312,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "wdl/complete",
     body: (args) => arg(args, "request")
   },
+  hover_wdl: {
+    method: "POST",
+    path: () => "wdl/hover",
+    body: (args) => arg(args, "request")
+  },
   compile_wdl: {
     method: "POST",
     path: () => "wdl/compile",

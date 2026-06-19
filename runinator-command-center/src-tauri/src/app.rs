@@ -20,6 +20,7 @@ pub fn run() {
             crate::commands::compile_wdl,
             crate::commands::analyze_wdl,
             crate::commands::complete_wdl,
+            crate::commands::hover_wdl,
             crate::commands::format_wdl,
             crate::commands::evaluate_expression,
             crate::commands::decompile_to_wdl,

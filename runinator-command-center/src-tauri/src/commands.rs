@@ -473,6 +473,13 @@ pub fn complete_wdl(
 }
 
 #[tauri::command]
+pub fn hover_wdl(
+    request: runinator_wdl::WdlHoverRequest,
+) -> CommandResult<Option<runinator_wdl::WdlHoverResponse>> {
+    Ok(runinator_wdl::hover_source(request))
+}
+
+#[tauri::command]
 pub fn format_wdl(source: String) -> CommandResult<String> {
     runinator_wdl::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
 }

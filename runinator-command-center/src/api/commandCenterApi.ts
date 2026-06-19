@@ -30,6 +30,8 @@ import type {
   WdlCompletionRequest,
   WdlCompletionResponse,
   WdlDiagnostic,
+  WdlHoverRequest,
+  WdlHoverResponse,
   WorkflowBundle,
   WorkflowDefinition,
   WorkflowRunCreated,
@@ -293,6 +295,10 @@ export async function analyzeWdl(source: string, sourcePath?: string | null) {
 
 export async function completeWdl(request: WdlCompletionRequest) {
   return command<WdlCompletionResponse>("complete_wdl", { request });
+}
+
+export async function hoverWdl(request: WdlHoverRequest) {
+  return command<WdlHoverResponse | null>("hover_wdl", { request });
 }
 
 export async function formatWdl(source: string) {

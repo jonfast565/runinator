@@ -25,6 +25,12 @@ pub(crate) async fn complete_wdl(
     Json(runinator_wdl::complete_source(request))
 }
 
+pub(crate) async fn hover_wdl(
+    Json(request): Json<runinator_wdl::WdlHoverRequest>,
+) -> Json<Option<runinator_wdl::WdlHoverResponse>> {
+    Json(runinator_wdl::hover_source(request))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CompileWdlRequest {
     pub source: String,

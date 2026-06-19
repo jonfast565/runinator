@@ -48,6 +48,7 @@ import { keymap, type ViewUpdate } from '@codemirror/view';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
 import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
+import { wdlHoverTooltip } from '../../utils/wdl-hover';
 import { analyzeWdl, formatWdl } from '../../api/commandCenterApi';
 import { useAppStore } from '../../stores/app';
 import type { CredentialSummary, ProviderMetadata, WdlDiagnostic, WdlSettingRef } from '../../types/models';
@@ -185,6 +186,7 @@ onMounted(() => {
         }
       ])),
       wdl(wdlProviderCompletionSource(() => props.providers ?? [], settingRefs)),
+      wdlHoverTooltip(() => props.providers ?? [], settingRefs),
       wdlLinter,
       editableCompartment.of(EditorView.editable.of(!props.readonly)),
       EditorView.updateListener.of((update) => {
@@ -195,7 +197,35 @@ onMounted(() => {
       }),
       EditorView.theme({
         "&": { height: "100%" },
-        ".cm-scroller": { overflow: "auto" }
+        ".cm-scroller": { overflow: "auto" },
+        ".cm-tooltip": {
+          border: "1px solid #b8c4d1",
+          borderRadius: "6px",
+          boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)"
+        },
+        ".wdl-hover": {
+          maxWidth: "420px",
+          padding: "8px 10px",
+          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          fontSize: "12px",
+          lineHeight: "1.35",
+          color: "#172033"
+        },
+        ".wdl-hover-title": {
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          fontWeight: "700",
+          color: "#0f172a"
+        },
+        ".wdl-hover-meta": {
+          marginTop: "3px",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          color: "#46566c"
+        },
+        ".wdl-hover-docs": {
+          marginTop: "7px",
+          color: "#2f3c4f",
+          whiteSpace: "pre-line"
+        }
       })
     ],
   });

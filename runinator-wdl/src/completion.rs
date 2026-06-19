@@ -45,26 +45,26 @@ pub struct WdlCompletionItem {
 }
 
 #[derive(Debug, Clone, Default)]
-struct CompletionContext {
-    input: RuninatorType,
-    bindings: BTreeMap<String, RuninatorType>,
-    scoped: BTreeMap<String, RuninatorType>,
-    labels: BTreeSet<String>,
+pub(crate) struct CompletionContext {
+    pub(crate) input: RuninatorType,
+    pub(crate) bindings: BTreeMap<String, RuninatorType>,
+    pub(crate) scoped: BTreeMap<String, RuninatorType>,
+    pub(crate) labels: BTreeSet<String>,
     // namespace scope derived from the document's `import`s and `fn` definitions, mirroring
     // namespace resolution so bare/aliased completions only offer in-scope names.
-    namespace: NamespaceScope,
+    pub(crate) namespace: NamespaceScope,
 }
 
 /// the names a bare or aliased call may resolve to, gathered from imports and user functions.
 #[derive(Debug, Clone, Default)]
-struct NamespaceScope {
+pub(crate) struct NamespaceScope {
     /// import alias -> the std module it targets (e.g. `s` -> `strings`). non-std aliases are
     /// omitted because their namespaces have no completable compute members.
-    aliases: BTreeMap<String, String>,
+    pub(crate) aliases: BTreeMap<String, String>,
     /// intrinsic leaves callable bare because their std module was imported unaliased.
-    bare_intrinsics: BTreeSet<String>,
+    pub(crate) bare_intrinsics: BTreeSet<String>,
     /// user-defined function names, always callable bare.
-    user_fns: BTreeSet<String>,
+    pub(crate) user_fns: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -725,7 +725,7 @@ fn complete_path(path: PathContext, context: &CompletionContext) -> Option<WdlCo
     })
 }
 
-fn root_type(name: &str, context: &CompletionContext) -> Option<RuninatorType> {
+pub(crate) fn root_type(name: &str, context: &CompletionContext) -> Option<RuninatorType> {
     if name == "params" {
         return Some(context.input.clone());
     }
@@ -743,7 +743,7 @@ fn root_type(name: &str, context: &CompletionContext) -> Option<RuninatorType> {
         .cloned()
 }
 
-fn type_fields(ty: &RuninatorType) -> Option<Vec<(String, RuninatorField)>> {
+pub(crate) fn type_fields(ty: &RuninatorType) -> Option<Vec<(String, RuninatorField)>> {
     match ty {
         RuninatorType::Struct { fields, .. } => Some(
             fields
@@ -770,7 +770,7 @@ fn type_fields(ty: &RuninatorType) -> Option<Vec<(String, RuninatorField)>> {
     }
 }
 
-fn navigate_type(mut ty: RuninatorType, segs: &[String]) -> Option<RuninatorType> {
+pub(crate) fn navigate_type(mut ty: RuninatorType, segs: &[String]) -> Option<RuninatorType> {
     for seg in segs {
         ty = match ty {
             RuninatorType::Struct { fields, additional } => fields
@@ -798,7 +798,7 @@ fn navigate_type(mut ty: RuninatorType, segs: &[String]) -> Option<RuninatorType
     Some(ty)
 }
 
-fn completion_context(
+pub(crate) fn completion_context(
     source: &str,
     cursor: usize,
     providers: &[ProviderMetadata],
@@ -829,7 +829,7 @@ fn completion_context(
     context
 }
 
-fn collect_labels(block: &Block) -> BTreeSet<String> {
+pub(crate) fn collect_labels(block: &Block) -> BTreeSet<String> {
     let mut labels = BTreeSet::new();
     collect_block_labels(block, &mut labels);
     labels
@@ -1030,7 +1030,7 @@ fn record_statement_binding(
     context.bindings.insert(id.to_string(), ty);
 }
 
-fn provider_action_output_type(
+pub(crate) fn provider_action_output_type(
     providers: &[ProviderMetadata],
     provider_name: &str,
     action_name: &str,
@@ -1109,7 +1109,7 @@ fn array_element_type(ty: RuninatorType) -> Option<RuninatorType> {
     }
 }
 
-fn workflow_context_type() -> RuninatorType {
+pub(crate) fn workflow_context_type() -> RuninatorType {
     RuninatorType::structure([
         ("run_id", RuninatorType::Integer),
         ("workflow_id", RuninatorType::Integer),
@@ -1130,7 +1130,7 @@ fn subflow_output_type() -> RuninatorType {
     ])
 }
 
-fn find_provider<'a>(
+pub(crate) fn find_provider<'a>(
     providers: &'a [ProviderMetadata],
     name: &str,
 ) -> Option<&'a ProviderMetadata> {
@@ -1144,7 +1144,7 @@ fn find_provider<'a>(
         })
 }
 
-fn action_signature(action: &ActionMetadata) -> String {
+pub(crate) fn action_signature(action: &ActionMetadata) -> String {
     let params = action
         .parameters
         .iter()
@@ -1246,14 +1246,14 @@ fn previous_word(source: &str) -> Option<&str> {
 }
 
 #[derive(Debug, Clone)]
-struct PathContext {
-    head: String,
-    completed: Vec<String>,
-    replace_start: usize,
-    replace_end: usize,
+pub(crate) struct PathContext {
+    pub(crate) head: String,
+    pub(crate) completed: Vec<String>,
+    pub(crate) replace_start: usize,
+    pub(crate) replace_end: usize,
 }
 
-fn path_context(source: &str, cursor: usize) -> Option<PathContext> {
+pub(crate) fn path_context(source: &str, cursor: usize) -> Option<PathContext> {
     let (start, end) = current_path_bounds(source, cursor);
     if start == end {
         return None;
@@ -1390,7 +1390,7 @@ fn used_argument_names(text: &str) -> BTreeSet<String> {
     names
 }
 
-fn unmatched_open_paren(source: &str, cursor: usize) -> Option<usize> {
+pub(crate) fn unmatched_open_paren(source: &str, cursor: usize) -> Option<usize> {
     let mut depth = 0usize;
     for (index, ch) in source[..cursor].char_indices().rev() {
         match ch {
@@ -1456,7 +1456,7 @@ fn identifier_start_before(source: &str, end: usize) -> Option<usize> {
     if start == end { None } else { Some(start) }
 }
 
-fn clamp_to_char_boundary(source: &str, cursor: usize) -> usize {
+pub(crate) fn clamp_to_char_boundary(source: &str, cursor: usize) -> usize {
     let mut cursor = cursor.min(source.len());
     while cursor > 0 && !source.is_char_boundary(cursor) {
         cursor -= 1;

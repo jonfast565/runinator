@@ -16,6 +16,7 @@ pub const WORKFLOW_JSON_IMPORT_RISK_HEADER: &str = "x-runinator-json-workflow-ri
 /// header value acknowledging that raw json workflow imports can break the system.
 pub const WORKFLOW_JSON_IMPORT_RISK_ACK: &str = "system-breakage-possible";
 pub const API_WDL_COMPLETE: &str = "/wdl/complete";
+pub const API_WDL_HOVER: &str = "/wdl/hover";
 pub const API_WDL_COMPILE: &str = "/wdl/compile";
 pub const API_WDL_ANALYZE: &str = "/wdl/analyze";
 pub const API_WDL_FORMAT: &str = "/wdl/format";
