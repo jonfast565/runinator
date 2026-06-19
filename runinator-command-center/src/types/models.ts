@@ -434,6 +434,11 @@ export interface CredentialSummary {
   kind?: SettingKind;
 }
 
+export interface CredentialDetail extends CredentialSummary {
+  value?: unknown;
+  secret?: unknown;
+}
+
 export interface WorkflowRunCreated {
   id: string;
 }

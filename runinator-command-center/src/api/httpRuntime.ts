@@ -340,6 +340,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   fetch_providers: { method: "GET", path: () => "providers" },
   fetch_replicas: { method: "GET", path: () => "replicas" },
   fetch_credentials: { method: "GET", path: () => "credentials" },
+  fetch_credential: {
+    method: "GET",
+    path: (args) =>
+      `credentials?scope=${escape(arg<string>(args, "scope"))}&name=${escape(arg<string>(args, "name"))}&kind=${escape(arg<string>(args, "kind"))}`
+  },
   save_credential: {
     method: "POST",
     path: () => "credentials",
@@ -348,7 +353,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   delete_credential: {
     method: "DELETE",
     path: (args) =>
-      `credentials?scope=${escape(arg<string>(args, "scope"))}&name=${escape(arg<string>(args, "name"))}`
+      `credentials?scope=${escape(arg<string>(args, "scope"))}&name=${escape(arg<string>(args, "name"))}&kind=${escape(arg<string>(args, "kind"))}`
   },
   approve_approval: {
     method: "POST",

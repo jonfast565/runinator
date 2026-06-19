@@ -59,6 +59,7 @@ pub fn run() {
             crate::commands::fetch_providers,
             crate::commands::fetch_replicas,
             crate::commands::fetch_credentials,
+            crate::commands::fetch_credential,
             crate::commands::save_credential,
             crate::commands::delete_credential,
             crate::commands::approve_approval,

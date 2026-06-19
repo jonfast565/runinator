@@ -17,7 +17,8 @@
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
-    <SecretsView v-show="app.activeTab === 'Secrets'" />
+    <SecretsView v-if="app.activeTab === 'Configs'" setting-kind="config" />
+    <SecretsView v-if="app.activeTab === 'Secrets'" setting-kind="secret" />
     <PermissionsView v-if="app.activeTab === 'Permissions'" />
   </AppShell>
 </template>
@@ -142,10 +143,10 @@ watch(
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
     if (tab === "Replicas") app.refreshReplicas().catch(() => {});
+    if (tab === "Configs") secrets.refreshSecrets();
     if (tab === "Secrets") secrets.refreshSecrets();
     if (tab === "Artifacts") artifacts.refreshArtifacts();
     if (tab === "Notifications") notifications.refreshNotifications();
-    if (tab === "Users") permissions.refreshAll();
     if (tab === "Permissions") permissions.refreshAll();
     if (isResourceTab(tab)) {
       const endpoint = endpointForTab(tab);

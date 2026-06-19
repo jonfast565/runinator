@@ -36,7 +36,8 @@ export const navSections: NavSection[] = [
     label: "Other",
     items: [
       { tab: "Gates", label: "Gates", icon: "gate" },
-      { tab: "Secrets", label: "Config & Secrets", icon: "key" }
+      { tab: "Configs", label: "Configs", icon: "settings" },
+      { tab: "Secrets", label: "Secrets", icon: "key" }
     ]
   },
   {

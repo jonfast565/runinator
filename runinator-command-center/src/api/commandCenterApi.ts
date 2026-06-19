@@ -6,6 +6,7 @@ import type {
   ApiKey,
   CreateApiKeyResponse,
   CredentialSummary,
+  CredentialDetail,
   DevPackApplyResult,
   DevPackInspectResult,
   DevPackTextFile,
@@ -579,6 +580,10 @@ export async function fetchReplicas() {
 
 export async function fetchCredentials() {
   return command<CredentialSummary[]>("fetch_credentials");
+}
+
+export async function fetchCredential(scope: string, name: string, kind: SettingKind = "secret") {
+  return command<CredentialDetail>("fetch_credential", { scope, name, kind });
 }
 
 export async function saveCredential(

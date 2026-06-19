@@ -10,8 +10,8 @@ export type AppTab =
   | "Events"
   | "ExternalItems"
   | "Gates"
+  | "Configs"
   | "Secrets"
-  | "Users"
   | "Permissions";
 
 export interface ResourceEndpoint {
