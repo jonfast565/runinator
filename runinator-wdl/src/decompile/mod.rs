@@ -43,6 +43,8 @@ pub(super) struct Decompiler<'a> {
     alias_decls: Vec<(String, Vec<Value>)>,
     // per-node `...alias` spread recipes (node id -> recipe segments) recovered from metadata.
     spreads: HashMap<String, Vec<Value>>,
+    // control-block ids explicitly authored in WDL, recovered from metadata.
+    control_ids: HashSet<String>,
     // node ids already emitted; each node is emitted exactly once and every other edge into
     // it becomes an explicit `-> label` arrow (labels are global, so this round-trips).
     visited: HashSet<String>,
@@ -79,6 +81,7 @@ pub fn decompile_definition(
     let input_types = read_input_types(&graph.metadata);
     let alias_decls = read_alias_decls(&graph.metadata);
     let spreads = read_spreads(&graph.metadata);
+    let control_ids = read_control_ids(&graph.metadata);
 
     let mut decompiler = Decompiler {
         nodes,
@@ -90,6 +93,7 @@ pub fn decompile_definition(
         input_types,
         alias_decls,
         spreads,
+        control_ids,
         visited: HashSet::new(),
         worklist: VecDeque::new(),
         queued: HashSet::new(),
@@ -99,6 +103,11 @@ pub fn decompile_definition(
 
     // top-level `fn` definitions render before the workflow block (document = func_def* ~ workflow).
     decompiler.emit_functions(&read_functions(&graph.metadata))?;
+
+    if let Some(namespace) = &definition.namespace {
+        decompiler.line(&format!("namespace {namespace} {{"));
+        decompiler.indent += 1;
+    }
 
     let returns = read_output_type(&graph.metadata)
         .map(|ty| format!(" returns {}", expr::render_type(&ty)))
@@ -111,9 +120,6 @@ pub fn decompile_definition(
     ));
     decompiler.indent += 1;
     decompiler.emit_params(&definition.input_type)?;
-    if let Some(namespace) = &definition.namespace {
-        decompiler.line(&format!("namespace {namespace}"));
-    }
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
     decompiler.emit_watches(&read_watches(&graph.metadata))?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
@@ -148,6 +154,10 @@ pub fn decompile_definition(
 
     decompiler.indent -= 1;
     decompiler.line("}");
+    if definition.namespace.is_some() {
+        decompiler.indent -= 1;
+        decompiler.line("}");
+    }
     Ok(decompiler.out)
 }
 
@@ -295,6 +305,21 @@ fn read_spreads(metadata: &Value) -> HashMap<String, Vec<Value>> {
         }
     }
     spreads
+}
+
+/// recover control-block ids that were explicitly authored with `@id(...)`.
+fn read_control_ids(metadata: &Value) -> HashSet<String> {
+    metadata
+        .pointer("/wdl/control_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// a `fn` definition recovered for decompilation: its name, its surface signature (`(params) -> ret`,
@@ -676,7 +701,11 @@ impl<'a> Decompiler<'a> {
     /// an `@id("...") ` prefix for a control block in the explicit form, empty otherwise. leaf
     /// nodes already surface their id through `let`/`@id`, so this covers only control headers.
     fn block_id_prefix(&self, node: &WorkflowNode) -> String {
-        self.annotation_prefix(node, self.explicit)
+        self.annotation_prefix(node, self.should_emit_control_id(node))
+    }
+
+    fn should_emit_control_id(&self, node: &WorkflowNode) -> bool {
+        self.explicit || self.control_ids.contains(&node.id) || !is_generated_control_id(node)
     }
 
     fn annotation_prefix(&self, node: &WorkflowNode, include_id: bool) -> String {
@@ -783,12 +812,16 @@ impl<'a> Decompiler<'a> {
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
                 Some(rendered) => format!(
-                    "{}node {}: {} = ",
+                    "{}node {}: {} <- ",
                     self.annotation_prefix(node, false),
                     node.id,
                     rendered
                 ),
-                None => format!("{}node {} = ", self.annotation_prefix(node, false), node.id),
+                None => format!(
+                    "{}node {} <- ",
+                    self.annotation_prefix(node, false),
+                    node.id
+                ),
             }
         } else if needs_id_annotation(&node.kind) {
             self.annotation_prefix(node, true)
@@ -870,13 +903,16 @@ impl<'a> Decompiler<'a> {
         Ok(success)
     }
 
-    /// returns the statement text and whether it should be prefixed with `node <id> =`.
+    /// returns the statement text and whether it should be prefixed with `node <id> <-`.
     fn statement_text(&self, node: &WorkflowNode) -> Result<(String, bool), WdlError> {
         match &node.kind {
             WorkflowNodeKind::Action => {
                 // a std provider node carrying a `program` is a compute block, not a plain call.
                 if let Some(program) = compute_program(node) {
                     return Ok((self.compute_text(node, program)?, true));
+                }
+                if foreign_compute_config(node).is_some() {
+                    return Ok((self.foreign_compute_text(node)?, true));
                 }
                 Ok((self.action_text(node)?, true))
             }
@@ -962,6 +998,49 @@ impl<'a> Decompiler<'a> {
             }
         }
         Ok(())
+    }
+
+    fn foreign_compute_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let action = node
+            .action
+            .as_ref()
+            .ok_or_else(|| WdlError::Decompile("foreign compute node missing action".into()))?;
+        let config = action.configuration.as_value();
+        let language = config
+            .get("language")
+            .and_then(Value::as_str)
+            .ok_or_else(|| WdlError::Decompile("foreign compute missing language".into()))?;
+        let source = config
+            .get("source")
+            .and_then(Value::as_str)
+            .ok_or_else(|| WdlError::Decompile("foreign compute missing source".into()))?;
+        if source.contains("```") {
+            return Err(WdlError::Decompile(
+                "foreign compute source contains a code fence delimiter".into(),
+            ));
+        }
+
+        let base = self.indent;
+        let mut out = format!("compute {language}");
+        if let Some(image) = config.get("image").and_then(Value::as_str) {
+            out.push_str(&format!(" using {}", quote(image)));
+        }
+        out.push_str(" ```\n");
+        out.push_str(source);
+        if !source.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("```");
+
+        let mut modifiers = Vec::new();
+        if self.explicit || action.timeout_seconds != 60 {
+            modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
+        }
+        if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
+            modifiers.push(retry);
+        }
+        out.push_str(&self.modifier_suffix(base, &modifiers, true));
+        Ok(out)
     }
 
     // lay out call arguments as a parenthesized list with one argument per line, indented under
@@ -1123,31 +1202,37 @@ impl<'a> Decompiler<'a> {
     fn subflow_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
         let subflow = &node.subflow;
         let name = subflow.workflow_name.clone().unwrap_or_default();
-        let verb = match subflow.subflow_type {
-            runinator_models::workflows::WorkflowSubflowType::FireAndForget => "spawn",
-            runinator_models::workflows::WorkflowSubflowType::Wait => "call",
-        };
-        let mut text = format!("{verb} {}", quote(&name));
+        let mut args = vec![quote(&name)];
+        let base = self.indent;
         if subflow.reuse_open_run {
-            text.push_str(" reuse");
+            args.push("reuse: true".to_string());
+        }
+        if matches!(
+            subflow.subflow_type,
+            runinator_models::workflows::WorkflowSubflowType::FireAndForget
+        ) {
+            args.push("detached: true".to_string());
         }
         if let Some(run_name) = &subflow.run_name {
-            text.push_str(&format!(" as {}", self.expr(run_name)?));
+            args.push(format!("name: {}", self.expr(run_name)?));
         }
-        let base = self.indent;
+        let mut params_arg = None;
         if let Some(segs) = self.spreads.get(&node.id) {
             let parts = self.render_seg_parts(segs)?;
-            text.push_str(&format!(" with {}", self.parts_object(&parts, base)));
+            params_arg = Some(format!("params: {}", self.parts_object(&parts, base)));
         } else if let Value::Object(params) = node.parameters.as_value() {
             if !params.is_empty() {
                 let mut parts = Vec::new();
                 for (name, value) in params {
                     parts.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
                 }
-                text.push_str(&format!(" with {}", self.parts_object(&parts, base)));
+                params_arg = Some(format!("params: {}", self.parts_object(&parts, base)));
             }
         }
-        Ok(text)
+        if let Some(params_arg) = params_arg {
+            args.insert(1, params_arg);
+        }
+        Ok(format!("subflow({})", args.join(", ")))
     }
 
     fn wait_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -1167,7 +1252,7 @@ impl<'a> Decompiler<'a> {
     }
 
     fn output_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
-        let mut text = "output".to_string();
+        let mut text = "emit".to_string();
         let event = node.parameters.get("event_type").and_then(Value::as_str);
         if let Some(event_type) = event {
             text.push_str(&format!(" {}", quote(event_type)));
@@ -1847,6 +1932,19 @@ fn compute_program(node: &WorkflowNode) -> Option<&[Value]> {
         .map(Vec::as_slice)
 }
 
+/// the foreign compute config of a `std.code` action node, if present.
+fn foreign_compute_config(node: &WorkflowNode) -> Option<&Value> {
+    let action = node.action.as_ref()?;
+    if action.provider != "std" || action.function != "code" {
+        return None;
+    }
+    let config = action.configuration.as_value();
+    if config.get("language").is_some() && config.get("source").is_some() {
+        return Some(config);
+    }
+    None
+}
+
 /// read a single `{ "$node": id }` reference into a node id.
 fn single_node_id(value: Option<&Value>) -> Option<String> {
     value
@@ -1867,6 +1965,33 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
             | WorkflowNodeKind::Signal
             | WorkflowNodeKind::Config
     )
+}
+
+fn is_generated_control_id(node: &WorkflowNode) -> bool {
+    let prefixes: &[&str] = match node.kind {
+        WorkflowNodeKind::Condition if node.reentry.enabled => &["while_loop"],
+        WorkflowNodeKind::Condition => &["if"],
+        WorkflowNodeKind::Loop => &["for_loop"],
+        WorkflowNodeKind::Map => &["map"],
+        WorkflowNodeKind::Parallel => &["parallel"],
+        WorkflowNodeKind::Race => &["race"],
+        WorkflowNodeKind::Switch => &["switch"],
+        WorkflowNodeKind::Try => &["try"],
+        _ => return true,
+    };
+    prefixes
+        .iter()
+        .any(|prefix| has_numbered_id(&node.id, prefix))
+}
+
+fn has_numbered_id(id: &str, prefix: &str) -> bool {
+    let Some(rest) = id
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('_'))
+    else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn quote(text: &str) -> String {

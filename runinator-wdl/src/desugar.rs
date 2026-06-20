@@ -11,8 +11,11 @@ pub(crate) type AliasTable = HashMap<String, Vec<(String, Expr)>>;
 
 /// expand every `...alias` spread in the document. mutates the document in place.
 pub fn desugar(document: &mut Document) -> Result<(), WdlError> {
-    let aliases = collect_aliases(&document.workflow.aliases)?;
-    expand_block(&mut document.workflow.body, &aliases)
+    for workflow in document.workflows.iter_mut() {
+        let aliases = collect_aliases(&workflow.aliases)?;
+        expand_block(&mut workflow.body, &aliases)?;
+    }
+    Ok(())
 }
 
 /// splice the top-level `...alias` spreads in an authored entry list into a flat entry list
@@ -120,6 +123,7 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_expr(data, aliases)?;
             }
         }
+        StmtKind::Yield(value) => expand_expr(value, aliases)?,
         StmtKind::Deliverable(deliverable) => {
             for (_, source) in deliverable.items.iter_mut() {
                 expand_expr(source, aliases)?;

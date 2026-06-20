@@ -53,7 +53,23 @@ impl Formatter {
         if !document.functions.is_empty() {
             self.out.push('\n');
         }
-        let workflow = &document.workflow;
+        for (index, workflow) in document.workflows.iter().enumerate() {
+            if index > 0 {
+                self.out.push('\n');
+            }
+            if let Some(namespace) = &workflow.namespace {
+                self.line(&format!("namespace {namespace} {{"));
+                self.indent += 1;
+                self.workflow(workflow);
+                self.indent -= 1;
+                self.line("}");
+            } else {
+                self.workflow(workflow);
+            }
+        }
+    }
+
+    fn workflow(&mut self, workflow: &Workflow) {
         let version = workflow
             .version
             .map(|version| format!(" v{version}"))
@@ -73,16 +89,10 @@ impl Formatter {
             if !workflow.triggers.is_empty()
                 || !workflow.aliases.is_empty()
                 || !workflow.body.is_empty()
-                || workflow.namespace.is_some()
                 || !workflow.imports.is_empty()
             {
                 self.out.push('\n');
             }
-        }
-        // preserve the `namespace` header and `import` declarations (surface sugar that qualifies
-        // identity and opens namespaces into local scope).
-        if let Some(namespace) = &workflow.namespace {
-            self.line(&format!("namespace {namespace}"));
         }
         for import in &workflow.imports {
             match &import.alias {
@@ -270,22 +280,14 @@ impl Formatter {
         }
 
         let mut text = String::new();
-        // action, subflow, and compute are the node-leaves: they carry the `node` keyword (with an
-        // optional `label[: type] =` binding). every other statement stays bare.
-        let is_node_leaf = matches!(
-            stmt.kind,
-            StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_)
-        );
-        if is_node_leaf {
+        if let Some(label) = &stmt.label {
             text.push_str("node ");
-            if let Some(label) = &stmt.label {
-                text.push_str(label);
-                if let Some(label_type) = &stmt.label_type {
-                    text.push_str(": ");
-                    text.push_str(&format_type(label_type));
-                }
-                text.push_str(" = ");
+            text.push_str(label);
+            if let Some(label_type) = &stmt.label_type {
+                text.push_str(": ");
+                text.push_str(&format_type(label_type));
             }
+            text.push_str(" <- ");
         }
 
         text.push_str(&self.stmt_kind(&stmt.kind));
@@ -346,6 +348,7 @@ impl Formatter {
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Output(output) => self.output(output),
+            StmtKind::Yield(value) => format!("yield {}", format_expr(value)),
             StmtKind::Deliverable(deliverable) => self.deliverable(deliverable),
             StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
@@ -368,12 +371,18 @@ impl Formatter {
     }
 
     fn compute(&mut self, compute: &ComputeStmt) -> String {
-        let mut out = String::from("compute {\n");
-        self.indent += 1;
-        self.compute_lines(&mut out, &compute.body);
-        self.indent -= 1;
-        self.push_indent(&mut out);
-        out.push('}');
+        let mut out = match &compute.foreign {
+            Some(foreign) => self.foreign_compute(foreign),
+            None => {
+                let mut out = String::from("compute {\n");
+                self.indent += 1;
+                self.compute_lines(&mut out, &compute.body);
+                self.indent -= 1;
+                self.push_indent(&mut out);
+                out.push('}');
+                out
+            }
+        };
         // render trailing modifiers (e.g. `.timeout(30s)`) like an action call.
         let mut modifiers = Vec::new();
         if let Some(seconds) = compute.modifiers.timeout_seconds {
@@ -383,6 +392,20 @@ impl Formatter {
             modifiers.push(format_retry(retry));
         }
         self.append_modifiers(&mut out, &modifiers, true);
+        out
+    }
+
+    fn foreign_compute(&self, foreign: &ForeignCompute) -> String {
+        let mut out = format!("compute {}", foreign.language);
+        if let Some(image) = &foreign.image {
+            out.push_str(&format!(" using {}", quote(image)));
+        }
+        out.push_str(" ```\n");
+        out.push_str(&foreign.source);
+        if !foreign.source.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("```");
         out
     }
 
@@ -529,22 +552,23 @@ impl Formatter {
     }
 
     fn subflow(&self, subflow: &SubflowStmt) -> String {
-        let verb = if subflow.detached { "spawn" } else { "call" };
-        let mut text = format!("{verb} {}", quote(&subflow.workflow_name));
-        if subflow.reuse {
-            text.push_str(" reuse");
-        }
-        if let Some(run_name) = &subflow.run_name {
-            text.push_str(&format!(" as {}", format_expr(run_name)));
-        }
+        let mut args = vec![quote(&subflow.workflow_name)];
         if !subflow.params.is_empty() {
-            text.push_str(" with ");
-            text.push_str(&format_object_entries_multiline(
-                &subflow.params,
-                self.indent,
+            args.push(format!(
+                "params: {}",
+                format_object_entries_multiline(&subflow.params, self.indent)
             ));
         }
-        text
+        if subflow.reuse {
+            args.push("reuse: true".to_string());
+        }
+        if subflow.detached {
+            args.push("detached: true".to_string());
+        }
+        if let Some(run_name) = &subflow.run_name {
+            args.push(format!("name: {}", format_expr(run_name)));
+        }
+        format!("subflow({})", args.join(", "))
     }
 
     fn wait(&self, wait: &WaitStmt) -> String {
@@ -563,7 +587,7 @@ impl Formatter {
     }
 
     fn output(&self, output: &OutputStmt) -> String {
-        let mut text = "output".to_string();
+        let mut text = "emit".to_string();
         if let Some(event_type) = &output.event_type {
             text.push_str(&format!(" {}", quote(event_type)));
         }

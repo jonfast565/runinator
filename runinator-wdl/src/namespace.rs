@@ -61,51 +61,67 @@ pub(crate) fn resolve_compute_fragment(body: &mut [ComputeLine]) -> Result<(), W
 
 /// resolve every namespaced call in the document to its bare runtime form, in place.
 pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
-    let scope = build_scope(document)?;
+    let function_scope = build_function_scope(document);
     for function in document.functions.iter_mut() {
         for param in function.params.iter_mut() {
             if let Some(default) = param.default.as_mut() {
-                resolve_expr(default, &scope)?;
+                resolve_expr(default, &function_scope)?;
             }
         }
         match &mut function.body {
-            FnBody::Expr(expr) => resolve_expr(expr, &scope)?,
-            FnBody::Block(lines) => resolve_compute_block(lines, &scope)?,
+            FnBody::Expr(expr) => resolve_expr(expr, &function_scope)?,
+            FnBody::Block(lines) => resolve_compute_block(lines, &function_scope)?,
         }
     }
-    for alias in document.workflow.aliases.iter_mut() {
-        for (_, value) in alias.entries.iter_mut() {
-            resolve_expr(value, &scope)?;
-        }
-    }
-    for trigger in document.workflow.triggers.iter_mut() {
-        resolve_expr(&mut trigger.schedule, &scope)?;
-        if let Some(params) = trigger.params.as_mut() {
-            resolve_expr(params, &scope)?;
-        }
-        if let Some(start) = trigger.blackout_start.as_mut() {
-            resolve_expr(start, &scope)?;
-        }
-        if let Some(end) = trigger.blackout_end.as_mut() {
-            resolve_expr(end, &scope)?;
-        }
-    }
-    if let Some(input) = document.workflow.input.as_mut() {
-        resolve_type_defaults(input, &scope)?;
-    }
-    resolve_block(&mut document.workflow.body, &scope)
-}
-
-/// build the name scope from the document's user functions and `import` declarations.
-fn build_scope(document: &Document) -> Result<Scope, WdlError> {
     let user_fns = document
         .functions
         .iter()
         .map(|function| function.name.clone())
-        .collect();
+        .collect::<HashSet<_>>();
+    for workflow in document.workflows.iter_mut() {
+        let scope = build_scope(workflow, user_fns.clone())?;
+        for alias in workflow.aliases.iter_mut() {
+            for (_, value) in alias.entries.iter_mut() {
+                resolve_expr(value, &scope)?;
+            }
+        }
+        for trigger in workflow.triggers.iter_mut() {
+            resolve_expr(&mut trigger.schedule, &scope)?;
+            if let Some(params) = trigger.params.as_mut() {
+                resolve_expr(params, &scope)?;
+            }
+            if let Some(start) = trigger.blackout_start.as_mut() {
+                resolve_expr(start, &scope)?;
+            }
+            if let Some(end) = trigger.blackout_end.as_mut() {
+                resolve_expr(end, &scope)?;
+            }
+        }
+        if let Some(input) = workflow.input.as_mut() {
+            resolve_type_defaults(input, &scope)?;
+        }
+        resolve_block(&mut workflow.body, &scope)?;
+    }
+    Ok(())
+}
+
+/// build the name scope from the document's user functions and `import` declarations.
+fn build_function_scope(document: &Document) -> Scope {
+    Scope {
+        aliases: HashMap::new(),
+        bare_intrinsics: HashSet::new(),
+        user_fns: document
+            .functions
+            .iter()
+            .map(|function| function.name.clone())
+            .collect(),
+    }
+}
+
+fn build_scope(workflow: &Workflow, user_fns: HashSet<String>) -> Result<Scope, WdlError> {
     let mut aliases = HashMap::new();
     let mut bare_intrinsics = HashSet::new();
-    for import in &document.workflow.imports {
+    for import in &workflow.imports {
         let segments: Vec<&str> = import.path.split('.').collect();
         // `import std` opens the entire standard library into bare scope; it cannot be aliased.
         if segments.as_slice() == [STD_NAMESPACE] {
@@ -233,6 +249,7 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
                 resolve_expr(data, scope)?;
             }
         }
+        StmtKind::Yield(value) => resolve_expr(value, scope)?,
         StmtKind::Deliverable(deliverable) => {
             for (_, source) in deliverable.items.iter_mut() {
                 resolve_expr(source, scope)?;

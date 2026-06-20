@@ -29,6 +29,11 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
         .max(0);
     let index = prior_iterations;
     let exhausted = index >= items.len() as i64 || index >= max_iterations;
+    let last = if exhausted && prior_iterations > 0 {
+        latest_succeeded_output_excluding(node_runs, &node.id)
+    } else {
+        None
+    };
     // each iteration gets its own run so prior_iterations advances. reuse the latest only if it was
     // left running from a prior interrupted visit.
     let node_run = match latest.filter(|run| run.status == WorkflowStatus::Running) {
@@ -57,6 +62,7 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
             item: None,
             has_next: false,
             count: items.len(),
+            last,
         }
     } else {
         LoopOutput {
@@ -64,6 +70,7 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
             item: Some(items[index as usize].clone()),
             has_next: true,
             count: items.len(),
+            last: None,
         }
     };
     let output_value = output.to_wire_value()?;
@@ -177,7 +184,10 @@ pub(super) async fn process_parallel_node<T: DatabaseImpl>(
             node.parameters.clone().into(),
         )
         .await?;
-    let output = ParallelOutput { branches };
+    let output = ParallelOutput {
+        branches,
+        outputs: Vec::new(),
+    };
     let mut state = WorkflowRunState::from_state(&workflow_run.state);
     state.parallel = Some(ParallelFrame {
         node_id: node.id.clone(),
@@ -221,6 +231,10 @@ pub(super) async fn process_join_node<T: DatabaseImpl>(
     if join_satisfied(&wait_for, params.mode, node_runs) {
         let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
         let output = JoinOutput {
+            outputs: wait_for
+                .iter()
+                .filter_map(|target| latest_succeeded_output_for(node_runs, target))
+                .collect(),
             wait_for,
             mode: branch_policy_name(params.mode).to_string(),
         };
@@ -317,7 +331,10 @@ pub(super) async fn process_race_node<T: DatabaseImpl>(
         .map(|branch| branch.as_str().to_string())
         .collect::<Vec<_>>();
     if let Some(winner) = race_winner(&branches, params.winner, node_runs) {
-        let output = RaceOutput { winner };
+        let output = RaceOutput {
+            output: latest_succeeded_output_for(node_runs, &winner),
+            winner,
+        };
         transition_from_node(
             db,
             workflow_run,
@@ -410,6 +427,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
             node_id: node.id.clone(),
             phase: "body".into(),
             pending_status: None,
+            pending_output: None,
         });
     let phase = frame.phase.clone();
     if latest.is_none() {
@@ -421,6 +439,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
             params.body.as_str(),
             "body",
             None,
+            None,
         )
         .await;
     }
@@ -429,6 +448,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
             let Some(status) = latest_status(params.body.as_str(), node_runs) else {
                 return Ok(());
             };
+            let body_output = latest_succeeded_output_excluding(node_runs, &node.id);
             if status == WorkflowStatus::Succeeded {
                 if let Some(finally) = params.finally {
                     return start_try_phase(
@@ -439,6 +459,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                         finally.as_str(),
                         "finally",
                         Some(status),
+                        body_output,
                     )
                     .await;
                 }
@@ -448,7 +469,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                     node,
                     &node_run,
                     status,
-                    None,
+                    body_output,
                     Some("try_body_succeeded".into()),
                     node_runs,
                 )
@@ -464,6 +485,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                     catch.as_str(),
                     "catch",
                     Some(status),
+                    None,
                 )
                 .await;
             }
@@ -476,6 +498,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                     finally.as_str(),
                     "finally",
                     Some(status),
+                    body_output,
                 )
                 .await;
             }
@@ -485,7 +508,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                 node,
                 &node_run,
                 status,
-                None,
+                body_output,
                 Some("try_body_failed".into()),
                 node_runs,
             )
@@ -500,6 +523,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
             else {
                 return Ok(());
             };
+            let catch_output = latest_succeeded_output_excluding(node_runs, &node.id);
             if let Some(finally) = params.finally {
                 return start_try_phase(
                     db,
@@ -509,6 +533,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                     finally.as_str(),
                     "finally",
                     Some(status),
+                    catch_output,
                 )
                 .await;
             }
@@ -518,7 +543,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                 node,
                 &node_run,
                 status,
-                None,
+                catch_output,
                 Some("try_catch_completed".into()),
                 node_runs,
             )
@@ -539,7 +564,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
                 node,
                 &node_run,
                 status,
-                None,
+                frame.pending_output,
                 Some("try_finally_completed".into()),
                 node_runs,
             )
@@ -548,4 +573,23 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
         }
         _ => block_node(db, workflow_run, node, "Try node has invalid phase").await,
     }
+}
+
+fn latest_succeeded_output_for(node_runs: &[WorkflowNodeRun], node_id: &str) -> Option<Value> {
+    node_runs
+        .iter()
+        .rev()
+        .find(|run| run.node_id == node_id && run.status == WorkflowStatus::Succeeded)
+        .and_then(|run| run.output_json.clone())
+}
+
+fn latest_succeeded_output_excluding(
+    node_runs: &[WorkflowNodeRun],
+    node_id: &str,
+) -> Option<Value> {
+    node_runs
+        .iter()
+        .rev()
+        .find(|run| run.node_id != node_id && run.status == WorkflowStatus::Succeeded)
+        .and_then(|run| run.output_json.clone())
 }

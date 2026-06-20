@@ -10,7 +10,21 @@ pub struct Document {
     /// top-level `fn` definitions, callable from the workflow body, compute blocks, and other
     /// function bodies. siblings of the workflow.
     pub functions: Vec<FunctionDef>,
-    pub workflow: Workflow,
+    pub workflows: Vec<Workflow>,
+}
+
+impl Document {
+    pub fn single_workflow(&self) -> Option<&Workflow> {
+        self.workflows.first().filter(|_| self.workflows.len() == 1)
+    }
+
+    pub fn single_workflow_mut(&mut self) -> Option<&mut Workflow> {
+        if self.workflows.len() == 1 {
+            self.workflows.first_mut()
+        } else {
+            None
+        }
+    }
 }
 
 /// a top-level `fn name(params) -> ret = body` definition. the body is either a single expression
@@ -125,9 +139,9 @@ pub type Block = Vec<Stmt>;
 pub struct Stmt {
     pub span: Span,
     pub annotations: Annotations,
-    /// `let <label> = ...`; the binding doubles as the generated node id.
+    /// `node <label> <- ...`; the binding doubles as the generated node id for leaf nodes.
     pub label: Option<String>,
-    /// an optional `let <label>: <type> = ...` annotation declaring the step's output type.
+    /// an optional `node <label>: <type> <- ...` annotation declaring the step's output type.
     pub label_type: Option<TypeExpr>,
     pub kind: StmtKind,
     pub transitions: TransitionClause,
@@ -150,6 +164,7 @@ pub enum StmtKind {
     Subflow(SubflowStmt),
     Wait(WaitStmt),
     Output(OutputStmt),
+    Yield(Expr),
     Deliverable(DeliverableStmt),
     Input(InputStmt),
     Approval(ApprovalStmt),
@@ -248,7 +263,16 @@ pub struct ActionStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComputeStmt {
     pub body: Vec<ComputeLine>,
+    pub foreign: Option<ForeignCompute>,
     pub modifiers: Modifiers,
+}
+
+/// a verbatim foreign-language compute block. lowers to `std.code` and runs on a worker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignCompute {
+    pub language: String,
+    pub image: Option<String>,
+    pub source: String,
 }
 
 /// a single line in a compute block.
@@ -272,7 +296,7 @@ pub enum ComputeLine {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubflowStmt {
     pub workflow_name: String,
-    /// `spawn` / `detached` => fire-and-forget; `call` => wait.
+    /// `detached: true` => fire-and-forget; otherwise wait.
     pub detached: bool,
     pub reuse: bool,
     pub run_name: Option<Expr>,

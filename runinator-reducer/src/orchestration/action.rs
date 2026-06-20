@@ -108,7 +108,7 @@ async fn build_node_parameters<T: DatabaseImpl>(
     // an effectful `std.exec` program is interpreted by the worker, not resolved here: ship the
     // program verbatim alongside the full runtime context and the workflow's user-function table so
     // the worker's interpreter can resolve refs/calls (with the effectful library) against it.
-    if action.provider == "std" {
+    if action.provider == "std" && action.function == "exec" {
         let context = runtime_context(db, workflow_run, node_runs).await;
         let program = action
             .configuration
@@ -125,6 +125,16 @@ async fn build_node_parameters<T: DatabaseImpl>(
         return Ok(
             runinator_models::json!({ "program": program, "context": context, "functions": functions }),
         );
+    }
+    // foreign compute source is passed verbatim to `std.code`; only the live context is appended.
+    if action.provider == "std" && action.function == "code" {
+        let mut parameters = action.configuration.as_value().clone();
+        let context = runtime_context(db, workflow_run, node_runs).await;
+        if let Value::Object(object) = &mut parameters {
+            object.insert("context".into(), context);
+            return Ok(parameters);
+        }
+        return Ok(runinator_models::json!({ "context": context }));
     }
     let base = merge_parameters(&action.configuration, &node.parameters);
     let context = runtime_context(db, workflow_run, node_runs).await;

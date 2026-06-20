@@ -23,18 +23,127 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
         .next()
         .ok_or_else(|| WdlError::Parse("empty input".into()))?;
     let mut functions = Vec::new();
-    let mut workflow = None;
-    for inner in document.into_inner() {
+    let mut workflows = Vec::new();
+    let mut active: Option<Workflow> = None;
+    let mut current_namespace: Option<String> = None;
+    for item in document.into_inner() {
+        let inner = match item.as_rule() {
+            Rule::document_item => first_inner(item)?,
+            Rule::EOI => continue,
+            _ => item,
+        };
         match inner.as_rule() {
             Rule::func_def => functions.push(parse_func_def(inner)?),
-            Rule::workflow => workflow = Some(parse_workflow(inner)?),
+            Rule::namespace_decl => {
+                current_namespace = Some(first_inner(inner)?.as_str().to_string());
+                if let Some(workflow) = active.as_mut() {
+                    workflow.namespace = current_namespace.clone();
+                }
+            }
+            Rule::namespace_block => {
+                if let Some(workflow) = active.take() {
+                    workflows.push(workflow);
+                }
+                workflows.extend(parse_namespace_block(inner)?);
+            }
+            Rule::workflow => {
+                if let Some(workflow) = active.take() {
+                    workflows.push(workflow);
+                }
+                workflows.push(parse_workflow(inner, current_namespace.clone())?);
+            }
+            Rule::workflow_decl => {
+                if let Some(workflow) = active.take() {
+                    workflows.push(workflow);
+                }
+                let (name, version, output, span) = parse_workflow_decl(inner)?;
+                active = Some(Workflow {
+                    name,
+                    version,
+                    input: None,
+                    output,
+                    aliases: Vec::new(),
+                    namespace: current_namespace.clone(),
+                    imports: Vec::new(),
+                    start: None,
+                    triggers: Vec::new(),
+                    watches: Vec::new(),
+                    type_decls: Vec::new(),
+                    body: Vec::new(),
+                    span,
+                });
+            }
+            Rule::params_block
+            | Rule::import_decl
+            | Rule::trigger_decl
+            | Rule::watch_decl
+            | Rule::alias_decl
+            | Rule::type_decl
+            | Rule::start_decl
+            | Rule::stmt
+                if active.is_none() =>
+            {
+                return Err(WdlError::syntax(
+                    span_of(&inner),
+                    "workflow declaration must come before workflow body declarations",
+                ));
+            }
+            Rule::params_block => {
+                let workflow = active.as_mut().expect("active workflow");
+                if workflow.input.is_some() {
+                    return Err(WdlError::syntax(
+                        span_of(&inner),
+                        "document can only declare one params block",
+                    ));
+                }
+                workflow.input = Some(parse_params_block(inner)?);
+            }
+            Rule::import_decl => active
+                .as_mut()
+                .expect("active workflow")
+                .imports
+                .push(parse_import_decl(inner)?),
+            Rule::trigger_decl => active
+                .as_mut()
+                .expect("active workflow")
+                .triggers
+                .push(parse_trigger_decl(inner)?),
+            Rule::watch_decl => active
+                .as_mut()
+                .expect("active workflow")
+                .watches
+                .push(parse_watch_decl(inner)?),
+            Rule::alias_decl => active
+                .as_mut()
+                .expect("active workflow")
+                .aliases
+                .push(parse_alias_decl(inner)?),
+            Rule::type_decl => active
+                .as_mut()
+                .expect("active workflow")
+                .type_decls
+                .push(parse_type_decl(inner)?),
+            Rule::start_decl => {
+                active.as_mut().expect("active workflow").start =
+                    Some(parse_target(first_inner(inner)?)?)
+            }
+            Rule::stmt => active
+                .as_mut()
+                .expect("active workflow")
+                .body
+                .push(parse_stmt(inner)?),
             _ => {}
         }
     }
-    let workflow = workflow.ok_or_else(|| WdlError::Parse("missing workflow".into()))?;
+    if let Some(workflow) = active.take() {
+        workflows.push(workflow);
+    }
+    if workflows.is_empty() {
+        return Err(WdlError::Parse("missing workflow".into()));
+    }
     Ok(Document {
         functions,
-        workflow,
+        workflows,
     })
 }
 
@@ -211,14 +320,26 @@ fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, WdlError> {
     })
 }
 
-fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
+fn parse_namespace_block(pair: Pair<Rule>) -> Result<Vec<Workflow>, WdlError> {
+    let mut namespace = None;
+    let mut workflows = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ns_path => namespace = Some(inner.as_str().to_string()),
+            Rule::workflow => workflows.push(parse_workflow(inner, namespace.clone())?),
+            _ => {}
+        }
+    }
+    Ok(workflows)
+}
+
+fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflow, WdlError> {
     let span = span_of(&pair);
     let mut name = String::new();
     let mut version = None;
     let mut input = None;
     let mut output = None;
     let mut aliases = Vec::new();
-    let mut namespace = None;
     let mut imports = Vec::new();
     let mut start = None;
     let mut triggers = Vec::new();
@@ -245,7 +366,6 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
                 output = Some(parse_type_expr(ty)?);
             }
             Rule::params_block => input = Some(parse_params_block(inner)?),
-            Rule::namespace_decl => namespace = Some(first_inner(inner)?.as_str().to_string()),
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
@@ -271,6 +391,38 @@ fn parse_workflow(pair: Pair<Rule>) -> Result<Workflow, WdlError> {
         body,
         span,
     })
+}
+
+fn parse_workflow_decl(
+    pair: Pair<Rule>,
+) -> Result<(String, Option<SemVer>, Option<TypeExpr>, Span), WdlError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut version = None;
+    let mut output = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::version => {
+                let digits = inner.as_str().trim_start_matches('v');
+                version =
+                    Some(digits.parse::<SemVer>().map_err(|err| {
+                        WdlError::syntax(span, format!("invalid version: {err}"))
+                    })?);
+            }
+            Rule::returns_decl => {
+                let ty = inner
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::type_expr)
+                    .ok_or_else(|| {
+                        WdlError::syntax(span, "returns declaration is missing a type")
+                    })?;
+                output = Some(parse_type_expr(ty)?);
+            }
+            _ => {}
+        }
+    }
+    Ok((name, version, output, span))
 }
 
 fn parse_watch_decl(pair: Pair<Rule>) -> Result<WatchDecl, WdlError> {
@@ -588,7 +740,6 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
     let mut annotations = Annotations::default();
     let mut label = None;
     let mut label_type = None;
-    let mut has_node = false;
     let mut kind = None;
     let mut transitions = TransitionClause::default();
     let mut compensation = None;
@@ -596,7 +747,6 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         match inner.as_rule() {
             Rule::annotation => apply_annotation(&mut annotations, inner)?,
             Rule::node_decl => {
-                has_node = true;
                 for part in inner.into_inner() {
                     match part.as_rule() {
                         Rule::ident => label = Some(part.as_str().to_string()),
@@ -614,22 +764,14 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         }
     }
     let kind = kind.ok_or_else(|| WdlError::syntax(span, "statement has no body"))?;
-    // `node` is required on the value-producing leaves and forbidden everywhere else.
-    let is_node_leaf = matches!(
-        kind,
-        StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_)
-    );
-    if is_node_leaf && !has_node {
+    if matches!(kind, StmtKind::Yield(_)) && label.is_some() {
         return Err(WdlError::syntax(
             span,
-            "action, subflow, and compute steps must be declared with `node`",
+            "`yield` cannot be bound with `node`",
         ));
     }
-    if !is_node_leaf && has_node {
-        return Err(WdlError::syntax(
-            span,
-            "`node` is only allowed on action, subflow, or compute steps",
-        ));
+    if matches!(kind, StmtKind::Yield(_)) && !transitions.is_empty() {
+        return Err(WdlError::syntax(span, "`yield` cannot declare transitions"));
     }
     Ok(Stmt {
         span,
@@ -669,7 +811,8 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_cond_stmt => Ok(StmtKind::While(parse_wait_until(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
-        Rule::output_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
+        Rule::emit_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
+        Rule::yield_stmt => Ok(StmtKind::Yield(parse_expr(first_inner(inner)?)?)),
         Rule::deliverable_stmt => Ok(StmtKind::Deliverable(parse_deliverable(inner)?)),
         Rule::input_stmt => Ok(StmtKind::Input(parse_input(inner)?)),
         Rule::approval_stmt => Ok(StmtKind::Approval(parse_approval(inner)?)),
@@ -724,15 +867,49 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
 
 fn parse_compute(pair: Pair<Rule>) -> Result<ComputeStmt, WdlError> {
     let mut body = Vec::new();
+    let mut foreign = None;
     let mut modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::compute_block => body = parse_compute_block(inner)?,
+            Rule::foreign_compute => foreign = Some(parse_foreign_compute(inner)?),
             Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
         }
     }
-    Ok(ComputeStmt { body, modifiers })
+    Ok(ComputeStmt {
+        body,
+        foreign,
+        modifiers,
+    })
+}
+
+fn parse_foreign_compute(pair: Pair<Rule>) -> Result<ForeignCompute, WdlError> {
+    let mut language = None;
+    let mut image = None;
+    let mut source = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => language = Some(inner.as_str().to_string()),
+            Rule::foreign_image => image = parse_foreign_image(inner)?,
+            Rule::raw_block => source = Some(raw_block_content(inner.as_str())),
+            _ => {}
+        }
+    }
+    Ok(ForeignCompute {
+        language: language.unwrap_or_default(),
+        image,
+        source: source.unwrap_or_default(),
+    })
+}
+
+fn parse_foreign_image(pair: Pair<Rule>) -> Result<Option<String>, WdlError> {
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::string {
+            return plain_string(inner).map(Some);
+        }
+    }
+    Ok(None)
 }
 
 fn parse_compute_block(pair: Pair<Rule>) -> Result<Vec<ComputeLine>, WdlError> {
@@ -1013,24 +1190,39 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, WdlError> {
     let mut params = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::subflow_verb => detached = inner.as_str() == "spawn",
             Rule::string => workflow_name = plain_string(inner)?,
-            Rule::subflow_opt => {
-                let text = inner.as_str();
-                if text.starts_with("detached") {
-                    detached = true;
-                } else if text.starts_with("reuse") {
-                    reuse = true;
-                } else if let Some(as_pair) =
-                    inner.into_inner().find(|p| p.as_rule() == Rule::subflow_as)
-                {
-                    let expr = first_inner(as_pair)?;
-                    run_name = Some(parse_expr(expr)?);
+            Rule::subflow_arg => {
+                let span = span_of(&inner);
+                let mut parts = inner.into_inner();
+                let key = parts
+                    .next()
+                    .ok_or_else(|| WdlError::lower("subflow argument missing name"))?
+                    .as_str()
+                    .to_string();
+                let value_pair = parts
+                    .next()
+                    .ok_or_else(|| WdlError::lower("subflow argument missing value"))?;
+                match key.as_str() {
+                    "params" => {
+                        let expr = parse_expr(value_pair)?;
+                        let ExprKind::Object(entries) = expr.kind else {
+                            return Err(WdlError::syntax(
+                                span,
+                                "subflow params must be an object literal",
+                            ));
+                        };
+                        params = entries;
+                    }
+                    "detached" => detached = expect_bool_expr(parse_expr(value_pair)?, "detached")?,
+                    "reuse" => reuse = expect_bool_expr(parse_expr(value_pair)?, "reuse")?,
+                    "name" => run_name = Some(parse_expr(value_pair)?),
+                    other => {
+                        return Err(WdlError::syntax(
+                            span,
+                            format!("unknown subflow argument '{other}'"),
+                        ));
+                    }
                 }
-            }
-            Rule::subflow_with => {
-                let object = first_inner(inner)?;
-                params = parse_object_entries(object)?;
             }
             _ => {}
         }
@@ -1042,6 +1234,16 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, WdlError> {
         run_name,
         params,
     })
+}
+
+fn expect_bool_expr(expr: Expr, name: &str) -> Result<bool, WdlError> {
+    match expr.kind {
+        ExprKind::Bool(value) => Ok(value),
+        _ => Err(WdlError::syntax(
+            expr.span,
+            format!("subflow {name} must be a boolean literal"),
+        )),
+    }
 }
 
 fn parse_wait(pair: Pair<Rule>) -> Result<WaitStmt, WdlError> {

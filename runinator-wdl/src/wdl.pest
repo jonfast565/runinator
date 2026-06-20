@@ -5,7 +5,7 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
-document = { SOI ~ func_def* ~ workflow ~ func_def* ~ EOI }
+document = { SOI ~ document_item* ~ EOI }
 expr_document = { SOI ~ expr ~ EOI }
 cond_document = { SOI ~ cond ~ EOI }
 compute_document = { SOI ~ compute_block ~ EOI }
@@ -31,7 +31,24 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
-workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (namespace_decl | import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+document_item = {
+    func_def
+  | namespace_block
+  | workflow
+  | namespace_decl
+  | workflow_decl
+  | params_block
+  | import_decl
+  | trigger_decl
+  | watch_decl
+  | type_decl
+  | alias_decl
+  | start_decl
+  | stmt
+}
+namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
+workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
@@ -123,12 +140,11 @@ ann_skip   = { "@skip" }
 ann_lock   = { "@lock" }
 ann_timeout = { "@timeout" ~ "(" ~ duration ~ ")" }
 
-// a graph-node declaration. `node` is required on the value-producing leaves (action, subflow,
-// compute) — the statements that otherwise read like bare function calls — and forbidden on every
-// other statement; the parser enforces that split. an optional `ident (: type)? =` binds the node's
-// output. `node_kw` carries a word boundary so identifiers like `node_pool` are not mistaken for it.
+// a graph-node binding. `node name <- statement` binds the runtime output of the authored node (or
+// for bound control regions, an internal value collector) to `name`. `node_kw` carries a word
+// boundary so identifiers like `node_pool` are not mistaken for it.
 // `let` is no longer a workflow-level keyword; it now means only a pure local inside a compute block.
-node_decl = { node_kw ~ (ident ~ (":" ~ type_expr)? ~ "=")? }
+node_decl = { node_kw ~ ident ~ (":" ~ type_expr)? ~ "<-" }
 node_kw   = @{ "node" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 stmt_body = {
@@ -143,7 +159,8 @@ stmt_body = {
   | map_stmt
   | wait_cond_stmt
   | wait_stmt
-  | output_stmt
+  | emit_stmt
+  | yield_stmt
   | deliverable_stmt
   | input_stmt
   | approval_stmt
@@ -158,9 +175,13 @@ stmt_body = {
 
 // an imperative compute block. lowers to an action node invoking the `std` standard library:
 // `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
-// dispatched to the worker) when any called function has side effects. compute lines reuse the one
-// expression/condition grammar; the only compute-specific surface is `let`/`return`/`goto`/`if`.
-compute_stmt  = { "compute" ~ compute_block ~ modifier* }
+// dispatched to the worker) when any called function has side effects. a foreign compute block
+// carries fenced source verbatim and lowers to `std.code`, executed by the worker through docker.
+// compute lines reuse the one expression/condition grammar; the only compute-specific surface is
+// `let`/`return`/`goto`/`if`.
+compute_stmt  = { "compute" ~ (foreign_compute | compute_block) ~ modifier* }
+foreign_compute = { ident ~ foreign_image? ~ raw_block }
+foreign_image = { "using" ~ string }
 compute_block = { "{" ~ compute_line* ~ "}" }
 compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
 compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
@@ -189,11 +210,8 @@ modifier      = { "." ~ ident ~ "(" ~ mod_arg_list? ~ ")" }
 mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }
 mod_arg       = { (ident ~ ":")? ~ expr }
 
-subflow_stmt = { subflow_verb ~ string ~ subflow_opt* ~ subflow_with? }
-subflow_verb = { "spawn" | "call" }
-subflow_opt  = { "detached" | "reuse" | subflow_as }
-subflow_as   = { "as" ~ expr }
-subflow_with = { "with" ~ object }
+subflow_stmt = { "subflow" ~ "(" ~ string ~ ("," ~ subflow_arg)* ~ ","? ~ ")" }
+subflow_arg  = { ident ~ ":" ~ expr }
 
 // `wait until <cond>` is a condition wait with no body: it parks, re-checks on the `every` interval
 // (default 30s), and proceeds once the condition holds. sugar for `until <cond> { wait <interval> }`.
@@ -207,9 +225,12 @@ wait_until  = { "until" ~ string }
 wait_initial = { "initial" ~ string }
 
 // the leading string is the event type; the trailing expression is the payload. an object
-// payload keeps its brace form (`output "x" { a: 1 }`); other payloads are any expression, and
+// payload keeps its brace form (`emit "x" { a: 1 }`); other payloads are any expression, and
 // the decompiler parenthesizes an event-less scalar so it is not mistaken for the event type.
-output_stmt = { "output" ~ string? ~ expr? }
+emit_stmt = { "emit" ~ string? ~ expr? }
+
+// supplies the value of an enclosing bound control region. lowers to a pure compute node.
+yield_stmt = { "yield" ~ expr }
 
 // names upstream artifacts as run-level deliverables. each `name = expr` entry binds a label to an
 // artifact-valued expression (typically `step.artifacts` or a single artifact).

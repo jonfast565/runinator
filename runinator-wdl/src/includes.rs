@@ -8,7 +8,9 @@ use crate::parser::parse_document;
 pub fn included_file_paths(src: &str, source_dir: &Path) -> Result<Vec<PathBuf>, WdlError> {
     let document = parse_document(src)?;
     let mut paths = Vec::new();
-    collect_workflow(&document.workflow, source_dir, &mut paths)?;
+    for workflow in &document.workflows {
+        collect_workflow(workflow, source_dir, &mut paths)?;
+    }
     paths.sort();
     paths.dedup();
     Ok(paths)
@@ -75,6 +77,7 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_expr(data, source_dir, paths)?;
             }
         }
+        StmtKind::Yield(value) => collect_expr(value, source_dir, paths)?,
         StmtKind::Deliverable(deliverable) => {
             for (_, source) in &deliverable.items {
                 collect_expr(source, source_dir, paths)?;

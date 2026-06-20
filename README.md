@@ -286,7 +286,7 @@ Workflow syntax now includes richer declarative control-flow nodes:
 - `emit` records structured node output without calling a provider.
 - `reentry` allows explicit bounded cycles back to a node and can route to `on_exhausted`.
 
-WDL references resolve runtime values into action arguments. Alongside `input.*`,
+WDL references resolve runtime values into action arguments. Alongside `params.*`,
 `prev.*`, `run.*`, and bare node-output names, two roots read from the unified
 settings store:
 

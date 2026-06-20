@@ -226,6 +226,8 @@ pub struct TryFrame {
     pub phase: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_status: Option<crate::workflows::WorkflowStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_output: Option<Value>,
 }
 
 impl ParallelFrame {
@@ -329,12 +331,16 @@ pub struct LoopOutput {
     pub item: Option<Value>,
     pub has_next: bool,
     pub count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<Value>,
 }
 
 /// parallel node fan-out output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParallelOutput {
     pub branches: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<Value>,
 }
 
 /// map node completion output.
@@ -348,6 +354,8 @@ pub struct MapOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceOutput {
     pub winner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Value>,
 }
 
 /// switch node target output.
@@ -370,6 +378,8 @@ pub struct ConfigSummary {
 pub struct JoinOutput {
     pub wait_for: Vec<String>,
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<Value>,
 }
 
 /// subflow completion/failure/timeout output.

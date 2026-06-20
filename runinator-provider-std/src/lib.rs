@@ -1,3 +1,4 @@
+mod code;
 mod errors;
 mod intrinsics;
 mod provider;

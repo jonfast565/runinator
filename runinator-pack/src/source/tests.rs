@@ -156,7 +156,7 @@ fn directory_pack_loads_wdls_settings() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("flow.wdl"),
-        "workflow \"Temp\" v1 {\n  node go = console.run(command: \"hi\")\n}\n",
+        "workflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n",
     )
     .expect("write wdl");
     fs::write(
@@ -192,7 +192,7 @@ fn directory_pack_types_pack_local_subflows() {
         dir.join("child.wdl"),
         r#"workflow "Child" v1 returns { url: string } {
   params { id: string }
-  node console.run(command: params.id)
+  console.run(command: params.id)
 }
 "#,
     )
@@ -200,8 +200,8 @@ fn directory_pack_types_pack_local_subflows() {
     fs::write(
         dir.join("parent.wdl"),
         r#"workflow "Parent" v1 {
-  node child = call "Child" with { id: "RUNI-1" }
-  node console.run(command: child.state.url)
+  node child <- subflow("Child", params: { id: "RUNI-1" })
+  console.run(command: child.state.url)
 }
 "#,
     )
@@ -227,7 +227,7 @@ fn wdl_context_signatures_include_sibling_workflows() {
         dir.join("child.wdl"),
         r#"workflow "Child" v1 {
   params { id: string }
-  node console.run(command: params.id)
+  console.run(command: params.id)
 }
 "#,
     )
@@ -235,7 +235,7 @@ fn wdl_context_signatures_include_sibling_workflows() {
 
     let parent_path = dir.join("parent.wdl");
     let parent = r#"workflow "Parent" v1 {
-  node child = call "Child" with { id: "RUNI-1" }
+  node child <- subflow("Child", params: { id: "RUNI-1" })
 }
 "#;
     let signatures =

@@ -195,6 +195,7 @@ fn resolve_stmt(
                 resolve_expr(data, symbols, scope, ctx, diagnostics);
             }
         }
+        StmtKind::Yield(value) => resolve_expr(value, symbols, scope, ctx, diagnostics),
         StmtKind::Deliverable(deliverable) => {
             for (_, source) in &deliverable.items {
                 resolve_expr(source, symbols, scope, ctx, diagnostics);

@@ -30,6 +30,9 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), WdlError> {
         self.record_declared_type(id, stmt)?;
+        if let Some(foreign) = &compute.foreign {
+            return self.lower_foreign_compute(foreign, compute, stmt, id, next);
+        }
         // collect every local name so bare local paths lower to `let` refs.
         let previous_locals = self.compute_locals.replace(HashSet::new());
         collect_locals(&compute.body, &mut self.compute_locals.borrow_mut());
@@ -64,6 +67,43 @@ impl Lowerer {
         self.push(super::node(id, "action", fields));
 
         self.compute_locals.replace(previous_locals);
+        Ok(())
+    }
+
+    fn lower_foreign_compute(
+        &mut self,
+        foreign: &ForeignCompute,
+        compute: &ComputeStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut config = Map::new();
+        config.insert("language".into(), Value::String(foreign.language.clone()));
+        config.insert("source".into(), Value::String(foreign.source.clone()));
+        if let Some(image) = &foreign.image {
+            config.insert("image".into(), Value::String(image.clone()));
+        }
+
+        let mut action_obj = Map::new();
+        action_obj.insert("provider".into(), Value::String("std".into()));
+        action_obj.insert("function".into(), Value::String("code".into()));
+        action_obj.insert(
+            "timeout_seconds".into(),
+            Value::from(compute.modifiers.timeout_seconds.unwrap_or(60)),
+        );
+        action_obj.insert("configuration".into(), Value::Object(config));
+
+        let mut fields = vec![
+            ("action", Value::Object(action_obj)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
+            ),
+        ];
+        self.apply_modifier_fields(&mut fields, &compute.modifiers);
+        self.apply_annotations(&mut fields, stmt);
+        self.push(super::node(id, "action", fields));
         Ok(())
     }
 

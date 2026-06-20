@@ -14,12 +14,18 @@ pub(crate) const GOTO_NOT_ALLOWED: ErrorDescriptor = ErrorDescriptor::new(
     "std.goto_not_allowed",
     "goto is not allowed in an effectful exec program",
 );
+pub(crate) const INVALID_CODE: ErrorDescriptor =
+    ErrorDescriptor::new("STD005", "std.invalid_code", "Invalid foreign code request");
+pub(crate) const CODE_FAILED: ErrorDescriptor =
+    ErrorDescriptor::new("STD006", "std.code_failed", "Foreign code execution failed");
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PROGRAM,
     INTRINSIC_FAILED,
     HTTP_ERROR,
     GOTO_NOT_ALLOWED,
+    INVALID_CODE,
+    CODE_FAILED,
 ];
 
 impl ProviderErrors for StdProvider {

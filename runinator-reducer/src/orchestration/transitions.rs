@@ -115,11 +115,13 @@ pub(super) async fn start_try_phase<T: DatabaseImpl>(
     target: &str,
     phase: &str,
     pending_status: Option<WorkflowStatus>,
+    pending_output: Option<Value>,
 ) -> Result<(), SendableError> {
     let frame = TryFrame {
         node_id: node.id.clone(),
         phase: phase.into(),
         pending_status,
+        pending_output,
     };
     let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
     run_state.try_frame = Some(frame.clone());

@@ -166,9 +166,13 @@ pub fn load_workflow_bundle_with_providers(
         Some("wdlp") => load_wdl_pack_manifest(path, providers),
         Some("wdl") => {
             let data = fs::read_to_string(path)?;
-            let definition = compile_wdl_with_providers(path, &data, SemVer::default(), providers)?;
             Ok(WorkflowBundle {
-                workflows: vec![definition],
+                workflows: compile_wdl_all_with_providers(
+                    path,
+                    &data,
+                    SemVer::default(),
+                    providers,
+                )?,
                 triggers: Vec::new(),
             })
         }
@@ -192,6 +196,15 @@ pub fn compile_wdl_with_providers(
     providers: &[ProviderMetadata],
 ) -> Result<WorkflowDefinition> {
     compile_wdl_with_signatures(path, data, default_version, providers, &[])
+}
+
+pub fn compile_wdl_all_with_providers(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+    providers: &[ProviderMetadata],
+) -> Result<Vec<WorkflowDefinition>> {
+    compile_wdl_all_with_signatures(path, data, default_version, providers, &[])
 }
 
 fn compile_wdl_with_signatures(
@@ -226,6 +239,41 @@ fn compile_wdl_with_signatures(
     // stamp with the source mtime so re-applying an edited file overwrites the stored workflow.
     definition.updated_at = file_modified(path);
     Ok(definition)
+}
+
+fn compile_wdl_all_with_signatures(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+    providers: &[ProviderMetadata],
+    workflow_signatures: &[WorkflowSignature],
+) -> Result<Vec<WorkflowDefinition>> {
+    let options = runinator_wdl::CompileOptions {
+        enabled: true,
+        default_version,
+        source_dir: path.parent().map(Path::to_path_buf),
+        providers: compile_providers(providers),
+        workflow_signatures: workflow_signatures.to_vec(),
+        ..runinator_wdl::CompileOptions::default()
+    };
+    let formatted = runinator_wdl::format_str(data).map_err(|e| {
+        PackError::compile(format!(
+            "failed to format {} before import:\n{}",
+            path.display(),
+            e.render(data)
+        ))
+    })?;
+    let mut definitions = runinator_wdl::compile_all_str(&formatted, &options).map_err(|e| {
+        PackError::compile(format!(
+            "failed to compile {}:\n{}",
+            path.display(),
+            e.render(&formatted)
+        ))
+    })?;
+    for definition in &mut definitions {
+        definition.updated_at = file_modified(path);
+    }
+    Ok(definitions)
 }
 
 fn collect_workflow_signatures(paths: &[PathBuf]) -> Result<Vec<WorkflowSignature>> {
@@ -308,7 +356,7 @@ fn load_wdl_directory(dir: &Path, providers: &[ProviderMetadata]) -> Result<Work
     let mut workflows = Vec::with_capacity(wdl_paths.len());
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)?;
-        workflows.push(compile_wdl_with_signatures(
+        workflows.extend(compile_wdl_all_with_signatures(
             wdl_path,
             &data,
             SemVer::default(),
@@ -357,7 +405,7 @@ fn load_wdl_pack_manifest(path: &Path, providers: &[ProviderMetadata]) -> Result
     let mut workflows = Vec::with_capacity(entries.len());
     for wdl_path in entries {
         let source = fs::read_to_string(&wdl_path)?;
-        workflows.push(compile_wdl_with_signatures(
+        workflows.extend(compile_wdl_all_with_signatures(
             &wdl_path,
             &source,
             version,

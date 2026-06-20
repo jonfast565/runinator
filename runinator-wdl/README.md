@@ -24,15 +24,16 @@ workflow "Core Team SDLC Pipeline" v1 {
         jira: { base_url: string, email: string, token: string, jql: string }
     }
 
-    node tickets = jira.search(
+    node tickets <- jira.search(
         base_url: params.jira.base_url,
         jql:      params.jira.jql,
     ).timeout(60s)
 
     for ticket in tickets.issues limit 50 {
-        spawn "Ticket Work" reuse
-            as "Ticket Work: ${ticket.key}"
-            with { ticket, parent_workflow_run_id: run.run_id }
+        subflow("Ticket Work", params: {
+            ticket,
+            parent_workflow_run_id: run.run_id
+        }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
     }
 }
 ```
@@ -43,17 +44,16 @@ workflow "Core Team SDLC Pipeline" v1 {
 `on_success`, control-ish leaves use `next`). A synthetic `start`/`end`/`fail` are always
 emitted. Every implicit part can also be written explicitly — see [Implicit vs explicit](#implicit-vs-explicit).
 
-**Node leaves carry `node`.** The value-producing leaves — actions (`provider.fn(...)`),
-subflows (`spawn`/`call`), and `compute` blocks — are declared with the `node` keyword, optionally
-binding the output (`node x = provider.fn(...)`). These are the statements that otherwise read like
-bare function calls, so `node` keeps them distinct from the `fn` functions and pure expressions
-around them. Every other statement (`wait`, `output`, `approve`, control flow, …) stays bare. `let`
-is no longer a workflow-level keyword; it now means only a pure local inside a `compute` block.
+**Node leaves carry `node` only when they bind a value.** Actions (`provider.fn(...)`),
+subflows (`subflow(...)`), control blocks, and `compute` blocks can bind their runtime value with
+`node name <- ...` or `node name: Type <- ...`. Bare statements are still allowed when their value is
+not referenced. `emit`, `wait`, `approve`, and similar side-effect statements stay bare unless you
+explicitly want a bound graph value. `let` is only a pure local inside a `compute` block.
 
 **Arrows make transitions explicit.** `-> done` (single) or outcome arrows:
 
 ```
-node deploy()
+node deploy <- github.deploy()
     ok      -> verify
     fail    -> rollback
     timeout -> alert
@@ -74,8 +74,8 @@ is not blindly re-run). Defaults preserve the historical behavior (exponential 1
 
 | WDL | JSON kind |
 |---|---|
-| `node provider.fn(args).mods` | action |
-| `node spawn`/`node call "WF" reuse as ... with { }` | subflow (fire_and_forget / wait) |
+| `node id <- provider.fn(args).mods` / `provider.fn(args).mods` | action |
+| `node id <- subflow("WF", params: { }, reuse: true)` / `subflow("WF", detached: true)` | subflow (wait / fire_and_forget) |
 | `wait 30s until "ready"` | wait |
 | `wait until <cond> every 30s` | condition poll-wait (sugar for `until <cond> { wait 30s }`; `every` defaults to 30s) |
 | `signal "name" key <expr>` (event wait; `key` lets an external webhook route here by correlation value; bound by `@timeout(...)`) | signal |
@@ -129,6 +129,24 @@ error outside a `compute` block, since it must dispatch to a worker. A `compute 
 only place effectful calls and multi-statement programs (`let` / `return` / `goto` / `if`) live;
 it lowers to `std.run` when pure and `std.exec` when effectful.
 
+Foreign-language compute code uses a fenced form:
+
+````
+node score <- compute python using "python:3.12-alpine" ```
+import json
+import sys
+
+ctx = json.load(sys.stdin)
+print(json.dumps({"score": ctx["input"]["score"] + 1}))
+```.timeout(30s)
+````
+
+The fenced source is carried verbatim in the compiled workflow and lowers to `std.code`, which runs
+on a worker through Docker. The runtime context is provided on stdin as JSON; stdout must be a JSON
+value, which becomes the compute node output. `using "<image>"` is optional for known languages
+(`python`, `javascript`/`node`, `bash`/`sh`, `ruby`, `perl`, `php`) and overrides the default image.
+Local and Kubernetes workers need a Docker-compatible CLI/runtime available to the worker process.
+
 ### Functions (`fn`)
 
 Top-level `fn` definitions are reusable callables, hermetic over their parameters (only the params,
@@ -168,17 +186,21 @@ Names are qualified, not flat. There are three namespace roots:
 - **providers** — a provider action's name may be a dotted path; the trailing segment is the
   function and the leading segments are the provider (`github.repos.create_pr(...)` →
   provider `github.repos`, function `create_pr`).
-- **workflow namespace** — an optional `namespace <path>` header qualifies a workflow's identity so
-  a subflow target can name a workflow in another pack (`call "core_sdlc.ticket_work"`).
+- **workflow namespace** — an optional `namespace <path> { ... }` block or document-level
+  `namespace <path>` declaration qualifies workflow identities so a subflow target can name a
+  workflow in another pack (`subflow("core_sdlc.ticket_work")`).
 
 `import` opens a namespace into local scope (header declaration, pure surface sugar — the compiled
 graph always holds fully-resolved names):
 
 ```
-namespace core_sdlc                 // this workflow's identity namespace
-import std                          // the whole stdlib, callable bare: add(a, b), upper(x)
-import std.strings                  // just the strings module, callable bare: upper(x)
-import std.collections as col       // aliased: col.map(xs, f)
+namespace core_sdlc {
+    workflow "Ticket Work" v1 {
+        import std                          // the whole stdlib, callable bare: add(a, b), upper(x)
+        import std.strings                  // just the strings module, callable bare: upper(x)
+        import std.collections as col       // aliased: col.map(xs, f)
+    }
+}
 ```
 
 Resolution order for an unqualified call is: file-local user `fn` → imported names → otherwise a
@@ -199,7 +221,7 @@ relative-path safety rules as `file()` apply, and the listed files are bundled w
 For embedded source, use a fenced inline block:
 
 ````
-node run = console.run(command: inline("python", ```
+node run <- console.run(command: inline("python", ```
 print("hello")
 ```))
 ````
@@ -281,7 +303,7 @@ parameters resolve against the live context, so a rollback can read the origin n
 created resource id). Rollback is best-effort: a failing compensation does not halt the unwind.
 
 ```
-node deploy_api = github.dispatch(workflow_id: "deploy", ref: "main")
+node deploy_api <- github.dispatch(workflow_id: "deploy", ref: "main")
     compensate github.dispatch(workflow_id: "rollback", ref: "main")
 ```
 
@@ -291,7 +313,7 @@ It lowers to the node's `compensation` (a `WorkflowAction`) and round-trips thro
 stability and node-level orchestration metadata. Action `.timeout(...)` remains the provider
 command timeout; `@timeout(...)` maps to the workflow node timeout.
 
-**Typed bindings**: `node tickets: { issues: any[] } = jira.search(...)` annotates a step's
+**Typed bindings**: `node tickets: { issues: any[] } <- jira.search(...)` annotates a step's
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
 
@@ -300,13 +322,13 @@ metadata, and re-emitted by the decompiler so it survives a round trip.
 ```
 workflow "Deploy" v1 returns { url: string, env: enum["dev", "prod"] } {
     params { env: enum["dev", "prod"] }
-    node console.run(command: params.env)
+    console.run(command: params.env)
 }
 ```
 
 The compiled definition stores this under `definition.metadata.wdl.output_type`; the runtime wire
-model is unchanged. A parent `call` sees the type at `child.state`, while `spawn` remains
-fire-and-forget metadata.
+model is unchanged. A waiting `subflow(...)` binding sees the type at `child.state`, while
+`detached: true` remains fire-and-forget metadata.
 
 **Argument aliases**: shared arguments can be named once in the workflow header and spread with
 `...name`, so a connection's `base_url`/`email`/`token` are written once instead of on every call:
@@ -315,12 +337,12 @@ fire-and-forget metadata.
 workflow "Ticket Work" v1 {
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
-    node t = jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
+    node t <- jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
 }
 ```
 
 A `...name` spread works anywhere an object's entries are written: action arguments, object
-literals `{ ... }`, subflow `with { ... }`, and `approve "..." { ... }` metadata — including nested
+literals `{ ... }`, subflow `params: { ... }`, and `approve "..." { ... }` metadata — including nested
 objects. Entries apply in source order with **positional last-wins** (like JS spread): a later
 `key: value` overrides an earlier spread of the same key, and a later spread overrides an earlier
 entry. Aliases may compose other aliases (`alias full = { ...base, token: secret.x }`); reference
@@ -347,7 +369,7 @@ canonical fully-expanded source so a reader never has to guess how a workflow is
 |---|---|---|
 | synthetic `start` → first statement | `start -> <id>` (top of body) | first statement |
 | sequential happy-path edge | `ok -> <id>` (action/subflow/approval) or `next -> <id>` (wait/emit/config, control blocks) | next statement |
-| auto node id (`action_1`, `for_loop_2`…) | `node x = …` (action/subflow/compute) or `@id("x") …` (any statement) | generated |
+| auto node id (`action_1`, `for_loop_2`…) | `node x <- …` (action/subflow/compute) or `@id("x") …` (any statement) | generated |
 | action `.timeout(…)` | `.timeout(60s)` | 60s |
 | action `.retry(…)` | `.retry(1)` | 1 attempt |
 | `while`/`until` cap | `limit 1000` | 1000 |
@@ -356,15 +378,15 @@ canonical fully-expanded source so a reader never has to guess how a workflow is
 | `parallel` / `race` policy | `join all` / `winner first_success` | always shown |
 | control-block continuation | trailing `} next -> <cont>` | next statement |
 
-`until c` is sugar for `while !c`, and `spawn`/`call` pick fire-and-forget vs wait — these stay as
-readable verbs; the canonical form normalizes to `while` and the matching verb. `limit none` /
+`until c` is sugar for `while !c`, and `subflow(..., detached: true)` picks fire-and-forget instead
+of waiting. `limit none` /
 `concurrency none` and an omitted cap are identical; the explicit form surfaces `none`.
 
 So this terse workflow:
 
 ```
 workflow "Hello" v1 {
-    node greeting = console.run(command: "echo hi")
+    node greeting <- console.run(command: "echo hi")
 }
 ```
 
@@ -373,7 +395,7 @@ is exactly this fully-explicit one (`decompile --explicit`):
 ```
 workflow "Hello" v1 {
     start -> greeting
-    node greeting = console.run(command: "echo hi").timeout(60s).retry(1)
+    node greeting <- console.run(command: "echo hi").timeout(60s).retry(1)
         ok -> done
 }
 ```

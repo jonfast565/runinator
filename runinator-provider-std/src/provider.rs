@@ -13,6 +13,7 @@ use runinator_workflows::{
     parse_program, run_program_with,
 };
 
+use crate::code::execute_code;
 use crate::errors::{GOTO_NOT_ALLOWED, HTTP_ERROR, INTRINSIC_FAILED, INVALID_PROGRAM};
 use crate::intrinsics::FullIntrinsics;
 
@@ -29,6 +30,9 @@ fn map_run_error(err: WorkflowValidationError) -> SendableError {
 const PROGRAM_KEY: &str = "program";
 const CONTEXT_KEY: &str = "context";
 const FUNCTIONS_KEY: &str = "functions";
+const LANGUAGE_KEY: &str = "language";
+const SOURCE_KEY: &str = "source";
+const IMAGE_KEY: &str = "image";
 
 #[derive(Clone)]
 pub struct StdProvider;
@@ -54,6 +58,14 @@ impl Provider for StdProvider {
                     // the web service ships the run context alongside the program so the worker
                     // interpreter can resolve refs/calls against it.
                     ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
+                    ParameterMetadata::optional(FUNCTIONS_KEY, RuninatorType::Any),
+                ]),
+            ActionMetadata::new("code", "execute foreign compute code in a docker container")
+                .with_parameters(vec![
+                    ParameterMetadata::required(LANGUAGE_KEY, RuninatorType::String),
+                    ParameterMetadata::required(SOURCE_KEY, RuninatorType::String),
+                    ParameterMetadata::optional(IMAGE_KEY, RuninatorType::String),
+                    ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
                 ]),
         ];
         actions.extend(PureIntrinsics::signatures());
@@ -71,6 +83,9 @@ impl Provider for StdProvider {
         _sink: Option<Arc<dyn ProviderEventSink>>,
         token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
+        if request.action_function == "code" {
+            return execute_code(&request, _sink, token);
+        }
         let program_value = request
             .parameters
             .get(PROGRAM_KEY)

@@ -299,14 +299,14 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             "node",
             "keyword",
             "provider action node",
-            "node ${name} = ${provider}.${action}(${args})",
+            "node ${name} <- ${provider}.${action}(${args})",
             true,
         ),
         (
             "compute",
             "keyword",
             "compute block",
-            "node ${name} = compute {\n    return ${value}\n}",
+            "node ${name} <- compute {\n    return ${value}\n}",
             true,
         ),
         (
@@ -352,31 +352,31 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
         (
-            "call",
+            "subflow",
             "keyword",
             "subflow call",
-            "node ${name} = call \"${workflow}\" with {\n    ${}\n}",
+            "node ${name} <- subflow(\"${workflow}\", params: {\n    ${}\n})",
             true,
         ),
         (
-            "spawn",
+            "subflow-detached",
             "keyword",
             "detached subflow",
-            "node ${name} = spawn \"${workflow}\" with {\n    ${}\n}",
+            "subflow(\"${workflow}\", params: {\n    ${}\n}, detached: true)",
             true,
         ),
         (
             "wait",
             "keyword",
             "wait node",
-            "node ${name} = wait ${duration}",
+            "node ${name} <- wait ${duration}",
             true,
         ),
         (
-            "output",
+            "emit",
             "keyword",
-            "output node",
-            "output \"${name}\" { ${key}: ${value} }",
+            "emit node",
+            "emit \"${name}\" { ${key}: ${value} }",
             true,
         ),
         (
@@ -813,19 +813,21 @@ pub(crate) fn completion_context(
     let Ok(document) = document else {
         return CompletionContext::default();
     };
-    let input = document
-        .workflow
-        .input
-        .as_ref()
-        .and_then(|ty| lower_type(ty).ok())
+    let workflow = document.workflows.first();
+    let input = workflow
+        .and_then(|workflow| workflow.input.as_ref().and_then(|ty| lower_type(ty).ok()))
         .unwrap_or(RuninatorType::Any);
     let mut context = CompletionContext {
         input,
-        labels: collect_labels(&document.workflow.body),
+        labels: workflow
+            .map(|workflow| collect_labels(&workflow.body))
+            .unwrap_or_default(),
         namespace: collect_namespace_scope(&document),
         ..Default::default()
     };
-    collect_block_context(&document.workflow.body, cursor, providers, &mut context);
+    if let Some(workflow) = workflow {
+        collect_block_context(&workflow.body, cursor, providers, &mut context);
+    }
     context
 }
 
@@ -892,7 +894,11 @@ fn collect_namespace_scope(document: &crate::ast::Document) -> NamespaceScope {
             .collect(),
         ..Default::default()
     };
-    for import in &document.workflow.imports {
+    for import in document
+        .workflows
+        .iter()
+        .flat_map(|workflow| &workflow.imports)
+    {
         let segments: Vec<&str> = import.path.split('.').collect();
         let is_std = segments.first() == Some(&runinator_workflows::STD_NAMESPACE);
         match (import.alias.as_deref(), segments.as_slice()) {

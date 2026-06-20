@@ -18,7 +18,7 @@ use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 use crate::CompileOptions;
 use crate::ast::*;
 use crate::desugar::AliasTable;
-use crate::errors::WdlError;
+use crate::errors::{Span, WdlError};
 
 /// a binding from a loop/map variable to the node output it reads from.
 #[derive(Clone)]
@@ -46,6 +46,9 @@ struct Lowerer {
     // per-node `...alias` spread recipes (node id -> recipe segments), kept for graph metadata so
     // decompile can resugar the spreads. empty for spread-free workflows.
     spreads: Map,
+    // control-block ids that were explicitly authored with `@id`, kept so terse decompile can
+    // preserve them without surfacing every generated control id.
+    control_ids: Vec<String>,
     // in-scope local names (compute-block `let`s and lambda params), so a bare local path lowers to
     // a `let` ref. interior-mutable because `lower_expr` (`&self`) scopes a lambda's params while
     // lowering its body, whether the lambda sits in a compute block or inline in any expression.
@@ -60,11 +63,27 @@ struct Lowerer {
     provider_actions: std::collections::HashMap<(String, String), ActionMetadata>,
 }
 
+struct LowerEntry {
+    entry: String,
+    collector: Option<String>,
+}
+
 pub fn lower_document(
     document: &Document,
     options: &CompileOptions,
+) -> Result<Vec<WorkflowDefinition>, WdlError> {
+    document
+        .workflows
+        .iter()
+        .map(|workflow| lower_workflow(document, workflow, options))
+        .collect()
+}
+
+fn lower_workflow(
+    document: &Document,
+    workflow: &Workflow,
+    options: &CompileOptions,
 ) -> Result<WorkflowDefinition, WdlError> {
-    let workflow = &document.workflow;
     let mut lowerer = Lowerer::new();
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
@@ -170,6 +189,19 @@ pub fn lower_document(
     if !lowerer.spreads.is_empty() {
         wdl.insert("spreads".into(), Value::Object(lowerer.spreads.clone()));
     }
+    if !lowerer.control_ids.is_empty() {
+        wdl.insert(
+            "control_ids".into(),
+            Value::Array(
+                lowerer
+                    .control_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
     // per-function surface signatures (`(params) -> ret`), recorded so decompile can reconstruct the
     // typed `fn` headers the runtime `functions` form does not carry. the runtime ignores this hint.
     if !document.functions.is_empty() {
@@ -269,6 +301,7 @@ impl Lowerer {
             declared_type_hints: Vec::new(),
             aliases: AliasTable::new(),
             spreads: Map::new(),
+            control_ids: Vec::new(),
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
             source_dir: None,
@@ -483,45 +516,59 @@ impl Lowerer {
         // pass 2: lower each statement with its concrete continuation.
         for (index, stmt) in block.iter().enumerate() {
             let next = if index + 1 < block.len() {
-                entries[index + 1].clone()
+                entries[index + 1].entry.clone()
             } else {
                 cont.to_string()
             };
-            self.lower_stmt(stmt, &entries[index], &next)?;
+            if let Some(collector) = &entries[index].collector {
+                self.lower_stmt(stmt, &entries[index].entry, collector)?;
+                self.lower_value_collector(stmt, collector, &next)?;
+            } else {
+                self.lower_stmt(stmt, &entries[index].entry, &next)?;
+            }
         }
-        Ok(entries[0].clone())
+        Ok(entries[0].entry.clone())
     }
 
-    fn entry_id_for(&mut self, stmt: &Stmt) -> Result<String, WdlError> {
+    fn entry_id_for(&mut self, stmt: &Stmt) -> Result<LowerEntry, WdlError> {
         if let Some(id) = &stmt.annotations.id {
-            return self.claim(id);
+            let id = self.claim(id)?;
+            if is_bound_control_stmt(stmt) {
+                let collector = stmt
+                    .label
+                    .as_ref()
+                    .map(|label| self.claim(label))
+                    .transpose()?;
+                return Ok(LowerEntry {
+                    entry: id,
+                    collector,
+                });
+            }
+            if is_control_stmt(stmt) {
+                self.control_ids.push(id.clone());
+            }
+            return Ok(LowerEntry {
+                entry: id,
+                collector: None,
+            });
         }
         if let Some(label) = &stmt.label {
-            return self.claim(label);
+            if is_control_stmt(stmt) {
+                let collector = self.claim(label)?;
+                return Ok(LowerEntry {
+                    entry: self.fresh(control_prefix(&stmt.kind)),
+                    collector: Some(collector),
+                });
+            }
+            return Ok(LowerEntry {
+                entry: self.claim(label)?,
+                collector: None,
+            });
         }
-        let prefix = match &stmt.kind {
-            StmtKind::Action(_) => "action",
-            StmtKind::Compute(_) => "compute",
-            StmtKind::Subflow(_) => "subflow",
-            StmtKind::Wait(_) => "wait",
-            StmtKind::Output(_) => "output",
-            StmtKind::Deliverable(_) => "deliverable",
-            StmtKind::Input(_) => "input",
-            StmtKind::Approval(_) => "approval",
-            StmtKind::Gate(_) => "gate",
-            StmtKind::Signal(_) => "signal",
-            StmtKind::Config(_) => "config",
-            StmtKind::Fail(_) => "fail_node",
-            StmtKind::If(_) => "if",
-            StmtKind::For(_) => "for_loop",
-            StmtKind::While(_) => "while_loop",
-            StmtKind::Match(_) => "switch",
-            StmtKind::Parallel(_) => "parallel",
-            StmtKind::Try(_) => "try",
-            StmtKind::Race(_) => "race",
-            StmtKind::Map(_) => "map",
-        };
-        Ok(self.fresh(prefix))
+        Ok(LowerEntry {
+            entry: self.fresh(control_prefix(&stmt.kind)),
+            collector: None,
+        })
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), WdlError> {
@@ -531,6 +578,7 @@ impl Lowerer {
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
+            StmtKind::Yield(value) => self.lower_yield(value, stmt, id, next),
             StmtKind::Deliverable(deliverable) => {
                 self.lower_deliverable(deliverable, stmt, id, next)
             }
@@ -573,6 +621,44 @@ impl Lowerer {
                 self.lower_map(map_stmt, stmt, id, &cont)
             }
         }
+    }
+
+    fn lower_yield(
+        &mut self,
+        value: &Expr,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let compute = ComputeStmt {
+            body: vec![ComputeLine::Return(value.clone())],
+            foreign: None,
+            modifiers: Modifiers::default(),
+        };
+        self.lower_compute(&compute, stmt, id, next)
+    }
+
+    fn lower_value_collector(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), WdlError> {
+        let span = stmt.span;
+        let value = control_value_expr(&stmt.kind);
+        let synthetic = Stmt {
+            span,
+            annotations: Annotations::default(),
+            label: stmt.label.clone(),
+            label_type: stmt.label_type.clone(),
+            kind: StmtKind::Compute(ComputeStmt {
+                body: vec![ComputeLine::Return(value)],
+                foreign: None,
+                modifiers: Modifiers::default(),
+            }),
+            transitions: TransitionClause::default(),
+            compensation: None,
+        };
+        let compute = match &synthetic.kind {
+            StmtKind::Compute(compute) => compute,
+            _ => unreachable!(),
+        };
+        self.lower_compute(compute, &synthetic, id, next)
     }
 
     // leaf statements -------------------------------------------------------
@@ -1096,6 +1182,75 @@ impl Lowerer {
                 return candidate;
             }
         }
+    }
+}
+
+fn is_control_stmt(stmt: &Stmt) -> bool {
+    matches!(
+        &stmt.kind,
+        StmtKind::If(_)
+            | StmtKind::For(_)
+            | StmtKind::While(_)
+            | StmtKind::Match(_)
+            | StmtKind::Parallel(_)
+            | StmtKind::Try(_)
+            | StmtKind::Race(_)
+            | StmtKind::Map(_)
+    )
+}
+
+fn is_bound_control_stmt(stmt: &Stmt) -> bool {
+    stmt.label.is_some() && is_control_stmt(stmt)
+}
+
+fn control_value_expr(kind: &StmtKind) -> Expr {
+    if matches!(kind, StmtKind::Parallel(_)) {
+        return Expr::new(
+            ExprKind::Object(vec![
+                ("branches".into(), path_expr(&["prev", "wait_for"])),
+                ("outputs".into(), path_expr(&["prev", "outputs"])),
+            ]),
+            Span::default(),
+        );
+    }
+    path_expr(&["prev"])
+}
+
+fn path_expr(parts: &[&str]) -> Expr {
+    Expr::new(
+        ExprKind::Path(
+            parts
+                .iter()
+                .map(|part| PathSeg::Key((*part).to_string()))
+                .collect(),
+        ),
+        Span::default(),
+    )
+}
+
+fn control_prefix(kind: &StmtKind) -> &'static str {
+    match kind {
+        StmtKind::Action(_) => "action",
+        StmtKind::Compute(_) => "compute",
+        StmtKind::Subflow(_) => "subflow",
+        StmtKind::Wait(_) => "wait",
+        StmtKind::Output(_) => "output",
+        StmtKind::Yield(_) => "yield",
+        StmtKind::Deliverable(_) => "deliverable",
+        StmtKind::Input(_) => "input",
+        StmtKind::Approval(_) => "approval",
+        StmtKind::Gate(_) => "gate",
+        StmtKind::Signal(_) => "signal",
+        StmtKind::Config(_) => "config",
+        StmtKind::Fail(_) => "fail_node",
+        StmtKind::If(_) => "if",
+        StmtKind::For(_) => "for_loop",
+        StmtKind::While(_) => "while_loop",
+        StmtKind::Match(_) => "switch",
+        StmtKind::Parallel(_) => "parallel",
+        StmtKind::Try(_) => "try",
+        StmtKind::Race(_) => "race",
+        StmtKind::Map(_) => "map",
     }
 }
 

@@ -319,9 +319,8 @@ fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
         Some("wdl") => {
             let data = fs::read_to_string(path)
                 .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-            let definition = compile_wdl(path, &data, SemVer::default())?;
             Ok(WorkflowBundle {
-                workflows: vec![definition],
+                workflows: compile_wdl_all(path, &data, SemVer::default())?,
                 triggers: Vec::new(),
             })
         }
@@ -332,20 +331,20 @@ fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
     }
 }
 
-fn compile_wdl(
+fn compile_wdl_all(
     path: &Path,
     data: &str,
     default_version: SemVer,
-) -> CommandResult<WorkflowDefinition> {
-    compile_wdl_with_signatures(path, data, default_version, &[])
+) -> CommandResult<Vec<WorkflowDefinition>> {
+    compile_wdl_all_with_signatures(path, data, default_version, &[])
 }
 
-fn compile_wdl_with_signatures(
+fn compile_wdl_all_with_signatures(
     path: &Path,
     data: &str,
     default_version: SemVer,
     workflow_signatures: &[WorkflowSignature],
-) -> CommandResult<WorkflowDefinition> {
+) -> CommandResult<Vec<WorkflowDefinition>> {
     let options = runinator_wdl::CompileOptions {
         enabled: true,
         default_version,
@@ -361,15 +360,18 @@ fn compile_wdl_with_signatures(
             err.render(data)
         ))
     })?;
-    let mut definition = runinator_wdl::compile_str(&formatted, &options).map_err(|err| {
+    let mut definitions = runinator_wdl::compile_all_str(&formatted, &options).map_err(|err| {
         command_error(format!(
             "failed to compile {}:\n{}",
             path.display(),
             err.render(&formatted)
         ))
     })?;
-    definition.updated_at = file_modified(path);
-    Ok(definition)
+    let updated_at = file_modified(path);
+    for definition in &mut definitions {
+        definition.updated_at = updated_at;
+    }
+    Ok(definitions)
 }
 
 fn collect_workflow_signatures(paths: &[PathBuf]) -> CommandResult<Vec<WorkflowSignature>> {
@@ -441,7 +443,7 @@ fn load_wdl_directory(dir: &Path) -> CommandResult<WorkflowBundle> {
     for wdl_path in &wdl_paths {
         let data = fs::read_to_string(wdl_path)
             .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-        workflows.push(compile_wdl_with_signatures(
+        workflows.extend(compile_wdl_all_with_signatures(
             wdl_path,
             &data,
             SemVer::default(),
@@ -490,7 +492,7 @@ fn load_wdl_pack_manifest(path: &Path) -> CommandResult<WorkflowBundle> {
     for wdl_path in paths {
         let source = fs::read_to_string(&wdl_path)
             .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-        workflows.push(compile_wdl_with_signatures(
+        workflows.extend(compile_wdl_all_with_signatures(
             &wdl_path,
             &source,
             version,

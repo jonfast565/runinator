@@ -212,6 +212,7 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(data, env, diagnostics);
             }
         }
+        StmtKind::Yield(value) => check_expr(value, env, diagnostics),
         StmtKind::Deliverable(deliverable) => {
             for (_, source) in &deliverable.items {
                 check_expr(source, env, diagnostics);

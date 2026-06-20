@@ -1,7 +1,7 @@
 # SDLC workflow pack
 
 This pack contains two workflows: **Core Team SDLC Pipeline** (the fan-out driver) and
-**Ticket Work** (the per-ticket pipeline the driver spawns).
+**Ticket Work** (the per-ticket pipeline the driver starts).
 
 ## Authoring format
 
@@ -72,7 +72,7 @@ emitted as explicit `-> label` arrows. `Ticket Work` round-trips compile → dec
 ```
 until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
     wait config.ci_poll.interval_seconds
-    node poll_checks: CheckSummary = github.checks_summary(
+    node poll_checks: CheckSummary <- github.checks_summary(
         ...github_conn,
         ref: create_pr.head.sha
     )

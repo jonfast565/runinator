@@ -7,10 +7,17 @@ use uuid::Uuid;
 use crate::StdProvider;
 
 fn request(parameters: runinator_models::value::Value) -> ProviderExecutionRequest {
+    request_for("exec", parameters)
+}
+
+fn request_for(
+    action_function: &str,
+    parameters: runinator_models::value::Value,
+) -> ProviderExecutionRequest {
     ProviderExecutionRequest {
         run_id: Some(Uuid::now_v7()),
         action_name: "std".into(),
-        action_function: "exec".into(),
+        action_function: action_function.into(),
         parameters,
         timeout_secs: 30,
         artifact_dir: String::new(),
@@ -87,6 +94,26 @@ fn exec_tolerates_null_functions_table() {
 }
 
 #[test]
+fn code_rejects_missing_language_before_docker() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "source": "print({})",
+        "context": {}
+    });
+    let err = provider
+        .execute_service(
+            request_for("code", parameters),
+            None,
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("missing string parameter 'language'")
+    );
+}
+
+#[test]
 fn metadata_advertises_run_exec_and_pure_flags() {
     let metadata = StdProvider.metadata();
     let run = metadata
@@ -101,6 +128,17 @@ fn metadata_advertises_run_exec_and_pure_flags() {
         .find(|action| action.function_name == "exec")
         .unwrap();
     assert!(!exec.pure);
+    let code = metadata
+        .actions
+        .iter()
+        .find(|action| action.function_name == "code")
+        .unwrap();
+    assert!(!code.pure);
+    assert!(
+        code.parameters
+            .iter()
+            .any(|parameter| parameter.name == "context" && !parameter.required)
+    );
     let add = metadata
         .actions
         .iter()

@@ -286,7 +286,12 @@ fn typed_path_hover(
 }
 
 fn type_hover(document: &Document, word: WordAt<'_>) -> Option<WdlHoverResponse> {
-    let named = resolve_named_types(&document.workflow.type_decls).ok()?;
+    let type_decls = document
+        .workflows
+        .iter()
+        .flat_map(|workflow| workflow.type_decls.clone())
+        .collect::<Vec<_>>();
+    let named = resolve_named_types(&type_decls).ok()?;
     if let Some(ty) = named.get(word.text) {
         return Some(WdlHoverResponse {
             range_start_byte: word.start,
@@ -397,7 +402,7 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "params" => "Declares workflow input parameters.",
         "type" => "Declares a reusable named type.",
         "node" => "Declares a workflow node.",
-        "let" => "Binds a node id or compute-local value.",
+        "let" => "Binds a compute-local value.",
         "compute" => "Runs a compute block and returns its value.",
         "if" => "Runs a branch when its condition is true.",
         "for" | "map" => "Iterates over a collection.",
@@ -406,13 +411,13 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "parallel" => "Runs branches concurrently and joins them.",
         "race" => "Runs branches concurrently and continues with a winner policy.",
         "try" => "Runs a body with optional catch and finally branches.",
-        "call" => "Runs a subflow and waits for its result.",
-        "spawn" => "Starts a detached subflow.",
+        "subflow" => "Runs a workflow as a subflow.",
         "wait" => "Parks the workflow until a duration or state is ready.",
         "approve" => "Parks the workflow for human approval.",
         "gate" => "Parks the workflow behind an external or condition gate.",
         "signal" => "Waits for an external signal.",
-        "output" => "Emits workflow output data.",
+        "emit" => "Emits workflow output data.",
+        "yield" => "Returns a value from a control region.",
         "deliverable" => "Records deliverable artifacts.",
         "trigger" => "Declares an import-managed workflow trigger.",
         "watch" => "Declares a workflow-level cancellation guard.",

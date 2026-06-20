@@ -100,27 +100,29 @@ pub fn compile_str(src: &str, options: &CompileOptions) -> Result<WorkflowDefini
 
 pub fn workflow_signature_from_source(src: &str) -> Result<Vec<WorkflowSignature>, WdlError> {
     let document = parse_document(src)?;
-    let workflow = &document.workflow;
-    let named = lower::types::resolve_named_types(&workflow.type_decls)?;
-    let input = match &workflow.input {
-        Some(input) => lower_signature_input_type(input, &named)?,
-        None => RuninatorType::Any,
-    };
-    let output = match &workflow.output {
-        Some(output) => lower::types::lower_type_with(output, &named)?,
-        None => RuninatorType::Any,
-    };
-    let mut signatures = vec![WorkflowSignature {
-        name: workflow.name.clone(),
-        input: input.clone(),
-        output: output.clone(),
-    }];
-    if let Some(namespace) = &workflow.namespace {
+    let mut signatures = Vec::new();
+    for workflow in &document.workflows {
+        let named = lower::types::resolve_named_types(&workflow.type_decls)?;
+        let input = match &workflow.input {
+            Some(input) => lower_signature_input_type(input, &named)?,
+            None => RuninatorType::Any,
+        };
+        let output = match &workflow.output {
+            Some(output) => lower::types::lower_type_with(output, &named)?,
+            None => RuninatorType::Any,
+        };
         signatures.push(WorkflowSignature {
-            name: format!("{namespace}.{}", workflow.name),
-            input,
-            output,
+            name: workflow.name.clone(),
+            input: input.clone(),
+            output: output.clone(),
         });
+        if let Some(namespace) = &workflow.namespace {
+            signatures.push(WorkflowSignature {
+                name: format!("{namespace}.{}", workflow.name),
+                input,
+                output,
+            });
+        }
     }
     Ok(signatures)
 }
@@ -159,6 +161,27 @@ pub fn compile_str_with_diagnostics(
     src: &str,
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<Diagnostic>), WdlError> {
+    let (mut definitions, diagnostics) = compile_all_str_with_diagnostics(src, options)?;
+    if definitions.len() != 1 {
+        return Err(WdlError::Parse(format!(
+            "expected exactly one workflow, found {}",
+            definitions.len()
+        )));
+    }
+    Ok((definitions.remove(0), diagnostics))
+}
+
+pub fn compile_all_str(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<Vec<WorkflowDefinition>, WdlError> {
+    compile_all_str_with_diagnostics(src, options).map(|(definitions, _)| definitions)
+}
+
+pub fn compile_all_str_with_diagnostics(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<(Vec<WorkflowDefinition>, Vec<Diagnostic>), WdlError> {
     let mut document = parse_document(src)?;
     // resolve namespaced calls to their bare runtime form before any later pass runs.
     namespace::resolve(&mut document)?;
@@ -175,13 +198,15 @@ pub fn compile_str_with_diagnostics(
     if let Some(error) = sema::first_error(&diagnostics) {
         return Err(WdlError::semantic(error.span, error.message.clone()));
     }
-    let definition = lower::lower_document(&document, options)?;
-    validate(&definition)?;
+    let definitions = lower::lower_document(&document, options)?;
+    for definition in &definitions {
+        validate(definition)?;
+    }
     let warnings = diagnostics
         .into_iter()
         .filter(|diagnostic| !diagnostic.is_error())
         .collect();
-    Ok((definition, warnings))
+    Ok((definitions, warnings))
 }
 
 /// parse and run every semantic pass, returning **all** diagnostics (errors and warnings)
@@ -329,7 +354,14 @@ pub fn compile_unchecked(
     // validate the alias expansion on a clone, then lower the sugared form (see above).
     let mut desugared = document.clone();
     desugar::desugar(&mut desugared)?;
-    lower::lower_document(&document, options)
+    let mut definitions = lower::lower_document(&document, options)?;
+    if definitions.len() != 1 {
+        return Err(WdlError::Parse(format!(
+            "expected exactly one workflow, found {}",
+            definitions.len()
+        )));
+    }
+    Ok(definitions.remove(0))
 }
 
 /// run the shared workflow validator over a definition, surfacing failures as WdlError.

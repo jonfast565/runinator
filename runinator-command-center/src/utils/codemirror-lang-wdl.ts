@@ -23,14 +23,14 @@ import {
 // keyword groups mirror runinator-wdl/src/wdl.pest, split by role so each gets its own color.
 // structural declarations that open blocks or bind names.
 const DECL_KW = new Set([
-  "workflow", "input", "node", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
+  "workflow", "params", "input", "node", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
   "fn", "namespace", "import",
 ]);
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
   "if", "else", "for", "while", "until", "match", "when", "parallel", "race", "try", "catch",
-  "finally", "map", "branch", "join", "wait", "output", "deliverable", "approve", "fail",
-  "subflow", "spawn", "call", "compute", "return", "goto", "edges", "gate", "signal",
+  "finally", "map", "branch", "join", "wait", "emit", "yield", "deliverable", "approve", "fail",
+  "subflow", "compute", "return", "goto", "edges", "gate", "signal",
   "watch", "compensate",
 ]);
 // clause/option words that modify a statement.
@@ -416,12 +416,12 @@ const snippets = [
     type: "keyword",
     detail: "for loop",
   }),
-  snippetCompletion('workflow "${name}" {\n\tinput {\n\t\t${}\n\t}\n\n\t${}\n}', {
+  snippetCompletion('workflow "${name}" {\n\tparams {\n\t\t${}\n\t}\n\n\t${}\n}', {
     label: "workflow",
     type: "keyword",
     detail: "workflow scaffold",
   }),
-  snippetCompletion("node ${provider}.${action}(${args}) -> ok", {
+  snippetCompletion("node ${name} <- ${provider}.${action}(${args}) -> ok", {
     label: "action",
     type: "function",
     detail: "provider action node",

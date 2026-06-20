@@ -86,23 +86,24 @@ pub fn analyze_with_options(
     type_policy: TypePolicy,
     workflow_signatures: &[WorkflowSignature],
 ) -> Vec<Diagnostic> {
-    let workflow = &document.workflow;
     let mut diagnostics = Vec::new();
 
     // pass 0: validate top-level `fn` definitions (duplicates, pure bodies, recursion annotations).
     functions::analyze(&document.functions, &mut diagnostics);
     // pass 1+2: build the label table, then resolve references and scopes against it.
-    scope::analyze(workflow, &document.functions, &mut diagnostics);
-    // pass 3: type-check expressions, conditions, and `let` annotations.
-    types::analyze(
-        workflow,
-        providers,
-        type_policy,
-        workflow_signatures,
-        &mut diagnostics,
-    );
-    // pass 4: flag structurally unreachable statements (warnings only).
-    reachability::analyze(workflow, &mut diagnostics);
+    for workflow in &document.workflows {
+        scope::analyze(workflow, &document.functions, &mut diagnostics);
+        // pass 3: type-check expressions, conditions, and `let` annotations.
+        types::analyze(
+            workflow,
+            providers,
+            type_policy,
+            workflow_signatures,
+            &mut diagnostics,
+        );
+        // pass 4: flag structurally unreachable statements (warnings only).
+        reachability::analyze(workflow, &mut diagnostics);
+    }
 
     diagnostics
 }
