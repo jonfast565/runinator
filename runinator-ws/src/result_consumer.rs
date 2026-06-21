@@ -9,6 +9,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::{
+    audit::persist_dead_letter,
     events::{EventSender, emit_workflow_node_run},
     repository, stability,
 };
@@ -16,11 +17,13 @@ use crate::{
 const RESULT_CONSUMER_ID: &str = "runinator-ws-results";
 const DEFAULT_MAX_RESULT_ATTEMPTS: u32 = 3;
 const DEFAULT_RESULT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+const DEFAULT_RESULT_MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResultConsumerPolicy {
     max_attempts: u32,
     retry_backoff: Duration,
+    max_backoff: Duration,
 }
 
 impl Default for ResultConsumerPolicy {
@@ -28,6 +31,7 @@ impl Default for ResultConsumerPolicy {
         Self {
             max_attempts: DEFAULT_MAX_RESULT_ATTEMPTS,
             retry_backoff: DEFAULT_RESULT_RETRY_BACKOFF,
+            max_backoff: DEFAULT_RESULT_MAX_BACKOFF,
         }
     }
 }
@@ -38,8 +42,39 @@ impl ResultConsumerPolicy {
         Self {
             max_attempts,
             retry_backoff,
+            max_backoff: DEFAULT_RESULT_MAX_BACKOFF,
         }
     }
+
+    /// compute the delay before the next retry with exponential backoff and full jitter.
+    ///
+    /// the base doubles per attempt (`base * 2^(attempt-1)`), is capped at `max_backoff`, then a
+    /// uniformly random fraction in `[0, capped]` is taken (full jitter) to avoid thundering-herd
+    /// retries when many events fail at once. `attempt` is 1-based (the first retry).
+    pub(crate) fn backoff_for(&self, attempt: u32) -> Duration {
+        let base = self.retry_backoff.as_millis().max(1) as u64;
+        let max = self.max_backoff.as_millis().max(1) as u64;
+        // shift by attempt-1, saturating so a large attempt count cannot overflow.
+        let shift = attempt.saturating_sub(1).min(32);
+        let exp = base.saturating_mul(1u64 << shift).min(max);
+        let jitter = jitter_millis(exp);
+        Duration::from_millis(jitter)
+    }
+}
+
+/// return a pseudo-random value in `[0, ceiling]` using process time as the entropy source.
+///
+/// retry jitter does not need a cryptographic rng, so we avoid a new dependency and derive the
+/// value from the high-resolution clock.
+fn jitter_millis(ceiling: u64) -> u64 {
+    if ceiling == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    nanos % (ceiling + 1)
 }
 
 pub(crate) async fn run_result_consumer<T: DatabaseImpl>(
@@ -118,6 +153,16 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                         "Dead-lettering workflow result event {} after {} attempt(s)",
                         delivery.event.event_id, attempt_count
                     );
+                    persist_dead_letter(
+                        db.as_ref(),
+                        "result",
+                        Some(delivery.event.event_id),
+                        Some(delivery.dedupe_key.clone()),
+                        attempt_count,
+                        &err.to_string(),
+                        serde_json::to_value(&delivery.event).unwrap_or_default(),
+                    )
+                    .await;
                     if let Err(err) = broker
                         .ack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
                         .await
@@ -131,7 +176,7 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                 }
 
                 stability::result_event_retried();
-                tokio::time::sleep(policy.retry_backoff).await;
+                tokio::time::sleep(policy.backoff_for(attempt_count)).await;
                 if let Err(err) = broker
                     .nack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
                     .await

@@ -1,4 +1,6 @@
 :root {
+  color-scheme: light;
+
   /* surfaces */
   --surface-app: #e9eef4;
   --surface: #ffffff;
@@ -6,6 +8,7 @@
   --surface-sunken: #f7f9fb;
   --surface-muted: #eef2f6;
   --surface-hover: #f1f5fb;
+  --surface-overlay: rgba(255, 255, 255, 0.9);
 
   /* inverse surfaces (sidebar) */
   --surface-inverse: #15202b;
@@ -26,12 +29,14 @@
   --border-strong: #c4ccd6;
   --border-subtle: #e5ebf1;
   --border-faint: #edf1f5;
+  --border-hover: #7b8794;
 
   /* brand / accent */
   --accent: #1f6feb;
   --accent-hover: #1864d6;
   --accent-soft: #eef5ff;
   --accent-text: #1d4ed8;
+  --accent-ring: rgba(31, 111, 235, 0.15);
 
   /* status: solid action colors */
   --danger-solid: #d6402b;
@@ -49,6 +54,13 @@
   --info-fg: #1d5b9f;
   --info-bg: #e1efff;
 
+  /* workflow */
+  --workflow-canvas-bg: #f8fafc;
+  --workflow-menu-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  --workflow-node-bg: #f8fafc;
+  --workflow-node-border: #34495e;
+  --workflow-node-text: #2c3e50;
+
   /* radii */
   --radius-sm: 4px;
   --radius: 6px;
@@ -58,6 +70,8 @@
   /* elevation */
   --shadow-modal: 0 16px 40px rgba(23, 32, 42, 0.28);
   --shadow-toast: 0 10px 28px rgba(23, 32, 42, 0.18);
+  --shadow-panel: 0 1px 2px rgba(23, 32, 42, 0.04);
+  --shadow-control: 0 1px 2px rgba(23, 32, 42, 0.12);
 
   /* typography */
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -67,6 +81,78 @@
   background: var(--surface-app);
   font-family: var(--font-sans);
   font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* surfaces */
+    --surface-app: #0f141b;
+    --surface: #151c24;
+    --surface-subtle: #1b2530;
+    --surface-sunken: #101720;
+    --surface-muted: #263241;
+    --surface-hover: #223044;
+    --surface-overlay: rgba(15, 20, 27, 0.88);
+
+    /* inverse surfaces (sidebar) */
+    --surface-inverse: #0b1117;
+    --surface-inverse-hover: #172231;
+    --surface-inverse-accent: #213247;
+    --text-inverse: #f4f7fb;
+    --text-inverse-muted: #c6d0dc;
+    --text-inverse-faint: #6f7e8f;
+
+    /* text */
+    --text: #e6ebf2;
+    --text-subtle: #bcc7d4;
+    --text-muted: #92a0af;
+    --text-faint: #697789;
+
+    /* borders */
+    --border: #2c3948;
+    --border-strong: #405064;
+    --border-subtle: #253140;
+    --border-faint: #1d2733;
+    --border-hover: #6f8198;
+
+    /* brand / accent */
+    --accent: #62a2ff;
+    --accent-hover: #82b6ff;
+    --accent-soft: #142a46;
+    --accent-text: #9cc6ff;
+    --accent-ring: rgba(98, 162, 255, 0.22);
+
+    /* status: solid action colors */
+    --danger-solid: #e45a48;
+    --danger-solid-hover: #f07160;
+    --warn-solid: #d79a36;
+    --warn-solid-hover: #e4ad55;
+
+    /* status: tonal badge colors */
+    --success-fg: #74d99f;
+    --success-bg: #123322;
+    --danger-fg: #ff9b91;
+    --danger-bg: #3a1818;
+    --warning-fg: #f1c86d;
+    --warning-bg: #33260f;
+    --info-fg: #9ac9ff;
+    --info-bg: #132b43;
+
+    /* workflow */
+    --workflow-canvas-bg: #111923;
+    --workflow-menu-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
+    --workflow-node-bg: #1a2530;
+    --workflow-node-border: #52657a;
+    --workflow-node-text: #e1e7ef;
+
+    /* elevation */
+    --shadow-modal: 0 18px 48px rgba(0, 0, 0, 0.58);
+    --shadow-toast: 0 12px 30px rgba(0, 0, 0, 0.42);
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.36);
+  }
 }
 
 * {
@@ -101,7 +187,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: #7b8794;
+  border-color: var(--border-hover);
   background: var(--surface-hover);
 }
 
@@ -132,7 +218,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 textarea {

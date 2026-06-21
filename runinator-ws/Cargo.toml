@@ -20,6 +20,9 @@ log-panics = "2.1"
 mime_guess = "2"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+tracing = "0.1"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }

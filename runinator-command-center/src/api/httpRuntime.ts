@@ -87,6 +87,32 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `workflows/${escape(arg<string>(args, "workflowId"))}/grants/${escape(arg<string>(args, "grantId"))}`
   },
+  list_dead_letters: {
+    method: "GET",
+    path: (args) => {
+      const params = new URLSearchParams();
+      const channel = argOpt<string>(args, "channel");
+      if (channel) params.set("channel", channel);
+      const limit = argOpt<number>(args, "limit");
+      if (limit != null) params.set("limit", String(limit));
+      const query = params.toString();
+      return query ? `dead_letters?${query}` : "dead_letters";
+    }
+  },
+  list_audit_log: {
+    method: "GET",
+    path: (args) => {
+      const params = new URLSearchParams();
+      const actorId = argOpt<string>(args, "actorId");
+      if (actorId) params.set("actor_id", actorId);
+      const action = argOpt<string>(args, "action");
+      if (action) params.set("action", action);
+      const limit = argOpt<number>(args, "limit");
+      if (limit != null) params.set("limit", String(limit));
+      const query = params.toString();
+      return query ? `audit_log?${query}` : "audit_log";
+    }
+  },
   list_users: { method: "GET", path: () => "users" },
   create_user: {
     method: "POST",

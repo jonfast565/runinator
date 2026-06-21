@@ -176,12 +176,12 @@ stmt_body = {
 // an imperative compute block. lowers to an action node invoking the `std` standard library:
 // `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
 // dispatched to the worker) when any called function has side effects. a foreign compute block
-// carries fenced source verbatim and lowers to `std.code`, executed by the worker through docker.
+// carries fenced source verbatim and lowers to `std.code`, executed by the worker through docker
+// using the admin-configured runtime for that language.
 // compute lines reuse the one expression/condition grammar; the only compute-specific surface is
 // `let`/`return`/`goto`/`if`.
 compute_stmt  = { "compute" ~ (foreign_compute | compute_block) ~ modifier* }
-foreign_compute = { ident ~ foreign_image? ~ raw_block }
-foreign_image = { "using" ~ string }
+foreign_compute = { string ~ raw_block }
 compute_block = { "{" ~ compute_line* ~ "}" }
 compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
 compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }

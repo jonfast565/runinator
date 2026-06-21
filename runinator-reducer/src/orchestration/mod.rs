@@ -47,4 +47,7 @@ mod subflow;
 mod transitions;
 mod wait;
 
+#[cfg(test)]
+mod tests;
+
 pub use engine::process_ready_node;

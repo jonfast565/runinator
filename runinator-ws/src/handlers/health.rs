@@ -1,4 +1,8 @@
-use axum::{Extension, Json, http::StatusCode};
+use axum::{
+    Extension, Json,
+    http::{StatusCode, header},
+    response::IntoResponse,
+};
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use serde::Serialize;
@@ -32,6 +36,24 @@ pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".into(),
     })
+}
+
+/// prometheus metrics in the text exposition format.
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "Meta",
+    security(),
+    responses((status = 200, description = "prometheus metrics", content_type = "text/plain")),
+)]
+pub(crate) async fn metrics() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        stability::render_metrics(),
+    )
 }
 
 /// readiness probe: reports database and broker reachability.

@@ -65,9 +65,9 @@ function onAdd() {
 
 <style scoped>
 .watch-panel {
-  border: 1px solid #d8e2ec;
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
   padding: 5px 8px;
   font-size: 12px;
   margin-bottom: 8px;
@@ -75,7 +75,7 @@ function onAdd() {
 .watch-panel summary {
   cursor: pointer;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-subtle);
   user-select: none;
 }
 .watch-add {
@@ -86,8 +86,8 @@ function onAdd() {
 .watch-add input {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid #ccd4dd;
-  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   font-size: 11px;
 }
 .watch-add button {
@@ -102,25 +102,25 @@ function onAdd() {
 .watch-table th,
 .watch-table td {
   padding: 3px 6px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-subtle);
   text-align: left;
 }
 .watch-table th {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   font-weight: 600;
 }
 .watch-path {
-  color: #1e293b;
+  color: var(--text);
   font-weight: 500;
   white-space: nowrap;
 }
 .watch-value {
-  color: #17202a;
+  color: var(--text);
   word-break: break-all;
 }
 .watch-value.empty {
-  color: #94a3b8;
+  color: var(--text-faint);
   font-style: italic;
 }
 .watch-actions {
@@ -130,17 +130,17 @@ function onAdd() {
 .watch-remove {
   background: transparent;
   border: 0;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 14px;
   cursor: pointer;
   padding: 0 4px;
 }
 .watch-remove:hover {
-  color: #dc2626;
+  color: var(--danger-fg);
 }
 .watch-empty {
   padding: 6px 0;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-style: italic;
   font-size: 11px;
 }

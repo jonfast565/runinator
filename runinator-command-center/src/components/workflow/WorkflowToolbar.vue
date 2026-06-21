@@ -124,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { workflowNodeKindInfo } from "../../utils/workflows";
@@ -183,9 +183,15 @@ function onDocumentKeyDown(event: KeyboardEvent) {
   if (event.key === "Escape") closeMenu();
 }
 
-onMounted(() => {
-  document.addEventListener("pointerdown", onDocumentPointerDown);
-  document.addEventListener("keydown", onDocumentKeyDown);
+// dropdown-dismissal listeners are attached only while a menu is open, not globally for the page.
+watch(openMenu, (menu) => {
+  if (menu) {
+    document.addEventListener("pointerdown", onDocumentPointerDown);
+    document.addEventListener("keydown", onDocumentKeyDown);
+  } else {
+    document.removeEventListener("pointerdown", onDocumentPointerDown);
+    document.removeEventListener("keydown", onDocumentKeyDown);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -211,22 +217,22 @@ onBeforeUnmount(() => {
   display: grid;
   min-width: 150px;
   padding: 4px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--workflow-menu-shadow);
 }
 
 .toolbar-menu-panel button {
   justify-content: flex-start;
   border-color: transparent;
   background: transparent;
-  color: #17202a;
+  color: var(--text);
   font-size: 12px;
 }
 
 .toolbar-menu-panel button:hover:not(:disabled) {
-  background: #f1f5f9;
+  background: var(--surface-hover);
 }
 
 .node-menu-panel {
@@ -245,7 +251,7 @@ onBeforeUnmount(() => {
 
 .node-menu-icon {
   margin-top: 2px;
-  color: #3498db;
+  color: var(--accent-text);
 }
 
 .node-menu-text {
@@ -261,7 +267,7 @@ onBeforeUnmount(() => {
 }
 
 .node-menu-desc {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 10.5px;
   line-height: 1.35;
   white-space: normal;

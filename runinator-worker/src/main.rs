@@ -40,6 +40,14 @@ const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
 use broker::{broker_error, build_broker};
 use secrets::resolve_secret_refs;
 
+// one in-flight action execution, tracked so a control command can cancel it. the owning run id is
+// retained so a run-wide cancel can fan out to every node run of that run.
+#[derive(Clone)]
+struct InFlightAction {
+    workflow_run_id: Uuid,
+    token: CancellationToken,
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -231,7 +239,9 @@ async fn run_worker_loop(
 ) -> Result<(), SendableError> {
     let max_concurrent_actions = max_concurrent_actions.max(1);
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
-    let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, CancellationToken>::new()));
+    // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
+    // work) each get their own cancellation token; a targeted cancel reaches exactly one branch.
+    let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
         consumer_id.clone(),
@@ -317,20 +327,20 @@ async fn run_worker_loop(
     Ok(())
 }
 
-async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, CancellationToken>>>) {
-    let tokens = {
+async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>) {
+    let actions = {
         let guard = in_flight.lock().await;
         guard.values().cloned().collect::<Vec<_>>()
     };
-    if tokens.is_empty() {
+    if actions.is_empty() {
         return;
     }
     warn!(
         "Canceling {} in-flight action(s) during worker shutdown",
-        tokens.len()
+        actions.len()
     );
-    for token in tokens {
-        token.cancel();
+    for action in actions {
+        action.token.cancel();
     }
 }
 
@@ -345,7 +355,7 @@ async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
 async fn run_control_loop(
     broker: Arc<dyn Broker>,
     consumer_id: String,
-    in_flight: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     loop {
@@ -365,26 +375,43 @@ async fn run_control_loop(
 async fn handle_control_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
-    in_flight: &Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
     let control_kind = delivery.command.kind;
     match control_kind {
         ControlKind::Cancel => {
-            let token = {
+            // a node-run-targeted cancel reaches exactly one losing race branch; a run-wide cancel
+            // fans out to every node run of the run held on this worker.
+            let tokens = {
                 let guard = in_flight.lock().await;
-                guard.get(&delivery.command.workflow_run_id).cloned()
+                match delivery.command.workflow_node_run_id {
+                    Some(node_run_id) => guard
+                        .get(&node_run_id)
+                        .map(|action| action.token.clone())
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    None => guard
+                        .values()
+                        .filter(|action| action.workflow_run_id == delivery.command.workflow_run_id)
+                        .map(|action| action.token.clone())
+                        .collect::<Vec<_>>(),
+                }
             };
-            if let Some(token) = token {
-                token.cancel();
+            if tokens.is_empty() {
                 info!(
-                    "Cancellation requested for workflow run {}",
-                    delivery.command.workflow_run_id
+                    "Cancellation requested for workflow run {} (node run {:?}), but no matching local execution is active",
+                    delivery.command.workflow_run_id, delivery.command.workflow_node_run_id
                 );
             } else {
+                for token in &tokens {
+                    token.cancel();
+                }
                 info!(
-                    "Cancellation requested for workflow run {}, but no local execution is active",
-                    delivery.command.workflow_run_id
+                    "Cancellation requested for workflow run {} (node run {:?}); canceled {} local execution(s)",
+                    delivery.command.workflow_run_id,
+                    delivery.command.workflow_node_run_id,
+                    tokens.len()
                 );
             }
         }
@@ -407,6 +434,16 @@ async fn handle_control_delivery(
         .map_err(|err| broker_error("ack_control", err))
 }
 
+#[tracing::instrument(
+    name = "execute_action",
+    skip_all,
+    fields(
+        trace_id = %delivery.command.trace_id,
+        run_id = %delivery.command.workflow_run_id,
+        node_id = %delivery.command.node_id,
+        attempt = delivery.command.attempt,
+    )
+)]
 async fn process_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
@@ -414,15 +451,18 @@ async fn process_delivery(
     api_client: AsyncApiClient<StaticLocator>,
     replica_id: Option<Uuid>,
     delivery: runinator_broker::BrokerDelivery,
-    in_flight: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
 ) -> Result<(), SendableError> {
     let command = delivery.command.clone();
     let action = command.action.clone();
     let token = CancellationToken::new();
-    in_flight
-        .lock()
-        .await
-        .insert(command.workflow_run_id, token.clone());
+    in_flight.lock().await.insert(
+        command.workflow_node_run_id,
+        InFlightAction {
+            workflow_run_id: command.workflow_run_id,
+            token: token.clone(),
+        },
+    );
     let sink = RunOutputSink::new(
         command.clone(),
         broker.clone(),
@@ -449,7 +489,7 @@ async fn process_delivery(
                     "Skipping duplicate delivery for node run {}: executor lease held elsewhere",
                     command.workflow_node_run_id
                 );
-                in_flight.lock().await.remove(&command.workflow_run_id);
+                in_flight.lock().await.remove(&command.workflow_node_run_id);
                 broker
                     .ack(consumer_id, delivery.delivery_id)
                     .await
@@ -471,7 +511,7 @@ async fn process_delivery(
             "Failed to publish workflow node run {} running status: {}",
             command.workflow_node_run_id, err
         );
-        in_flight.lock().await.remove(&command.workflow_run_id);
+        in_flight.lock().await.remove(&command.workflow_node_run_id);
         nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
         return Err(broker_error("publish_result", err));
     }
@@ -498,7 +538,7 @@ async fn process_delivery(
                     "Failed to publish workflow node run {} failed status: {}",
                     command.workflow_node_run_id, err
                 );
-                in_flight.lock().await.remove(&command.workflow_run_id);
+                in_flight.lock().await.remove(&command.workflow_node_run_id);
                 nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
                 return Err(broker_error("publish_result", err));
             }
@@ -515,7 +555,7 @@ async fn process_delivery(
                     )
                     .await;
             }
-            in_flight.lock().await.remove(&command.workflow_run_id);
+            in_flight.lock().await.remove(&command.workflow_node_run_id);
             return Ok(());
         }
     };
@@ -528,7 +568,7 @@ async fn process_delivery(
         token,
     )
     .await;
-    in_flight.lock().await.remove(&command.workflow_run_id);
+    in_flight.lock().await.remove(&command.workflow_node_run_id);
     if let Some(execution_result) = &result.execution_result
         && let Err(err) = sink.persist_result(execution_result).await
     {

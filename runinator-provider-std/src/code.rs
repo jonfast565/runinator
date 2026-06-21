@@ -20,20 +20,24 @@ use crate::errors::{CODE_FAILED, INVALID_CODE};
 
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
-const IMAGE_KEY: &str = "image";
 const CONTEXT_KEY: &str = "context";
+const RUNTIME_KEY: &str = "runtime";
+const SETUP_FILE: &str = "setup.sh";
+const CONTEXT_FILE: &str = "context.json";
+const OUTPUT_FILE: &str = "output.json";
+const RUNTIME_DIR: &str = "/runinator";
+const WORK_DIR: &str = "/work";
 
 struct CodeRequest {
     language: String,
     source: String,
-    image: Option<String>,
+    runtime: CodeRuntime,
     context: Value,
 }
 
-struct LanguageSpec {
-    image: &'static str,
-    filename: &'static str,
-    command: Vec<String>,
+struct CodeRuntime {
+    image: String,
+    setup_script: String,
 }
 
 pub(crate) fn execute_code(
@@ -42,44 +46,35 @@ pub(crate) fn execute_code(
     token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let code = parse_request(request)?;
-    let spec = language_spec(&code.language);
-    let image = code.image.as_deref().unwrap_or(spec.image);
-    let work_dir = prepare_work_dir(request, spec.filename, &code.source)?;
+    let language = language_spec(&code.language)?;
+    let work_dir = prepare_work_dir(request, language.filename, &code.source, &code.runtime)?;
     let output = run_docker(
-        image,
-        &spec.command,
-        spec.filename,
+        &code.runtime.image,
+        language.canonical,
+        &language.command,
         &work_dir,
         &code.context,
         request.timeout_secs,
         token,
     )?;
 
-    emit_output(&sink, "stdout", &output.stdout);
-    emit_output(&sink, "stderr", &output.stderr);
+    emit_output(&sink, "stdout", &output.process.stdout);
+    emit_output(&sink, "stderr", &output.process.stderr);
 
-    if !output.status.success() {
+    if !output.process.status.success() {
         return Err(CODE_FAILED.error(format!(
             "docker exited with code {}: {}",
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr)
+            output.process.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.process.stderr)
         )));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|err| INVALID_CODE.error(format!("code stdout must be utf-8: {err}")))?;
-    let output_json = if stdout.trim().is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_str::<serde_json::Value>(&stdout)
-            .map(Value::from)
-            .map_err(|err| INVALID_CODE.error(format!("code stdout must be JSON: {err}")))?
-    };
+    let output_json = parse_code_output(&output.output_path, output.process.stdout)?;
 
     Ok(TaskExecutionResult {
         message: Some(format!(
-            "{} code completed in docker image {image}",
-            code.language
+            "{} code completed in docker image {}",
+            language.canonical, code.runtime.image
         )),
         output_json: Some(output_json),
         chunks: Vec::new(),
@@ -87,14 +82,36 @@ pub(crate) fn execute_code(
     })
 }
 
+pub(crate) fn parse_code_output(
+    output_path: &Path,
+    stdout: Vec<u8>,
+) -> Result<Value, SendableError> {
+    if output_path.exists() {
+        let output = fs::read_to_string(output_path)
+            .map_err(|err| INVALID_CODE.error(format!("failed to read code output: {err}")))?;
+        if !output.trim().is_empty() {
+            return serde_json::from_str::<serde_json::Value>(&output)
+                .map(Value::from)
+                .map_err(|err| {
+                    INVALID_CODE.error(format!("code output file must contain JSON: {err}"))
+                });
+        }
+    }
+
+    let stdout = String::from_utf8(stdout)
+        .map_err(|err| INVALID_CODE.error(format!("code stdout must be utf-8: {err}")))?;
+    if stdout.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str::<serde_json::Value>(&stdout)
+        .map(Value::from)
+        .map_err(|err| INVALID_CODE.error(format!("code stdout must be JSON: {err}")))
+}
+
 fn parse_request(request: &ProviderExecutionRequest) -> Result<CodeRequest, SendableError> {
     let language = string_param(request, LANGUAGE_KEY)?;
     let source = string_param(request, SOURCE_KEY)?;
-    let image = request
-        .parameters
-        .get(IMAGE_KEY)
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let runtime = runtime_param(request)?;
     let context = request
         .parameters
         .get(CONTEXT_KEY)
@@ -103,7 +120,7 @@ fn parse_request(request: &ProviderExecutionRequest) -> Result<CodeRequest, Send
     Ok(CodeRequest {
         language,
         source,
-        image,
+        runtime,
         context,
     })
 }
@@ -117,50 +134,92 @@ fn string_param(request: &ProviderExecutionRequest, name: &str) -> Result<String
         .ok_or_else(|| INVALID_CODE.error(format!("missing string parameter '{name}'")))
 }
 
-fn language_spec(language: &str) -> LanguageSpec {
-    match language {
+fn runtime_param(request: &ProviderExecutionRequest) -> Result<CodeRuntime, SendableError> {
+    let runtime = request
+        .parameters
+        .get(RUNTIME_KEY)
+        .and_then(Value::as_object)
+        .ok_or_else(|| INVALID_CODE.error("missing runtime config"))?;
+    let image = runtime
+        .get("image")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|image| !image.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| INVALID_CODE.error("runtime.image must be a non-empty string"))?;
+    let setup_script = runtime
+        .get("setup_script")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Ok(CodeRuntime {
+        image,
+        setup_script,
+    })
+}
+
+pub(crate) struct LanguageSpec {
+    pub(crate) canonical: &'static str,
+    pub(crate) filename: &'static str,
+    pub(crate) command: Vec<String>,
+}
+
+pub(crate) fn language_spec(language: &str) -> Result<LanguageSpec, SendableError> {
+    let spec = match language {
         "python" | "py" => LanguageSpec {
-            image: "python:3.12-alpine",
+            canonical: "python",
             filename: "main.py",
-            command: vec!["python".into()],
+            command: run_command("python /work/main.py"),
         },
         "javascript" | "js" | "node" => LanguageSpec {
-            image: "node:22-alpine",
+            canonical: "javascript",
             filename: "main.js",
-            command: vec!["node".into()],
+            command: run_command("node /work/main.js"),
         },
         "bash" | "sh" => LanguageSpec {
-            image: "bash:5.2-alpine",
+            canonical: "bash",
             filename: "main.sh",
-            command: vec!["bash".into()],
+            command: run_command("bash /work/main.sh"),
         },
         "ruby" | "rb" => LanguageSpec {
-            image: "ruby:3.3-alpine",
+            canonical: "ruby",
             filename: "main.rb",
-            command: vec!["ruby".into()],
+            command: run_command("ruby /work/main.rb"),
         },
         "perl" | "pl" => LanguageSpec {
-            image: "perl:5.40",
+            canonical: "perl",
             filename: "main.pl",
-            command: vec!["perl".into()],
+            command: run_command("perl /work/main.pl"),
         },
         "php" => LanguageSpec {
-            image: "php:8.3-cli-alpine",
+            canonical: "php",
             filename: "main.php",
-            command: vec!["php".into()],
+            command: run_command("php /work/main.php"),
         },
-        other => LanguageSpec {
-            image: "debian:stable-slim",
-            filename: "main.code",
-            command: vec![other.into()],
-        },
-    }
+        other => {
+            return Err(INVALID_CODE.error(format!(
+                "unsupported foreign language '{other}'; supported languages: python, javascript, bash, ruby, perl, php"
+            )));
+        }
+    };
+    Ok(spec)
+}
+
+fn run_command(execute: &str) -> Vec<String> {
+    vec![
+        "bash".into(),
+        "-lc".into(),
+        format!(
+            "set -euo pipefail; if [ -s {WORK_DIR}/{SETUP_FILE} ]; then bash {WORK_DIR}/{SETUP_FILE}; fi; exec {execute}"
+        ),
+    ]
 }
 
 fn prepare_work_dir(
     request: &ProviderExecutionRequest,
     filename: &str,
     source: &str,
+    runtime: &CodeRuntime,
 ) -> Result<PathBuf, SendableError> {
     let base = if request.artifact_dir.is_empty() {
         std::env::temp_dir().join("runinator-std-code")
@@ -172,19 +231,37 @@ fn prepare_work_dir(
         .map_err(|err| INVALID_CODE.error(format!("failed to create code work dir: {err}")))?;
     fs::write(work_dir.join(filename), source)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code source: {err}")))?;
+    fs::write(work_dir.join(SETUP_FILE), &runtime.setup_script)
+        .map_err(|err| INVALID_CODE.error(format!("failed to write code setup script: {err}")))?;
     Ok(work_dir)
+}
+
+struct DockerOutput {
+    process: std::process::Output,
+    output_path: PathBuf,
 }
 
 fn run_docker(
     image: &str,
+    language: &str,
     command: &[String],
-    filename: &str,
     work_dir: &Path,
     context: &Value,
     timeout_secs: i64,
     token: CancellationToken,
-) -> Result<std::process::Output, SendableError> {
-    let mount = format!("{}:/work:ro", work_dir.display());
+) -> Result<DockerOutput, SendableError> {
+    let runtime_dir = work_dir.join("runtime");
+    fs::create_dir_all(&runtime_dir)
+        .map_err(|err| INVALID_CODE.error(format!("failed to create code runtime dir: {err}")))?;
+    let context_path = runtime_dir.join(CONTEXT_FILE);
+    let output_path = runtime_dir.join(OUTPUT_FILE);
+    let input = serde_json::to_string(context)
+        .map_err(|err| INVALID_CODE.error(format!("failed to encode code context: {err}")))?;
+    fs::write(&context_path, &input)
+        .map_err(|err| INVALID_CODE.error(format!("failed to write code context: {err}")))?;
+
+    let work_mount = format!("{}:{WORK_DIR}:ro", work_dir.display());
+    let runtime_mount = format!("{}:{RUNTIME_DIR}", runtime_dir.display());
     let container_name = format!("runinator-code-{}", Uuid::new_v4());
     let mut child = Command::new("docker")
         .args([
@@ -194,13 +271,20 @@ fn run_docker(
             "--name",
             &container_name,
             "-v",
-            &mount,
+            &work_mount,
+            "-v",
+            &runtime_mount,
             "-w",
-            "/work",
+            WORK_DIR,
+            "-e",
+            &format!("RUNINATOR_CONTEXT={RUNTIME_DIR}/{CONTEXT_FILE}"),
+            "-e",
+            &format!("RUNINATOR_OUTPUT={RUNTIME_DIR}/{OUTPUT_FILE}"),
+            "-e",
+            &format!("RUNINATOR_LANGUAGE={language}"),
             image,
         ])
         .args(command)
-        .arg(format!("/work/{filename}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -208,14 +292,16 @@ fn run_docker(
         .map_err(|err| CODE_FAILED.error(format!("failed to start docker: {err}")))?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        let input = serde_json::to_string(context)
-            .map_err(|err| INVALID_CODE.error(format!("failed to encode code context: {err}")))?;
         stdin
             .write_all(input.as_bytes())
             .map_err(|err| CODE_FAILED.error(format!("failed to write code stdin: {err}")))?;
     }
 
-    wait_with_timeout(child, timeout_secs, token, &container_name)
+    let process = wait_with_timeout(child, timeout_secs, token, &container_name)?;
+    Ok(DockerOutput {
+        process,
+        output_path,
+    })
 }
 
 fn wait_with_timeout(

@@ -2,9 +2,11 @@ use runinator_models::json;
 use runinator_models::runs::ProviderExecutionRequest;
 use runinator_plugin::cancel::CancellationToken;
 use runinator_plugin::provider::Provider;
+use std::fs;
 use uuid::Uuid;
 
 use crate::StdProvider;
+use crate::code::{language_spec, parse_code_output};
 
 fn request(parameters: runinator_models::value::Value) -> ProviderExecutionRequest {
     request_for("exec", parameters)
@@ -114,6 +116,92 @@ fn code_rejects_missing_language_before_docker() {
 }
 
 #[test]
+fn code_rejects_unsupported_language_before_docker() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "lua",
+        "source": "print({})",
+        "runtime": { "image": "lua:latest", "setup_script": "" },
+        "context": {}
+    });
+    let err = provider
+        .execute_service(
+            request_for("code", parameters),
+            None,
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("supported languages"));
+}
+
+#[test]
+fn code_rejects_missing_runtime_before_docker() {
+    let provider = StdProvider;
+    let parameters = json!({
+        "language": "python",
+        "source": "print({})",
+        "context": {}
+    });
+    let err = provider
+        .execute_service(
+            request_for("code", parameters),
+            None,
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("missing runtime config"));
+}
+
+#[test]
+fn code_language_specs_support_restored_languages_and_aliases() {
+    let cases = [
+        ("python", "python", "main.py", "python /work/main.py"),
+        ("py", "python", "main.py", "python /work/main.py"),
+        ("javascript", "javascript", "main.js", "node /work/main.js"),
+        ("js", "javascript", "main.js", "node /work/main.js"),
+        ("node", "javascript", "main.js", "node /work/main.js"),
+        ("bash", "bash", "main.sh", "bash /work/main.sh"),
+        ("sh", "bash", "main.sh", "bash /work/main.sh"),
+        ("ruby", "ruby", "main.rb", "ruby /work/main.rb"),
+        ("rb", "ruby", "main.rb", "ruby /work/main.rb"),
+        ("perl", "perl", "main.pl", "perl /work/main.pl"),
+        ("pl", "perl", "main.pl", "perl /work/main.pl"),
+        ("php", "php", "main.php", "php /work/main.php"),
+    ];
+
+    for (input, canonical, filename, command) in cases {
+        let spec = language_spec(input).expect(input);
+        assert_eq!(spec.canonical, canonical, "{input}");
+        assert_eq!(spec.filename, filename, "{input}");
+        assert!(
+            spec.command.iter().any(|part| part.contains(command)),
+            "{input}: {:?}",
+            spec.command
+        );
+    }
+}
+
+#[test]
+fn code_output_file_wins_over_stdout() {
+    let dir = std::env::temp_dir().join(format!("runinator-code-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let output_path = dir.join("output.json");
+    fs::write(&output_path, r#"{"value":42}"#).unwrap();
+
+    let value = parse_code_output(&output_path, b"not json logs".to_vec()).unwrap();
+
+    assert_eq!(value, json!({ "value": 42 }));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn code_output_falls_back_to_stdout_json() {
+    let output_path = std::env::temp_dir().join(format!("missing-{}.json", Uuid::new_v4()));
+    let value = parse_code_output(&output_path, br#"{"from":"stdout"}"#.to_vec()).unwrap();
+    assert_eq!(value, json!({ "from": "stdout" }));
+}
+
+#[test]
 fn metadata_advertises_run_exec_and_pure_flags() {
     let metadata = StdProvider.metadata();
     let run = metadata
@@ -138,6 +226,11 @@ fn metadata_advertises_run_exec_and_pure_flags() {
         code.parameters
             .iter()
             .any(|parameter| parameter.name == "context" && !parameter.required)
+    );
+    assert!(
+        code.parameters
+            .iter()
+            .any(|parameter| parameter.name == "runtime" && !parameter.required)
     );
     let add = metadata
         .actions

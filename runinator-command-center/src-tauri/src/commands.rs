@@ -340,6 +340,53 @@ pub async fn rotate_api_key(
 }
 
 #[tauri::command]
+pub async fn list_dead_letters(
+    state: State<'_, CommandCenterState>,
+    channel: Option<String>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<Value>> {
+    let mut params: Vec<String> = Vec::new();
+    if let Some(channel) = channel.filter(|c| !c.is_empty()) {
+        params.push(format!("channel={channel}"));
+    }
+    if let Some(limit) = limit {
+        params.push(format!("limit={limit}"));
+    }
+    let path = with_query("dead_letters", &params);
+    get_json(&state, &path).await
+}
+
+#[tauri::command]
+pub async fn list_audit_log(
+    state: State<'_, CommandCenterState>,
+    actor_id: Option<Uuid>,
+    action: Option<String>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<Value>> {
+    let mut params: Vec<String> = Vec::new();
+    if let Some(actor_id) = actor_id {
+        params.push(format!("actor_id={actor_id}"));
+    }
+    if let Some(action) = action.filter(|a| !a.is_empty()) {
+        params.push(format!("action={action}"));
+    }
+    if let Some(limit) = limit {
+        params.push(format!("limit={limit}"));
+    }
+    let path = with_query("audit_log", &params);
+    get_json(&state, &path).await
+}
+
+/// append a `?`-joined query string to `base` when any params are present.
+fn with_query(base: &str, params: &[String]) -> String {
+    if params.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}?{}", params.join("&"))
+    }
+}
+
+#[tauri::command]
 pub async fn fetch_workflows(
     state: State<'_, CommandCenterState>,
 ) -> CommandResult<Vec<WorkflowDefinition>> {

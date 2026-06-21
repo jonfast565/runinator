@@ -68,10 +68,11 @@ impl Provider for Plugin {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
-        _token: CancellationToken,
+        token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        // dynamic plugin abi does not yet pass cancellation tokens across ffi.
-        self.plugin_service_call(request, sink)
+        // cancellation crosses the ffi boundary cooperatively: the host touches a sentinel file an
+        // abi-2 plugin polls. abi-1 plugins simply ignore it and run to completion as before.
+        self.plugin_service_call(request, sink, token)
     }
 }
 
@@ -92,6 +93,9 @@ impl Plugin {
         let version_symbol: Symbol<PluginAbiVersionFn> =
             unsafe { lib.get(PLUGIN_ABI_VERSION_FN_NAME.as_bytes())? };
         let abi_version = unsafe { (version_symbol)() };
+        // abi 1 is the floor; abi 2 additionally polls the host cancel-signal file (a sibling
+        // `cancel.signal` of the request's `events_jsonl_path`) for cooperative cancellation. the
+        // host always touches that file on cancel, so newer hosts stay compatible with abi-1 plugins.
         if abi_version < 1 {
             return Err(crate::errors::ABI_UNSUPPORTED
                 .error(format!("ABI {abi_version} found; ABI 1 is required")));
@@ -112,6 +116,7 @@ impl Plugin {
         &self,
         request: ProviderExecutionRequest,
         sink: Option<Arc<dyn ProviderEventSink>>,
+        token: CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
         let request_path = unique_temp_file("request", "json");
         let response_path = unique_temp_file("response", "json");
@@ -131,6 +136,13 @@ impl Plugin {
             let stop = Arc::clone(&stop);
             thread::spawn(move || poll_events_until_stopped(events_path, sink, stop))
         });
+        // relay the host cancellation token to the plugin by touching its sentinel file. a slow or
+        // already-cancelled token still writes the file before the plugin's first poll.
+        let canceller = request.cancel_signal_path().map(|signal_path| {
+            let stop = Arc::clone(&stop);
+            let token = token.clone();
+            thread::spawn(move || signal_cancel_until_stopped(signal_path, token, stop))
+        });
 
         let result = unsafe {
             let lib = Library::new(self.file_name.clone())?;
@@ -146,6 +158,9 @@ impl Plugin {
             && let Ok(Err(err)) = poller.join()
         {
             warn!("Plugin event poller failed: {}", err);
+        }
+        if let Some(canceller) = canceller {
+            let _ = canceller.join();
         }
 
         if result != 0 {
@@ -200,6 +215,28 @@ fn chrono_like_now() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default()
+}
+
+// poll the host cancellation token and, on cancellation, touch the sentinel file an abi-2 plugin
+// watches. exits once the ffi call returns (`stop` set) so a finished plugin never sees a late file.
+fn signal_cancel_until_stopped(
+    signal_path: PathBuf,
+    token: CancellationToken,
+    stop: Arc<AtomicBool>,
+) {
+    while !stop.load(Ordering::Relaxed) {
+        if token.is_cancelled() {
+            if let Err(err) = fs::write(&signal_path, b"1") {
+                warn!(
+                    "Failed to write plugin cancel signal {}: {}",
+                    signal_path.display(),
+                    err
+                );
+            }
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn poll_events_until_stopped(

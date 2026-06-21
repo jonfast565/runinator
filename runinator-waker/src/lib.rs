@@ -97,3 +97,6 @@ async fn drive(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

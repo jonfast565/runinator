@@ -111,4 +111,16 @@ pub(crate) struct CliArgs {
         default_value_t = 1_209_600
     )]
     pub auth_refresh_ttl_seconds: i64,
+
+    /// Enable per-principal/per-IP rate limiting on the HTTP API. Off by default.
+    #[arg(long, env = "RUNINATOR_RATE_LIMIT_ENABLED", default_value_t = false)]
+    pub rate_limit_enabled: bool,
+
+    /// Sustained requests per second allowed per principal/IP (token-bucket refill rate).
+    #[arg(long, env = "RUNINATOR_RATE_LIMIT_RPS", default_value_t = 50.0)]
+    pub rate_limit_rps: f64,
+
+    /// Maximum burst capacity per principal/IP (token-bucket size).
+    #[arg(long, env = "RUNINATOR_RATE_LIMIT_BURST", default_value_t = 100.0)]
+    pub rate_limit_burst: f64,
 }

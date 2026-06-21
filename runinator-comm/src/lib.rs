@@ -56,6 +56,10 @@ pub struct ActionCommand {
     pub attempt: i64,
     #[serde(default)]
     pub parameters: Value,
+    /// correlation id propagated across the ws -> broker -> worker hop so spans/logs for one action
+    /// execution line up. defaults for backward-compatible deserialization of older messages.
+    #[serde(default = "Uuid::now_v7")]
+    pub trace_id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +92,11 @@ pub enum ControlKind {
 pub struct ControlCommand {
     pub workflow_run_id: Uuid,
     pub kind: ControlKind,
+    /// when set, the control applies to a single node run rather than the whole run. used to cancel
+    /// an already-dispatched losing race branch without disturbing the winner or sibling work.
+    /// defaults to `None` for backward-compatible deserialization of run-wide commands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_node_run_id: Option<Uuid>,
 }
 
 /// a request to run the web-service reducer for one ready-queue row at a future time. the web
@@ -246,6 +255,10 @@ pub struct WorkflowResultEvent {
     pub node_id: String,
     pub kind: WorkflowResultEventKind,
     pub timestamp: DateTime<Utc>,
+    /// correlation id carried back from the originating [`ActionCommand`] so worker result handling
+    /// stays on the same trace. defaults for backward-compatible deserialization of older messages.
+    #[serde(default = "Uuid::now_v7")]
+    pub trace_id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +284,20 @@ impl ControlCommand {
         Self {
             workflow_run_id,
             kind,
+            workflow_node_run_id: None,
+        }
+    }
+
+    /// a control targeting a single node run (e.g. cancelling one losing race branch).
+    pub fn for_node_run(
+        workflow_run_id: Uuid,
+        workflow_node_run_id: Uuid,
+        kind: ControlKind,
+    ) -> Self {
+        Self {
+            workflow_run_id,
+            kind,
+            workflow_node_run_id: Some(workflow_node_run_id),
         }
     }
 }
@@ -309,6 +336,7 @@ impl WorkflowResultEvent {
             node_id: command.node_id.clone(),
             kind,
             timestamp: Utc::now(),
+            trace_id: command.trace_id,
         }
     }
 }

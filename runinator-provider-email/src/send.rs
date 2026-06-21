@@ -172,7 +172,11 @@ async fn post_notification(payload: NotificationPayload) -> Result<String, Senda
         "target": payload.target,
         "metadata": payload.metadata,
     });
-    let client = reqwest::Client::new();
+    // bound the notification post so a stalled service url cannot hang the action indefinitely.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|err| NOTIFICATION_POST.error(err))?;
     let response = client
         .post(url)
         .json(&body)

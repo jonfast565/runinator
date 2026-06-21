@@ -18,6 +18,7 @@ import { json } from '@codemirror/lang-json';
 import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { shouldStartJsonCompletion, jsonCompletionSource } from '../../utils/json-completion';
+import { osCodeMirrorTheme } from '../../utils/codemirror-theme';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -33,6 +34,7 @@ const emit = defineEmits<{
 
 const editorContainer = ref<HTMLElement | null>(null);
 let view: EditorView | null = null;
+let disposeEditorTheme: (() => void) | null = null;
 const title = props.title;
 const copied = ref(false);
 
@@ -48,12 +50,14 @@ async function copy() {
 
 onMounted(() => {
   if (!editorContainer.value) return;
+  const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
     doc: props.modelValue,
     extensions: [
       basicSetup,
       json(),
+      editorTheme.extension,
       autocompletion({ override: [jsonCompletionSource(() => ({ keyHints: props.keyHints ?? [] }))] }),
       keymap.of(completionKeymap),
       EditorView.editable.of(!props.readonly),
@@ -74,6 +78,7 @@ onMounted(() => {
     state: startState,
     parent: editorContainer.value,
   });
+  disposeEditorTheme = editorTheme.install(view);
 });
 
 watch(() => props.modelValue, (newValue) => {
@@ -85,6 +90,7 @@ watch(() => props.modelValue, (newValue) => {
 });
 
 onBeforeUnmount(() => {
+  disposeEditorTheme?.();
   if (view) {
     view.destroy();
   }

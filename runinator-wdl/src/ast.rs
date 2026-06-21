@@ -271,7 +271,6 @@ pub struct ComputeStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignCompute {
     pub language: String,
-    pub image: Option<String>,
     pub source: String,
 }
 

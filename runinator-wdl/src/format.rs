@@ -396,10 +396,7 @@ impl Formatter {
     }
 
     fn foreign_compute(&self, foreign: &ForeignCompute) -> String {
-        let mut out = format!("compute {}", foreign.language);
-        if let Some(image) = &foreign.image {
-            out.push_str(&format!(" using {}", quote(image)));
-        }
+        let mut out = format!("compute {}", quote(&foreign.language));
         out.push_str(" ```\n");
         out.push_str(&foreign.source);
         if !foreign.source.ends_with('\n') {

@@ -38,6 +38,8 @@ fn annotated_paths_are_present() {
         "/credentials",
         "/webhooks/signal",
         "/scheduler/action_dispatches/claim",
+        "/dead_letters",
+        "/audit_log",
     ] {
         assert!(
             paths.contains_key(expected),

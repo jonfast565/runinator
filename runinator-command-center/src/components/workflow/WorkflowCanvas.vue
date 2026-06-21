@@ -31,6 +31,7 @@
             @pane-context-menu="closeOverlaysAndSelection"
             :edges-updatable="true"
             delete-key-code="Delete"
+            :select-nodes-on-drag="false"
             :snap-to-grid="true"
             :snap-grid="[15, 15]"
           >

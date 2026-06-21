@@ -309,6 +309,24 @@ pub struct GateQuery {
     pub status: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeadLetterQuery {
+    #[serde(default)]
+    pub channel: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuditLogQuery {
+    #[serde(default)]
+    pub actor_id: Option<Uuid>,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct GateResolutionRequest {
     #[serde(default)]

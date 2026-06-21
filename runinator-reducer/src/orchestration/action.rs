@@ -3,6 +3,27 @@ use super::transitions::{arm_node_timeout, retry_or_transition, time_out, timed_
 use super::*;
 use uuid::Uuid;
 
+const FOREIGN_LANGUAGE_SCOPE: &str = "foreign_languages";
+
+pub(super) fn foreign_language_runtime(language: &str) -> Option<(&'static str, &'static str)> {
+    match language {
+        "python" | "py" => Some(("python", "python:3.12")),
+        "javascript" | "js" | "node" => Some(("javascript", "node:22")),
+        "bash" | "sh" => Some(("bash", "bash:5.2")),
+        "ruby" | "rb" => Some(("ruby", "ruby:3.3")),
+        "perl" | "pl" => Some(("perl", "perl:5.40")),
+        "php" => Some(("php", "php:8.3-cli")),
+        _ => None,
+    }
+}
+
+pub(super) fn default_foreign_language_runtime(image: &str) -> Value {
+    runinator_models::json!({
+        "image": image,
+        "setup_script": ""
+    })
+}
+
 pub(super) async fn process_action_node<T: DatabaseImpl>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
@@ -131,7 +152,24 @@ async fn build_node_parameters<T: DatabaseImpl>(
         let mut parameters = action.configuration.as_value().clone();
         let context = runtime_context(db, workflow_run, node_runs).await;
         if let Value::Object(object) = &mut parameters {
+            let language = object
+                .get("language")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let (canonical_language, default_image) =
+                foreign_language_runtime(&language).ok_or_else(|| {
+                    crate::errors::COMPUTE_NODE_FAILED.error(format!(
+                        "unsupported foreign language '{language}'; supported languages: python, javascript, bash, ruby, perl, php"
+                    ))
+                })?;
+            let runtime =
+                crate::config::config_value(db, FOREIGN_LANGUAGE_SCOPE, canonical_language)
+                    .await?
+                    .unwrap_or_else(|| default_foreign_language_runtime(default_image));
+            object.insert("language".into(), Value::String(canonical_language.into()));
             object.insert("context".into(), context);
+            object.insert("runtime".into(), runtime);
             return Ok(parameters);
         }
         return Ok(runinator_models::json!({ "context": context }));
@@ -156,5 +194,6 @@ fn build_action_command(
         action: action.clone(),
         attempt: node_run.attempt + 1,
         parameters,
+        trace_id: Uuid::now_v7(),
     }
 }

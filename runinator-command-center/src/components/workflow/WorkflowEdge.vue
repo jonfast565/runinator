@@ -260,40 +260,40 @@ onBeforeUnmount(stopDragging);
 
 .workflow-edge-label-connector path {
   fill: none;
-  stroke: #94a3b8;
+  stroke: var(--text-faint);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   opacity: 0.8;
 }
 
 .workflow-edge-label-connector circle {
-  fill: #94a3b8;
+  fill: var(--text-faint);
   opacity: 0.8;
 }
 
 .workflow-edge-label-connector.warning path,
 .workflow-edge-label-connector.warning circle {
-  stroke: #f59e0b;
-  fill: #f59e0b;
+  stroke: var(--warn-solid);
+  fill: var(--warn-solid);
 }
 
 .workflow-edge-label-connector.error path,
 .workflow-edge-label-connector.error circle {
-  stroke: #dc2626;
-  fill: #dc2626;
+  stroke: var(--danger-solid);
+  fill: var(--danger-solid);
 }
 
 .workflow-edge-label {
   position: absolute;
   padding: 1px 6px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: #ffffff;
-  color: #34495e;
+  background: var(--surface);
+  color: var(--text-subtle);
   font-size: 10px;
   line-height: 1.5;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--shadow-control);
   user-select: none;
 }
 
@@ -303,21 +303,21 @@ onBeforeUnmount(stopDragging);
 
 .workflow-edge-label.is-manual {
   border-style: dashed;
-  border-color: #94a3b8;
+  border-color: var(--text-faint);
 }
 
 .workflow-edge-label.is-dragging {
   cursor: grabbing;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.24);
+  box-shadow: var(--workflow-menu-shadow);
 }
 
 .workflow-edge-label.warning {
-  border-color: #f59e0b;
-  color: #92400e;
+  border-color: var(--warn-solid);
+  color: var(--warning-fg);
 }
 
 .workflow-edge-label.error {
-  border-color: #dc2626;
-  color: #b91c1c;
+  border-color: var(--danger-solid);
+  color: var(--danger-fg);
 }
 </style>

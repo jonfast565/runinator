@@ -81,7 +81,7 @@ function onSubmit() {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.4);
+  background: rgba(15, 23, 42, 0.48);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -90,13 +90,13 @@ function onSubmit() {
 .modal-card {
   width: min(640px, 90vw);
   max-height: 80vh;
-  background: #fff;
+  background: var(--surface);
   border-radius: 8px;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.25);
+  box-shadow: var(--shadow-modal);
 }
 .modal-header {
   display: flex;
@@ -111,11 +111,11 @@ function onSubmit() {
   border: 0;
   font-size: 20px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--text-muted);
 }
 .modal-hint {
   font-size: 12px;
-  color: #64748b;
+  color: var(--text-muted);
   margin: 0;
 }
 .modal-editor {
@@ -126,7 +126,7 @@ function onSubmit() {
   height: 280px;
 }
 .modal-error {
-  color: #dc2626;
+  color: var(--danger-fg);
   font-size: 12px;
 }
 .modal-footer {
@@ -135,8 +135,8 @@ function onSubmit() {
   gap: 8px;
 }
 .modal-footer button.primary {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 .modal-footer button.primary:disabled {

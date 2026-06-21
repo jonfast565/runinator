@@ -33,36 +33,23 @@
         </div>
       </div>
 
-      <DataTable>
-        <table>
-          <thead>
-            <tr>
-              <th>Scope</th>
-              <th>Name</th>
-              <th>Reference</th>
-              <th v-if="isConfig">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="setting in filteredEntries"
-              :key="secretKey(setting)"
-              :class="{ selected: secrets.selectedSecretKey === secretKey(setting) }"
-              @click="openEditSetting(setting)"
-            >
-              <td>{{ setting.scope }}</td>
-              <td>{{ setting.name }}</td>
-              <td><code>{{ settingRef(setting.kind, setting.scope, setting.name) }}</code></td>
-              <td v-if="isConfig">
-                <pre class="config-value">{{ secrets.configValues[secretKey(setting)] || "Loading..." }}</pre>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </DataTable>
+      <div class="settings-tree-shell">
+        <ul v-if="settingsTree.length" class="settings-tree-root">
+          <SettingsTreeNode
+            v-for="node in settingsTree"
+            :key="node.path"
+            :node="node"
+            :is-config="isConfig"
+            :config-values="secrets.configValues"
+            :selected-key="secrets.selectedSecretKey"
+            @select="openEditSetting"
+          />
+        </ul>
+        <div v-else class="settings-tree-empty">{{ isConfig ? "No configs match." : "No secrets match." }}</div>
+      </div>
     </div>
 
-    <div v-if="editorOpen" class="modal-backdrop" @click.self="closeEditor">
+    <div v-if="editorOpen" ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="closeEditor">
       <form class="modal setting-modal" @submit.prevent="saveEditor">
         <header class="modal-header">
           <div>
@@ -120,15 +107,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import DataTable from "../components/shared/DataTable.vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
 import { useAppStore } from "../stores/app";
 import { useProvidersStore } from "../stores/providers";
 import { useSecretsStore } from "../stores/secrets";
 import type { CredentialSummary, SettingKind } from "../types/models";
 import { secretKey, settingRef } from "../utils/secrets";
+import { buildSettingsTree } from "../utils/settings-tree";
 
 const props = defineProps<{
   settingKind: SettingKind;
@@ -138,6 +126,7 @@ const app = useAppStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
 const editorOpen = ref(false);
+const modalRoot = ref<HTMLElement | null>(null);
 
 const isConfig = computed(() => props.settingKind === "config");
 const baseEntries = computed(() => (isConfig.value ? secrets.configEntries : secrets.secretEntries));
@@ -151,6 +140,7 @@ const filteredEntries = computed(() => {
       .includes(query)
   );
 });
+const settingsTree = computed(() => buildSettingsTree(filteredEntries.value));
 const pageTitle = computed(() => (isConfig.value ? "Configs" : "Secrets"));
 const pageDescription = computed(() =>
   isConfig.value
@@ -226,6 +216,13 @@ watch(
   }
 );
 
+// focus the modal on open so its scoped escape handler works without a manual click.
+watch(editorOpen, async (open) => {
+  if (!open) return;
+  await nextTick();
+  modalRoot.value?.focus();
+});
+
 onMounted(() => {
   if (providers.providers.length === 0 && !providers.loading) providers.fetchProviders();
   void refreshPage();
@@ -283,6 +280,26 @@ onMounted(() => {
 .settings-summary strong {
   color: var(--text);
   font-size: 16px;
+}
+
+.settings-tree-shell {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px;
+}
+
+.settings-tree-root {
+  margin: 0;
+  padding: 0;
+}
+
+.settings-tree-empty {
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .setting-modal {

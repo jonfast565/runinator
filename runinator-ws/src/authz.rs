@@ -87,8 +87,39 @@ pub async fn require_workflow<T: DatabaseImpl>(
     }
     match workflow_permission(db, ctx, workflow_id).await {
         Some(permission) if permission.allows(needed) => Ok(()),
-        _ => Err(forbidden()),
+        _ => {
+            audit_denied(db, ctx, workflow_id, needed).await;
+            Err(forbidden())
+        }
     }
+}
+
+/// the audit `actor_kind` string for a principal.
+fn actor_kind(ctx: &AuthContext) -> &'static str {
+    match ctx.kind {
+        PrincipalKind::User => "user",
+        PrincipalKind::Service => "service",
+    }
+}
+
+/// record an authorization denial against a workflow resource.
+async fn audit_denied<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    workflow_id: Uuid,
+    needed: Permission,
+) {
+    crate::audit::record_audit(
+        db,
+        ctx.principal_id,
+        actor_kind(ctx),
+        "authz.denied",
+        crate::audit::AuditOutcome::Denied,
+        Some(ResourceType::Workflow.as_str()),
+        Some(workflow_id),
+        Some(&format!("missing {:?} permission", needed)),
+    )
+    .await;
 }
 
 /// the workflow ids the caller can see, or `None` meaning "all" (admin / auth disabled).

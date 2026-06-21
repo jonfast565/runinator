@@ -32,7 +32,7 @@ const CONTEXT_KEY: &str = "context";
 const FUNCTIONS_KEY: &str = "functions";
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
-const IMAGE_KEY: &str = "image";
+const RUNTIME_KEY: &str = "runtime";
 
 #[derive(Clone)]
 pub struct StdProvider;
@@ -64,7 +64,7 @@ impl Provider for StdProvider {
                 .with_parameters(vec![
                     ParameterMetadata::required(LANGUAGE_KEY, RuninatorType::String),
                     ParameterMetadata::required(SOURCE_KEY, RuninatorType::String),
-                    ParameterMetadata::optional(IMAGE_KEY, RuninatorType::String),
+                    ParameterMetadata::optional(RUNTIME_KEY, RuninatorType::Any),
                     ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
                 ]),
         ];

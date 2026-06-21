@@ -83,20 +83,20 @@
   display: grid;
   min-width: 220px;
   flex: 1;
-  color: #4b5663;
+  color: var(--text-muted);
   font-size: 12px;
   gap: 2px;
 }
 
 .workflow-title strong {
-  color: #17202a;
+  color: var(--text);
   font-size: 14px;
 }
 
 .workflow-toolbar label {
   display: grid;
   min-width: 92px;
-  color: #4b5663;
+  color: var(--text-muted);
   font-size: 12px;
   gap: 3px;
 }
@@ -126,7 +126,7 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  border-top: 1px solid #e2e8ef;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .workflow-graph-pane,
@@ -142,14 +142,14 @@
 .workflow-wdl-pane {
   gap: 8px;
   padding: 12px;
-  background: #f8fafc;
+  background: var(--workflow-canvas-bg);
 }
 
 .workflow-graph {
   min-height: 0;
   flex: 1 1 0;
   border: 0;
-  background: #f8fafc;
+  background: var(--workflow-canvas-bg);
 }
 
 .workflow-context-menu {
@@ -158,22 +158,22 @@
   display: grid;
   min-width: 130px;
   padding: 4px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--workflow-menu-shadow);
 }
 
 .workflow-context-menu button {
   justify-content: flex-start;
   border-color: transparent;
   background: transparent;
-  color: #17202a;
+  color: var(--text);
   text-align: left;
 }
 
 .workflow-context-menu button:hover:not(:disabled) {
-  background: #eef4ff;
+  background: var(--surface-hover);
 }
 
 .workflow-command-bar {
@@ -187,10 +187,10 @@
   gap: 6px;
   overflow: hidden;
   padding: 7px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--workflow-menu-shadow);
   transform: translateX(-50%);
 }
 
@@ -200,7 +200,7 @@
 
 .workflow-command-issues {
   overflow: hidden;
-  color: #b91c1c;
+  color: var(--danger-fg);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -213,8 +213,8 @@
   max-height: 180px;
   min-height: 92px;
   overflow: auto;
-  border-top: 1px solid #e3e8ee;
-  background: #fbfcfe;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
   font-size: 12px;
 }
 
@@ -227,9 +227,9 @@
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid #e3e8ee;
-  background: #f2f5f8;
-  color: #4b5663;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
   font-weight: 600;
 }
 
@@ -241,18 +241,18 @@
 }
 
 .workflow-issues-summary.clean {
-  background: #e8f7ef;
-  color: #11653b;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .workflow-issues-summary.warning {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .workflow-issues-summary.error {
-  background: #fde8e8;
-  color: #b91c1c;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .workflow-issues-table {
@@ -264,7 +264,7 @@
 .workflow-issues-table th,
 .workflow-issues-table td {
   padding: 5px 8px;
-  border-bottom: 1px solid #e6ebf1;
+  border-bottom: 1px solid var(--border-subtle);
   text-align: left;
   vertical-align: top;
 }
@@ -272,8 +272,8 @@
 .workflow-issues-table th {
   position: sticky;
   top: 33px;
-  background: #f2f5f8;
-  color: #4b5663;
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
   font-weight: 700;
 }
 
@@ -282,7 +282,7 @@
 }
 
 .workflow-issues-table tbody tr:hover {
-  background: #eef4ff;
+  background: var(--surface-hover);
 }
 
 .workflow-issues-table tbody tr.error {
@@ -295,7 +295,7 @@
 
 .workflow-issue-node-cell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: #44505f;
+  color: var(--text-subtle);
   white-space: nowrap;
 }
 
@@ -309,18 +309,18 @@
 }
 
 .workflow-issue-severity.error {
-  background: #fde8e8;
-  color: #b91c1c;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .workflow-issue-severity.warning {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .workflow-issues-empty {
   padding: 7px 10px;
-  color: #66717e;
+  color: var(--text-muted);
 }
 
 .workflow-edge-popover {
@@ -332,14 +332,14 @@
   overflow: auto;
   gap: 6px;
   padding: 8px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--workflow-menu-shadow);
 }
 
 .workflow-edge-popover strong {
-  color: #17202a;
+  color: var(--text);
   font-size: 12px;
 }
 
@@ -347,24 +347,24 @@
   display: grid;
   justify-items: start;
   border-color: transparent;
-  background: #f6f9fc;
-  color: #17202a;
+  background: var(--surface-subtle);
+  color: var(--text);
   text-align: left;
 }
 
 .workflow-edge-popover button:hover:not(:disabled) {
-  background: #eef4ff;
+  background: var(--surface-hover);
 }
 
 .workflow-edge-popover small {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .workflow-edge-editor label {
   display: grid;
   gap: 4px;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 12px;
 }
 
@@ -380,7 +380,7 @@
 }
 
 .workflow-edge-anchor-control span {
-  color: #17202a;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -415,10 +415,10 @@
 .workflow-wdl-error {
   margin: 0;
   padding: 8px 10px;
-  border: 1px solid #f3d6a8;
-  border-radius: 6px;
-  background: #fff8ec;
-  color: #8a5a00;
+  border: 1px solid var(--warning-bg);
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
   font-size: 12px;
 }
 
@@ -432,7 +432,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 10px;
-  border-bottom: 1px solid #e2e8ef;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .workflow-run-graph-header h2 {
@@ -441,58 +441,58 @@
 }
 
 .workflow-run-graph-header span {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .vue-flow__node {
   width: 180px;
-  border: 1px solid #34495e;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #2c3e50;
+  border: 1px solid var(--workflow-node-border);
+  border-radius: var(--radius);
+  background: var(--workflow-node-bg);
+  color: var(--workflow-node-text);
   white-space: pre-line;
   font-size: 12px;
 }
 
 .vue-flow__node.selected {
-  box-shadow: 0 0 0 2px #4ea1ff;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .vue-flow__node.node-success,
 .workflow-node-content.node-success {
-  background: #dff5e7;
-  border-color: #2ecc71;
+  background: var(--success-bg);
+  border-color: var(--success-fg);
 }
 
 .vue-flow__node.node-danger,
 .workflow-node-content.node-danger {
-  background: #fde2df;
-  border-color: #e74c3c;
+  background: var(--danger-bg);
+  border-color: var(--danger-solid);
 }
 
 .vue-flow__node.node-running,
 .workflow-node-content.node-running {
-  background: #fff2cc;
-  border-color: #f39c12;
+  background: var(--warning-bg);
+  border-color: var(--warn-solid);
 }
 
 .vue-flow__node.node-warning,
 .workflow-node-content.node-warning {
-  background: #fef9e7;
-  border-color: #f1c40f;
+  background: var(--warning-bg);
+  border-color: var(--warning-fg);
 }
 
 .vue-flow__node.node-waiting,
 .workflow-node-content.node-waiting {
-  background: #e0f2fe;
-  border-color: #38bdf8;
+  background: var(--info-bg);
+  border-color: var(--info-fg);
 }
 
 .vue-flow__node.node-active,
 .workflow-node-content.node-active {
-  background: #e1efff;
-  border-color: #3498db;
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .inspector-panel {
@@ -511,7 +511,7 @@
 
 .step-editor label {
   display: grid;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 12px;
   gap: 4px;
 }
@@ -526,6 +526,6 @@
 
 .step-editor h3 {
   margin: 0;
-  color: #17202a;
+  color: var(--text);
   font-size: 13px;
 }

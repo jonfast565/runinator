@@ -132,20 +132,28 @@ it lowers to `std.run` when pure and `std.exec` when effectful.
 Foreign-language compute code uses a fenced form:
 
 ````
-node score <- compute python using "python:3.12-alpine" ```
+node score <- compute "python" ```
 import json
-import sys
+import os
 
-ctx = json.load(sys.stdin)
-print(json.dumps({"score": ctx["input"]["score"] + 1}))
+with open(os.environ["RUNINATOR_CONTEXT"]) as f:
+    ctx = json.load(f)
+
+with open(os.environ["RUNINATOR_OUTPUT"], "w") as f:
+    json.dump({"score": ctx["input"]["score"] + 1}, f)
 ```.timeout(30s)
 ````
 
 The fenced source is carried verbatim in the compiled workflow and lowers to `std.code`, which runs
-on a worker through Docker. The runtime context is provided on stdin as JSON; stdout must be a JSON
-value, which becomes the compute node output. `using "<image>"` is optional for known languages
-(`python`, `javascript`/`node`, `bash`/`sh`, `ruby`, `perl`, `php`) and overrides the default image.
-Local and Kubernetes workers need a Docker-compatible CLI/runtime available to the worker process.
+on a worker through Docker. The runtime context is provided on stdin as JSON and at the
+`RUNINATOR_CONTEXT` file path. Scripts should write the JSON value they return to
+`RUNINATOR_OUTPUT`; that value becomes the compute node output and is available to later WDL nodes
+as `score.field`. For compatibility, if `RUNINATOR_OUTPUT` is not written, stdout is parsed as the
+JSON output value. The Docker image and optional bash setup script are configured by an
+administrator under Admin -> Settings -> Foreign Languages, with built-in defaults for
+`python`/`py`, `javascript`/`js`/`node`, `bash`/`sh`, `ruby`/`rb`, `perl`/`pl`, and `php`. Setup
+scripts are bash, so configured images must include `bash`. Local and Kubernetes workers need a
+Docker-compatible CLI/runtime available to the worker process.
 
 ### Functions (`fn`)
 

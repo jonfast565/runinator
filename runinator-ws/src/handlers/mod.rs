@@ -8,6 +8,7 @@ pub(crate) mod debug;
 pub(crate) mod health;
 pub(crate) mod node_runs;
 pub(crate) mod notifications;
+pub(crate) mod observability;
 pub(crate) mod packs;
 pub(crate) mod providers;
 pub(crate) mod replicas;

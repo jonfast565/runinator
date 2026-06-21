@@ -101,6 +101,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
+        trace_id: Uuid::nil(),
     }
 }
 
@@ -197,6 +198,7 @@ async fn mariadb_full_lifecycle() {
             output_json: None,
             message: None,
         },
+        trace_id: Uuid::nil(),
     };
     assert!(
         db.apply_workflow_result_event(&event).await.unwrap(),

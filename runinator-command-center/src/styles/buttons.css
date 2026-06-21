@@ -18,7 +18,7 @@
 }
 
 .btn:hover:not(:disabled) {
-  border-color: #7b8794;
+  border-color: var(--border-hover);
   background: var(--surface-hover);
 }
 

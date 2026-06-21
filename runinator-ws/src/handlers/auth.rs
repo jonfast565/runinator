@@ -144,18 +144,57 @@ pub(crate) async fn login<T: DatabaseImpl>(
     Extension(config): Extension<Arc<AuthConfig>>,
     Json(request): Json<LoginRequest>,
 ) -> Reply {
+    let username = request.username.clone();
     let credential = match db.fetch_local_credential(request.username).await {
         Ok(Some(credential)) => credential,
-        Ok(None) => return unauthorized("invalid username or password"),
+        Ok(None) => {
+            audit_login_failure(db.as_ref(), &username, "unknown user").await;
+            return unauthorized("invalid username or password");
+        }
         Err(err) => return api_error(err.to_string()),
     };
     if credential.user.disabled || !verify_password(&request.password, &credential.password_hash) {
+        let reason = if credential.user.disabled {
+            "account disabled"
+        } else {
+            "bad password"
+        };
+        audit_login_failure(db.as_ref(), &username, reason).await;
         return unauthorized("invalid username or password");
     }
+    let user_id = credential.user.id;
     match issue_session(db.as_ref(), &config, credential.user).await {
-        Ok(response) => ok_value(&response),
+        Ok(response) => {
+            crate::audit::record_audit(
+                db.as_ref(),
+                user_id,
+                "user",
+                "auth.login",
+                crate::audit::AuditOutcome::Success,
+                None,
+                None,
+                Some(&format!("user {username} logged in")),
+            )
+            .await;
+            ok_value(&response)
+        }
         Err(reply) => reply,
     }
+}
+
+/// record a failed login attempt without leaking the credential material.
+async fn audit_login_failure<T: DatabaseImpl>(db: &T, username: &str, reason: &str) {
+    crate::audit::record_audit(
+        db,
+        None,
+        "anonymous",
+        "auth.login",
+        crate::audit::AuditOutcome::Failure,
+        None,
+        None,
+        Some(&format!("login failed for '{username}': {reason}")),
+    )
+    .await;
 }
 
 #[utoipa::path(

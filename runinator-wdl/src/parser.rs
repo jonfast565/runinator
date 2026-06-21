@@ -886,30 +886,18 @@ fn parse_compute(pair: Pair<Rule>) -> Result<ComputeStmt, WdlError> {
 
 fn parse_foreign_compute(pair: Pair<Rule>) -> Result<ForeignCompute, WdlError> {
     let mut language = None;
-    let mut image = None;
     let mut source = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::ident => language = Some(inner.as_str().to_string()),
-            Rule::foreign_image => image = parse_foreign_image(inner)?,
+            Rule::string => language = Some(plain_string(inner)?),
             Rule::raw_block => source = Some(raw_block_content(inner.as_str())),
             _ => {}
         }
     }
     Ok(ForeignCompute {
         language: language.unwrap_or_default(),
-        image,
         source: source.unwrap_or_default(),
     })
-}
-
-fn parse_foreign_image(pair: Pair<Rule>) -> Result<Option<String>, WdlError> {
-    for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::string {
-            return plain_string(inner).map(Some);
-        }
-    }
-    Ok(None)
 }
 
 fn parse_compute_block(pair: Pair<Rule>) -> Result<Vec<ComputeLine>, WdlError> {

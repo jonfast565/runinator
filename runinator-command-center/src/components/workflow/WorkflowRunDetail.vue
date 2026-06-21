@@ -306,7 +306,7 @@ function formatResultValue(value: any): string {
 
 .workflow-run-meta {
   font-size: 12px;
-  color: #66717e;
+  color: var(--text-muted);
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
@@ -320,11 +320,11 @@ function formatResultValue(value: any): string {
   min-height: 0;
 }
 .debug-panel {
-  border: 1px solid #d8e2ec;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 8px;
   margin-bottom: 10px;
-  background: #fbfcfe;
+  background: var(--surface-subtle);
 }
 .debug-panel-header {
   display: flex;
@@ -337,7 +337,7 @@ function formatResultValue(value: any): string {
   margin: 0;
 }
 .debug-panel-header span {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .debug-grid {
@@ -347,9 +347,9 @@ function formatResultValue(value: any): string {
   margin-top: 6px;
 }
 .debug-json-group {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
   margin-bottom: 8px;
   overflow: hidden;
   padding: 6px 8px;
@@ -358,13 +358,13 @@ function formatResultValue(value: any): string {
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-subtle);
   user-select: none;
 }
 .debug-panel h4 {
   margin: 0 0 4px;
   font-size: 11px;
-  color: #66717e;
+  color: var(--text-muted);
 }
 .debug-panel :deep(.json-editor-container) {
   height: 132px;
@@ -377,11 +377,11 @@ function formatResultValue(value: any): string {
   margin-top: 2px;
 }
 .run-summary-card {
-  border: 1px solid #d8e2ec;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 10px 12px;
   margin-bottom: 14px;
-  background: #f8fafc;
+  background: var(--surface-subtle);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -391,11 +391,11 @@ function formatResultValue(value: any): string {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: #475569;
+  color: var(--text-subtle);
 }
 .summary-label {
   width: 90px;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -427,16 +427,16 @@ function formatResultValue(value: any): string {
   margin-right: 6px;
 }
 .summary-chip.success {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 .summary-chip.danger {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 .summary-chip.warning {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 .workflow-detail-logs {
   flex: 0 0 auto;
@@ -459,8 +459,8 @@ function formatResultValue(value: any): string {
 .result-fields {
   display: flex;
   flex-direction: column;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
   overflow: hidden;
   margin-bottom: 10px;
   font-size: 12px;
@@ -471,19 +471,19 @@ function formatResultValue(value: any): string {
   min-height: 28px;
 }
 .result-field-row + .result-field-row {
-  border-top: 1px solid #f0f4f8;
+  border-top: 1px solid var(--border-faint);
 }
 .result-field-key {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
+  background: var(--surface-subtle);
+  border-right: 1px solid var(--border-subtle);
 }
 .result-field-name {
   font-weight: 500;
-  color: #374151;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -491,8 +491,8 @@ function formatResultValue(value: any): string {
 .result-field-type {
   flex-shrink: 0;
   font-size: 10px;
-  color: #7b8794;
-  background: #e9eef4;
+  color: var(--text-muted);
+  background: var(--surface-muted);
   border-radius: 3px;
   padding: 1px 4px;
   line-height: 1.4;
@@ -503,28 +503,28 @@ function formatResultValue(value: any): string {
   padding: 5px 10px;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
-  color: #17202a;
+  color: var(--text);
   word-break: break-all;
-  background: #fff;
+  background: var(--surface);
 }
 .result-field-value.empty {
-  color: #97a1ad;
+  color: var(--text-faint);
   font-style: italic;
   font-family: inherit;
 }
 .result-extra {
-  border-top: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
 }
 .result-extra summary {
   cursor: pointer;
   padding: 4px 10px;
-  color: #7b8794;
+  color: var(--text-muted);
   font-size: 11px;
   user-select: none;
 }
 .result-extra summary:hover {
-  color: #374151;
+  color: var(--text-subtle);
 }
 
 @media (max-width: 920px) {

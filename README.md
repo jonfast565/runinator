@@ -386,6 +386,13 @@ without invalidating live tokens or stranding stored secrets:
   accepted on decrypt. To rotate: set the new key as the primary and the old one
   as `*_PREVIOUS`, redeploy ws, `POST /credentials/reencrypt` (admin) to re-tag
   every stored value with the new key, then clear `*_PREVIOUS` and redeploy.
+- **Rate limiting.** Set `RUNINATOR_RATE_LIMIT_ENABLED=true` to gate the HTTP API
+  with an in-memory token bucket keyed by the authenticated principal (falling
+  back to the connection IP). Tune it with `RUNINATOR_RATE_LIMIT_RPS` (sustained
+  requests per second, default `50`) and `RUNINATOR_RATE_LIMIT_BURST` (bucket
+  size, default `100`). Each ws replica limits independently; `/health`, `/ready`,
+  and `/metrics` are exempt. Over-limit requests get `429` with a `Retry-After`
+  header.
 
 ### Quick start (local cluster)
 

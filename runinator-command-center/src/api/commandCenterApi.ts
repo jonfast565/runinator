@@ -48,6 +48,13 @@ export interface WorkflowWdlSaveRequest {
   ui?: JsonRecord | null;
 }
 
+export interface ForeignLanguageRuntimeConfig {
+  image: string;
+  setup_script: string;
+}
+
+const FOREIGN_LANGUAGE_SCOPE = "foreign_languages";
+
 function command<T>(name: string, args?: Record<string, unknown>) {
   if (isTauriRuntime()) return invoke<T>(name, args);
   return invokeViaHttp<T>(name, args);
@@ -201,6 +208,14 @@ export async function updateApiKey(keyId: string, request: UpdateApiKeyInput) {
 
 export async function revokeApiKey(keyId: string) {
   return command<TaskResponse>("revoke_api_key", { keyId });
+}
+
+export async function listDeadLetters(channel?: string, limit?: number) {
+  return command<JsonRecord[]>("list_dead_letters", { channel, limit });
+}
+
+export async function listAuditLog(actorId?: string, action?: string, limit?: number) {
+  return command<JsonRecord[]>("list_audit_log", { actorId, action, limit });
 }
 
 export async function rotateApiKey(keyId: string) {
@@ -604,6 +619,14 @@ export async function saveCredential(
 
 export async function deleteCredential(scope: string, name: string, kind: SettingKind = "secret") {
   return command<any>("delete_credential", { scope, name, kind });
+}
+
+export async function fetchForeignLanguageRuntime(language: string) {
+  return fetchCredential(FOREIGN_LANGUAGE_SCOPE, language, "config") as Promise<CredentialDetail & { value?: ForeignLanguageRuntimeConfig }>;
+}
+
+export async function saveForeignLanguageRuntime(language: string, value: ForeignLanguageRuntimeConfig) {
+  return saveCredential(FOREIGN_LANGUAGE_SCOPE, language, value, "config");
 }
 
 export async function approveApproval(approvalId: string) {

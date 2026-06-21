@@ -44,7 +44,7 @@ async function submit() {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: #f3f6f9;
+  background: var(--surface-app);
 }
 
 .login-card {
@@ -52,42 +52,42 @@ async function submit() {
   gap: 12px;
   width: min(360px, calc(100vw - 32px));
   padding: 28px;
-  border: 1px solid #ccd4dd;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
 }
 
 .login-card h1 {
   margin: 0;
   font-size: 20px;
-  color: #17202a;
+  color: var(--text);
 }
 
 .login-sub {
   margin: 0 0 8px;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .login-card label {
   display: grid;
   gap: 4px;
-  color: #3b4652;
+  color: var(--text-subtle);
   font-size: 12px;
   font-weight: 600;
 }
 
 .login-card input {
   padding: 8px 10px;
-  border: 1px solid #ccd4dd;
-  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
   font: inherit;
 }
 
 .login-error {
   margin: 0;
-  color: #c53030;
+  color: var(--danger-fg);
   font-size: 12px;
 }
 
@@ -95,8 +95,8 @@ async function submit() {
   margin-top: 4px;
   padding: 9px 12px;
   border: 0;
-  border-radius: 6px;
-  background: #17202a;
+  border-radius: var(--radius);
+  background: var(--accent);
   color: #ffffff;
   font-weight: 600;
   cursor: pointer;

@@ -535,6 +535,122 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
 }
 
 #[tokio::test]
+async fn workflow_permission_takes_highest_of_user_and_team_grants() {
+    let (db, path) = test_db().await;
+    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "shared"))
+        .await
+        .unwrap();
+    let workflow_id = wf.id.expect("workflow id");
+    let user_id = db
+        .create_user("member".into(), None, false, None)
+        .await
+        .unwrap()
+        .id
+        .expect("user id");
+    let team_id = db
+        .create_team("ops".into())
+        .await
+        .unwrap()
+        .id
+        .expect("team id");
+    db.add_team_member(team_id, user_id).await.unwrap();
+    // a weak direct grant and a stronger team grant on the same workflow.
+    db.create_grant(grant(
+        workflow_id,
+        PrincipalType::User,
+        user_id,
+        Permission::View,
+    ))
+    .await
+    .unwrap();
+    db.create_grant(grant(
+        workflow_id,
+        PrincipalType::Team,
+        team_id,
+        Permission::Edit,
+    ))
+    .await
+    .unwrap();
+
+    let ctx = user_ctx(user_id);
+    let effective = crate::authz::workflow_permission(&db, &ctx, workflow_id).await;
+    assert_eq!(effective, Some(Permission::Edit));
+
+    // edit (and everything below it) is allowed; own is not.
+    assert!(
+        crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Run)
+            .await
+            .is_ok()
+    );
+    assert!(
+        crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Edit)
+            .await
+            .is_ok()
+    );
+    let denied = crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Own).await;
+    assert_eq!(
+        denied.expect_err("own should be denied").0,
+        StatusCode::FORBIDDEN
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn workflow_permission_is_none_without_a_grant() {
+    let (db, path) = test_db().await;
+    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "private"))
+        .await
+        .unwrap();
+    let workflow_id = wf.id.expect("workflow id");
+    let user_id = db
+        .create_user("stranger".into(), None, false, None)
+        .await
+        .unwrap()
+        .id
+        .expect("user id");
+
+    let ctx = user_ctx(user_id);
+    assert_eq!(
+        crate::authz::workflow_permission(&db, &ctx, workflow_id).await,
+        None
+    );
+    let denied = crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::View).await;
+    assert_eq!(
+        denied.expect_err("view should be denied").0,
+        StatusCode::FORBIDDEN
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn workflow_permission_admin_owns_everything_without_grants() {
+    let (db, path) = test_db().await;
+    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "any"))
+        .await
+        .unwrap();
+    let workflow_id = wf.id.expect("workflow id");
+
+    let admin = AuthContext {
+        principal_id: None,
+        is_admin: true,
+        kind: PrincipalKind::User,
+    };
+    assert_eq!(
+        crate::authz::workflow_permission(&db, &admin, workflow_id).await,
+        Some(Permission::Own)
+    );
+    assert!(
+        crate::authz::require_workflow(&db, &admin, workflow_id, Permission::Own)
+            .await
+            .is_ok()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn wdl_evaluate_accepts_legacy_lowered_expression() {
     let request = crate::handlers::wdl::EvaluateExpressionRequest {
         expression: Some(json!({ "$concat": ["hello ", { "$ref": { "params": ["name"] } }] })),
@@ -1741,7 +1857,35 @@ async fn result_consumer_dead_letters_poison_result_events_after_retries() {
         .await
         .unwrap();
     assert!(chunks.is_empty());
+
+    // the poison event leaves a durable dead-letter record on the result channel.
+    let dead_letters = db.fetch_dead_letters(None, 100).await.unwrap();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(
+        dead_letters[0]
+            .get("channel")
+            .and_then(runinator_models::value::Value::as_str),
+        Some("result")
+    );
+
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn result_consumer_backoff_grows_and_is_capped() {
+    let policy = crate::result_consumer::ResultConsumerPolicy::new(5, Duration::from_millis(100));
+    // full jitter keeps every delay within [0, base * 2^(attempt-1)] for early attempts.
+    for attempt in 1..=4u32 {
+        let ceiling = 100u128 * (1u128 << (attempt - 1));
+        let backoff = policy.backoff_for(attempt).as_millis();
+        assert!(
+            backoff <= ceiling,
+            "attempt {attempt} backoff {backoff} exceeded ceiling {ceiling}"
+        );
+    }
+    // a large attempt count is clamped to the 30s max backoff and cannot overflow.
+    let huge = policy.backoff_for(40).as_millis();
+    assert!(huge <= 30_000, "backoff {huge} exceeded max_backoff");
 }
 
 #[tokio::test]
@@ -1857,6 +2001,7 @@ fn action_command(
         },
         attempt: 1,
         parameters: json!({}),
+        trace_id: Uuid::nil(),
     }
 }
 
@@ -2028,6 +2173,31 @@ fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
         .unwrap(),
         created_at: None,
         updated_at: None,
+    }
+}
+
+fn user_ctx(user_id: Uuid) -> AuthContext {
+    AuthContext {
+        principal_id: Some(user_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+    }
+}
+
+fn grant(
+    workflow_id: Uuid,
+    principal_type: PrincipalType,
+    principal_id: Uuid,
+    permission: Permission,
+) -> Grant {
+    Grant {
+        id: None,
+        resource_type: ResourceType::Workflow,
+        resource_id: workflow_id,
+        principal_type,
+        principal_id,
+        permission,
+        created_at: chrono::Utc::now(),
     }
 }
 

@@ -50,6 +50,7 @@ use crate::models::ApiError;
     ),
     paths(
         crate::handlers::health::health,
+        crate::handlers::health::metrics,
         crate::handlers::health::ready,
         crate::handlers::auth::auth_config,
         crate::handlers::auth::login,
@@ -69,6 +70,8 @@ use crate::models::ApiError;
         crate::handlers::runs::get_workflow_runs,
         crate::handlers::providers::get_providers,
         crate::handlers::replicas::get_replicas,
+        crate::handlers::observability::get_dead_letters,
+        crate::handlers::observability::get_audit_log,
     ),
     components(schemas(ApiError)),
 )]

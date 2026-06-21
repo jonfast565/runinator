@@ -1,5 +1,5 @@
 <template>
-  <div class="modal-backdrop" @click.self="workflows.closeStepEditor">
+  <div ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="workflows.closeStepEditor">
     <form class="modal step-modal" @submit.prevent="workflows.submitStepEditor">
       <header class="modal-header">
         <div>
@@ -26,6 +26,12 @@
               <option value="fail">fail</option>
             </select>
           </label>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h3>Runtime</h3>
+        <div class="form-grid runtime-grid">
           <label class="checkbox">
             <input v-model="workflows.stepEditor.locked" type="checkbox" :disabled="isProtectedNode" />
             Locked
@@ -68,15 +74,22 @@
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'action'" class="form-section">
-        <h3>Step Parameters</h3>
+        <h3>Parameters</h3>
         <TypedParameterEditor
-          v-if="selectedAction"
+          v-if="selectedAction && selectedAction.parameters?.length"
           v-model="stepParameters"
           :parameters="selectedAction.parameters ?? []"
           :credential-scopes="currentProvider?.metadata.credential_scopes ?? []"
           :expression-context="expressionContext"
         />
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor
+          v-else
+          v-model="stepParameters"
+          title="Action Parameters"
+          empty-label="No action parameters configured."
+          :expression-context="expressionContext"
+        />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'approval'" class="form-section">
@@ -107,7 +120,8 @@
           <span class="form-field-label">When (passes once true)</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.gate_when_json" :context="expressionContext" title="Gate condition" />
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'signal'" class="form-section">
@@ -116,7 +130,8 @@
           <label>Signal Name <input v-model="workflows.stepEditor.signal_name" placeholder="Name delivered to POST /workflow_runs/{id}/signals" /></label>
         </div>
         <p class="hint">Pauses the run until this named signal is delivered. Set a node timeout to bound the wait.</p>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'condition'" class="form-section">
@@ -174,7 +189,8 @@
           <span class="form-field-label">Items</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.loop_items_json" :context="expressionContext" title="Loop items" />
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'switch'" class="form-section">
@@ -214,7 +230,8 @@
             <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
           </select>
         </label>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'parallel'" class="form-section">
@@ -230,7 +247,8 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.parallel_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.parallel_branches)">Add Branch</button>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'join'" class="form-section">
@@ -252,7 +270,8 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.join_wait_for, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.join_wait_for)">Add Dependency</button>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'try'" class="form-section">
@@ -280,7 +299,8 @@
             </select>
           </label>
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'map'" class="form-section">
@@ -299,7 +319,8 @@
           <span class="form-field-label">Items</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.map_items_json" :context="expressionContext" title="Map items" />
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'race'" class="form-section">
@@ -321,7 +342,8 @@
           <button type="button" @click="workflows.removeNodeRefEditor(workflows.stepEditor.race_branches, index)">Remove</button>
         </div>
         <button type="button" @click="workflows.addNodeRefEditor(workflows.stepEditor.race_branches)">Add Branch</button>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'output'" class="form-section">
@@ -329,21 +351,24 @@
         <label>Event Type <input v-model="workflows.stepEditor.output_event_type" /></label>
         <div class="form-field">
           <span class="form-field-label">Data</span>
-          <TypedValueEditor
-            :ty="outputDataType"
-            :model-value="outputData"
+          <KeyValueObjectEditor
+            v-if="outputDataIsObject"
+            v-model="outputDataObject"
+            empty-label="No output fields configured."
             :expression-context="expressionContext"
-            @update:model-value="onOutputDataChange"
           />
+          <p v-else class="hint">This output data is a WDL expression or non-object value. Edit it from the raw WDL data disclosure below.</p>
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Advanced WDL data" />
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.output_data_json" :context="expressionContext" title="Raw WDL data" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'input'" class="form-section">
         <h3>Input</h3>
         <label>Prompt <input v-model="workflows.stepEditor.input_prompt" /></label>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'config'" class="form-section">
@@ -356,7 +381,8 @@
           <span class="form-field-label">Metadata</span>
           <ExpressionJsonEditor v-model="workflows.stepEditor.config_metadata_json" :context="expressionContext" title="Config metadata" />
         </div>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section v-if="workflows.stepEditor.kind === 'subflow'" class="form-section">
@@ -379,8 +405,13 @@
           :expression-context="expressionContext"
           @update:model-value="onSubflowParametersChange"
         />
-        <p v-else class="hint">Select a workflow to configure its parameters, or use the advanced editor below.</p>
-        <AdvancedWdlParameters v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" />
+        <KeyValueObjectEditor
+          v-else
+          v-model="subflowParameters"
+          empty-label="Select a workflow or add subflow parameters."
+          :expression-context="expressionContext"
+        />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
       <section class="form-section">
@@ -411,18 +442,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useProvidersStore } from "../../stores/providers";
 import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
 import { parseObject } from "../../utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
+import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflow-references";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
-import type { RuninatorType } from "../../types/models";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -439,6 +470,45 @@ const stepParameters = computed({
   get: () => parseObject(workflows.stepEditor.parameters_json, {}),
   set: (value) => {
     workflows.stepEditor.parameters_json = pretty(value);
+  }
+});
+const reservedParameterKeys = computed(() => {
+  switch (workflows.stepEditor.kind) {
+    case "approval":
+      return new Set(["approval_type", "prompt"]);
+    case "gate":
+      return new Set(["kind", "when", "poll_interval", "timeout", "label"]);
+    case "signal":
+      return new Set(["name"]);
+    case "loop":
+      return new Set(["items", "target"]);
+    case "switch":
+      return new Set(["value", "cases", "default"]);
+    case "parallel":
+      return new Set(["branches"]);
+    case "join":
+      return new Set(["wait_for", "mode"]);
+    case "try":
+      return new Set(["body", "catch", "finally"]);
+    case "map":
+      return new Set(["items", "target", "concurrency"]);
+    case "race":
+      return new Set(["branches", "winner"]);
+    case "output":
+      return new Set(["event_type", "data"]);
+    case "input":
+      return new Set(["prompt"]);
+    case "config":
+      return new Set(["name", "metadata"]);
+    default:
+      return new Set<string>();
+  }
+});
+const additionalParameters = computed({
+  get: () => omitKeys(stepParameters.value, reservedParameterKeys.value),
+  set: (value) => {
+    const reserved = pickKeys(stepParameters.value, reservedParameterKeys.value);
+    workflows.stepEditor.parameters_json = pretty({ ...reserved, ...value });
   }
 });
 const isProtectedNode = computed(() => ["start", "end", "fail"].includes(workflows.selectedNode?.kind ?? ""));
@@ -489,17 +559,27 @@ const selectedSubflowInputType = computed(() => {
   return workflow?.input_type ?? null;
 });
 
-const subflowParameters = computed(() => parseObject(workflows.stepEditor.subflow_parameters_json, {}));
+const subflowParameters = computed({
+  get: () => parseObject(workflows.stepEditor.subflow_parameters_json, {}),
+  set: (value) => {
+    workflows.stepEditor.subflow_parameters_json = pretty(value);
+  }
+});
 
-// output data is an open "bag": no fixed fields, any number of named entries each holding any wdl value.
-const outputDataType: RuninatorType = { type: "struct", fields: {}, additional: { type: "any" } };
-const outputData = computed(() => parseObject(workflows.stepEditor.output_data_json, {}));
-
-// the bag editor and the raw-json fallback both write back to the same json string.
-function onOutputDataChange(value: unknown) {
-  const object = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  workflows.stepEditor.output_data_json = pretty(object);
-}
+const outputDataObject = computed({
+  get: () => parseObject(workflows.stepEditor.output_data_json, {}),
+  set: (value) => {
+    workflows.stepEditor.output_data_json = pretty(value);
+  }
+});
+const outputDataIsObject = computed(() => {
+  try {
+    const value = JSON.parse(workflows.stepEditor.output_data_json || "{}");
+    return Boolean(value && typeof value === "object" && !Array.isArray(value));
+  } catch {
+    return false;
+  }
+});
 
 // the typed editor and the raw-json fallback both write back to the same json string.
 function onSubflowParametersChange(value: unknown) {
@@ -507,19 +587,21 @@ function onSubflowParametersChange(value: unknown) {
   workflows.stepEditor.subflow_parameters_json = pretty(object);
 }
 
+function omitKeys(value: Record<string, unknown>, keys: Set<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.has(key)));
+}
+
+function pickKeys(value: Record<string, unknown>, keys: Set<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => keys.has(key)));
+}
+
+// the modal owns its escape handling via a scoped @keydown on its root, so focus it on open.
+const modalRoot = ref<HTMLElement | null>(null);
+
 onMounted(() => {
   if (providersStore.providers.length === 0 && !providersStore.loading) providersStore.fetchProviders();
-  window.addEventListener("keydown", onKeydown);
+  modalRoot.value?.focus();
 });
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", onKeydown);
-});
-
-// escape closes the node editor without applying changes.
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") workflows.closeStepEditor();
-}
 
 function onActionNameChange(event: Event) {
   const name = (event.target as HTMLSelectElement).value;

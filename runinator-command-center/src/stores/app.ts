@@ -43,7 +43,10 @@ export const navSections: NavSection[] = [
   {
     label: "Admin",
     items: [
-      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true }
+      { tab: "AdminSettings", label: "Settings", icon: "settings", adminOnly: true },
+      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true },
+      { tab: "DeadLetters", label: "Dead Letters", icon: "flag", adminOnly: true },
+      { tab: "AuditLog", label: "Audit Log", icon: "list", adminOnly: true }
     ]
   }
 ];

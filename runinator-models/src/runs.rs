@@ -135,6 +135,20 @@ pub struct ProviderExecutionRequest {
     pub events_jsonl_path: String,
 }
 
+impl ProviderExecutionRequest {
+    /// path the host touches to request cooperative cancellation across the plugin ffi boundary.
+    /// derived as a sibling of `events_jsonl_path` (the per-run work dir) so abi-2 plugins can locate
+    /// it without a new wire field; `None` when no events path is set (unit tests bypassing a worker).
+    pub fn cancel_signal_path(&self) -> Option<std::path::PathBuf> {
+        if self.events_jsonl_path.is_empty() {
+            return None;
+        }
+        std::path::Path::new(&self.events_jsonl_path)
+            .parent()
+            .map(|parent| parent.join("cancel.signal"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderExecutionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]

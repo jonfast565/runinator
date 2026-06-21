@@ -15,7 +15,7 @@ use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use runinator_ws::{AuthOptions, ReplicaAdvertisement, run_webserver};
+use runinator_ws::{AuthOptions, RateLimitConfig, ReplicaAdvertisement, run_webserver};
 
 use crate::config::{CliArgs, DatabaseKind};
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
@@ -60,11 +60,19 @@ async fn main() -> Result<(), SendableError> {
         auth_enabled,
         auth_access_ttl_seconds,
         auth_refresh_ttl_seconds,
+        rate_limit_enabled,
+        rate_limit_rps,
+        rate_limit_burst,
     } = args;
     let auth_options = AuthOptions {
         enabled: auth_enabled,
         access_ttl_secs: auth_access_ttl_seconds,
         refresh_ttl_secs: auth_refresh_ttl_seconds,
+    };
+    let rate_limit_options = RateLimitConfig {
+        enabled: rate_limit_enabled,
+        requests_per_second: rate_limit_rps,
+        burst: rate_limit_burst,
     };
     // treat a blank advertise host as unset so the replica list omits it rather than storing "".
     let advertise_host = {
@@ -141,6 +149,7 @@ async fn main() -> Result<(), SendableError> {
                 broker,
                 advertisement.clone(),
                 auth_options.clone(),
+                rate_limit_options,
             )
             .await?;
         }
@@ -163,6 +172,7 @@ async fn main() -> Result<(), SendableError> {
                 broker,
                 advertisement.clone(),
                 auth_options.clone(),
+                rate_limit_options,
             )
             .await?;
         }
@@ -185,6 +195,7 @@ async fn main() -> Result<(), SendableError> {
                 broker,
                 advertisement.clone(),
                 auth_options.clone(),
+                rate_limit_options,
             )
             .await?;
         }

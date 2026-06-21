@@ -166,6 +166,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   let pendingBreakpointPatch: { runId: string; breakpoints: string[]; mutationId: number } | null = null;
   const workflowNodeDetailExtra = ref("");
   const selectedStepId = ref("");
+  // the node currently showing its inline mini-editor; distinct from selection so a single
+  // click only selects while a double-click opens the inline form.
+  const inlineEditNodeId = ref("");
   const selectedGraphEdgeId = ref("");
   const selectedWorkflowRunNodeId = ref("");
   const selectedWorkflowNodeRunId = ref<string | null>(null);
@@ -1028,6 +1031,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function clearWorkflowGraphSelection() {
     selectedStepId.value = "";
+    inlineEditNodeId.value = "";
     selectedGraphEdgeId.value = "";
   }
 
@@ -1394,13 +1398,20 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (nodeId) {
       dismissStepEditorForCanvasEdit();
       selectedGraphEdgeId.value = "";
+      // a single click only selects the node for the inspector/reference panel; it must not
+      // drop the node into its inline mini-editor.
+      inlineEditNodeId.value = "";
       populateStepEditor(nodeId);
     }
   }
 
   function onGraphNodeDoubleClick(event: any) {
     const nodeId = event?.node?.id;
-    if (nodeId) openStepEditor(nodeId, false);
+    if (!nodeId) return;
+    // a double click opens the inline mini-editor on the node itself.
+    selectedGraphEdgeId.value = "";
+    populateStepEditor(nodeId);
+    inlineEditNodeId.value = nodeId;
   }
 
   function onGraphNodeDragStop(event: any) {
@@ -1993,6 +2004,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditorCreatedNodeId.value = creating ? nodeId : "";
     stepEditorError.value = "";
     workflowInspectorMode.value = "step";
+    // the full modal supersedes the inline mini-editor.
+    inlineEditNodeId.value = "";
     stepEditorOpen.value = true;
   }
 
@@ -2002,6 +2015,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditorCreating.value = false;
     stepEditorCreatedNodeId.value = "";
     selectedStepId.value = "";
+    inlineEditNodeId.value = "";
     // applying a step persists the workflow so canvas edits do not need a manual save.
     await saveSelectedWorkflowBundle();
   }
@@ -2027,6 +2041,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       syncWorkflowDraftToJson();
     }
     selectedStepId.value = "";
+    inlineEditNodeId.value = "";
     stepEditorOpen.value = false;
     stepEditorCreating.value = false;
     stepEditorCreatedNodeId.value = "";
@@ -2217,6 +2232,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     workflowRunGates,
     workflowNodeDetailExtra,
     selectedStepId,
+    inlineEditNodeId,
     selectedWorkflowRunNodeId,
     selectedWorkflowNodeRunId,
     stepEditor,

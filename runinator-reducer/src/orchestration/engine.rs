@@ -125,6 +125,36 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         return Ok(ReadyNodeDisposition::Complete);
     }
 
+    // enforce the reentry safety bound at runtime: a `while`/`until`/poll loop header (or any
+    // reentry-enabled node forming a bounded cycle) that has already been visited `max_visits` times
+    // exits via `on_exhausted` instead of looping again. without this a loop whose condition never
+    // goes false would spin forever, parking on each iteration. only checked when entering the node
+    // fresh, never while a prior visit is still in flight.
+    if reentry_exhausted(node, &node_runs, latest.as_ref()) {
+        match node.reentry.on_exhausted.as_ref() {
+            Some(target) => {
+                db.update_workflow_run_status(
+                    workflow_run.id,
+                    WorkflowStatus::Running,
+                    Some(target.as_str().to_string()),
+                    None,
+                    Some(format!("reentry_exhausted:{}", node.id)),
+                )
+                .await?;
+            }
+            None => {
+                transitions::block_node(
+                    db,
+                    &workflow_run,
+                    node,
+                    "Reentry max_visits exhausted with no on_exhausted target",
+                )
+                .await?;
+            }
+        }
+        return Ok(ReadyNodeDisposition::Complete);
+    }
+
     match &node.kind {
         runinator_models::workflows::WorkflowNodeKind::Start => {
             let node_run =
@@ -400,6 +430,31 @@ impl WorkflowProgressKey {
             latest_active_node_status: latest_active.map(|run| run.status),
         }
     }
+}
+
+// completed visits to a reentry-enabled node. each visit records exactly one node run for the node,
+// and the bound is only consulted when entering fresh (no in-flight run), so every counted run is a
+// finished iteration.
+fn reentry_visits(node: &WorkflowNode, node_runs: &[WorkflowNodeRun]) -> i64 {
+    node_runs
+        .iter()
+        .filter(|run| run.node_id == node.id)
+        .count() as i64
+}
+
+// true when a reentry-bounded node should exit via its safety bound instead of looping again. only
+// fires on a fresh entry (no in-flight run for the node), so an iteration still awaiting a worker is
+// never abandoned mid-flight.
+pub(super) fn reentry_exhausted(
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+    latest: Option<&WorkflowNodeRun>,
+) -> bool {
+    let entering_fresh = latest.map_or(true, |run| run.status.is_terminal());
+    entering_fresh
+        && node.reentry.enabled
+        && node.reentry.max_visits > 0
+        && reentry_visits(node, node_runs) >= node.reentry.max_visits
 }
 
 fn should_stop_inline_progress(

@@ -63,6 +63,7 @@ fn workflow_result_events_round_trip_with_json() {
         },
         attempt: 1,
         parameters: json!({}),
+        trace_id: Uuid::nil(),
     };
     let event = WorkflowResultEvent::chunk(
         &command,

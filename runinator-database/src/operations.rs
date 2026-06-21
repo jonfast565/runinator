@@ -2618,6 +2618,118 @@ where
         Ok(row.map(|row| mappers::row_to_gate(&row)))
     }
 
+    async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
+        let payload = record
+            .get("payload")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        sqlx::query(&self.render(
+            "INSERT INTO dead_letters (id, channel, event_id, dedupe_key, attempts, error, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(id)
+        .bind(json_str(&record, "channel"))
+        .bind(json_opt_uuid(&record, "event_id"))
+        .bind(json_opt_str(&record, "dedupe_key"))
+        .bind(json_opt_i64(&record, "attempts").unwrap_or(0))
+        .bind(json_str(&record, "error"))
+        .bind(payload.to_string())
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        let row = sqlx::query(&self.render(
+            "SELECT id, channel, event_id, dedupe_key, attempts, error, payload, created_at FROM dead_letters WHERE id = ?",
+        ))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_dead_letter(&row))
+    }
+
+    async fn fetch_dead_letters(
+        &self,
+        channel: Option<String>,
+        limit: i64,
+    ) -> Result<Vec<Value>, SendableError> {
+        let mut sql = String::from(
+            "SELECT id, channel, event_id, dedupe_key, attempts, error, payload, created_at FROM dead_letters",
+        );
+        if channel.is_some() {
+            sql.push_str(" WHERE channel = ?");
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(channel) = &channel {
+            query = query.bind(channel.clone());
+        }
+        query = query.bind(limit.max(1));
+        let rows = query.fetch_all(self.pool()).await?;
+        Ok(rows.iter().map(mappers::row_to_dead_letter).collect())
+    }
+
+    async fn record_audit_log(&self, record: Value) -> Result<Value, SendableError> {
+        let now = Utc::now().timestamp();
+        let id = Uuid::now_v7();
+        sqlx::query(&self.render(
+            "INSERT INTO audit_log (id, actor_id, actor_kind, action, resource_type, resource_id, outcome, detail, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(id)
+        .bind(json_opt_uuid(&record, "actor_id"))
+        .bind(json_str(&record, "actor_kind"))
+        .bind(json_str(&record, "action"))
+        .bind(json_opt_str(&record, "resource_type"))
+        .bind(json_opt_uuid(&record, "resource_id"))
+        .bind(json_str(&record, "outcome"))
+        .bind(json_opt_str(&record, "detail"))
+        .bind(json_metadata(&record))
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        let row = sqlx::query(&self.render(
+            "SELECT id, actor_id, actor_kind, action, resource_type, resource_id, outcome, detail, metadata, created_at FROM audit_log WHERE id = ?",
+        ))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_audit_log(&row))
+    }
+
+    async fn fetch_audit_log(
+        &self,
+        actor_id: Option<Uuid>,
+        action: Option<String>,
+        limit: i64,
+    ) -> Result<Vec<Value>, SendableError> {
+        let mut sql = String::from(
+            "SELECT id, actor_id, actor_kind, action, resource_type, resource_id, outcome, detail, metadata, created_at FROM audit_log",
+        );
+        let mut clauses = Vec::new();
+        if actor_id.is_some() {
+            clauses.push("actor_id = ?");
+        }
+        if action.is_some() {
+            clauses.push("action = ?");
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered);
+        if let Some(actor_id) = actor_id {
+            query = query.bind(actor_id);
+        }
+        if let Some(action) = &action {
+            query = query.bind(action.clone());
+        }
+        query = query.bind(limit.max(1));
+        let rows = query.fetch_all(self.pool()).await?;
+        Ok(rows.iter().map(mappers::row_to_audit_log).collect())
+    }
+
     async fn put_idempotency_key(
         &self,
         scope: String,

@@ -1,5 +1,5 @@
 <template>
-  <div class="modal-backdrop" @click.self="workflows.closeRunInput">
+  <div ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="workflows.closeRunInput">
     <form class="modal run-input-modal" @submit.prevent="onSubmit">
       <header class="modal-header">
         <div>
@@ -31,13 +31,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { JsonRecord, RuninatorType } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import RunInputForm from "../shared/RunInputForm.vue";
 
 const workflows = useWorkflowsStore();
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
+const modalRoot = ref<HTMLElement | null>(null);
+
+onMounted(() => modalRoot.value?.focus());
 
 const inputType = computed<RuninatorType>(() => workflows.selectedWorkflowInputType ?? { type: "any" });
 const storageKey = computed(() => String(workflows.selectedWorkflow?.id ?? workflows.selectedWorkflow?.name ?? "none"));

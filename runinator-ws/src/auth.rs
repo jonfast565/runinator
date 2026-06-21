@@ -59,6 +59,7 @@ fn is_public_path(path: &str) -> bool {
         path,
         "/health"
             | "/ready"
+            | "/metrics"
             | "/openapi.json"
             | "/docs"
             | "/auth/config"

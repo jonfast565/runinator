@@ -14,7 +14,7 @@
   min-width: 0;
   flex-direction: column;
   gap: 18px;
-  border-right: 1px solid #cbd5df;
+  border-right: 1px solid var(--border);
   background: var(--surface-inverse);
   color: var(--text-inverse);
   padding: 16px 12px;
@@ -69,7 +69,7 @@
   min-width: 24px;
   border-radius: var(--radius-pill);
   background: var(--surface-inverse-accent);
-  color: #cbd5df;
+  color: var(--text-inverse-muted);
   font-size: 12px;
   text-align: center;
 }
@@ -94,7 +94,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -108,7 +108,7 @@
 .app-loader-spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid rgba(0, 0, 0, 0.1);
+  border: 4px solid var(--border-subtle);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -248,7 +248,7 @@ main {
   background: var(--surface);
   color: var(--text-muted);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(23, 32, 42, 0.12);
+  box-shadow: var(--shadow-control);
 }
 
 .split-pane-vertical > .split-handle > .split-collapse-btn {
@@ -268,7 +268,7 @@ main {
   left: 4px;
   width: 2px;
   border-radius: var(--radius-pill);
-  background: #c8d2dd;
+  background: var(--border);
   content: "";
   transition:
     background 120ms ease,
@@ -310,7 +310,7 @@ main {
   border-radius: var(--radius-lg);
   background: var(--surface);
   padding: 14px;
-  box-shadow: 0 1px 2px rgba(23, 32, 42, 0.04);
+  box-shadow: var(--shadow-panel);
   overflow: hidden;
 }
 
@@ -396,17 +396,17 @@ main {
   bottom: 18px;
   z-index: 20;
   max-width: min(520px, calc(100vw - 40px));
-  border: 1px solid #bde5c8;
+  border: 1px solid var(--success-bg);
   border-radius: var(--radius-lg);
-  background: #f0fbf4;
+  background: var(--success-bg);
   color: var(--success-fg);
   padding: 10px 12px;
   box-shadow: var(--shadow-toast);
 }
 
 .toast.error {
-  border-color: #f1b8b2;
-  background: #fff1f0;
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
   color: var(--danger-fg);
 }
 
@@ -445,7 +445,7 @@ main {
     align-items: center;
     gap: 10px;
     border-right: 0;
-    border-bottom: 1px solid #cbd5df;
+    border-bottom: 1px solid var(--border);
     padding: 8px 10px;
     overflow-x: auto;
   }

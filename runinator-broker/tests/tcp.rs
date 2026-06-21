@@ -35,6 +35,7 @@ async fn tcp_broker_delivers_published_messages() {
             },
             attempt: 1,
             parameters: json!({ "value": true }),
+            trace_id: Uuid::nil(),
         },
         dedupe_key: Some("tcp-test".into()),
         enqueued_at: Utc::now(),
@@ -162,5 +163,6 @@ fn action_command() -> ActionCommand {
         },
         attempt: 1,
         parameters: json!({ "value": true }),
+        trace_id: Uuid::nil(),
     }
 }

@@ -331,6 +331,10 @@ pub(super) async fn process_race_node<T: DatabaseImpl>(
         .map(|branch| branch.as_str().to_string())
         .collect::<Vec<_>>();
     if let Some(winner) = race_winner(&branches, params.winner, node_runs) {
+        // the race is decided: mark any still-running losing branch as canceled so its node run is
+        // terminal and the ws drive path can signal the worker to stop wasted work (the v1 limitation
+        // noted in the README). branches that never started or already settled are left untouched.
+        cancel_losing_race_branches(db, &branches, &winner, node_runs).await?;
         let output = RaceOutput {
             output: latest_succeeded_output_for(node_runs, &winner),
             winner,
@@ -573,6 +577,41 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
         }
         _ => block_node(db, workflow_run, node, "Try node has invalid phase").await,
     }
+}
+
+// cancel the latest non-terminal node run of each losing race branch. marking it `Canceled` makes
+// the run record consistent immediately; the ws drive path then publishes a node-run-targeted worker
+// control so an in-flight execution actually stops.
+async fn cancel_losing_race_branches<T: DatabaseImpl>(
+    db: &T,
+    branches: &[String],
+    winner: &str,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    for branch in branches {
+        if branch == winner {
+            continue;
+        }
+        let Some(node_run) = node_runs
+            .iter()
+            .rev()
+            .find(|run| run.node_id == *branch && !run.status.is_terminal())
+        else {
+            continue;
+        };
+        db.update_workflow_node_run(
+            node_run.id,
+            WorkflowStatus::Canceled,
+            None,
+            None,
+            None,
+            None,
+            Some("race_branch_canceled".into()),
+            Some("Canceled because another race branch won".into()),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 fn latest_succeeded_output_for(node_runs: &[WorkflowNodeRun], node_id: &str) -> Option<Value> {

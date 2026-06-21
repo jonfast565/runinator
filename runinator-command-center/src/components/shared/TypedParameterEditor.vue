@@ -288,7 +288,7 @@ function isExpressionValue(value: unknown): boolean {
 .parameter-label small,
 .hint,
 .description {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .description {
@@ -306,15 +306,15 @@ function isExpressionValue(value: unknown): boolean {
   grid-template-columns: minmax(120px, 1fr) auto minmax(80px, 0.8fr);
   gap: 8px;
   align-items: baseline;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .type-rows code {
-  color: #2f3a45;
+  color: var(--text-subtle);
   font-size: 12px;
 }
 .error {
-  color: #c53030;
+  color: var(--danger-fg);
   font-size: 12px;
   margin: 0;
 }

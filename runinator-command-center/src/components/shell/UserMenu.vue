@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "../shared/Icon.vue";
 import { useAuthStore } from "../../stores/auth";
 
@@ -79,9 +79,15 @@ function onDocumentKeyDown(event: KeyboardEvent) {
   if (event.key === "Escape") close();
 }
 
-onMounted(() => {
-  document.addEventListener("pointerdown", onDocumentPointerDown);
-  document.addEventListener("keydown", onDocumentKeyDown);
+// dismissal listeners live only while the menu is open, so they are not always-on global handlers.
+watch(open, (isOpen) => {
+  if (isOpen) {
+    document.addEventListener("pointerdown", onDocumentPointerDown);
+    document.addEventListener("keydown", onDocumentKeyDown);
+  } else {
+    document.removeEventListener("pointerdown", onDocumentPointerDown);
+    document.removeEventListener("keydown", onDocumentKeyDown);
+  }
 });
 
 onBeforeUnmount(() => {

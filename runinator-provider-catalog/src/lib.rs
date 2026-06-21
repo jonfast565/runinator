@@ -38,3 +38,6 @@ pub fn metadata() -> Vec<ProviderMetadata> {
         .map(|provider| provider.metadata())
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

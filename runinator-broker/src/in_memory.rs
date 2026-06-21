@@ -688,6 +688,7 @@ mod tests {
             },
             attempt: 1,
             parameters: json!({}),
+            trace_id: Uuid::nil(),
         }
     }
 }

@@ -40,7 +40,9 @@ pub async fn run_webserver<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     advertisement: ReplicaAdvertisement,
     auth: crate::auth::AuthOptions,
+    rate_limit: crate::rate_limit::RateLimitConfig,
 ) -> Result<(), SendableError> {
+    crate::stability::init_metrics();
     seed_builtin_catalog(pool.as_ref()).await?;
     let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
     let jwt_secret_previous = load_jwt_secret_previous(pool.as_ref()).await?;
@@ -157,7 +159,14 @@ pub async fn run_webserver<T: DatabaseImpl>(
         )),
         tokio::spawn(run_replica_reaper(pool.clone(), notify.clone())),
     ];
-    let app = build_router(pool, bus, broker, auth_config);
+    if rate_limit.enabled {
+        log::info!(
+            "HTTP API rate limiting is ENABLED ({} req/s, burst {})",
+            rate_limit.requests_per_second,
+            rate_limit.burst
+        );
+    }
+    let app = build_router(pool, bus, broker, auth_config, rate_limit);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(

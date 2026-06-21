@@ -72,6 +72,11 @@ pub const DELIVERABLE_SOURCE_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.deliverable.source_unresolved",
     "Deliverable source did not resolve to an artifact",
 );
+pub const FOREIGN_LANGUAGE_CONFIG_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI144",
+    "workflow.foreign_language.config_missing",
+    "Foreign language runtime config is missing",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     WORKFLOW_NOT_FOUND,
@@ -88,6 +93,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     SUBFLOW_INVALID_ID,
     COMPUTE_NODE_FAILED,
     DELIVERABLE_SOURCE_UNRESOLVED,
+    FOREIGN_LANGUAGE_CONFIG_MISSING,
 ];
 
 /// reducer error dictionary.

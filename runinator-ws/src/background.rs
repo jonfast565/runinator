@@ -2,8 +2,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use log::{error, info, warn};
 use runinator_broker::Broker;
-use runinator_comm::{ControlKind, WsIngressCommand};
+use runinator_comm::{ControlCommand, ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::workflows::WorkflowStatus;
 use tokio::sync::{Notify, broadcast};
 use uuid::Uuid;
 
@@ -201,6 +202,16 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
                 if count >= MAX_INGRESS_ATTEMPTS {
                     attempts.remove(&key);
                     warn!("Dead-lettering ingress message after {} attempt(s)", count);
+                    crate::audit::persist_dead_letter(
+                        db.as_ref(),
+                        "ingress",
+                        None,
+                        Some(delivery.dedupe_key.clone()),
+                        count,
+                        &err.to_string(),
+                        serde_json::to_value(&delivery.command).unwrap_or_default(),
+                    )
+                    .await;
                     if let Err(err) = broker
                         .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
                         .await
@@ -233,6 +244,7 @@ async fn apply_ingress<T: DatabaseImpl>(
             if let Some(run_id) =
                 repository::drive_ready_node(db, *ready_node_id, instance_id.to_string()).await?
             {
+                signal_canceled_executing_node_runs(db, broker, run_id).await;
                 emit_workflow_run(events, run_id);
             }
             Ok(())
@@ -254,6 +266,36 @@ async fn apply_ingress<T: DatabaseImpl>(
             }
             emit_workflow_run(events, *workflow_run_id);
             Ok(())
+        }
+    }
+}
+
+/// publish a node-run-targeted worker cancel for every node run the reducer has just marked
+/// `Canceled` while a worker still holds its executor lease (e.g. a losing race branch). best-effort:
+/// a missed signal at worst lets the loser run to completion, the pre-existing v1 behavior. idempotent
+/// across drives because the worker clears its executor claim once the cancel lands.
+async fn signal_canceled_executing_node_runs<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    workflow_run_id: Uuid,
+) {
+    let node_runs = match db.fetch_workflow_node_runs(workflow_run_id).await {
+        Ok(node_runs) => node_runs,
+        Err(err) => {
+            warn!(
+                "Failed to load node runs for run {} cancel fan-out: {}",
+                workflow_run_id, err
+            );
+            return;
+        }
+    };
+    for run in node_runs {
+        if run.status != WorkflowStatus::Canceled || run.current_executor_replica_id.is_none() {
+            continue;
+        }
+        let command = ControlCommand::for_node_run(workflow_run_id, run.id, ControlKind::Cancel);
+        if let Err(err) = broker.publish_control(command).await {
+            warn!("Failed to publish cancel for node run {}: {}", run.id, err);
         }
     }
 }

@@ -560,6 +560,33 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         gate_id: Uuid,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
 
+    /// Persist a dead-lettered broker message for later inspection/replay.
+    fn record_dead_letter(
+        &self,
+        record: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+
+    /// Fetch dead-letter rows, newest first, with an optional channel filter.
+    fn fetch_dead_letters(
+        &self,
+        channel: Option<String>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<Value>, SendableError>> + Send;
+
+    /// Append an audit-log entry (auth/authz/sensitive op).
+    fn record_audit_log(
+        &self,
+        record: Value,
+    ) -> impl Future<Output = Result<Value, SendableError>> + Send;
+
+    /// Fetch audit-log rows, newest first, with optional actor and action filters.
+    fn fetch_audit_log(
+        &self,
+        actor_id: Option<Uuid>,
+        action: Option<String>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<Value>, SendableError>> + Send;
+
     /// Store a result for an idempotency key.
     fn put_idempotency_key(
         &self,

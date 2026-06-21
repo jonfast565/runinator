@@ -1021,10 +1021,7 @@ impl<'a> Decompiler<'a> {
         }
 
         let base = self.indent;
-        let mut out = format!("compute {language}");
-        if let Some(image) = config.get("image").and_then(Value::as_str) {
-            out.push_str(&format!(" using {}", quote(image)));
-        }
+        let mut out = format!("compute {}", quote(language));
         out.push_str(" ```\n");
         out.push_str(source);
         if !source.ends_with('\n') {

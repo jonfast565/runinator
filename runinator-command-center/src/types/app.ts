@@ -12,7 +12,10 @@ export type AppTab =
   | "Gates"
   | "Configs"
   | "Secrets"
-  | "Permissions";
+  | "AdminSettings"
+  | "Permissions"
+  | "DeadLetters"
+  | "AuditLog";
 
 export interface ResourceEndpoint {
   label: string;

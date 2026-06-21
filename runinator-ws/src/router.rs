@@ -51,7 +51,7 @@ use crate::handlers::{
         run_to_cursor_workflow_run, skip_debug_workflow_node, step_debug_workflow_run,
         update_workflow_run_debug,
     },
-    health::{health, ready},
+    health::{health, metrics, ready},
     node_runs::{
         add_workflow_node_run_artifact, append_workflow_node_run_chunk,
         claim_workflow_node_run_executor, create_workflow_node_run,
@@ -63,6 +63,7 @@ use crate::handlers::{
         create_notification, list_notifications, mark_all_notifications_read,
         mark_notification_read,
     },
+    observability::{get_audit_log, get_dead_letters},
     packs::import_pack,
     providers::{get_providers, import_provider_bundle, upsert_provider},
     replicas::{
@@ -93,6 +94,7 @@ use crate::handlers::{
         get_workflow, get_workflows, import_workflow_bundle, upsert_workflow, validate_workflow,
     },
 };
+use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
 use crate::websocket::{ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run};
 
 pub fn build_router<T: DatabaseImpl>(
@@ -100,8 +102,10 @@ pub fn build_router<T: DatabaseImpl>(
     events: EventSender,
     broker: Arc<dyn Broker>,
     auth: AuthConfig,
+    rate_limit: RateLimitConfig,
 ) -> Router {
     let auth_config_arc = Arc::new(auth);
+    let rate_limiter = Arc::new(RateLimiter::new(rate_limit));
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -111,6 +115,7 @@ pub fn build_router<T: DatabaseImpl>(
     Router::new()
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
         .route("/openapi.json", get(crate::openapi::openapi_json))
         .route("/docs", get(crate::openapi::openapi_docs))
@@ -439,6 +444,14 @@ pub fn build_router<T: DatabaseImpl>(
             post(close_gate::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/dead_letters",
+            get(get_dead_letters::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/audit_log",
+            get(get_audit_log::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/automation_events",
             get(get_automation_events::<T>)
                 .post(create_automation_event::<T>)
@@ -578,6 +591,9 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(Extension(events))
         .layer(Extension(broker))
         .layer(Extension(auth_config_arc.clone()))
+        // the rate limiter is layered inside the auth middleware so it can key by the resolved
+        // principal; auth inserts the `AuthContext` before this layer runs.
+        .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
         .layer(from_fn_with_state(
             AuthState {
                 config: auth_config_arc,

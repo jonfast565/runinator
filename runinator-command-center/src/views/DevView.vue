@@ -1,5 +1,5 @@
 <template>
-  <section class="pane dev-pane">
+  <section ref="devPane" class="pane dev-pane" tabindex="-1" @keydown="onKeydown">
     <div class="dev-layout">
       <section class="panel dev-panel">
         <div class="panel-toolbar">
@@ -310,6 +310,7 @@ const statusText = ref("Ready.");
 const lastInspectAt = ref<Date | null>(null);
 const busy = ref(false);
 const saving = ref(false);
+const devPane = ref<HTMLElement | null>(null);
 let inspectTimer = 0;
 let runTimer = 0;
 let lastFingerprint = "";
@@ -348,14 +349,14 @@ onMounted(async () => {
       void inspectPack({ quiet: true, applyOnChange: autoApply.value });
     }
   }, 1500);
-  window.addEventListener("keydown", onKeydown);
+  // focus the pane so its scoped keydown shortcuts work without first clicking inside.
+  devPane.value?.focus();
 });
 
 onBeforeUnmount(() => {
   window.clearInterval(inspectTimer);
   window.clearInterval(runTimer);
   window.clearTimeout(autoSaveTimer);
-  window.removeEventListener("keydown", onKeydown);
   document.title = defaultDocumentTitle;
 });
 

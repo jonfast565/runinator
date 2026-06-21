@@ -94,6 +94,8 @@ pub fn run() {
             crate::commands::update_api_key,
             crate::commands::revoke_api_key,
             crate::commands::rotate_api_key,
+            crate::commands::list_dead_letters,
+            crate::commands::list_audit_log,
             crate::commands::fetch_all_artifacts,
             crate::commands::upload_artifact,
             crate::commands::download_artifact,

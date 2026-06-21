@@ -81,9 +81,6 @@ impl Lowerer {
         let mut config = Map::new();
         config.insert("language".into(), Value::String(foreign.language.clone()));
         config.insert("source".into(), Value::String(foreign.source.clone()));
-        if let Some(image) = &foreign.image {
-            config.insert("image".into(), Value::String(image.clone()));
-        }
 
         let mut action_obj = Map::new();
         action_obj.insert("provider".into(), Value::String("std".into()));

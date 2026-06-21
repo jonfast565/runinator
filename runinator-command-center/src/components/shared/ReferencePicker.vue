@@ -69,15 +69,15 @@ const filteredGroups = computed<ReferenceGroup[]>(() => {
   flex-direction: column;
   min-height: 0;
   max-height: 280px;
-  border-top: 1px solid #e3e8ee;
-  background: #fbfcfe;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
 }
 
 .reference-search {
   margin: 8px;
   padding: 5px 8px;
-  border: 1px solid #ccd4dd;
-  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   font-size: 12px;
 }
 
@@ -90,7 +90,7 @@ const filteredGroups = computed<ReferenceGroup[]>(() => {
 
 .reference-empty {
   margin: 4px 2px;
-  color: #8a949f;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -98,8 +98,8 @@ const filteredGroups = computed<ReferenceGroup[]>(() => {
   position: sticky;
   top: 0;
   padding: 5px 2px;
-  background: #fbfcfe;
-  color: #66717e;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -121,17 +121,17 @@ const filteredGroups = computed<ReferenceGroup[]>(() => {
 }
 
 .reference-row:hover {
-  background: #eef3f9;
+  background: var(--surface-hover);
 }
 
 .reference-label {
-  color: #2f3a45;
+  color: var(--text);
   font-size: 12px;
 }
 
 .reference-type {
   flex: 0 0 auto;
-  color: #8a949f;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
@@ -140,26 +140,26 @@ const filteredGroups = computed<ReferenceGroup[]>(() => {
   align-items: center;
   gap: 6px;
   padding: 7px 8px;
-  border-top: 1px solid #e3e8ee;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .reference-transforms-label {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
 }
 
 .reference-transforms button {
   padding: 3px 8px;
-  border: 1px solid #ccd4dd;
-  border-radius: 4px;
-  background: #fff;
-  color: #3b4652;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-subtle);
   cursor: pointer;
   font-size: 12px;
 }
 
 .reference-transforms button:hover {
-  background: #eef3f9;
+  background: var(--surface-hover);
 }
 </style>

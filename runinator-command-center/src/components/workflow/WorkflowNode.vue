@@ -29,7 +29,7 @@
       </span>
       <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
     </div>
-    <form v-if="isSelected && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
+    <form v-if="isInlineEditing && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
       <input v-model="inlineId" aria-label="Node ID" placeholder="Step ID" />
       <input v-model="inlineValue" type="text" aria-label="Node name" placeholder="Name" />
       <div class="node-inline-actions">
@@ -208,7 +208,8 @@ const isDebugActive = computed(() => {
   if (!debug?.paused) return false;
   return debug.current_node_id === props.id;
 });
-const isSelected = computed(() => workflows.selectedStepId === props.id);
+// the inline mini-editor opens on double-click only, tracked separately from selection.
+const isInlineEditing = computed(() => workflows.inlineEditNodeId === props.id);
 // surface the step id in the topline whenever a custom display name hides it from the title.
 const showNodeId = computed(() => props.data.title !== props.id);
 const compassHandles = computed(() => [
@@ -261,7 +262,8 @@ function applyInlineEdit() {
 function cancelInlineEdit() {
   inlineId.value = props.id;
   inlineValue.value = props.data.inlineEdit?.value ?? "";
-  workflows.clearWorkflowGraphSelection();
+  // close the inline form but keep the node selected for the inspector.
+  workflows.inlineEditNodeId = "";
 }
 
 function onInputDraftChange(value: string) {
@@ -383,8 +385,8 @@ function formatInputDraft(value: unknown): string {
   width: 11px;
   height: 11px;
   opacity: 0;
-  border: 2px solid #ffffff;
-  background: #3498db;
+  border: 2px solid var(--surface);
+  background: var(--accent);
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
@@ -402,7 +404,7 @@ function formatInputDraft(value: unknown): string {
 }
 
 .workflow-handle-target {
-  background: #7f8c8d;
+  background: var(--text-muted);
 }
 
 .workflow-handle-source {
@@ -416,8 +418,8 @@ function formatInputDraft(value: unknown): string {
   overflow: hidden;
   padding: 1px 4px;
   border-radius: 4px;
-  background: #eef4ff;
-  color: #34495e;
+  background: var(--accent-soft);
+  color: var(--text-subtle);
   font-size: 9px;
   opacity: 0;
   pointer-events: none;
@@ -439,14 +441,14 @@ function formatInputDraft(value: unknown): string {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #f59e0b;
+  background: var(--warn-solid);
   color: #ffffff;
   font-size: 10px;
   font-weight: 700;
 }
 
 .node-validation-badge.error {
-  background: #dc2626;
+  background: var(--danger-solid);
 }
 
 .node-execution-count {
@@ -455,10 +457,10 @@ function formatInputDraft(value: unknown): string {
   height: 16px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #b7c8dc;
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
-  background: #ffffff;
-  color: #334155;
+  background: var(--surface);
+  color: var(--text-subtle);
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -475,8 +477,8 @@ function formatInputDraft(value: unknown): string {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 3px 5px;
   font-size: 11px;
 }
@@ -504,7 +506,7 @@ function formatInputDraft(value: unknown): string {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -518,24 +520,24 @@ function formatInputDraft(value: unknown): string {
 .node-waiting-icon {
   display: inline-grid;
   place-items: center;
-  color: #0f6e9f;
+  color: var(--info-fg);
 }
 
 .node-kind-icon {
-  color: #3498db;
+  color: var(--accent-text);
 }
 
 .node-info {
   position: relative;
   display: inline-grid;
   place-items: center;
-  color: #94a3b8;
+  color: var(--text-faint);
   cursor: help;
   pointer-events: all;
 }
 
 .node-info:hover {
-  color: #3498db;
+  color: var(--accent-text);
 }
 
 .node-info-pop {
@@ -545,11 +547,11 @@ function formatInputDraft(value: unknown): string {
   z-index: 20;
   width: 180px;
   padding: 7px 9px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
-  color: #475569;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--workflow-menu-shadow);
+  color: var(--text-subtle);
   font-size: 11px;
   line-height: 1.4;
   text-align: left;
@@ -564,7 +566,7 @@ function formatInputDraft(value: unknown): string {
 .node-info-pop strong {
   display: block;
   margin-bottom: 2px;
-  color: #17202a;
+  color: var(--text);
   text-transform: capitalize;
 }
 
@@ -577,7 +579,7 @@ function formatInputDraft(value: unknown): string {
 .node-id {
   flex: 1;
   overflow: hidden;
-  color: #95a0ad;
+  color: var(--text-faint);
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -586,7 +588,7 @@ function formatInputDraft(value: unknown): string {
 .node-title {
   max-width: 100%;
   overflow: hidden;
-  color: #17202a;
+  color: var(--text);
   font-weight: 700;
   text-align: center;
   text-overflow: ellipsis;
@@ -597,7 +599,7 @@ function formatInputDraft(value: unknown): string {
 .node-prompt {
   max-width: 100%;
   overflow: hidden;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 11px;
   text-align: center;
   text-overflow: ellipsis;
@@ -605,17 +607,17 @@ function formatInputDraft(value: unknown): string {
 }
 
 .node-prompt {
-  color: #8a5a00;
+  color: var(--warning-fg);
 }
 
 .node-gate-state {
   width: 100%;
   margin-top: 4px;
   padding: 5px 6px;
-  border: 1px solid rgba(14, 116, 144, 0.16);
+  border: 1px solid var(--info-bg);
   border-radius: 5px;
-  background: rgba(224, 242, 254, 0.6);
-  color: #155e75;
+  background: var(--info-bg);
+  color: var(--info-fg);
   font-size: 10px;
   text-align: left;
   box-sizing: border-box;
@@ -634,12 +636,12 @@ function formatInputDraft(value: unknown): string {
 }
 
 .node-gate-status {
-  color: #0f766e;
+  color: var(--success-fg);
 }
 
 .node-gate-reason {
   margin-top: 3px;
-  color: #0f172a;
+  color: var(--text);
   text-transform: none;
   word-break: break-word;
 }
@@ -653,8 +655,8 @@ function formatInputDraft(value: unknown): string {
 .spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #3498db;
+  border: 2px solid var(--border-subtle);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -674,7 +676,7 @@ function formatInputDraft(value: unknown): string {
 }
 
 .node-input-error {
-  color: #b91c1c;
+  color: var(--danger-fg);
   font-size: 11px;
 }
 
@@ -689,11 +691,11 @@ function formatInputDraft(value: unknown): string {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #9bd4ea;
-  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 3px 5px;
   font-size: 11px;
-  background: rgba(240, 249, 255, 0.95);
+  background: var(--surface);
 }
 
 .node-btn {
@@ -705,8 +707,8 @@ function formatInputDraft(value: unknown): string {
   pointer-events: all;
 }
 
-.approve { background: #2ecc71; color: white; }
-.reject { background: #e74c3c; color: white; }
+.approve { background: var(--success-fg); color: #ffffff; }
+.reject { background: var(--danger-solid); color: #ffffff; }
 
 .breakpoint-dot {
   position: absolute;
@@ -715,9 +717,9 @@ function formatInputDraft(value: unknown): string {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #dc2626;
-  border: 1px solid #fff;
-  box-shadow: 0 0 0 1px #dc2626;
+  background: var(--danger-solid);
+  border: 1px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--danger-solid);
   z-index: 2;
 }
 
@@ -730,10 +732,10 @@ function formatInputDraft(value: unknown): string {
   height: 16px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #94a3b8;
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
-  background: #ffffff;
-  color: #475569;
+  background: var(--surface);
+  color: var(--text-subtle);
   z-index: 2;
 }
 
@@ -746,10 +748,10 @@ function formatInputDraft(value: unknown): string {
   height: 16px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #38bdf8;
+  border: 1px solid var(--info-fg);
   border-radius: 50%;
-  background: #ecfeff;
-  color: #0369a1;
+  background: var(--info-bg);
+  color: var(--info-fg);
   z-index: 2;
 }
 
@@ -758,7 +760,7 @@ function formatInputDraft(value: unknown): string {
 }
 
 .node-breakpointed {
-  border-color: #dc2626 !important;
+  border-color: var(--danger-solid) !important;
 }
 
 .node-skipped {
@@ -767,7 +769,7 @@ function formatInputDraft(value: unknown): string {
 }
 
 .node-debug-active {
-  border-color: #f59e0b !important;
+  border-color: var(--warn-solid) !important;
   animation: debug-pulse 1.4s ease-in-out infinite;
 }
 

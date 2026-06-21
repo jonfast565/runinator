@@ -2296,7 +2296,7 @@ fn compute_pure_lowers_to_std_run() {
 fn foreign_compute_lowers_to_std_code_and_round_trips() {
     let src = r#"
         workflow "Foreign Compute" v1 {
-            node result <- compute python using "python:3.12-alpine" ```
+            node result <- compute "python" ```
 import json
 import sys
 
@@ -2317,10 +2317,7 @@ print(json.dumps({"total": ctx["input"]["a"] + 1}))
     assert_eq!(node["action"]["function"], "code");
     assert_eq!(node["action"]["timeout_seconds"], 45);
     assert_eq!(node["action"]["configuration"]["language"], "python");
-    assert_eq!(
-        node["action"]["configuration"]["image"],
-        "python:3.12-alpine"
-    );
+    assert!(node["action"]["configuration"]["image"].is_null());
     assert!(
         node["action"]["configuration"]["source"]
             .as_str()
@@ -2329,11 +2326,38 @@ print(json.dumps({"total": ctx["input"]["a"] + 1}))
     );
 
     let wdl = decompile(&definition).expect("decompile");
-    assert!(
-        wdl.contains("compute python using \"python:3.12-alpine\""),
-        "{wdl}"
-    );
+    assert!(wdl.contains("compute \"python\""), "{wdl}");
+    assert!(!wdl.contains("using"), "{wdl}");
     assert!(wdl.contains("json.load(sys.stdin)"), "{wdl}");
+    let second = compile_str(&wdl, &default_test_options()).expect("recompile");
+    assert_eq!(graph_value(&definition), graph_value(&second));
+}
+
+#[test]
+fn foreign_compute_keeps_restored_language_alias_as_string() {
+    let src = r#"
+        workflow "Foreign Compute Alias" v1 {
+            node result <- compute "js" ```
+console.log(JSON.stringify({ total: 42 }))
+```
+        }
+    "#;
+    let definition = compile(src);
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    let node = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "action")
+        .expect("compute action node");
+    assert_eq!(node["action"]["provider"], "std");
+    assert_eq!(node["action"]["function"], "code");
+    assert_eq!(node["action"]["configuration"]["language"], "js");
+    assert!(node["action"]["configuration"]["image"].is_null());
+
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(wdl.contains("compute \"js\""), "{wdl}");
+    assert!(!wdl.contains("using"), "{wdl}");
     let second = compile_str(&wdl, &default_test_options()).expect("recompile");
     assert_eq!(graph_value(&definition), graph_value(&second));
 }

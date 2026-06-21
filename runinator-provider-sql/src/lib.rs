@@ -86,3 +86,6 @@ impl Provider for SqlProvider {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

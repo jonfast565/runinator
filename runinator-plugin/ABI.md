@@ -17,7 +17,21 @@ int call_service(const char *request_json_path, const char *response_json_path);
 - `runinator_abi_version` must return `1` or higher.
 - `call_service` reads a JSON request file and writes a JSON response file.
 - A nonzero `call_service` return marks the task failed.
-- Dynamic plugins do not receive cooperative cancellation tokens in ABI version 1.
+
+## Cancellation (ABI version 2)
+
+Cancellation crosses the FFI boundary cooperatively through a sentinel file. When the host
+cancels an action (worker shutdown, run cancellation, or a lost race branch) it touches a
+`cancel.signal` file located **next to** the request's `events_jsonl_path` (the per-run work
+directory). An ABI version 2 plugin should:
+
+- Compute the signal path as `dirname(events_jsonl_path)/cancel.signal`.
+- Poll for its existence during long-running work and abort cooperatively when it appears.
+- Return a nonzero `call_service` value (or a failure message) once it stops early.
+
+ABI version 1 plugins ignore the file and run to completion; the host always writes it, so
+newer hosts remain compatible with older plugins. Built-in (in-process) providers receive a
+real `CancellationToken` instead and do not use the file.
 
 ## Request JSON
 

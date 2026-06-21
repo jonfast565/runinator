@@ -1,26 +1,33 @@
 use log::{error, info};
 use runinator_models::errors::SendableError;
-use std::{env, fs, path::PathBuf, time::SystemTime};
+use std::{env, fs, fs::File, path::PathBuf, sync::Mutex};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::app_data;
 
+/// install the global tracing subscriber: structured spans/events to stdout plus a log file, with
+/// the existing `log` macros bridged in. honors `RUNINATOR_LOG` (an `EnvFilter` directive); falls
+/// back to `info`.
 pub fn setup_logger() -> Result<(), SendableError> {
-    let log_output = open_log_output()?;
+    let log_file = open_log_file()?;
 
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{} {} {}] {}",
-                humantime::format_rfc3339_seconds(SystemTime::now()),
-                record.level(),
-                record.target(),
-                message
-            ))
-        })
-        .level(log::LevelFilter::Info)
-        .chain(std::io::stdout())
-        .chain(log_output)
-        .apply()?;
+    let filter = EnvFilter::try_from_env("RUNINATOR_LOG")
+        .or_else(|_| EnvFilter::try_new("info"))
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+
+    let stdout_layer = fmt::layer().with_target(true).with_writer(std::io::stdout);
+    let file_layer = fmt::layer()
+        .with_ansi(false)
+        .with_target(true)
+        .with_writer(Mutex::new(log_file));
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
+        .try_init()
+        .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err.to_string())) })?;
+
     Ok(())
 }
 
@@ -30,7 +37,7 @@ pub fn print_env() -> std::io::Result<()> {
     Ok(())
 }
 
-fn open_log_output() -> std::io::Result<fern::Output> {
+fn open_log_file() -> std::io::Result<File> {
     let mut last_error: Option<std::io::Error> = None;
     let mut had_failure = false;
 
@@ -48,12 +55,12 @@ fn open_log_output() -> std::io::Result<fern::Output> {
             last_error = Some(err);
             continue;
         }
-        match fern::log_file(&path) {
-            Ok(output) => {
+        match fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(file) => {
                 if had_failure {
                     error!("Falling back to log file at {}", path_string);
                 }
-                return Ok(fern::Output::from(output));
+                return Ok(file);
             }
             Err(err) => {
                 had_failure = true;

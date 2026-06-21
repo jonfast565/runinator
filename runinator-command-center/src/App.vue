@@ -19,7 +19,10 @@
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SecretsView v-if="app.activeTab === 'Configs'" setting-kind="config" />
     <SecretsView v-if="app.activeTab === 'Secrets'" setting-kind="secret" />
+    <AdminSettingsView v-if="app.activeTab === 'AdminSettings'" />
     <PermissionsView v-if="app.activeTab === 'Permissions'" />
+    <DeadLettersView v-if="app.activeTab === 'DeadLetters'" />
+    <AuditLogView v-if="app.activeTab === 'AuditLog'" />
   </AppShell>
 </template>
 
@@ -40,6 +43,7 @@ import { useSecretsStore } from "./stores/secrets";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
 import { usePermissionsStore } from "./stores/permissions";
+import { useAdminSettingsStore } from "./stores/adminSettings";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
 import ReplicasView from "./views/ReplicasView.vue";
@@ -53,6 +57,9 @@ import ExternalItemsView from "./views/ExternalItemsView.vue";
 import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 import PermissionsView from "./views/PermissionsView.vue";
+import AdminSettingsView from "./views/AdminSettingsView.vue";
+import DeadLettersView from "./views/DeadLettersView.vue";
+import AuditLogView from "./views/AuditLogView.vue";
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -64,6 +71,7 @@ const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
 const permissions = usePermissionsStore();
+const adminSettings = useAdminSettingsStore();
 useEventStream();
 
 let unlistenUrl: (() => void) | undefined;
@@ -145,6 +153,7 @@ watch(
     if (tab === "Replicas") app.refreshReplicas().catch(() => {});
     if (tab === "Configs") secrets.refreshSecrets();
     if (tab === "Secrets") secrets.refreshSecrets();
+    if (tab === "AdminSettings") adminSettings.refresh();
     if (tab === "Artifacts") artifacts.refreshArtifacts();
     if (tab === "Notifications") notifications.refreshNotifications();
     if (tab === "Permissions") permissions.refreshAll();
@@ -187,6 +196,7 @@ function clearBackendState() {
   artifacts.clearArtifacts();
   notifications.clearNotifications();
   secrets.clearSecrets();
+  adminSettings.clear();
   providers.clearProviders();
   permissions.clearPermissions();
   app.clearReplicaState();

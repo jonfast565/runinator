@@ -21,7 +21,8 @@
     />
     <details v-if="hasSample" class="expression-preview" open>
       <summary>Resolved against last run</summary>
-      <pre v-if="previewError" class="expression-preview-error">{{ previewError }}</pre>
+      <pre v-if="previewUnresolved" class="expression-preview-muted">{{ previewUnresolved }}</pre>
+      <pre v-else-if="previewError" class="expression-preview-error">{{ previewError }}</pre>
       <pre v-else>{{ previewResult }}</pre>
     </details>
     <details class="expression-preview">
@@ -43,6 +44,7 @@ import { workflowExpressionCompletionSource } from "../../utils/workflow-express
 import { workflowReferenceGroups } from "../../utils/workflow-references";
 import { clearExpressionInsertTarget, setExpressionInsertTarget } from "../../utils/expression-insert-target";
 import { wdl } from "../../utils/codemirror-lang-wdl";
+import { osCodeMirrorTheme } from "../../utils/codemirror-theme";
 import { pretty } from "../../utils/format";
 import { expressionJsonToWdl, parseWdlExpression } from "../../utils/wdl-expression";
 import { evaluateExpression } from "../../api/commandCenterApi";
@@ -64,9 +66,16 @@ const parseError = ref("");
 const showPicker = ref(false);
 const previewResult = ref("");
 const previewError = ref("");
+// a reference that resolves in the full workflow run but is absent from this preview's sample is
+// not an authoring error; it is surfaced as a muted note rather than a red error.
+const previewUnresolved = ref("");
 let view: EditorView | null = null;
+let disposeEditorTheme: (() => void) | null = null;
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewToken = 0;
+// the last value this editor emitted; used to ignore the parent echoing it straight back, so an
+// edit in progress is not reformatted by the json<->wdl round-trip moving the cursor.
+let lastEmitted: string | null = null;
 const title = computed(() => props.title ?? "WDL Expression");
 const loweredJson = computed(() => props.modelValue);
 const referenceGroups = computed(() => workflowReferenceGroups(props.context));
@@ -81,6 +90,7 @@ function schedulePreview() {
   if (!hasSample.value) {
     previewResult.value = "";
     previewError.value = "";
+    previewUnresolved.value = "";
     return;
   }
   previewTimer = setTimeout(runPreview, 250);
@@ -100,11 +110,20 @@ async function runPreview() {
     const resolved = await evaluateExpression(expression, sample);
     if (token !== previewToken) return; // a newer edit superseded this request.
     previewError.value = "";
+    previewUnresolved.value = "";
     previewResult.value = pretty(resolved);
   } catch (err) {
     if (token !== previewToken) return;
-    previewError.value = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
     previewResult.value = "";
+    // an unresolved reference (WORKFLOW017) is expected for refs not captured in the sample run.
+    if (isUnresolvedReferenceError(message)) {
+      previewError.value = "";
+      previewUnresolved.value = "Not available in this preview (resolves at runtime).";
+      return;
+    }
+    previewError.value = message;
+    previewUnresolved.value = "";
   }
 }
 
@@ -134,11 +153,13 @@ function applyTransform(kind: "string" | "json" | "coalesce" | "concat") {
 
 onMounted(() => {
   if (!editorContainer.value) return;
+  const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
     doc: wdlFromLoweredJson(props.modelValue),
     extensions: [
       basicSetup,
+      editorTheme.extension,
       wdl(workflowExpressionCompletionSource(() => props.context)),
       Prec.high(keymap.of([
         ...completionKeymap,
@@ -172,11 +193,19 @@ onMounted(() => {
     state: startState,
     parent: editorContainer.value
   });
+  disposeEditorTheme = editorTheme.install(view);
 
   schedulePreview();
 });
 
 watch(() => props.modelValue, (newValue) => {
+  // ignore the parent echoing back exactly what we just emitted; re-deriving the wdl text would
+  // reformat the doc and jump the cursor mid-edit.
+  if (newValue === lastEmitted) {
+    lastEmitted = null;
+    schedulePreview();
+    return;
+  }
   const nextWdl = wdlFromLoweredJson(newValue);
   if (view && nextWdl !== view.state.doc.toString()) {
     view.dispatch({
@@ -191,6 +220,7 @@ watch(() => props.context?.sampleContext, schedulePreview);
 
 onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
+  disposeEditorTheme?.();
   clearExpressionInsertTarget(insertReference);
   view?.destroy();
 });
@@ -202,6 +232,11 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
   if (head <= 0) return false;
   const previous = update.state.sliceDoc(head - 1, head);
   return /[\w.]/.test(previous);
+}
+
+// the backend tags an invalid/absent runtime value reference with the WORKFLOW017 code.
+function isUnresolvedReferenceError(message: string): boolean {
+  return /WORKFLOW0?17\b/i.test(message);
 }
 
 function wdlFromLoweredJson(value: string): string {
@@ -216,7 +251,9 @@ function updateLoweredJson(source: string) {
   try {
     const lowered = parseWdlExpression(source);
     parseError.value = "";
-    emit("update:modelValue", pretty(lowered));
+    const next = pretty(lowered);
+    lastEmitted = next;
+    emit("update:modelValue", next);
   } catch (err) {
     parseError.value = err instanceof Error ? err.message : String(err);
   }
@@ -229,9 +266,9 @@ function updateLoweredJson(source: string) {
   min-height: 164px;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid #ccd4dd;
-  border-radius: 6px;
-  background-color: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background-color: var(--surface);
   overflow: hidden;
 }
 
@@ -241,7 +278,7 @@ function updateLoweredJson(source: string) {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 9px;
-  color: #3b4652;
+  color: var(--text-subtle);
   font-size: 12px;
   font-weight: 700;
   user-select: none;
@@ -249,10 +286,10 @@ function updateLoweredJson(source: string) {
 
 .expression-picker-toggle {
   padding: 2px 9px;
-  border: 1px solid #ccd4dd;
-  border-radius: 4px;
-  background: #fff;
-  color: #3b4652;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-subtle);
   cursor: pointer;
   font-size: 11px;
   font-weight: 700;
@@ -260,27 +297,27 @@ function updateLoweredJson(source: string) {
 
 .expression-picker-toggle:hover,
 .expression-picker-toggle.active {
-  background: #eef3f9;
-  border-color: #aeb9c4;
+  background: var(--surface-hover);
+  border-color: var(--border-hover);
 }
 
 .expression-editor-container {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  border-top: 1px solid #e3e8ee;
+  border-top: 1px solid var(--border-subtle);
   overflow: hidden;
 }
 
 .expression-preview {
-  border-top: 1px solid #e3e8ee;
-  background: #fbfcfe;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
 }
 
 .expression-preview summary {
   cursor: pointer;
   padding: 6px 9px;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -290,23 +327,28 @@ function updateLoweredJson(source: string) {
   margin: 0;
   overflow: auto;
   padding: 8px 10px;
-  border-top: 1px solid #e3e8ee;
-  color: #2f3a45;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text);
   font-size: 12px;
   white-space: pre-wrap;
 }
 
 .expression-preview pre.expression-preview-error {
-  color: #b05a16;
-  background: #fffaf3;
+  color: var(--warning-fg);
+  background: var(--warning-bg);
+}
+
+.expression-preview pre.expression-preview-muted {
+  color: var(--text-faint);
+  font-style: italic;
 }
 
 .expression-error {
   margin: 0;
   padding: 7px 9px;
-  border-top: 1px solid #f2c4c4;
-  background: #fff5f5;
-  color: #c53030;
+  border-top: 1px solid var(--danger-bg);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
   font-size: 12px;
 }
 

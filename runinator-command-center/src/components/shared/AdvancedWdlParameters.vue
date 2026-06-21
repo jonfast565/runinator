@@ -15,7 +15,8 @@ import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
 
 // a single collapsible wrapper for the raw-wdl value editors in the step dialog, so every node kind
-// shares one "advanced" disclosure instead of repeating the markup inline.
+// shares one "advanced" disclosure instead of repeating the markup inline. it shares the same
+// parameters_json string as the structured editors above it; edits are last-write-wins.
 withDefaults(
   defineProps<{
     modelValue: string;

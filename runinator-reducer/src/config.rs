@@ -43,6 +43,25 @@ pub async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
     Value::Object(root)
 }
 
+/// fetch one config value by scope/name, decrypting and decoding the persisted payload.
+pub async fn config_value<T: DatabaseImpl>(
+    db: &T,
+    scope: &str,
+    name: &str,
+) -> Result<Option<Value>, runinator_models::errors::SendableError> {
+    let Some(record) = db
+        .fetch_setting(SettingKind::Config, scope.to_string(), name.to_string())
+        .await?
+    else {
+        return Ok(None);
+    };
+    let cipher = settings_cipher();
+    let Some(plaintext) = cipher.try_decrypt(&record.value) else {
+        return Ok(None);
+    };
+    Ok(Some(decode_config_value(&plaintext)))
+}
+
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check config refs.
 pub async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
     let cipher = settings_cipher();

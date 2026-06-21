@@ -47,6 +47,7 @@ import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { keymap, type ViewUpdate } from '@codemirror/view';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { wdl } from '../../utils/codemirror-lang-wdl';
+import { osCodeMirrorTheme } from '../../utils/codemirror-theme';
 import { wdlProviderCompletionSource } from '../../utils/wdl-completion';
 import { wdlHoverTooltip } from '../../utils/wdl-hover';
 import { analyzeWdl, formatWdl } from '../../api/commandCenterApi';
@@ -80,6 +81,7 @@ const diagnostics = ref<WdlDiagnostic[]>([]);
 // editability is reconfigurable so a readonly toggle after mount takes effect live.
 const editableCompartment = new Compartment();
 let view: EditorView | null = null;
+let disposeEditorTheme: (() => void) | null = null;
 const title = props.title ?? "WDL";
 const app = useAppStore();
 let diagnosticsRequest = 0;
@@ -169,11 +171,13 @@ async function formatDocument() {
 
 onMounted(() => {
   if (!editorContainer.value) return;
+  const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
     doc: props.modelValue,
     extensions: [
       basicSetup,
+      editorTheme.extension,
       Prec.high(keymap.of([
         ...completionKeymap,
         {
@@ -199,9 +203,9 @@ onMounted(() => {
         "&": { height: "100%" },
         ".cm-scroller": { overflow: "auto" },
         ".cm-tooltip": {
-          border: "1px solid #b8c4d1",
+          border: "1px solid var(--border-strong)",
           borderRadius: "6px",
-          boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)"
+          boxShadow: "var(--workflow-menu-shadow)"
         },
         ".wdl-hover": {
           maxWidth: "420px",
@@ -209,21 +213,21 @@ onMounted(() => {
           fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           fontSize: "12px",
           lineHeight: "1.35",
-          color: "#172033"
+          color: "var(--text)"
         },
         ".wdl-hover-title": {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
           fontWeight: "700",
-          color: "#0f172a"
+          color: "var(--text)"
         },
         ".wdl-hover-meta": {
           marginTop: "3px",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-          color: "#46566c"
+          color: "var(--text-muted)"
         },
         ".wdl-hover-docs": {
           marginTop: "7px",
-          color: "#2f3c4f",
+          color: "var(--text-subtle)",
           whiteSpace: "pre-line"
         }
       })
@@ -234,6 +238,7 @@ onMounted(() => {
     state: startState,
     parent: editorContainer.value,
   });
+  disposeEditorTheme = editorTheme.install(view);
 });
 
 watch(() => props.modelValue, (newValue) => {
@@ -249,6 +254,7 @@ watch(() => props.readonly, (readonly) => {
 });
 
 onBeforeUnmount(() => {
+  disposeEditorTheme?.();
   if (view) {
     view.destroy();
   }
@@ -272,9 +278,9 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
   min-height: 0;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid #ccd4dd;
-  border-radius: 6px;
-  background-color: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background-color: var(--surface);
   overflow: hidden;
 }
 
@@ -303,25 +309,25 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 }
 
 .wdl-diagnostic-summary.clean {
-  background: #e8f7ef;
-  color: #11653b;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .wdl-diagnostic-summary.warning {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .wdl-diagnostic-summary.error {
-  background: #fde8e8;
-  color: #b91c1c;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .wdl-editor-title button {
-  border: 1px solid #b8c3cf;
-  border-radius: 4px;
-  background: #f7f9fb;
-  color: #1c2938;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text);
   cursor: pointer;
   font: inherit;
   font-weight: 600;
@@ -337,7 +343,7 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  border-top: 1px solid #e3e8ee;
+  border-top: 1px solid var(--border-subtle);
   overflow: hidden;
 }
 
@@ -346,8 +352,8 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
   min-height: 104px;
   max-height: 180px;
   overflow: auto;
-  border-top: 1px solid #e3e8ee;
-  background: #fbfcfe;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
 }
 
 .wdl-diagnostics table {
@@ -359,7 +365,7 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 .wdl-diagnostics th,
 .wdl-diagnostics td {
   padding: 5px 8px;
-  border-bottom: 1px solid #e6ebf1;
+  border-bottom: 1px solid var(--border-subtle);
   text-align: left;
   vertical-align: top;
 }
@@ -367,8 +373,8 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 .wdl-diagnostics th {
   position: sticky;
   top: 0;
-  background: #f2f5f8;
-  color: #4b5663;
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
   font-weight: 700;
 }
 
@@ -377,7 +383,7 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 }
 
 .wdl-diagnostics tbody tr:hover {
-  background: #eef4ff;
+  background: var(--surface-hover);
 }
 
 .wdl-diagnostics tbody tr.error {
@@ -395,7 +401,7 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 .wdl-diagnostics td:nth-child(3),
 .wdl-diagnostics td:nth-child(4) {
   width: 56px;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
 }
 
@@ -409,18 +415,18 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 }
 
 .wdl-diagnostic-severity.error {
-  background: #fde8e8;
-  color: #b91c1c;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .wdl-diagnostic-severity.warning {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .wdl-diagnostics-empty {
   padding: 7px 10px;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 

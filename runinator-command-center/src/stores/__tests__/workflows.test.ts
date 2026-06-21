@@ -199,6 +199,38 @@ describe("workflow run detail state", () => {
     });
   });
 
+  it("applies untyped action parameter objects and WDL expressions into action configuration", async () => {
+    const workflows = useWorkflowsStore();
+    const providers = useProvidersStore();
+    providers.providers = [untypedActionProvider()];
+    await workflows.selectWorkflow(workflowDefinition(WORKFLOW_ID, "untyped action"));
+    workflows.workflowDraft.definition.nodes.splice(1, 0, {
+      id: "notify",
+      kind: "action",
+      action: { provider: "webhook", function: "send", timeout_seconds: 300, configuration: {} },
+      parameters: {},
+      transitions: { next: { "$node": "end" } }
+    });
+    workflows.openStepEditor("notify");
+
+    workflows.stepEditor.parameters_json = JSON.stringify({
+      url: "https://example.test/hook",
+      payload: {
+        message: { "$concat": ["ticket ", { "$ref": { params: ["ticket_id"] } }] },
+        urgent: true
+      }
+    });
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(workflows.ensureWorkflowNodes().find((node) => node.id === "notify")?.action.configuration).toEqual({
+      url: "https://example.test/hook",
+      payload: {
+        message: { "$concat": ["ticket ", { "$ref": { params: ["ticket_id"] } }] },
+        urgent: true
+      }
+    });
+  });
+
   it("exits inline node editing after a successful apply", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "inline edit"));
@@ -711,6 +743,21 @@ function nestedWorkflowInputProvider(): ProviderMetadata {
             }
           }
         ]
+      }
+    ]
+  };
+}
+
+function untypedActionProvider(): ProviderMetadata {
+  return {
+    name: "webhook",
+    metadata: { credential_scopes: [], contract: null },
+    actions: [
+      {
+        function_name: "send",
+        description: null,
+        results: [],
+        parameters: []
       }
     ]
   };

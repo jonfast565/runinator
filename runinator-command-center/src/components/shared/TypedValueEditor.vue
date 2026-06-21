@@ -11,6 +11,46 @@
       title="Expression"
       @update:model-value="setExpressionJsonValue"
     />
+    <div v-else-if="typeKind === 'any'" class="any-editor">
+      <select :value="anyValueKind" @change="setAnyValueKind(($event.target as HTMLSelectElement).value)">
+        <option value="string">string</option>
+        <option value="number">number</option>
+        <option value="boolean">boolean</option>
+        <option value="null">null</option>
+        <option value="object">object</option>
+        <option value="array">array</option>
+      </select>
+      <input
+        v-if="anyValueKind === 'string'"
+        type="text"
+        :value="stringValue"
+        :placeholder="placeholder"
+        @input="emitValue(($event.target as HTMLInputElement).value)"
+      />
+      <input
+        v-else-if="anyValueKind === 'number'"
+        type="number"
+        step="any"
+        :value="numberValue"
+        @input="setAnyNumberValue(($event.target as HTMLInputElement).value)"
+      />
+      <label v-else-if="anyValueKind === 'boolean'" class="inline-boolean">
+        <input
+          type="checkbox"
+          :checked="Boolean(modelValue)"
+          @change="emitValue(($event.target as HTMLInputElement).checked)"
+        />
+        true
+      </label>
+      <span v-else-if="anyValueKind === 'null'" class="null-value">null</span>
+      <ExpressionJsonEditor
+        v-else
+        :model-value="jsonText"
+        :context="expressionContext"
+        title="WDL Value"
+        @update:model-value="setJsonValue"
+      />
+    </div>
     <input
       v-else-if="typeKind === 'string'"
       type="text"
@@ -38,7 +78,7 @@
       @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
     />
     <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
-      <div v-for="(_item, index) in arrayValue" :key="index" class="collection-row">
+      <div v-for="(_item, index) in arrayValue" :key="arrayKeys[index] ?? index" class="collection-row">
         <TypedValueEditor
           class="collection-value"
           :model-value="arrayValue[index]"
@@ -155,6 +195,14 @@ const emit = defineEmits<{
 const typeKind = computed(() => props.ty?.type ?? "any");
 const stringValue = computed(() => (typeof props.modelValue === "string" ? props.modelValue : ""));
 const numberValue = computed(() => (typeof props.modelValue === "number" ? props.modelValue : ""));
+const anyValueKind = computed(() => {
+  if (props.modelValue === null || props.modelValue === undefined) return "null";
+  if (Array.isArray(props.modelValue)) return "array";
+  if (typeof props.modelValue === "object") return "object";
+  if (typeof props.modelValue === "number") return "number";
+  if (typeof props.modelValue === "boolean") return "boolean";
+  return "string";
+});
 const arrayValue = computed<unknown[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : []));
 const recordValue = computed<JsonRecord>(() => (isPlainRecord(props.modelValue) ? props.modelValue : {}));
 const recordEntries = computed(() => Object.entries(recordValue.value));
@@ -184,6 +232,19 @@ watch(() => props.forceExpression, (forced) => {
 watch(() => props.modelValue, (value) => {
   if (isWorkflowExpressionValue(value)) localExpressionMode.value = true;
 });
+
+// stable per-item keys so editing or removing one array entry never remounts its siblings (which
+// would re-seed their expression/value mode). keys are reconciled to the array length and stay put.
+const arrayKeys = ref<number[]>([]);
+let nextArrayKey = 0;
+watch(
+  () => arrayValue.value.length,
+  (length) => {
+    while (arrayKeys.value.length < length) arrayKeys.value.push(nextArrayKey++);
+    if (arrayKeys.value.length > length) arrayKeys.value.length = length;
+  },
+  { immediate: true }
+);
 
 function emitValue(value: unknown) {
   emit("update:modelValue", value);
@@ -226,6 +287,24 @@ function setNumberValue(raw: string) {
   emitValue(typeKind.value === "integer" ? Number.parseInt(raw, 10) : Number(raw));
 }
 
+function setAnyNumberValue(raw: string) {
+  if (raw.trim() === "") {
+    emitValue(null);
+    return;
+  }
+  emitValue(Number(raw));
+}
+
+function setAnyValueKind(kind: string) {
+  if (kind === anyValueKind.value) return;
+  if (kind === "string") emitValue("");
+  else if (kind === "number") emitValue(0);
+  else if (kind === "boolean") emitValue(false);
+  else if (kind === "array") emitValue([]);
+  else if (kind === "object") emitValue({});
+  else emitValue(null);
+}
+
 function setJsonValue(raw: string) {
   try {
     emitValue(JSON.parse(raw || "null"));
@@ -246,6 +325,8 @@ function addArrayItem() {
 }
 
 function removeArrayItem(index: number) {
+  // drop the removed row's key so the surviving rows keep theirs (and their editor state).
+  arrayKeys.value.splice(index, 1);
   emitValue(arrayValue.value.filter((_, itemIndex) => itemIndex !== index));
 }
 
@@ -363,7 +444,8 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 .struct-editor,
 .map-editor,
 .array-editor,
-.union-editor {
+.union-editor,
+.any-editor {
   display: grid;
   gap: 8px;
 }
@@ -380,10 +462,10 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 .value-mode-row button {
-  border: 1px solid #c8d1db;
-  border-radius: 4px;
-  background: #f8fafc;
-  color: #4b5663;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text-subtle);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -393,8 +475,8 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 .value-mode-row button.active {
-  border-color: #2f3a45;
-  background: #2f3a45;
+  border-color: var(--accent);
+  background: var(--accent);
   color: #ffffff;
 }
 
@@ -426,7 +508,28 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 .parameter-label small {
-  color: #66717e;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.inline-boolean {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.inline-boolean input {
+  width: auto;
+}
+
+.null-value {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
 }
 
