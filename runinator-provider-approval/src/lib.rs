@@ -81,8 +81,7 @@ impl Provider for ApprovalProvider {
 }
 
 fn parse_params(request: &ProviderExecutionRequest) -> Result<ApprovalParams, SendableError> {
-    serde_json::from_value(request.parameters.clone().into())
-        .map_err(|e| errors::INVALID_PARAMS.error(e))
+    runinator_provider_support::parse_params(request, &errors::INVALID_PARAMS)
 }
 
 #[cfg(test)]

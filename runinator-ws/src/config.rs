@@ -1,15 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, ValueEnum};
-
-#[derive(Clone, Debug, ValueEnum)]
-pub(crate) enum DatabaseKind {
-    Sqlite,
-    Postgres,
-    /// MySQL or MariaDB (alias: mariadb).
-    #[value(alias = "mariadb")]
-    Mysql,
-}
+use clap::Parser;
+use runinator_db_cli::DatabaseBackend;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -23,9 +15,9 @@ pub(crate) struct CliArgs {
         long,
         env = "RUNINATOR_DATABASE",
         value_enum,
-        default_value_t = DatabaseKind::Sqlite
+        default_value_t = DatabaseBackend::Sqlite
     )]
-    pub database: DatabaseKind,
+    pub database: DatabaseBackend,
 
     /// Path to the SQLite database file (used when --database=sqlite). Also reads RUNINATOR_SQLITE_PATH.
     #[arg(long, env = "RUNINATOR_SQLITE_PATH")]

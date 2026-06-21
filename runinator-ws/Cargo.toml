@@ -28,6 +28,7 @@ runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
+runinator-db-cli = { path = "../runinator-db-cli" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }

@@ -19,7 +19,7 @@ pub(crate) struct ConsoleResult {
 pub(crate) fn parse_params(
     request: &ProviderExecutionRequest,
 ) -> Result<ConsoleParams, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| INVALID_PARAMS.error(e))
+    runinator_provider_support::parse_params(request, &INVALID_PARAMS)
 }
 
 pub(crate) fn to_runtime_error(err: std::io::Error) -> SendableError {

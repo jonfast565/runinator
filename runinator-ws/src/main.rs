@@ -10,14 +10,14 @@ use runinator_broker::{
     in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
 };
-use runinator_database::{mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb};
+use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
 use runinator_ws::{AuthOptions, RateLimitConfig, ReplicaAdvertisement, run_webserver};
 
-use crate::config::{CliArgs, DatabaseKind};
+use crate::config::CliArgs;
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
 use runinator_utilities::{app_data, startup};
 
@@ -81,9 +81,9 @@ async fn main() -> Result<(), SendableError> {
     };
     // advertise the backends this replica runs on so the replica list has parity with worker/waker.
     let database_backend = match &database {
-        DatabaseKind::Sqlite => "sqlite",
-        DatabaseKind::Postgres => "postgres",
-        DatabaseKind::Mysql => "mysql",
+        DatabaseBackend::Sqlite => "sqlite",
+        DatabaseBackend::Postgres => "postgres",
+        DatabaseBackend::Mysql => "mysql",
     };
     let advertisement = ReplicaAdvertisement {
         host: advertise_host,
@@ -130,18 +130,23 @@ async fn main() -> Result<(), SendableError> {
         });
     }
 
-    match database {
-        DatabaseKind::Sqlite => {
+    info!("Starting Runinator webservice with {database_backend} database");
+    dispatch_database!(
+        database,
+        sqlite: {
             let sqlite_path = sqlite_path.unwrap_or(app_data::default_sqlite_path()?);
             if let Some(parent) = sqlite_path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            info!(
-                "Starting Runinator webservice with SQLite database at {}",
-                sqlite_path.display()
-            );
-            let sqlite_path = sqlite_path.to_string_lossy();
-            let db = Arc::new(SqliteDb::new(sqlite_path.as_ref()).await?);
+            info!("SQLite database file at {}", sqlite_path.display());
+            sqlite_path.to_string_lossy().into_owned()
+        },
+        url: database_url
+            .clone()
+            .ok_or_else(|| -> SendableError {
+                "--database-url must be provided when --database=postgres/mysql/mariadb".into()
+            })?,
+        |db| {
             run_webserver(
                 db,
                 notify.clone(),
@@ -153,53 +158,7 @@ async fn main() -> Result<(), SendableError> {
             )
             .await?;
         }
-        DatabaseKind::Postgres => {
-            let url = database_url
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "--database-url must be provided when --database=postgres",
-                    )
-                })
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-
-            info!("Starting Runinator webservice with Postgres database");
-            let db = Arc::new(PostgresDb::new(&url).await?);
-            run_webserver(
-                db,
-                notify.clone(),
-                port,
-                broker,
-                advertisement.clone(),
-                auth_options.clone(),
-                rate_limit_options,
-            )
-            .await?;
-        }
-        DatabaseKind::Mysql => {
-            let url = database_url
-                .ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "--database-url must be provided when --database=mysql or --database=mariadb",
-                        )
-                    })
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-
-            info!("Starting Runinator webservice with MySQL/MariaDB database");
-            let db = Arc::new(MySqlDb::new(&url).await?);
-            run_webserver(
-                db,
-                notify.clone(),
-                port,
-                broker,
-                advertisement.clone(),
-                auth_options.clone(),
-                rate_limit_options,
-            )
-            .await?;
-        }
-    }
+    );
 
     Ok(())
 }

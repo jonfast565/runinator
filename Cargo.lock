@@ -5363,6 +5363,7 @@ dependencies = [
  "flate2",
  "log",
  "runinator-database",
+ "runinator-db-cli",
  "runinator-models",
  "serde_json",
  "tokio",
@@ -5391,6 +5392,7 @@ dependencies = [
  "env_logger",
  "log",
  "runinator-database",
+ "runinator-db-cli",
  "runinator-models",
  "tokio",
 ]
@@ -5486,6 +5488,14 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "runinator-db-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "runinator-database",
 ]
 
 [[package]]
@@ -5591,6 +5601,7 @@ version = "0.1.0"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5602,6 +5613,7 @@ version = "0.1.0"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5649,6 +5661,7 @@ dependencies = [
  "log",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
 ]
@@ -5673,6 +5686,7 @@ version = "0.1.0"
 dependencies = [
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5685,6 +5699,7 @@ dependencies = [
  "reqwest",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5697,6 +5712,7 @@ dependencies = [
  "reqwest",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5709,6 +5725,7 @@ dependencies = [
  "reqwest",
  "runinator-models",
  "runinator-plugin",
+ "runinator-provider-support",
  "serde",
  "serde_json",
  "uuid",
@@ -5743,6 +5760,15 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "runinator-provider-support"
+version = "0.1.0"
+dependencies = [
+ "runinator-models",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5880,6 +5906,7 @@ dependencies = [
  "runinator-broker",
  "runinator-comm",
  "runinator-database",
+ "runinator-db-cli",
  "runinator-models",
  "runinator-provider-catalog",
  "runinator-reducer",

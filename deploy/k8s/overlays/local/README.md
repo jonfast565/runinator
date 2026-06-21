@@ -41,6 +41,13 @@ read-write because Claude Code writes session/project state and refreshes its
 OAuth token there. Point that node path at your real `~/.claude` using your
 local cluster driver's mount or symlink support before applying the overlay.
 
+The archiver pod mounts a node-local archive directory at `/var/runinator/archive`,
+exposed inside the container at `/var/lib/runinator/archive`, so the compressed
+`jsonl.gz` archives it writes land on the real filesystem instead of an ephemeral
+PVC (the base `runinator-archive-data` claim is dropped by this overlay). Point
+that node path at your real `~/.runinator` using your local cluster driver's mount
+or symlink support before applying the overlay.
+
 The preferred end-to-end command is:
 
 ```sh

@@ -10,6 +10,7 @@ log = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 runinator-database = { path = "../runinator-database" }
+runinator-db-cli = { path = "../runinator-db-cli" }
 runinator-models = { path = "../runinator-models" }
 
 [[bin]]

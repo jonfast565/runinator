@@ -1,19 +1,10 @@
 use std::process::ExitCode;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use log::{error, info};
-use runinator_database::{
-    BootstrapOptions, bootstrap_database, mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb,
-};
+use runinator_database::{BootstrapOptions, bootstrap_database};
+use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
-
-#[derive(ValueEnum, Debug, Clone, Copy)]
-enum Backend {
-    Sqlite,
-    Postgres,
-    #[value(alias = "mariadb")]
-    Mysql,
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -23,7 +14,7 @@ enum Backend {
 struct Cli {
     /// Backend to bootstrap. Also reads RUNINATOR_DATABASE.
     #[arg(long, env = "RUNINATOR_DATABASE", value_enum)]
-    database: Backend,
+    database: DatabaseBackend,
 
     /// Connection string. For sqlite, a filesystem path (file:/path/to/runinator.db
     /// or just /path/to/runinator.db). For postgres, a postgres:// URL. For
@@ -104,22 +95,13 @@ async fn run() -> Result<(), SendableError> {
             "missing connection string: pass --database-url or set DATABASE_URL".into()
         })?;
 
-    match cli.database {
-        Backend::Sqlite => {
-            info!("Connecting to sqlite at {url}");
-            let db = std::sync::Arc::new(SqliteDb::new(&url).await?);
+    dispatch_database!(
+        cli.database,
+        sqlite: url.clone(),
+        url: url.clone(),
+        |db| {
             bootstrap_database(&db, &bootstrap_options).await?;
         }
-        Backend::Postgres => {
-            info!("Connecting to postgres");
-            let db = std::sync::Arc::new(PostgresDb::new(&url).await?);
-            bootstrap_database(&db, &bootstrap_options).await?;
-        }
-        Backend::Mysql => {
-            info!("Connecting to mysql/mariadb");
-            let db = std::sync::Arc::new(MySqlDb::new(&url).await?);
-            bootstrap_database(&db, &bootstrap_options).await?;
-        }
-    }
+    );
     Ok(())
 }

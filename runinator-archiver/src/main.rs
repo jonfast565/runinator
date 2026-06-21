@@ -18,15 +18,13 @@ use log::{error, info, warn};
 use runinator_database::{
     archive::{ArchiveRow, ArchiveTable},
     interfaces::DatabaseImpl,
-    mysql::MySqlDb,
-    postgres::PostgresDb,
-    sqlite::SqliteDb,
 };
+use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::config::{Backend, Cli, Config};
+use crate::config::{Cli, Config};
 
 const ARCHIVE_FILE_EXTENSION: &str = "jsonl.gz";
 
@@ -50,20 +48,12 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), SendableError> {
     let config = Config::from_cli(Cli::parse())?;
-    match config.database {
-        Backend::Sqlite => {
-            let db = Arc::new(SqliteDb::new(&config.database_url).await?);
-            run_loop(db, config).await
-        }
-        Backend::Postgres => {
-            let db = Arc::new(PostgresDb::new(&config.database_url).await?);
-            run_loop(db, config).await
-        }
-        Backend::Mysql => {
-            let db = Arc::new(MySqlDb::new(&config.database_url).await?);
-            run_loop(db, config).await
-        }
-    }
+    dispatch_database!(
+        config.database,
+        sqlite: config.database_url.clone(),
+        url: config.database_url.clone(),
+        |db| { run_loop(db, config).await }
+    )
 }
 
 async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), SendableError> {

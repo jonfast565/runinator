@@ -1,15 +1,8 @@
 use std::{path::PathBuf, time::Duration};
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
+use runinator_db_cli::DatabaseBackend;
 use runinator_models::errors::SendableError;
-
-#[derive(ValueEnum, Debug, Clone, Copy)]
-pub enum Backend {
-    Sqlite,
-    Postgres,
-    #[value(alias = "mariadb")]
-    Mysql,
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -19,7 +12,7 @@ pub enum Backend {
 )]
 pub struct Cli {
     #[arg(long, env = "RUNINATOR_DATABASE", value_enum)]
-    pub database: Backend,
+    pub database: DatabaseBackend,
 
     #[arg(long, env = "RUNINATOR_DATABASE_URL")]
     pub database_url: Option<String>,
@@ -102,7 +95,7 @@ pub struct Cli {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub database: Backend,
+    pub database: DatabaseBackend,
     pub database_url: String,
     pub archive_dir: PathBuf,
     pub interval: Duration,

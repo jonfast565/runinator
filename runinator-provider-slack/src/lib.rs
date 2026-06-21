@@ -101,12 +101,7 @@ impl Provider for SlackProvider {
     }
 }
 
-fn parse_params<T: serde::de::DeserializeOwned>(
-    request: &ProviderExecutionRequest,
-) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone().into())
-        .map_err(|err| INVALID_PARAMS.error(err))
-}
+runinator_provider_support::provider_parse_params!(crate::errors::INVALID_PARAMS);
 
 fn build_send_message_payload(params: SendMessageParams) -> Result<Value, SendableError> {
     let mut payload = Map::new();

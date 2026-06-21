@@ -20,6 +20,31 @@ patches:
   - path: autoscaling-patch.yaml
   - path: aws-creds-patch.yaml
   - path: claude-creds-patch.yaml
+  # Drop archiver output onto the real filesystem instead of an ephemeral PVC.
+  # The base archiver declares a single volume (archive-data), so replacing
+  # volumes/0 swaps its source to a node-local hostPath; the archiver keeps
+  # writing jsonl.gz files to /var/lib/runinator/archive and they land on the
+  # host. Point /var/runinator/archive at your real ~/.runinator through the
+  # local cluster driver's mount or symlink mechanism before applying.
+  # DirectoryOrCreate lets the pod start even when no such mount exists.
+  - target: { kind: Deployment, name: runinator-archiver }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: archive-data
+          hostPath:
+            path: /var/runinator/archive
+            type: DirectoryOrCreate
+  # the base PVC is no longer referenced; drop it so the local cluster does not
+  # provision an unused ReadWriteOnce claim.
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: runinator-archive-data
+        namespace: runinator
 
 # Default image refs are local dev tags. build.ps1 -DeployKube renders matching
 # tags into a copied overlay under target/k8s-render before applying.

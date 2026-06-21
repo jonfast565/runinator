@@ -1,17 +1,13 @@
 use runinator_models::{
     errors::SendableError,
     providers::{ParameterMetadata, ResultMetadata, RuninatorType},
-    runs::{ProviderExecutionRequest, TaskExecutionResult},
+    runs::TaskExecutionResult,
 };
 use serde_json::{Value, json};
 
-use crate::errors::{HTTP_ERROR, INVALID_JSON, INVALID_PARAMS};
+use crate::errors::{HTTP_ERROR, INVALID_JSON};
 
-pub(crate) fn parse_params<T: serde::de::DeserializeOwned>(
-    request: &ProviderExecutionRequest,
-) -> Result<T, SendableError> {
-    serde_json::from_value(request.parameters.clone().into()).map_err(|e| INVALID_PARAMS.error(e))
-}
+runinator_provider_support::provider_parse_params!(crate::errors::INVALID_PARAMS);
 
 pub(crate) fn first_pull_number(
     response: reqwest::blocking::Response,
