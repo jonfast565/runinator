@@ -18,6 +18,7 @@
 #   docker build -f deploy/Dockerfile --target ws        -t runinator-ws:dev        .
 #   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
 #   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
+#   docker build -f deploy/Dockerfile --target archiver  -t runinator-archiver:dev  .
 #   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
 #   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
 
@@ -180,7 +181,7 @@ else
 fi
 
 if [[ "$verb" == "apply" ]]; then
-    rollout_targets=(deployment/runinator-ws deployment/runinator-waker deployment/runinator-worker)
+    rollout_targets=(deployment/runinator-ws deployment/runinator-archiver deployment/runinator-waker deployment/runinator-worker)
     if [[ "$skip_pg" -eq 0 ]]; then
         rollout_targets=(statefulset/runinator-postgres "${rollout_targets[@]}")
     fi

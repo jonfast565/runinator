@@ -23,6 +23,8 @@ use runinator_models::{
     },
 };
 
+use crate::archive::{ArchiveMark, ArchiveRow, ArchiveTable};
+
 /// Core persistence operations for Runinator.
 pub trait DatabaseImpl: Send + Sync + 'static {
     /// Execute initialization scripts for the database.
@@ -30,6 +32,48 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         paths: &[String],
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Mark old rows that are eligible for archival. Marking is idempotent.
+    fn mark_archive_candidates(
+        &self,
+        table: ArchiveTable,
+        eligible_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Claim archive marks for one archiver process under a short lease.
+    fn claim_archive_marks(
+        &self,
+        archiver_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ArchiveMark>, SendableError>> + Send;
+
+    /// Fetch source rows for claimed archive marks, rechecking eligibility at read time.
+    fn fetch_archive_rows(
+        &self,
+        marks: Vec<ArchiveMark>,
+    ) -> impl Future<Output = Result<Vec<ArchiveRow>, SendableError>> + Send;
+
+    /// Delete archived source rows by exact table/id pairs.
+    fn delete_archive_rows(
+        &self,
+        rows: Vec<ArchiveRow>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Mark archive ledger rows as archived after their source rows were deleted.
+    fn complete_archive_marks(
+        &self,
+        mark_ids: Vec<Uuid>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Release archive marks after a failed archival attempt.
+    fn fail_archive_marks(
+        &self,
+        mark_ids: Vec<Uuid>,
+        error: String,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
     /// Fetch all runs filtered by their current status.
     fn fetch_runs_by_status(

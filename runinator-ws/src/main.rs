@@ -233,8 +233,11 @@ async fn build_broker(
         }
         "in-memory" => Arc::new(InMemoryBroker::new()),
         "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
-        "kafka" => build_kafka_broker(kafka_config)?,
-        "rabbitmq" => build_rabbitmq_broker(rabbitmq_config).await?,
+        "kafka" => runinator_broker::build_kafka_broker(kafka_config)
+            .map_err(|err| runinator_ws::errors::BROKER_KAFKA.error(err))?,
+        "rabbitmq" => runinator_broker::build_rabbitmq_broker(rabbitmq_config)
+            .await
+            .map_err(|err| runinator_ws::errors::BROKER_RABBITMQ.error(err))?,
         other => {
             return Err(runinator_ws::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'")));
         }
@@ -244,37 +247,6 @@ async fn build_broker(
         .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
 
     Ok(broker)
-}
-
-#[cfg(feature = "kafka")]
-fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config)
-        .map_err(|err| runinator_ws::errors::BROKER_KAFKA.error(err))?;
-    Ok(Arc::new(broker))
-}
-
-#[cfg(not(feature = "kafka"))]
-fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(runinator_ws::errors::BROKER_KAFKA_FEATURE_DISABLED
-        .error("build runinator-ws with --features kafka"))
-}
-
-#[cfg(feature = "rabbitmq")]
-async fn build_rabbitmq_broker(
-    config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::rabbitmq::RabbitMqBroker::connect(config)
-        .await
-        .map_err(|err| runinator_ws::errors::BROKER_RABBITMQ.error(err))?;
-    Ok(Arc::new(broker))
-}
-
-#[cfg(not(feature = "rabbitmq"))]
-async fn build_rabbitmq_broker(
-    _config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(runinator_ws::errors::BROKER_RABBITMQ_FEATURE_DISABLED
-        .error("build runinator-ws with --features rabbitmq"))
 }
 
 #[cfg(test)]

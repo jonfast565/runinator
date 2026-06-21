@@ -33,6 +33,9 @@ images:
   - name: runinator-worker
     newName: runinator-worker
     newTag: dev
+  - name: runinator-archiver
+    newName: runinator-archiver
+    newTag: dev
   - name: runinator-ctl
     newName: runinator-ctl
     newTag: dev

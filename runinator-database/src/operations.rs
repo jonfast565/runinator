@@ -30,6 +30,7 @@ use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, 
 use uuid::Uuid;
 
 use crate::{
+    archive::{ArchiveMark, ArchiveRow, ArchiveTable},
     backend::{RowsAffected, SqlBackend},
     common::{
         is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_opt_uuid, json_str,
@@ -45,6 +46,334 @@ const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, 
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
+
+trait ArchiveSqlExt: SqlBackend {
+    async fn archive_candidate_ids(
+        &self,
+        table: ArchiveTable,
+        eligible_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, DateTime<Utc>)>, SendableError>;
+
+    async fn fetch_archive_row(
+        &self,
+        mark: &ArchiveMark,
+    ) -> Result<Option<ArchiveRow>, SendableError>;
+}
+
+impl<B> ArchiveSqlExt for B
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Uuid: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<String>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<Uuid>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    async fn archive_candidate_ids(
+        &self,
+        table: ArchiveTable,
+        eligible_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, DateTime<Utc>)>, SendableError> {
+        let sql = archive_candidate_sql(table);
+        let rows = sqlx::query(&self.render(sql))
+            .bind(eligible_before.timestamp())
+            .bind(limit)
+            .fetch_all(self.pool())
+            .await?;
+        rows.iter()
+            .map(|row| {
+                let id: Uuid = row.get("id");
+                let created_at: i64 = row.get("created_at");
+                Ok((id, timestamp_to_utc(created_at)?))
+            })
+            .collect()
+    }
+
+    async fn fetch_archive_row(
+        &self,
+        mark: &ArchiveMark,
+    ) -> Result<Option<ArchiveRow>, SendableError> {
+        let Some(row) = sqlx::query(&self.render(&archive_source_sql(self.dialect(), mark.table)))
+            .bind(mark.primary_key)
+            .fetch_optional(self.pool())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let row_json = archive_row_json(mark.table, &row)?;
+        Ok(Some(ArchiveRow {
+            mark_id: mark.id,
+            table: mark.table,
+            primary_key: mark.primary_key,
+            created_at: mark.created_at,
+            row: row_json,
+        }))
+    }
+}
+
+fn archive_candidate_sql(table: ArchiveTable) -> &'static str {
+    match table {
+        ArchiveTable::WorkflowRuns => {
+            "SELECT id, created_at FROM workflow_runs
+             WHERE created_at <= ?
+               AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')
+               AND NOT EXISTS (SELECT 1 FROM workflow_node_runs WHERE workflow_node_runs.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_ready_nodes WHERE workflow_ready_nodes.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_orchestration_events WHERE workflow_orchestration_events.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_result_events WHERE workflow_result_events.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_trigger_firings WHERE workflow_trigger_firings.workflow_run_id = workflow_runs.id)
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::WorkflowNodeChunks => {
+            "SELECT id, created_at FROM workflow_node_chunks
+             WHERE created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::WorkflowReadyNodes => {
+            "SELECT id, created_at FROM workflow_ready_nodes
+             WHERE completed_at IS NOT NULL AND created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::RunChunks => {
+            "SELECT id, created_at FROM run_chunks
+             WHERE created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::WorkflowActionDispatches => {
+            "SELECT id, created_at FROM workflow_action_dispatches
+             WHERE published_at IS NOT NULL AND updated_at <= ?
+             ORDER BY updated_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::Notifications => {
+            "SELECT id, created_at FROM notifications
+             WHERE read_at IS NOT NULL AND created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::DeadLetters => {
+            "SELECT id, created_at FROM dead_letters
+             WHERE created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::AuditLog => {
+            "SELECT id, created_at FROM audit_log
+             WHERE created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+        ArchiveTable::IdempotencyKeys => {
+            "SELECT id, created_at FROM idempotency_keys
+             WHERE created_at <= ?
+             ORDER BY created_at, id
+             LIMIT ?"
+        }
+    }
+}
+
+fn archive_source_sql(dialect: SqlDialect, table: ArchiveTable) -> String {
+    match table {
+        ArchiveTable::WorkflowRuns => {
+            "SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata FROM workflow_runs WHERE id = ?".to_string()
+        }
+        ArchiveTable::WorkflowNodeChunks => {
+            "SELECT id, workflow_node_run_id, sequence, stream, content, created_at FROM workflow_node_chunks WHERE id = ?".to_string()
+        }
+        ArchiveTable::WorkflowReadyNodes => {
+            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at FROM workflow_ready_nodes WHERE id = ? AND completed_at IS NOT NULL".to_string()
+        }
+        ArchiveTable::RunChunks => {
+            "SELECT id, run_id, sequence, stream, content, created_at FROM run_chunks WHERE id = ?"
+                .to_string()
+        }
+        ArchiveTable::WorkflowActionDispatches => {
+            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until FROM workflow_action_dispatches WHERE id = ? AND published_at IS NOT NULL".to_string()
+        }
+        ArchiveTable::Notifications => {
+            "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ? AND read_at IS NOT NULL".to_string()
+        }
+        ArchiveTable::DeadLetters => {
+            "SELECT id, channel, event_id, dedupe_key, attempts, error, payload, created_at FROM dead_letters WHERE id = ?".to_string()
+        }
+        ArchiveTable::AuditLog => {
+            "SELECT id, actor_id, actor_kind, action, resource_type, resource_id, outcome, detail, metadata, created_at FROM audit_log WHERE id = ?".to_string()
+        }
+        ArchiveTable::IdempotencyKeys => {
+            format!(
+                "SELECT id, scope, {key_col}, result, created_at FROM idempotency_keys WHERE id = ?",
+                key_col = queries::ident(dialect, "key")
+            )
+        }
+    }
+}
+
+fn timestamp_to_utc(timestamp: i64) -> Result<DateTime<Utc>, SendableError> {
+    DateTime::from_timestamp(timestamp, 0).ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid unix timestamp {timestamp}"),
+        )) as SendableError
+    })
+}
+
+fn row_to_archive_mark<R>(row: &R) -> Result<ArchiveMark, SendableError>
+where
+    R: Row,
+    for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+    for<'c> &'c str: ColumnIndex<R>,
+{
+    let table_name: String = row.get("table_name");
+    let primary_key: String = row.get("primary_key");
+    let table = table_name
+        .parse::<ArchiveTable>()
+        .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err)) })?;
+    let primary_key = Uuid::parse_str(&primary_key)
+        .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err)) })?;
+    Ok(ArchiveMark {
+        id: row.get("id"),
+        table,
+        primary_key,
+        created_at: timestamp_to_utc(row.get("created_at"))?,
+        archive_day: row.get("archive_day"),
+    })
+}
+
+fn archive_row_json<R>(table: ArchiveTable, row: &R) -> Result<Value, SendableError>
+where
+    R: Row,
+    for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
+    for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
+    for<'c> &'c str: ColumnIndex<R>,
+{
+    Ok(match table {
+        ArchiveTable::WorkflowRuns => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
+            "workflow_snapshot": row.get::<Option<String>, _>("workflow_snapshot"),
+            "status": row.get::<String, _>("status"),
+            "active_node_id": row.get::<Option<String>, _>("active_node_id"),
+            "parameters": row.get::<String, _>("parameters"),
+            "state": row.get::<String, _>("state"),
+            "created_at": row.get::<i64, _>("created_at"),
+            "started_at": row.get::<Option<i64>, _>("started_at"),
+            "finished_at": row.get::<Option<i64>, _>("finished_at"),
+            "message": row.get::<Option<String>, _>("message"),
+            "name": row.get::<Option<String>, _>("name"),
+            "trigger_source_kind": row.get::<Option<String>, _>("trigger_source_kind"),
+            "trigger_actor_type": row.get::<Option<String>, _>("trigger_actor_type"),
+            "trigger_actor_replica_id": row.get::<Option<Uuid>, _>("trigger_actor_replica_id").map(|id| id.to_string()),
+            "trigger_actor_display_name": row.get::<Option<String>, _>("trigger_actor_display_name"),
+            "trigger_request_host": row.get::<Option<String>, _>("trigger_request_host"),
+            "trigger_request_ip": row.get::<Option<String>, _>("trigger_request_ip"),
+            "trigger_metadata": row.get::<String, _>("trigger_metadata"),
+        }),
+        ArchiveTable::WorkflowNodeChunks => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
+            "sequence": row.get::<i64, _>("sequence"),
+            "stream": row.get::<String, _>("stream"),
+            "content": row.get::<String, _>("content"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+        ArchiveTable::WorkflowReadyNodes => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "source_event_id": row.get::<Uuid, _>("source_event_id").to_string(),
+            "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+            "node_id": row.get::<String, _>("node_id"),
+            "status": row.get::<String, _>("status"),
+            "ready_at": row.get::<i64, _>("ready_at"),
+            "attempts": row.get::<i64, _>("attempts"),
+            "claimed_by": row.get::<Option<String>, _>("claimed_by"),
+            "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
+            "completed_at": row.get::<Option<i64>, _>("completed_at"),
+            "created_at": row.get::<i64, _>("created_at"),
+            "updated_at": row.get::<i64, _>("updated_at"),
+        }),
+        ArchiveTable::RunChunks => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "run_id": row.get::<Uuid, _>("run_id").to_string(),
+            "sequence": row.get::<i64, _>("sequence"),
+            "stream": row.get::<String, _>("stream"),
+            "content": row.get::<String, _>("content"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+        ArchiveTable::WorkflowActionDispatches => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "dedupe_key": row.get::<String, _>("dedupe_key"),
+            "command_json": row.get::<String, _>("command_json"),
+            "attempts": row.get::<i64, _>("attempts"),
+            "created_at": row.get::<i64, _>("created_at"),
+            "updated_at": row.get::<i64, _>("updated_at"),
+            "published_at": row.get::<Option<i64>, _>("published_at"),
+            "last_error": row.get::<Option<String>, _>("last_error"),
+            "claimed_by": row.get::<Option<String>, _>("claimed_by"),
+            "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
+        }),
+        ArchiveTable::Notifications => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
+            "workflow_node_id": row.get::<Option<String>, _>("workflow_node_id"),
+            "channel": row.get::<String, _>("channel"),
+            "severity": row.get::<String, _>("severity"),
+            "title": row.get::<String, _>("title"),
+            "body": row.get::<Option<String>, _>("body"),
+            "target": row.get::<Option<String>, _>("target"),
+            "metadata": row.get::<String, _>("metadata"),
+            "read_at": row.get::<Option<i64>, _>("read_at"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+        ArchiveTable::DeadLetters => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "channel": row.get::<String, _>("channel"),
+            "event_id": row.get::<Option<Uuid>, _>("event_id").map(|id| id.to_string()),
+            "dedupe_key": row.get::<Option<String>, _>("dedupe_key"),
+            "attempts": row.get::<i64, _>("attempts"),
+            "error": row.get::<String, _>("error"),
+            "payload": row.get::<String, _>("payload"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+        ArchiveTable::AuditLog => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "actor_id": row.get::<Option<Uuid>, _>("actor_id").map(|id| id.to_string()),
+            "actor_kind": row.get::<String, _>("actor_kind"),
+            "action": row.get::<String, _>("action"),
+            "resource_type": row.get::<Option<String>, _>("resource_type"),
+            "resource_id": row.get::<Option<Uuid>, _>("resource_id").map(|id| id.to_string()),
+            "outcome": row.get::<String, _>("outcome"),
+            "detail": row.get::<Option<String>, _>("detail"),
+            "metadata": row.get::<String, _>("metadata"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+        ArchiveTable::IdempotencyKeys => runinator_models::json!({
+            "id": row.get::<Uuid, _>("id").to_string(),
+            "scope": row.get::<String, _>("scope"),
+            "key": row.get::<String, _>("key"),
+            "result": row.get::<String, _>("result"),
+            "created_at": row.get::<i64, _>("created_at"),
+        }),
+    })
+}
 
 impl<B> DatabaseImpl for B
 where
@@ -77,6 +406,173 @@ where
 {
     async fn run_init_scripts(&self, paths: &[String]) -> Result<(), SendableError> {
         self.init(paths).await
+    }
+
+    async fn mark_archive_candidates(
+        &self,
+        table: ArchiveTable,
+        eligible_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<u64, SendableError> {
+        let candidates = self
+            .archive_candidate_ids(table, eligible_before, limit.max(1))
+            .await?;
+        let now = Utc::now().timestamp();
+        let archive_day = eligible_before.format("%F").to_string();
+        let mut marked = 0;
+        for (primary_key, created_at) in candidates {
+            let insert = sqlx::query(&self.render(&queries::insert_ignore(
+                self.dialect(),
+                "archive_marks",
+                "id, table_name, primary_key, created_at, eligible_before, archive_day, status, attempts, marked_at",
+                "?, ?, ?, ?, ?, ?, 'marked', 0, ?",
+                "table_name, primary_key",
+                None,
+            )))
+            .bind(Uuid::now_v7())
+            .bind(table.as_str())
+            .bind(primary_key.to_string())
+            .bind(created_at.timestamp())
+            .bind(eligible_before.timestamp())
+            .bind(archive_day.as_str())
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+            marked += insert.affected();
+        }
+        Ok(marked)
+    }
+
+    async fn claim_archive_marks(
+        &self,
+        archiver_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ArchiveMark>, SendableError> {
+        let columns = "id, table_name, primary_key, created_at, archive_day";
+        if self.dialect() == SqlDialect::MySql {
+            sqlx::query(&self.render(
+                "UPDATE archive_marks
+                 SET claimed_by = ?, claimed_until = ?, attempts = attempts + 1
+                 WHERE id IN (
+                     SELECT id FROM (
+                         SELECT id FROM archive_marks
+                         WHERE status = 'marked'
+                           AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)
+                         ORDER BY archive_day, table_name, primary_key
+                         LIMIT ?
+                     ) AS claimable
+                 )",
+            ))
+            .bind(archiver_id.as_str())
+            .bind(lease_until.timestamp())
+            .bind(now.timestamp())
+            .bind(archiver_id.as_str())
+            .bind(limit.max(1))
+            .execute(self.pool())
+            .await?;
+            let rows = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM archive_marks WHERE claimed_by = ? AND claimed_until = ? ORDER BY archive_day, table_name, primary_key",
+            )))
+            .bind(archiver_id.as_str())
+            .bind(lease_until.timestamp())
+            .fetch_all(self.pool())
+            .await?;
+            return rows.iter().map(row_to_archive_mark).collect();
+        }
+
+        let sql = self.render(&format!(
+            "UPDATE archive_marks
+             SET claimed_by = ?, claimed_until = ?, attempts = attempts + 1
+             WHERE id IN (
+                 SELECT id FROM archive_marks
+                 WHERE status = 'marked'
+                   AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)
+                 ORDER BY archive_day, table_name, primary_key
+                 LIMIT ?{skip}
+             )
+             RETURNING {columns}",
+            skip = queries::skip_locked(self.dialect()),
+        ));
+        let rows = sqlx::query(&sql)
+            .bind(archiver_id.as_str())
+            .bind(lease_until.timestamp())
+            .bind(now.timestamp())
+            .bind(archiver_id.as_str())
+            .bind(limit.max(1))
+            .fetch_all(self.pool())
+            .await?;
+        rows.iter().map(row_to_archive_mark).collect()
+    }
+
+    async fn fetch_archive_rows(
+        &self,
+        marks: Vec<ArchiveMark>,
+    ) -> Result<Vec<ArchiveRow>, SendableError> {
+        let mut rows = Vec::new();
+        for mark in marks {
+            if let Some(row) = self.fetch_archive_row(&mark).await? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
+    async fn delete_archive_rows(&self, rows: Vec<ArchiveRow>) -> Result<u64, SendableError> {
+        let mut deleted = 0;
+        for row in rows {
+            let sql = format!(
+                "DELETE FROM {} WHERE {} = ?",
+                row.table.as_str(),
+                row.table.primary_key_column()
+            );
+            let result = sqlx::query(&self.render(&sql))
+                .bind(row.primary_key)
+                .execute(self.pool())
+                .await?;
+            deleted += result.affected();
+        }
+        Ok(deleted)
+    }
+
+    async fn complete_archive_marks(&self, mark_ids: Vec<Uuid>) -> Result<u64, SendableError> {
+        let now = Utc::now().timestamp();
+        let mut updated = 0;
+        for mark_id in mark_ids {
+            let result = sqlx::query(&self.render(
+                "UPDATE archive_marks
+                 SET status = 'archived', archived_at = ?, claimed_by = NULL, claimed_until = NULL, last_error = NULL
+                 WHERE id = ?",
+            ))
+            .bind(now)
+            .bind(mark_id)
+            .execute(self.pool())
+            .await?;
+            updated += result.affected();
+        }
+        Ok(updated)
+    }
+
+    async fn fail_archive_marks(
+        &self,
+        mark_ids: Vec<Uuid>,
+        error: String,
+    ) -> Result<u64, SendableError> {
+        let mut updated = 0;
+        for mark_id in mark_ids {
+            let result = sqlx::query(&self.render(
+                "UPDATE archive_marks
+                 SET claimed_by = NULL, claimed_until = NULL, last_error = ?
+                 WHERE id = ? AND status = 'marked'",
+            ))
+            .bind(error.as_str())
+            .bind(mark_id)
+            .execute(self.pool())
+            .await?;
+            updated += result.affected();
+        }
+        Ok(updated)
     }
 
     async fn fetch_runs_by_status(

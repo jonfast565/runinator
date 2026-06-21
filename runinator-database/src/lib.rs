@@ -8,6 +8,7 @@ use runinator_models::errors::SendableError;
 use runinator_models::settings::SettingKind;
 use uuid::Uuid;
 
+pub mod archive;
 pub mod backend;
 mod common;
 pub mod errors;

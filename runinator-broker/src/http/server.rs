@@ -422,6 +422,10 @@ fn error_response(err: BrokerError) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorResponse::new("internal", message),
         ),
+        BrokerError::FeatureDisabled(feature) => json_response(
+            StatusCode::NOT_IMPLEMENTED,
+            ErrorResponse::new("feature_disabled", feature),
+        ),
     }
 }
 

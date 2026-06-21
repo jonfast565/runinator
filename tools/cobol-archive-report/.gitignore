@@ -1,0 +1,3 @@
+# compiled binary and decompressed/test artifacts
+/archive-report
+*.jsonl.gz

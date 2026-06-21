@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: runinator-archive-data
+  namespace: runinator
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-archiver
+  namespace: runinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-archiver
+  template:
+    metadata:
+      labels:
+        app: runinator-archiver
+    spec:
+      containers:
+        - name: archiver
+          image: runinator-archiver:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-archiver"]
+          args:
+            - "--database"
+            - "postgres"
+            - "--database-url"
+            - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+            - "--archive-dir"
+            - "/var/lib/runinator/archive"
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-postgres-secret
+          volumeMounts:
+            - name: archive-data
+              mountPath: /var/lib/runinator/archive
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: archive-data
+          persistentVolumeClaim:
+            claimName: runinator-archive-data

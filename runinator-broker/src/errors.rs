@@ -13,6 +13,8 @@ pub enum BrokerError {
     WorkflowResultsUnsupported(String),
     #[error("BROKER005 - internal broker error: {0}")]
     Internal(String),
+    #[error("BROKER006 - {0} broker feature disabled: rebuild with --features {0}")]
+    FeatureDisabled(&'static str),
 }
 
 // numbered error dictionary for the broker engine.
@@ -32,6 +34,11 @@ pub const WORKFLOW_RESULTS_UNSUPPORTED: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub const INTERNAL: ErrorDescriptor =
     ErrorDescriptor::new("BROKER005", "broker.internal", "Internal broker error");
+pub const FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
+    "BROKER006",
+    "broker.feature_disabled",
+    "Broker backend feature disabled",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     DUPLICATE,
@@ -39,6 +46,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     NOT_IMPLEMENTED,
     WORKFLOW_RESULTS_UNSUPPORTED,
     INTERNAL,
+    FEATURE_DISABLED,
 ];
 
 impl EngineErrors for BrokerError {

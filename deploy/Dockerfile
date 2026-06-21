@@ -8,6 +8,7 @@
 #   docker build -f deploy/Dockerfile --target ws        -t runinator-ws:dev        .
 #   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
 #   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
+#   docker build -f deploy/Dockerfile --target archiver  -t runinator-archiver:dev  .
 #   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
 #   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
 #
@@ -23,6 +24,7 @@ RUN rustup install 1.91.1 && \
     cargo build --release \
         -p runinator-ws \
         -p runinator-worker \
+        -p runinator-archiver \
         -p runinator-waker \
         -p runinator-ctl \
         -p runinator-bootstrap \
@@ -66,6 +68,17 @@ RUN chown -R runinator:runinator /usr/local/bin/runinator-worker /home/runinator
 VOLUME ["/data"]
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-worker"]
+
+# ---- archiver ----
+FROM runtime-base AS archiver
+RUN mkdir -p /var/lib/runinator/archive \
+    && chown -R runinator:runinator /var/lib/runinator
+COPY --from=builder /workspace/target/release/runinator-archiver /usr/local/bin/runinator-archiver
+RUN chown -R runinator:runinator /usr/local/bin/runinator-archiver \
+    && chmod -R 775 /usr/local/bin/runinator-archiver
+VOLUME ["/var/lib/runinator/archive"]
+USER runinator
+ENTRYPOINT ["/usr/local/bin/runinator-archiver"]
 
 # ---- ctl: short-lived pack importer ----
 FROM runtime-base AS ctl

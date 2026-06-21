@@ -95,18 +95,8 @@ pub const BROKER_UNKNOWN_BACKEND: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub const BROKER_KAFKA: ErrorDescriptor =
     ErrorDescriptor::new("RUNI174", "ws.broker.kafka", "Kafka broker error");
-pub const BROKER_KAFKA_FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
-    "RUNI175",
-    "ws.broker.kafka_feature_disabled",
-    "Kafka broker support not compiled in",
-);
 pub const BROKER_RABBITMQ: ErrorDescriptor =
     ErrorDescriptor::new("RUNI176", "ws.broker.rabbitmq", "RabbitMQ broker error");
-pub const BROKER_RABBITMQ_FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
-    "RUNI177",
-    "ws.broker.rabbitmq_feature_disabled",
-    "RabbitMQ broker support not compiled in",
-);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
@@ -128,9 +118,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     BROKER_CLIENT,
     BROKER_UNKNOWN_BACKEND,
     BROKER_KAFKA,
-    BROKER_KAFKA_FEATURE_DISABLED,
     BROKER_RABBITMQ,
-    BROKER_RABBITMQ_FEATURE_DISABLED,
 ];
 
 /// web service engine error dictionary.

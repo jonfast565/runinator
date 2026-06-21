@@ -5354,6 +5354,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-archiver"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "env_logger",
+ "flate2",
+ "log",
+ "runinator-database",
+ "runinator-models",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-auth"
 version = "0.1.0"
 dependencies = [

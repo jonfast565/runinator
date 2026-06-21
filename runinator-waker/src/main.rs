@@ -107,7 +107,7 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
         }
         "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
         "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
-        "kafka" => build_kafka_broker(
+        "kafka" => runinator_broker::build_kafka_broker(
             KafkaBrokerConfig::new(config.broker_endpoint.clone())
                 .with_topics(
                     config.broker_action_topic.clone(),
@@ -119,54 +119,23 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
                     config.broker_ingress_topic.clone(),
                 )
                 .with_client_id(config.broker_client_id.clone()),
-        ),
-        "rabbitmq" => {
-            build_rabbitmq_broker(
-                RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
-                    .with_queues(
-                        config.broker_action_topic.clone(),
-                        config.broker_control_topic.clone(),
-                        config.broker_result_topic.clone(),
-                    )
-                    .with_orchestration_queues(
-                        config.broker_wake_topic.clone(),
-                        config.broker_ingress_topic.clone(),
-                    )
-                    .with_client_id(config.broker_client_id.clone()),
-            )
-            .await
-        }
+        )
+        .map_err(|err| runinator_waker::errors::BROKER_KAFKA.error(err)),
+        "rabbitmq" => runinator_broker::build_rabbitmq_broker(
+            RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
+                .with_queues(
+                    config.broker_action_topic.clone(),
+                    config.broker_control_topic.clone(),
+                    config.broker_result_topic.clone(),
+                )
+                .with_orchestration_queues(
+                    config.broker_wake_topic.clone(),
+                    config.broker_ingress_topic.clone(),
+                )
+                .with_client_id(config.broker_client_id.clone()),
+        )
+        .await
+        .map_err(|err| runinator_waker::errors::BROKER_RABBITMQ.error(err)),
         other => Err(runinator_waker::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'"))),
     }
-}
-
-#[cfg(feature = "kafka")]
-fn build_kafka_broker(config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::kafka::KafkaBroker::new(config)
-        .map_err(|err| runinator_waker::errors::BROKER_KAFKA.error(err))?;
-    Ok(Arc::new(broker))
-}
-
-#[cfg(not(feature = "kafka"))]
-fn build_kafka_broker(_config: KafkaBrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(runinator_waker::errors::BROKER_KAFKA_FEATURE_DISABLED
-        .error("build runinator-waker with --features kafka"))
-}
-
-#[cfg(feature = "rabbitmq")]
-async fn build_rabbitmq_broker(
-    config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker = runinator_broker::adapters::rabbitmq::RabbitMqBroker::connect(config)
-        .await
-        .map_err(|err| runinator_waker::errors::BROKER_RABBITMQ.error(err))?;
-    Ok(Arc::new(broker))
-}
-
-#[cfg(not(feature = "rabbitmq"))]
-async fn build_rabbitmq_broker(
-    _config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    Err(runinator_waker::errors::BROKER_RABBITMQ_FEATURE_DISABLED
-        .error("build runinator-waker with --features rabbitmq"))
 }

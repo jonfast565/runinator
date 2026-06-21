@@ -10,6 +10,7 @@ members = [
     "runinator-reducer",
     "runinator-database",
     "runinator-bootstrap",
+    "runinator-archiver",
     "runinator-waker",
     "runinator-ws",
     "runinator-worker",

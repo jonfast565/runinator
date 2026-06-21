@@ -1,6 +1,7 @@
 pub mod adapters;
 mod capabilities;
 mod errors;
+mod factory;
 pub mod http;
 pub mod in_memory;
 pub mod tcp;
@@ -10,6 +11,7 @@ pub use capabilities::{
     ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
 };
 pub use errors::BrokerError;
+pub use factory::{build_kafka_broker, build_rabbitmq_broker};
 pub use runinator_comm::{ControlCommand, UiEvent, WakeCommand, WsIngressCommand};
 pub use types::{
     BrokerDelivery, BrokerMessage, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,

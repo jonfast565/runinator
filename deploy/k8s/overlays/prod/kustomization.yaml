@@ -18,6 +18,9 @@ images:
   - name: runinator-worker
     newName: REPLACE_REGISTRY/runinator-worker
     newTag: latest
+  - name: runinator-archiver
+    newName: REPLACE_REGISTRY/runinator-archiver
+    newTag: latest
   - name: runinator-ctl
     newName: REPLACE_REGISTRY/runinator-ctl
     newTag: latest

@@ -429,6 +429,7 @@ function Publish-Binaries {
     $binaries = @(
         'runinator-waker',
         'runinator-worker',
+        'runinator-archiver',
         'runinatorctl',
         'runinator-ws',
         'runinator-broker',
@@ -975,6 +976,7 @@ function Build-ContainerImages {
     $images = @(
         @{ Name = 'runinator-waker';     Dockerfile = 'deploy/Dockerfile'; Target = 'waker' },
         @{ Name = 'runinator-worker';    Dockerfile = 'deploy/Dockerfile'; Target = 'worker' },
+        @{ Name = 'runinator-archiver';  Dockerfile = 'deploy/Dockerfile'; Target = 'archiver' },
         @{ Name = 'runinator-ctl';       Dockerfile = 'deploy/Dockerfile'; Target = 'ctl' },
         @{ Name = 'runinator-ws';        Dockerfile = 'deploy/Dockerfile'; Target = 'ws' },
         @{ Name = 'runinator-bootstrap'; Dockerfile = 'deploy/Dockerfile'; Target = 'bootstrap' },
@@ -1307,6 +1309,7 @@ function Deploy-KubernetesStack {
         if (-not $skipMq) { [void]$rolloutTargets.Add((Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-rabbitmq' -FallbackKind 'StatefulSet')) }
         foreach ($t in @(
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-ws' -FallbackKind 'Deployment'),
+            (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-archiver' -FallbackKind 'Deployment'),
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-waker' -FallbackKind 'Deployment'),
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-worker' -FallbackKind 'StatefulSet'),
             (Get-K8sRolloutTarget -RenderedYaml $renderedManifest -Name 'runinator-command-center' -FallbackKind 'Deployment')
