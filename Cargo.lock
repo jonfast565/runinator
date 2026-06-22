@@ -5406,6 +5406,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "lapin",
+ "log",
  "parking_lot",
  "rdkafka",
  "reqwest",

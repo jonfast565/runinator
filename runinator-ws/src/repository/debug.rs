@@ -596,6 +596,15 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
             )),
         )
         .await?;
+        support::enqueue_node_ready(
+            db,
+            new_run.id,
+            target_node_id.to_string(),
+            "workflow_run_replay",
+            Utc::now(),
+            runinator_models::json!({ "node_id": target_node_id }),
+        )
+        .await?;
 
         let Some(refreshed) = db.fetch_workflow_run(new_run.id).await? else {
             return Err(crate::errors::REPLAY_NOT_FOUND
@@ -604,23 +613,26 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         return Ok(refreshed);
     }
 
-    db.create_workflow_run(
-        source.workflow_id,
-        snapshot,
-        source.parameters,
-        state,
-        source.name,
-        runinator_models::replicas::WorkflowRunProvenance {
-            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-            actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-            actor_replica_id: None,
-            actor_display_name: Some("replay".into()),
-            request_host: None,
-            request_ip: None,
-            metadata: runinator_models::json!({ "source_run_id": source.id }),
-        },
-    )
-    .await
+    let run = db
+        .create_workflow_run(
+            source.workflow_id,
+            snapshot,
+            source.parameters,
+            state,
+            source.name,
+            runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                actor_replica_id: None,
+                actor_display_name: Some("replay".into()),
+                request_host: None,
+                request_ip: None,
+                metadata: runinator_models::json!({ "source_run_id": source.id }),
+            },
+        )
+        .await?;
+    support::enqueue_start_ready_node(db, &run).await?;
+    Ok(run)
 }
 
 /// BFS over reverse transitions from `target_node_id` to find all nodes that must

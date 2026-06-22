@@ -426,6 +426,10 @@ fn error_response(err: BrokerError) -> Response {
             StatusCode::NOT_IMPLEMENTED,
             ErrorResponse::new("feature_disabled", feature),
         ),
+        BrokerError::ConsumerStreamEnded => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorResponse::new("consumer_stream_ended", "consumer stream ended"),
+        ),
     }
 }
 

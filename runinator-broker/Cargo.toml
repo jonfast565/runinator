@@ -17,6 +17,7 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 rdkafka = { version = "0.39", features = ["cmake-build"], optional = true }
 lapin = { version = "4.9.1", optional = true }
 futures-util = { version = "0.3", optional = true }
+log = { version = "0.4", optional = true }
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 serde = { version = "1", features = ["derive"] }
@@ -27,4 +28,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 
 [features]
 kafka = ["dep:rdkafka"]
-rabbitmq = ["dep:lapin", "dep:futures-util"]
+rabbitmq = ["dep:lapin", "dep:futures-util", "dep:log"]

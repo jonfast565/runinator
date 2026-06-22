@@ -55,6 +55,11 @@ pub struct Config {
     /// name so it stays resolvable across ip churn.
     #[arg(long, default_value = "")]
     pub advertise_host: String,
+
+    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec
+    /// probes when the waker has no http server. set to empty to disable.
+    #[arg(long, default_value = "/tmp/runinator-waker-liveness")]
+    pub liveness_file: String,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {

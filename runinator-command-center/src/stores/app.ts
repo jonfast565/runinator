@@ -90,6 +90,7 @@ export function isResourceTab(tab: AppTab): boolean {
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 
 const SIDEBAR_COLLAPSED_KEY = "command-center.sidebar.collapsed";
+const DEFAULT_TAB_KEY = "command-center.defaultTab";
 
 function readSidebarCollapsed(): boolean {
   try {
@@ -99,8 +100,18 @@ function readSidebarCollapsed(): boolean {
   }
 }
 
+function readStoredDefaultTab(): AppTab {
+  try {
+    const stored = localStorage.getItem(DEFAULT_TAB_KEY);
+    if (stored && (tabs as string[]).includes(stored)) return stored as AppTab;
+  } catch {
+    // storage unavailable; use default.
+  }
+  return "Workflows";
+}
+
 export const useAppStore = defineStore("app", () => {
-  const activeTab = ref<AppTab>("Workflows");
+  const activeTab = ref<AppTab>(readStoredDefaultTab());
   const sidebarCollapsed = ref(readSidebarCollapsed());
   const serviceUrl = ref<string | null>(null);
   const backendReachable = ref(false);

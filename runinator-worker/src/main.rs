@@ -70,6 +70,20 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let broker = build_broker(&config).await?;
     let api_client = build_api_client(&config)?;
     let shutdown = Arc::new(Notify::new());
+
+    if !config.liveness_file.trim().is_empty() {
+        let path = config.liveness_file.clone();
+        let liveness_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = std::fs::write(&path, b"");
+                tokio::select! {
+                    _ = liveness_shutdown.notified() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                }
+            }
+        });
+    }
     let replica_session = match register_worker_replica(&api_client, &config).await {
         Ok(session) => Some(session),
         Err(err) => {

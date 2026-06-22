@@ -15,6 +15,8 @@ pub enum BrokerError {
     Internal(String),
     #[error("BROKER006 - {0} broker feature disabled: rebuild with --features {0}")]
     FeatureDisabled(&'static str),
+    #[error("BROKER007 - consumer stream ended; connection may have dropped")]
+    ConsumerStreamEnded,
 }
 
 // numbered error dictionary for the broker engine.
@@ -39,6 +41,11 @@ pub const FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
     "broker.feature_disabled",
     "Broker backend feature disabled",
 );
+pub const CONSUMER_STREAM_ENDED: ErrorDescriptor = ErrorDescriptor::new(
+    "BROKER007",
+    "broker.consumer_stream_ended",
+    "Consumer stream ended; connection may have dropped",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     DUPLICATE,
@@ -47,6 +54,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     WORKFLOW_RESULTS_UNSUPPORTED,
     INTERNAL,
     FEATURE_DISABLED,
+    CONSUMER_STREAM_ENDED,
 ];
 
 impl EngineErrors for BrokerError {

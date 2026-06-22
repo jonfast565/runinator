@@ -69,6 +69,20 @@ async fn main() -> Result<(), SendableError> {
         }
     };
 
+    if !config.liveness_file.trim().is_empty() {
+        let path = config.liveness_file.clone();
+        let shutdown = notify.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = std::fs::write(&path, b"");
+                tokio::select! {
+                    _ = shutdown.notified() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                }
+            }
+        });
+    }
+
     let loop_notify = notify.clone();
     let loop_broker = broker.clone();
     let loop_config = config.clone();

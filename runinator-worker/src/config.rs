@@ -19,6 +19,7 @@ pub struct Config {
     pub api_key: Option<String>,
     pub worker_id: Uuid,
     pub advertise_host: Option<String>,
+    pub liveness_file: String,
 }
 
 #[derive(Parser, Debug)]
@@ -68,6 +69,11 @@ struct CliArgs {
     // dns name so it survives pod ip churn.
     #[arg(long)]
     advertise_host: Option<String>,
+
+    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec
+    /// probes when the worker has no http server. set to empty to disable.
+    #[arg(long, default_value = "/tmp/runinator-worker-liveness")]
+    liveness_file: String,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {
@@ -104,6 +110,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         api_key: args.api_key.filter(|value| !value.trim().is_empty()),
         worker_id,
         advertise_host: args.advertise_host.filter(|value| !value.trim().is_empty()),
+        liveness_file: args.liveness_file,
     })
 }
 

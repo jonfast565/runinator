@@ -68,6 +68,16 @@ spec:
             - name: plugins
               mountPath: /opt/runinator/plugins
               readOnly: true
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "test $(find /tmp/runinator-worker-liveness -mmin -1 2>/dev/null | wc -l) -eq 1"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: "100m"

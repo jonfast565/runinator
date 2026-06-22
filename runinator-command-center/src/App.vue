@@ -44,6 +44,7 @@ import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
 import { usePermissionsStore } from "./stores/permissions";
 import { useAdminSettingsStore } from "./stores/adminSettings";
+import { useDisplayPreferencesStore } from "./stores/displayPreferences";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
 import ReplicasView from "./views/ReplicasView.vue";
@@ -72,6 +73,8 @@ const secrets = useSecretsStore();
 const providers = useProvidersStore();
 const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
+// initialize early so the theme data-theme attribute is set before first render.
+useDisplayPreferencesStore();
 useEventStream();
 
 let unlistenUrl: (() => void) | undefined;

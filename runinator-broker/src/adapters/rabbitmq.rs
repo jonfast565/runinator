@@ -115,10 +115,14 @@ use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 #[cfg(feature = "rabbitmq")]
 use tokio::sync::Mutex as AsyncMutex;
+#[cfg(feature = "rabbitmq")]
+use log::{info, warn};
 
 #[cfg(feature = "rabbitmq")]
 struct RabbitMqBrokerInner {
-    channel: lapin::Channel,
+    // wrapped in AsyncMutex so ensure_connected can replace it after a connection drop.
+    channel: AsyncMutex<lapin::Channel>,
+    uri: String,
     action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     control_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
@@ -159,7 +163,8 @@ impl RabbitMqBrokerInner {
         declare_fanout_exchange(&channel, &config.event_exchange).await?;
 
         Ok(Self {
-            channel,
+            channel: AsyncMutex::new(channel),
+            uri: config.uri.clone(),
             action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
@@ -168,6 +173,44 @@ impl RabbitMqBrokerInner {
             event_consumers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// return a connected channel, reconnecting (and re-declaring queues/exchanges) if the current
+    /// channel has closed. callers must release the returned clone before re-entering this method.
+    async fn ensure_connected(
+        &self,
+        config: &RabbitMqBrokerConfig,
+    ) -> Result<lapin::Channel, BrokerError> {
+        use lapin::{Connection, ConnectionProperties};
+
+        let mut guard = self.channel.lock().await;
+        if guard.status().connected() {
+            return Ok(guard.clone());
+        }
+        warn!("rabbitmq channel closed, attempting to reconnect");
+        let conn = Connection::connect(&self.uri, ConnectionProperties::default())
+            .await
+            .map_err(rabbitmq_error("reconnect"))?;
+        let new_channel = conn
+            .create_channel()
+            .await
+            .map_err(rabbitmq_error("reconnect_channel"))?;
+        declare_queue(&new_channel, &config.action_queue).await?;
+        declare_queue(&new_channel, &config.control_queue).await?;
+        declare_queue(&new_channel, &config.result_queue).await?;
+        declare_queue(&new_channel, &config.wake_queue).await?;
+        declare_queue(&new_channel, &config.ingress_queue).await?;
+        declare_fanout_exchange(&new_channel, &config.event_exchange).await?;
+        // consumers are bound to the old channel; clear them so they're recreated on next use.
+        self.action_consumers.lock().clear();
+        self.control_consumers.lock().clear();
+        self.result_consumers.lock().clear();
+        self.wake_consumers.lock().clear();
+        self.ingress_consumers.lock().clear();
+        self.event_consumers.lock().clear();
+        *guard = new_channel.clone();
+        info!("reconnected to rabbitmq");
+        Ok(new_channel)
     }
 
     /// get-or-create one subscriber's exclusive queue bound to the fan-out events exchange.
@@ -180,46 +223,44 @@ impl RabbitMqBrokerInner {
             return Ok(consumer);
         }
 
+        let ch = self.ensure_connected(config).await?;
         // a per-subscriber exclusive, auto-delete queue bound to the fanout exchange gives this
         // replica its own copy of every event; auto-ack since UI events are best-effort.
         let queue_name = format!("{}.events.{}", config.client_id, consumer_id);
-        self.channel
-            .queue_declare(
+        ch.queue_declare(
+            queue_name.as_str().into(),
+            lapin::options::QueueDeclareOptions {
+                durable: false,
+                exclusive: true,
+                auto_delete: true,
+                ..Default::default()
+            },
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .map_err(rabbitmq_error("event_queue_declare"))?;
+        ch.queue_bind(
+            queue_name.as_str().into(),
+            config.event_exchange.as_str().into(),
+            "".into(),
+            lapin::options::QueueBindOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .map_err(rabbitmq_error("event_queue_bind"))?;
+        let tag = format!("{}.events.{}", config.client_id, consumer_id);
+        let consumer = Arc::new(AsyncMutex::new(
+            ch.basic_consume(
                 queue_name.as_str().into(),
-                lapin::options::QueueDeclareOptions {
-                    durable: false,
-                    exclusive: true,
-                    auto_delete: true,
+                tag.into(),
+                lapin::options::BasicConsumeOptions {
+                    no_ack: true,
                     ..Default::default()
                 },
                 lapin::types::FieldTable::default(),
             )
             .await
-            .map_err(rabbitmq_error("event_queue_declare"))?;
-        self.channel
-            .queue_bind(
-                queue_name.as_str().into(),
-                config.event_exchange.as_str().into(),
-                "".into(),
-                lapin::options::QueueBindOptions::default(),
-                lapin::types::FieldTable::default(),
-            )
-            .await
-            .map_err(rabbitmq_error("event_queue_bind"))?;
-        let tag = format!("{}.events.{}", config.client_id, consumer_id);
-        let consumer = Arc::new(AsyncMutex::new(
-            self.channel
-                .basic_consume(
-                    queue_name.as_str().into(),
-                    tag.into(),
-                    lapin::options::BasicConsumeOptions {
-                        no_ack: true,
-                        ..Default::default()
-                    },
-                    lapin::types::FieldTable::default(),
-                )
-                .await
-                .map_err(rabbitmq_error("event_consume"))?,
+            .map_err(rabbitmq_error("event_consume"))?,
         ));
         self.event_consumers
             .lock()
@@ -245,6 +286,7 @@ impl RabbitMqBrokerInner {
             return Ok(consumer);
         }
 
+        let ch = self.ensure_connected(config).await?;
         let queue = queue_for(config, channel);
         let tag = format!(
             "{}.{}.{}",
@@ -253,15 +295,14 @@ impl RabbitMqBrokerInner {
             consumer_id
         );
         let consumer = Arc::new(AsyncMutex::new(
-            self.channel
-                .basic_consume(
-                    queue.into(),
-                    tag.into(),
-                    lapin::options::BasicConsumeOptions::default(),
-                    lapin::types::FieldTable::default(),
-                )
-                .await
-                .map_err(rabbitmq_error("consume"))?,
+            ch.basic_consume(
+                queue.into(),
+                tag.into(),
+                lapin::options::BasicConsumeOptions::default(),
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("consume"))?,
         ));
         map.lock()
             .insert(consumer_id.to_string(), Arc::clone(&consumer));
@@ -378,7 +419,7 @@ where
     let delivery = guard
         .next()
         .await
-        .ok_or_else(|| BrokerError::Internal("rabbitmq consumer stream ended".into()))?
+        .ok_or(BrokerError::ConsumerStreamEnded)?
         .map_err(rabbitmq_error("receive"))?;
     let value = serde_json::from_slice(&delivery.data)
         .map_err(|err| BrokerError::Internal(err.to_string()))?;
@@ -444,18 +485,16 @@ impl Broker for RabbitMqBroker {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.channel,
-            &self.config.action_queue,
-            &key,
-            payload,
-        )
-        .await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_json(&ch, &self.config.action_queue, &key, payload).await
     }
 
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        let (message, delivery) =
-            receive_json::<BrokerMessage>(self, RabbitMqChannel::Action, consumer).await?;
+        let result = receive_json::<BrokerMessage>(self, RabbitMqChannel::Action, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.action_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
         let broker_delivery = BrokerDelivery::from(message);
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
@@ -474,18 +513,17 @@ impl Broker for RabbitMqBroker {
         let key = command.workflow_run_id.to_string();
         let payload = serde_json::to_string(&command)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.channel,
-            &self.config.control_queue,
-            &key,
-            payload,
-        )
-        .await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_json(&ch, &self.config.control_queue, &key, payload).await
     }
 
     async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
-        let (command, delivery) =
-            receive_json::<ControlCommand>(self, RabbitMqChannel::Control, consumer).await?;
+        let result =
+            receive_json::<ControlCommand>(self, RabbitMqChannel::Control, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.control_consumers.lock().remove(consumer);
+        }
+        let (command, delivery) = result?;
         let broker_delivery = ControlDelivery::from(command);
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
@@ -500,18 +538,16 @@ impl Broker for RabbitMqBroker {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.channel,
-            &self.config.result_queue,
-            &key,
-            payload,
-        )
-        .await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_json(&ch, &self.config.result_queue, &key, payload).await
     }
 
     async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        let (message, delivery) =
-            receive_json::<ResultMessage>(self, RabbitMqChannel::Result, consumer).await?;
+        let result = receive_json::<ResultMessage>(self, RabbitMqChannel::Result, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.result_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
         let broker_delivery = ResultDelivery::from(message);
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
@@ -530,12 +566,16 @@ impl Broker for RabbitMqBroker {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(&self.inner.channel, &self.config.wake_queue, &key, payload).await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_json(&ch, &self.config.wake_queue, &key, payload).await
     }
 
     async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
-        let (message, delivery) =
-            receive_json::<WakeMessage>(self, RabbitMqChannel::Wake, consumer).await?;
+        let result = receive_json::<WakeMessage>(self, RabbitMqChannel::Wake, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.wake_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
         let broker_delivery = WakeDelivery::from(message);
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
@@ -554,18 +594,17 @@ impl Broker for RabbitMqBroker {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.channel,
-            &self.config.ingress_queue,
-            &key,
-            payload,
-        )
-        .await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_json(&ch, &self.config.ingress_queue, &key, payload).await
     }
 
     async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
-        let (message, delivery) =
-            receive_json::<IngressMessage>(self, RabbitMqChannel::Ingress, consumer).await?;
+        let result =
+            receive_json::<IngressMessage>(self, RabbitMqChannel::Ingress, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.ingress_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
         let broker_delivery = IngressDelivery::from(message);
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
@@ -583,16 +622,22 @@ impl Broker for RabbitMqBroker {
     async fn publish_event(&self, message: EventMessage) -> Result<(), BrokerError> {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_fanout(&self.inner.channel, &self.config.event_exchange, payload).await
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        publish_fanout(&ch, &self.config.event_exchange, payload).await
     }
 
     async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {
         let subscriber = self.inner.event_consumer(&self.config, consumer).await?;
-        let mut guard = subscriber.lock().await;
-        let delivery = guard
-            .next()
-            .await
-            .ok_or_else(|| BrokerError::Internal("rabbitmq event stream ended".into()))?
+        let delivery_result = {
+            let mut guard = subscriber.lock().await;
+            guard.next().await
+        };
+        if delivery_result.is_none() {
+            self.inner.event_consumers.lock().remove(consumer);
+            return Err(BrokerError::ConsumerStreamEnded);
+        }
+        let delivery = delivery_result
+            .unwrap()
             .map_err(rabbitmq_error("receive_event"))?;
         let message: EventMessage = serde_json::from_slice(&delivery.data)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
