@@ -64,3 +64,50 @@ fn archive_writer_exports_gzipped_jsonl() {
 
     fs::remove_dir_all(&root).ok();
 }
+
+fn config_with_liveness(liveness_file: &str) -> crate::config::Config {
+    use clap::Parser;
+    let cli = crate::config::Cli::try_parse_from([
+        "runinator-archiver",
+        "--database",
+        "sqlite",
+        "--database-url",
+        "sqlite::memory:",
+        "--liveness-file",
+        liveness_file,
+    ])
+    .unwrap();
+    crate::config::Config::from_cli(cli).unwrap()
+}
+
+#[tokio::test]
+async fn spawn_liveness_is_disabled_for_a_blank_path() {
+    let config = config_with_liveness("");
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    assert!(super::spawn_liveness(&config, shutdown).is_none());
+}
+
+#[tokio::test]
+async fn spawn_liveness_writes_the_configured_file() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("runinator-archiver-liveness-{}", Uuid::new_v4()));
+    let config = config_with_liveness(&path.to_string_lossy());
+
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handle = super::spawn_liveness(&config, shutdown.clone()).expect("a path should spawn a task");
+
+    for _ in 0..50 {
+        if path.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(path.exists(), "archiver should touch its liveness file");
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("liveness task should stop after shutdown")
+        .expect("liveness task should not panic");
+    let _ = std::fs::remove_file(&path);
+}

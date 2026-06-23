@@ -41,3 +41,37 @@ fn config_parser_accepts_waker_and_broker_overrides() {
     assert_eq!(config.broker_endpoint, "127.0.0.1:9090");
     assert_eq!(config.broker_client_id, "relay-1");
 }
+
+#[tokio::test]
+async fn spawn_liveness_is_disabled_for_a_blank_path() {
+    let mut config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    config.liveness_file = String::new();
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    assert!(crate::spawn_liveness(&config, shutdown).is_none());
+}
+
+#[tokio::test]
+async fn spawn_liveness_writes_the_configured_file() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("runinator-waker-liveness-{}", uuid::Uuid::new_v4()));
+    let mut config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    config.liveness_file = path.to_string_lossy().to_string();
+
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let handle = crate::spawn_liveness(&config, shutdown.clone()).expect("a path should spawn a task");
+
+    for _ in 0..50 {
+        if path.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(path.exists(), "waker should touch its liveness file");
+
+    shutdown.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("liveness task should stop after shutdown")
+        .expect("liveness task should not panic");
+    let _ = std::fs::remove_file(&path);
+}
