@@ -467,14 +467,38 @@ pub enum WorkflowNodeKind {
     Try,
     Map,
     Race,
-    #[serde(rename = "output")]
+    #[serde(rename = "output", alias = "deliverable")]
     Output,
-    Deliverable,
     Input,
     Subflow,
     Config,
     End,
     Fail,
+    // --- new node kinds (easiest → most complex) ---
+    /// evaluate named boolean assertions; fails with a structured violation list.
+    Assert,
+    /// resolve named expression bindings into the run context; no side effects.
+    Transform,
+    /// append a tamper-evident audit record to the workflow audit log.
+    Audit,
+    /// snapshot run state at a named point; enables rollback via the control-plane api.
+    Checkpoint,
+    /// acquire a named distributed mutex; parks until the lock is available.
+    Mutex,
+    /// enforce a cross-run rate limit; parks until a token is available.
+    Throttle,
+    /// wait for one or more independently-started workflow runs to reach a terminal state.
+    AwaitRun,
+    /// park for a trailing delay that resets when re-triggered; collapses event bursts.
+    Debounce,
+    /// accumulate externally-delivered items until a count or time threshold is met.
+    Collect,
+    /// park until N runs reach this named barrier; the last arrival releases all waiters.
+    Barrier,
+    /// track failure rates across runs; fast-fail or route to fallback when tripped.
+    CircuitBreaker,
+    /// subscribe to a named event stream; drives a body subgraph on each matching event.
+    EventSource,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -881,9 +905,9 @@ pub struct WorkflowNodeRunArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-/// Input for promoting a node artifact to a run-level deliverable.
+/// Input for promoting a node artifact to a run-level artifact via an output node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewWorkflowRunDeliverable {
+pub struct NewWorkflowRunArtifact {
     pub workflow_run_id: Uuid,
     pub node_id: String,
     pub artifact_id: Uuid,
@@ -894,10 +918,9 @@ pub struct NewWorkflowRunDeliverable {
     pub metadata: Value,
 }
 
-/// A run-level deliverable: an author-declared label over a node artifact, promoted by a
-/// `deliverable` node so a finished workflow run exposes what it produced.
+/// A run-level artifact declared by an output node, making it visible at workflow-run scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowRunDeliverable {
+pub struct WorkflowRunArtifact {
     pub id: Uuid,
     pub workflow_run_id: Uuid,
     pub node_id: String,

@@ -772,24 +772,24 @@ fn signal_node_round_trips() {
 }
 
 #[test]
-fn deliverable_node_round_trips() {
+fn output_node_artifact_round_trips() {
     let src = r#"
         workflow "Reports" v1 {
             node dump <- console.run(command: "dump")
-            deliverable {
+            output {
                 report = dump.artifacts
                 first = dump.artifacts[0]
             }
         }
     "#;
     let definition = compile(src);
-    let deliverable = definition
+    let output_node = definition
         .definition
         .nodes
         .iter()
-        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Deliverable)
-        .expect("deliverable node");
-    let items = deliverable
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Output)
+        .expect("output node");
+    let items = output_node
         .parameters
         .get("items")
         .and_then(Value::as_array)
@@ -5237,4 +5237,90 @@ fn decompile_output_is_format_idempotent() {
             "decompile output is not format-stable:\n--- decompiled ---\n{decompiled}\n--- formatted ---\n{formatted}"
         );
     }
+}
+
+/// the twelve coordination/resilience/diagnostic node kinds each compile to the expected kind and
+/// survive a compile -> decompile -> compile round trip.
+#[test]
+fn new_node_kinds_compile_and_round_trip() {
+    use runinator_models::workflows::WorkflowNodeKind;
+
+    let src = r#"
+        workflow "New Nodes" v1 {
+            params { run_ids: string[], amount: int, user: string }
+            node seed <- console.run(command: "echo go")
+            assert {
+                "amount_positive": params.amount > 0
+            }
+            transform {
+                doubled = params.amount * 2
+            }
+            audit action "reviewed" actor params.user
+            checkpoint "after-audit"
+            mutex "deploy-lock" every 5s timeout 300s
+            throttle "github-api" rate 10 per 60s
+            await params.run_ids mode "all" timeout 1800s
+            debounce "file-change" delay 30s
+            collect "events" max 50 timeout 300s
+            barrier "shard-sync" count 4 timeout 600s
+            circuit_breaker "payment-api" threshold 5 window 60s cooldown 120s
+            event_source type "file.uploaded" max 100 timeout 3600s
+            node finish <- console.run(command: "echo done")
+        }
+    "#;
+
+    let definition = compile(src);
+    let kinds: Vec<_> = definition
+        .definition
+        .nodes
+        .iter()
+        .map(|n| n.kind.clone())
+        .collect();
+    for expected in [
+        WorkflowNodeKind::Assert,
+        WorkflowNodeKind::Transform,
+        WorkflowNodeKind::Audit,
+        WorkflowNodeKind::Checkpoint,
+        WorkflowNodeKind::Mutex,
+        WorkflowNodeKind::Throttle,
+        WorkflowNodeKind::AwaitRun,
+        WorkflowNodeKind::Debounce,
+        WorkflowNodeKind::Collect,
+        WorkflowNodeKind::Barrier,
+        WorkflowNodeKind::CircuitBreaker,
+        WorkflowNodeKind::EventSource,
+    ] {
+        assert!(kinds.contains(&expected), "missing node kind {expected:?}");
+    }
+
+    // spot-check a couple of lowered parameter shapes against what the reducer reads.
+    let throttle = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::Throttle)
+        .expect("throttle node");
+    assert_eq!(
+        throttle
+            .parameters
+            .get("max_per_window")
+            .and_then(Value::as_i64),
+        Some(10)
+    );
+    assert_eq!(
+        throttle
+            .parameters
+            .get("window_seconds")
+            .and_then(Value::as_i64),
+        Some(60)
+    );
+    let mutex = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::Mutex)
+        .expect("mutex node");
+    assert_eq!(mutex.timeout_seconds, Some(300));
+
+    assert_round_trips_unordered(src);
 }

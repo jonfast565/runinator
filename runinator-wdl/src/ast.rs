@@ -165,11 +165,22 @@ pub enum StmtKind {
     Wait(WaitStmt),
     Output(OutputStmt),
     Yield(Expr),
-    Deliverable(DeliverableStmt),
     Input(InputStmt),
     Approval(ApprovalStmt),
     Gate(GateStmt),
     Signal(SignalStmt),
+    Assert(AssertStmt),
+    Transform(TransformStmt),
+    Audit(AuditStmt),
+    Checkpoint(CheckpointStmt),
+    Mutex(MutexStmt),
+    Throttle(ThrottleStmt),
+    Await(AwaitStmt),
+    Debounce(DebounceStmt),
+    Collect(CollectStmt),
+    Barrier(BarrierStmt),
+    CircuitBreaker(CircuitBreakerStmt),
+    EventSource(EventSourceStmt),
     Config(ConfigStmt),
     Fail(Option<Expr>),
     If(IfStmt),
@@ -320,17 +331,13 @@ pub enum WaitAmount {
 pub struct OutputStmt {
     pub event_type: Option<String>,
     pub data: Option<Expr>,
+    /// artifact declarations from `name = expr` lines in the output block.
+    pub items: Vec<(String, Expr)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputStmt {
     pub prompt: Option<Expr>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeliverableStmt {
-    /// (name, artifact-valued expression) pairs in source order.
-    pub items: Vec<(String, Expr)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +368,104 @@ pub struct SignalStmt {
 pub struct ConfigStmt {
     pub name: Option<Expr>,
     pub metadata: Option<Expr>,
+}
+
+/// `assert { "name": cond, ... }`: named boolean invariants checked inline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertStmt {
+    /// each entry is a (name, condition); the violation message defaults to the name.
+    pub assertions: Vec<(String, Cond)>,
+}
+
+/// `transform { name = expr, ... }`: named context bindings reshaped from the runtime context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransformStmt {
+    pub bindings: Vec<(String, Expr)>,
+}
+
+/// `audit action <expr> (actor <expr>)? (target <expr>)? (reason <expr>)?`: a compliance record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditStmt {
+    pub action: Expr,
+    pub actor: Option<Expr>,
+    pub target: Option<Expr>,
+    pub reason: Option<Expr>,
+}
+
+/// `checkpoint "name"`: a named state snapshot for later rollback.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckpointStmt {
+    pub name: String,
+}
+
+/// `mutex "name" (every <dur>)? (timeout <dur>)?`: a named cross-run exclusive lock.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MutexStmt {
+    pub name: String,
+    pub poll_interval: Option<i64>,
+    pub timeout: Option<i64>,
+}
+
+/// `throttle "name" rate <n> per <dur> ...`: a named cross-run rate limiter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThrottleStmt {
+    pub name: String,
+    pub max_per_window: i64,
+    pub window_seconds: i64,
+    pub poll_interval: Option<i64>,
+    pub timeout: Option<i64>,
+}
+
+/// `await <expr> (mode <str>)? ...`: wait for other run(s) to reach a terminal state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaitStmt {
+    pub run_ids: Expr,
+    pub mode: Option<String>,
+    pub poll_interval: Option<i64>,
+    pub timeout: Option<i64>,
+}
+
+/// `debounce "name" delay <dur> (key <expr>)?`: a trailing-delay window with external reset.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DebounceStmt {
+    pub name: String,
+    pub delay_seconds: i64,
+    pub key: Option<Expr>,
+}
+
+/// `collect "name" max <n> (timeout <dur>)?`: a timed accumulator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectStmt {
+    pub name: String,
+    pub max: i64,
+    pub timeout: Option<i64>,
+}
+
+/// `barrier "name" count <n> ...`: a multi-run rendezvous.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarrierStmt {
+    pub name: String,
+    pub count: i64,
+    pub poll_interval: Option<i64>,
+    pub timeout: Option<i64>,
+}
+
+/// `circuit_breaker "name" threshold <n> window <dur> cooldown <dur>`: a cross-run failure guard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CircuitBreakerStmt {
+    pub name: String,
+    pub threshold: i64,
+    pub window_seconds: i64,
+    pub cooldown_seconds: i64,
+}
+
+/// `event_source type <str> (filter <cond>)? (max <n>)? (timeout <dur>)?`: stream-driven iteration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventSourceStmt {
+    pub event_type: String,
+    pub filter: Option<Cond>,
+    pub max: Option<i64>,
+    pub timeout: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -165,11 +165,8 @@ fn static_node_output_type(
         WorkflowNodeKind::Output => Ok(Some(WorkflowType::structure([
             ("event_type", WorkflowType::String),
             ("data", WorkflowType::Any),
+            ("artifacts", WorkflowType::Any),
         ]))),
-        WorkflowNodeKind::Deliverable => Ok(Some(WorkflowType::structure([(
-            "deliverables",
-            WorkflowType::Any,
-        )]))),
         WorkflowNodeKind::Input => Ok(Some(WorkflowType::Any)),
         _ => Ok(None),
     }

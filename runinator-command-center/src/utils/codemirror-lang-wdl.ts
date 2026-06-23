@@ -29,15 +29,19 @@ const DECL_KW = new Set([
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
   "if", "else", "for", "while", "until", "match", "when", "parallel", "race", "try", "catch",
-  "finally", "map", "branch", "join", "wait", "emit", "yield", "deliverable", "approve", "fail",
+  "finally", "map", "branch", "join", "wait", "emit", "output", "yield", "approve", "fail",
   "subflow", "compute", "return", "goto", "edges", "gate", "signal",
   "watch", "compensate",
+  "assert", "transform", "audit", "checkpoint", "mutex", "throttle", "await", "debounce",
+  "collect", "barrier", "circuit_breaker", "event_source",
 ]);
 // clause/option words that modify a statement.
 const MODIFIER_KW = new Set([
   "with", "as", "initial", "limit", "concurrency", "detached", "reuse", "disabled", "blackout",
   "to", "cron", "winner", "name", "meta", "returns", "every", "timeout", "key", "priority",
   "max_depth",
+  "rate", "per", "delay", "count", "threshold", "window", "cooldown", "mode", "action", "actor",
+  "target", "reason", "filter",
 ]);
 // word-form comparison/membership operators.
 const OP_KW = new Set(["exists", "contains", "in", "starts_with", "ends_with"]);
@@ -460,6 +464,66 @@ const snippets = [
     label: "compensate",
     type: "keyword",
     detail: "compensating action",
+  }),
+  snippetCompletion('assert {\n\t"${name}": ${condition}\n}', {
+    label: "assert",
+    type: "keyword",
+    detail: "invariant assertions",
+  }),
+  snippetCompletion("transform {\n\t${name} = ${expr}\n}", {
+    label: "transform",
+    type: "keyword",
+    detail: "data reshape bindings",
+  }),
+  snippetCompletion('audit action "${action}" actor ${actor}', {
+    label: "audit",
+    type: "keyword",
+    detail: "compliance audit record",
+  }),
+  snippetCompletion('checkpoint "${name}"', {
+    label: "checkpoint",
+    type: "keyword",
+    detail: "named state snapshot",
+  }),
+  snippetCompletion('mutex "${name}" timeout ${deadline}', {
+    label: "mutex",
+    type: "keyword",
+    detail: "cross-run exclusive lock",
+  }),
+  snippetCompletion('throttle "${name}" rate ${n} per ${window}', {
+    label: "throttle",
+    type: "keyword",
+    detail: "cross-run rate limiter",
+  }),
+  snippetCompletion('await ${run_ids} mode "all"', {
+    label: "await",
+    type: "keyword",
+    detail: "wait for other run(s)",
+  }),
+  snippetCompletion('debounce "${name}" delay ${delay}', {
+    label: "debounce",
+    type: "keyword",
+    detail: "trailing-delay debounce",
+  }),
+  snippetCompletion('collect "${name}" max ${count} timeout ${deadline}', {
+    label: "collect",
+    type: "keyword",
+    detail: "timed accumulator",
+  }),
+  snippetCompletion('barrier "${name}" count ${n} timeout ${deadline}', {
+    label: "barrier",
+    type: "keyword",
+    detail: "multi-run rendezvous",
+  }),
+  snippetCompletion('circuit_breaker "${name}" threshold ${n} window ${window} cooldown ${cooldown}', {
+    label: "circuit_breaker",
+    type: "keyword",
+    detail: "cross-run failure guard",
+  }),
+  snippetCompletion('event_source type "${event_type}" max ${count} timeout ${deadline}', {
+    label: "event_source",
+    type: "keyword",
+    detail: "stream-driven iteration",
   }),
   snippetCompletion("type ${Name} {\n\t${field}: ${type}\n}", {
     label: "type struct",

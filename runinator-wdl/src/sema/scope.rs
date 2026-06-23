@@ -194,13 +194,11 @@ fn resolve_stmt(
             if let Some(data) = &output.data {
                 resolve_expr(data, symbols, scope, ctx, diagnostics);
             }
-        }
-        StmtKind::Yield(value) => resolve_expr(value, symbols, scope, ctx, diagnostics),
-        StmtKind::Deliverable(deliverable) => {
-            for (_, source) in &deliverable.items {
+            for (_, source) in &output.items {
                 resolve_expr(source, symbols, scope, ctx, diagnostics);
             }
         }
+        StmtKind::Yield(value) => resolve_expr(value, symbols, scope, ctx, diagnostics),
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 resolve_expr(prompt, symbols, scope, ctx, diagnostics);
@@ -301,6 +299,49 @@ fn resolve_stmt(
                 resolve_block(finally, symbols, scope, diagnostics);
             }
         }
+        StmtKind::Assert(assert) => {
+            for (_, cond) in &assert.assertions {
+                resolve_cond(cond, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::Transform(transform) => {
+            for (_, value) in &transform.bindings {
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::Audit(audit) => {
+            resolve_expr(&audit.action, symbols, scope, ctx, diagnostics);
+            for value in [
+                audit.actor.as_ref(),
+                audit.target.as_ref(),
+                audit.reason.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                resolve_expr(value, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::Await(await_stmt) => {
+            resolve_expr(&await_stmt.run_ids, symbols, scope, ctx, diagnostics);
+        }
+        StmtKind::Debounce(debounce) => {
+            if let Some(key) = &debounce.key {
+                resolve_expr(key, symbols, scope, ctx, diagnostics);
+            }
+        }
+        StmtKind::EventSource(es) => {
+            if let Some(filter) = &es.filter {
+                resolve_cond(filter, symbols, scope, ctx, diagnostics);
+            }
+        }
+        // these declare no references to resolve.
+        StmtKind::Checkpoint(_)
+        | StmtKind::Mutex(_)
+        | StmtKind::Throttle(_)
+        | StmtKind::Collect(_)
+        | StmtKind::Barrier(_)
+        | StmtKind::CircuitBreaker(_) => {}
     }
 }
 

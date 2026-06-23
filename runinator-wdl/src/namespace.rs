@@ -248,13 +248,11 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
             if let Some(data) = output.data.as_mut() {
                 resolve_expr(data, scope)?;
             }
-        }
-        StmtKind::Yield(value) => resolve_expr(value, scope)?,
-        StmtKind::Deliverable(deliverable) => {
-            for (_, source) in deliverable.items.iter_mut() {
+            for (_, source) in output.items.iter_mut() {
                 resolve_expr(source, scope)?;
             }
         }
+        StmtKind::Yield(value) => resolve_expr(value, scope)?,
         StmtKind::Input(input) => {
             if let Some(prompt) = input.prompt.as_mut() {
                 resolve_expr(prompt, scope)?;
@@ -325,6 +323,47 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
                 resolve_block(body, scope)?;
             }
         }
+        StmtKind::Assert(assert) => {
+            for (_, cond) in assert.assertions.iter_mut() {
+                resolve_cond(cond, scope)?;
+            }
+        }
+        StmtKind::Transform(transform) => {
+            for (_, value) in transform.bindings.iter_mut() {
+                resolve_expr(value, scope)?;
+            }
+        }
+        StmtKind::Audit(audit) => {
+            resolve_expr(&mut audit.action, scope)?;
+            for value in [
+                audit.actor.as_mut(),
+                audit.target.as_mut(),
+                audit.reason.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                resolve_expr(value, scope)?;
+            }
+        }
+        StmtKind::Await(await_stmt) => resolve_expr(&mut await_stmt.run_ids, scope)?,
+        StmtKind::Debounce(debounce) => {
+            if let Some(key) = debounce.key.as_mut() {
+                resolve_expr(key, scope)?;
+            }
+        }
+        StmtKind::EventSource(es) => {
+            if let Some(filter) = es.filter.as_mut() {
+                resolve_cond(filter, scope)?;
+            }
+        }
+        // no namespace-qualified references to resolve.
+        StmtKind::Checkpoint(_)
+        | StmtKind::Mutex(_)
+        | StmtKind::Throttle(_)
+        | StmtKind::Collect(_)
+        | StmtKind::Barrier(_)
+        | StmtKind::CircuitBreaker(_) => {}
     }
     Ok(())
 }

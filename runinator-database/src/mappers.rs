@@ -18,7 +18,7 @@ use runinator_models::{
     types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
         WorkflowTriggerKind,
     },
 };
@@ -412,9 +412,9 @@ row_mapper!(row_to_workflow_node_run_artifact(row) -> WorkflowNodeRunArtifact {
     workflow_node_run_artifact_from_row!(row)
 });
 
-macro_rules! workflow_run_deliverable_from_row {
+macro_rules! workflow_run_artifact_from_row {
     ($row:expr) => {{
-        WorkflowRunDeliverable {
+        WorkflowRunArtifact {
             id: $row.get("id"),
             workflow_run_id: $row.get("workflow_run_id"),
             node_id: $row.get("node_id"),
@@ -430,8 +430,8 @@ macro_rules! workflow_run_deliverable_from_row {
     }};
 }
 
-row_mapper!(row_to_workflow_run_deliverable(row) -> WorkflowRunDeliverable {
-    workflow_run_deliverable_from_row!(row)
+row_mapper!(row_to_workflow_run_artifact(row) -> WorkflowRunArtifact {
+    workflow_run_artifact_from_row!(row)
 });
 
 macro_rules! catalog_item_from_row {

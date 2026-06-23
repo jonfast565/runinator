@@ -76,13 +76,11 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
             if let Some(data) = &output.data {
                 collect_expr(data, source_dir, paths)?;
             }
-        }
-        StmtKind::Yield(value) => collect_expr(value, source_dir, paths)?,
-        StmtKind::Deliverable(deliverable) => {
-            for (_, source) in &deliverable.items {
+            for (_, source) in &output.items {
                 collect_expr(source, source_dir, paths)?;
             }
         }
+        StmtKind::Yield(value) => collect_expr(value, source_dir, paths)?,
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 collect_expr(prompt, source_dir, paths)?;
@@ -169,6 +167,47 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
             collect_expr(&map_stmt.items, source_dir, paths)?;
             collect_block(&map_stmt.body, source_dir, paths)?;
         }
+        StmtKind::Assert(assert) => {
+            for (_, cond) in &assert.assertions {
+                collect_cond(cond, source_dir, paths)?;
+            }
+        }
+        StmtKind::Transform(transform) => {
+            for (_, value) in &transform.bindings {
+                collect_expr(value, source_dir, paths)?;
+            }
+        }
+        StmtKind::Audit(audit) => {
+            collect_expr(&audit.action, source_dir, paths)?;
+            for value in [
+                audit.actor.as_ref(),
+                audit.target.as_ref(),
+                audit.reason.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                collect_expr(value, source_dir, paths)?;
+            }
+        }
+        StmtKind::Await(await_stmt) => collect_expr(&await_stmt.run_ids, source_dir, paths)?,
+        StmtKind::Debounce(debounce) => {
+            if let Some(key) = &debounce.key {
+                collect_expr(key, source_dir, paths)?;
+            }
+        }
+        StmtKind::EventSource(es) => {
+            if let Some(filter) = &es.filter {
+                collect_cond(filter, source_dir, paths)?;
+            }
+        }
+        // these reference no file()-bearing expressions.
+        StmtKind::Checkpoint(_)
+        | StmtKind::Mutex(_)
+        | StmtKind::Throttle(_)
+        | StmtKind::Collect(_)
+        | StmtKind::Barrier(_)
+        | StmtKind::CircuitBreaker(_) => {}
     }
     Ok(())
 }

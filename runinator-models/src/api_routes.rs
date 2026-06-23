@@ -89,8 +89,8 @@ pub fn api_workflow_run_nodes(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/nodes")
 }
 
-pub fn api_workflow_run_deliverables(workflow_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/deliverables")
+pub fn api_workflow_run_artifacts(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/artifacts")
 }
 
 pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {

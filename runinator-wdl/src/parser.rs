@@ -811,13 +811,25 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_cond_stmt => Ok(StmtKind::While(parse_wait_until(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
+        Rule::output_stmt => Ok(StmtKind::Output(parse_output_block(inner)?)),
         Rule::emit_stmt => Ok(StmtKind::Output(parse_output(inner)?)),
         Rule::yield_stmt => Ok(StmtKind::Yield(parse_expr(first_inner(inner)?)?)),
-        Rule::deliverable_stmt => Ok(StmtKind::Deliverable(parse_deliverable(inner)?)),
         Rule::input_stmt => Ok(StmtKind::Input(parse_input(inner)?)),
         Rule::approval_stmt => Ok(StmtKind::Approval(parse_approval(inner)?)),
         Rule::gate_stmt => Ok(StmtKind::Gate(parse_gate(inner)?)),
         Rule::signal_stmt => Ok(StmtKind::Signal(parse_signal(inner)?)),
+        Rule::assert_stmt => Ok(StmtKind::Assert(parse_assert(inner)?)),
+        Rule::transform_stmt => Ok(StmtKind::Transform(parse_transform(inner)?)),
+        Rule::audit_stmt => Ok(StmtKind::Audit(parse_audit(inner)?)),
+        Rule::checkpoint_stmt => Ok(StmtKind::Checkpoint(parse_checkpoint(inner)?)),
+        Rule::mutex_stmt => Ok(StmtKind::Mutex(parse_mutex(inner)?)),
+        Rule::throttle_stmt => Ok(StmtKind::Throttle(parse_throttle(inner)?)),
+        Rule::await_stmt => Ok(StmtKind::Await(parse_await(inner)?)),
+        Rule::debounce_stmt => Ok(StmtKind::Debounce(parse_debounce(inner)?)),
+        Rule::collect_stmt => Ok(StmtKind::Collect(parse_collect(inner)?)),
+        Rule::barrier_stmt => Ok(StmtKind::Barrier(parse_barrier(inner)?)),
+        Rule::circuit_breaker_stmt => Ok(StmtKind::CircuitBreaker(parse_circuit_breaker(inner)?)),
+        Rule::event_source_stmt => Ok(StmtKind::EventSource(parse_event_source(inner)?)),
         Rule::config_stmt => Ok(StmtKind::Config(parse_config(inner)?)),
         Rule::fail_stmt => Ok(StmtKind::Fail(parse_fail(inner)?)),
         Rule::if_stmt => Ok(StmtKind::If(parse_if(inner)?)),
@@ -1271,29 +1283,50 @@ fn parse_output(pair: Pair<Rule>) -> Result<OutputStmt, WdlError> {
             _ => {}
         }
     }
-    Ok(OutputStmt { event_type, data })
+    Ok(OutputStmt {
+        event_type,
+        data,
+        items: Vec::new(),
+    })
 }
 
-fn parse_deliverable(pair: Pair<Rule>) -> Result<DeliverableStmt, WdlError> {
+fn parse_output_block(pair: Pair<Rule>) -> Result<OutputStmt, WdlError> {
+    let mut event_type = None;
+    let mut data = None;
     let mut items = Vec::new();
     for inner in pair.into_inner() {
-        if inner.as_rule() != Rule::deliverable_item {
-            continue;
-        }
-        let mut name = String::new();
-        let mut source = None;
-        for part in inner.into_inner() {
-            match part.as_rule() {
-                Rule::ident => name = part.as_str().to_string(),
-                Rule::expr => source = Some(parse_expr(part)?),
-                _ => {}
+        match inner.as_rule() {
+            Rule::emit_stmt => {
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::string => event_type = Some(plain_string(part)?),
+                        Rule::expr => data = Some(parse_expr(part)?),
+                        _ => {}
+                    }
+                }
             }
-        }
-        if let Some(source) = source {
-            items.push((name, source));
+            Rule::artifact_line => {
+                let mut name = String::new();
+                let mut source = None;
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::ident => name = part.as_str().to_string(),
+                        Rule::expr => source = Some(parse_expr(part)?),
+                        _ => {}
+                    }
+                }
+                if let Some(source) = source {
+                    items.push((name, source));
+                }
+            }
+            _ => {}
         }
     }
-    Ok(DeliverableStmt { items })
+    Ok(OutputStmt {
+        event_type,
+        data,
+        items,
+    })
 }
 
 fn parse_input(pair: Pair<Rule>) -> Result<InputStmt, WdlError> {
@@ -1375,6 +1408,301 @@ fn parse_signal(pair: Pair<Rule>) -> Result<SignalStmt, WdlError> {
         name,
         correlation_key,
         metadata,
+    })
+}
+
+fn parse_assert(pair: Pair<Rule>) -> Result<AssertStmt, WdlError> {
+    let mut assertions = Vec::new();
+    for line in pair.into_inner() {
+        if line.as_rule() != Rule::assert_line {
+            continue;
+        }
+        let mut name = String::new();
+        let mut cond = None;
+        for inner in line.into_inner() {
+            match inner.as_rule() {
+                Rule::string => name = plain_string(inner)?,
+                Rule::cond => cond = Some(parse_cond(inner)?),
+                _ => {}
+            }
+        }
+        let cond = cond.ok_or_else(|| WdlError::lower("assert line missing condition"))?;
+        assertions.push((name, cond));
+    }
+    Ok(AssertStmt { assertions })
+}
+
+fn parse_transform(pair: Pair<Rule>) -> Result<TransformStmt, WdlError> {
+    let mut bindings = Vec::new();
+    for line in pair.into_inner() {
+        if line.as_rule() != Rule::transform_line {
+            continue;
+        }
+        let mut name = String::new();
+        let mut value = None;
+        for inner in line.into_inner() {
+            match inner.as_rule() {
+                Rule::ident => name = inner.as_str().to_string(),
+                Rule::expr => value = Some(parse_expr(inner)?),
+                _ => {}
+            }
+        }
+        let value = value.ok_or_else(|| WdlError::lower("transform line missing value"))?;
+        bindings.push((name, value));
+    }
+    Ok(TransformStmt { bindings })
+}
+
+fn parse_audit(pair: Pair<Rule>) -> Result<AuditStmt, WdlError> {
+    let mut action = None;
+    let mut actor = None;
+    let mut target = None;
+    let mut reason = None;
+    for field in pair.into_inner() {
+        if field.as_rule() != Rule::audit_field {
+            continue;
+        }
+        let mut kw = String::new();
+        let mut value = None;
+        for inner in field.into_inner() {
+            match inner.as_rule() {
+                Rule::audit_kw => kw = inner.as_str().trim().to_string(),
+                Rule::expr => value = Some(parse_expr(inner)?),
+                _ => {}
+            }
+        }
+        let value = value.ok_or_else(|| WdlError::lower("audit field missing value"))?;
+        match kw.as_str() {
+            "action" => action = Some(value),
+            "actor" => actor = Some(value),
+            "target" => target = Some(value),
+            "reason" => reason = Some(value),
+            _ => {}
+        }
+    }
+    let action = action.ok_or_else(|| WdlError::lower("audit requires an action"))?;
+    Ok(AuditStmt {
+        action,
+        actor,
+        target,
+        reason,
+    })
+}
+
+fn parse_checkpoint(pair: Pair<Rule>) -> Result<CheckpointStmt, WdlError> {
+    let name = plain_string(first_inner(pair)?)?;
+    Ok(CheckpointStmt { name })
+}
+
+fn parse_mutex(pair: Pair<Rule>) -> Result<MutexStmt, WdlError> {
+    let mut name = String::new();
+    let mut poll_interval = None;
+    let mut timeout = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::poll_every => {
+                let value = first_inner(inner)?;
+                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    Ok(MutexStmt {
+        name,
+        poll_interval,
+        timeout,
+    })
+}
+
+fn parse_throttle(pair: Pair<Rule>) -> Result<ThrottleStmt, WdlError> {
+    let mut name = String::new();
+    let mut max_per_window = 0;
+    let mut window_seconds = 0;
+    let mut poll_interval = None;
+    let mut timeout = None;
+    // the rate integer and the `per` duration arrive in order; the first integer is the rate.
+    let mut seen_rate = false;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::integer if !seen_rate => {
+                max_per_window = parse_i64(inner.as_str(), span_of(&inner))?;
+                seen_rate = true;
+            }
+            Rule::duration => {
+                window_seconds = parse_duration(inner.as_str(), span_of(&inner))?;
+            }
+            Rule::poll_every => {
+                let value = first_inner(inner)?;
+                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    Ok(ThrottleStmt {
+        name,
+        max_per_window,
+        window_seconds,
+        poll_interval,
+        timeout,
+    })
+}
+
+fn parse_await(pair: Pair<Rule>) -> Result<AwaitStmt, WdlError> {
+    let mut run_ids = None;
+    let mut mode = None;
+    let mut poll_interval = None;
+    let mut timeout = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expr => run_ids = Some(parse_expr(inner)?),
+            Rule::await_mode => mode = Some(plain_string(first_inner(inner)?)?),
+            Rule::poll_every => {
+                let value = first_inner(inner)?;
+                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    let run_ids = run_ids.ok_or_else(|| WdlError::lower("await requires a run-id expression"))?;
+    Ok(AwaitStmt {
+        run_ids,
+        mode,
+        poll_interval,
+        timeout,
+    })
+}
+
+fn parse_debounce(pair: Pair<Rule>) -> Result<DebounceStmt, WdlError> {
+    let mut name = String::new();
+    let mut delay_seconds = 0;
+    let mut key = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::duration => {
+                delay_seconds = parse_duration(inner.as_str(), span_of(&inner))?;
+            }
+            Rule::debounce_key => key = Some(parse_expr(first_inner(inner)?)?),
+            _ => {}
+        }
+    }
+    Ok(DebounceStmt {
+        name,
+        delay_seconds,
+        key,
+    })
+}
+
+fn parse_collect(pair: Pair<Rule>) -> Result<CollectStmt, WdlError> {
+    let mut name = String::new();
+    let mut max = 0;
+    let mut timeout = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::integer => max = parse_i64(inner.as_str(), span_of(&inner))?,
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    Ok(CollectStmt { name, max, timeout })
+}
+
+fn parse_barrier(pair: Pair<Rule>) -> Result<BarrierStmt, WdlError> {
+    let mut name = String::new();
+    let mut count = 0;
+    let mut poll_interval = None;
+    let mut timeout = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::integer => count = parse_i64(inner.as_str(), span_of(&inner))?,
+            Rule::poll_every => {
+                let value = first_inner(inner)?;
+                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    Ok(BarrierStmt {
+        name,
+        count,
+        poll_interval,
+        timeout,
+    })
+}
+
+fn parse_circuit_breaker(pair: Pair<Rule>) -> Result<CircuitBreakerStmt, WdlError> {
+    let mut name = String::new();
+    let mut threshold = 0;
+    // the window duration comes before the cooldown duration in source order.
+    let mut durations = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::integer => threshold = parse_i64(inner.as_str(), span_of(&inner))?,
+            Rule::duration => {
+                durations.push(parse_duration(inner.as_str(), span_of(&inner))?);
+            }
+            _ => {}
+        }
+    }
+    let window_seconds = durations.first().copied().unwrap_or(60);
+    let cooldown_seconds = durations.get(1).copied().unwrap_or(120);
+    Ok(CircuitBreakerStmt {
+        name,
+        threshold,
+        window_seconds,
+        cooldown_seconds,
+    })
+}
+
+fn parse_event_source(pair: Pair<Rule>) -> Result<EventSourceStmt, WdlError> {
+    let mut event_type = String::new();
+    let mut filter = None;
+    let mut max = None;
+    let mut timeout = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => event_type = plain_string(inner)?,
+            Rule::event_filter => filter = Some(parse_cond(first_inner(inner)?)?),
+            Rule::event_max => {
+                let value = first_inner(inner)?;
+                max = Some(parse_i64(value.as_str(), span_of(&value))?);
+            }
+            Rule::node_timeout => {
+                let value = first_inner(inner)?;
+                timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            _ => {}
+        }
+    }
+    Ok(EventSourceStmt {
+        event_type,
+        filter,
+        max,
+        timeout,
     })
 }
 

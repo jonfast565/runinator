@@ -291,10 +291,21 @@ fn is_output_producing_kind(kind: &WorkflowNodeKind) -> bool {
             | WorkflowNodeKind::Map
             | WorkflowNodeKind::Race
             | WorkflowNodeKind::Output
-            | WorkflowNodeKind::Deliverable
             | WorkflowNodeKind::Input
             | WorkflowNodeKind::Subflow
             | WorkflowNodeKind::Config
+            | WorkflowNodeKind::Assert
+            | WorkflowNodeKind::Transform
+            | WorkflowNodeKind::Audit
+            | WorkflowNodeKind::Checkpoint
+            | WorkflowNodeKind::Mutex
+            | WorkflowNodeKind::Throttle
+            | WorkflowNodeKind::AwaitRun
+            | WorkflowNodeKind::Debounce
+            | WorkflowNodeKind::Collect
+            | WorkflowNodeKind::Barrier
+            | WorkflowNodeKind::CircuitBreaker
+            | WorkflowNodeKind::EventSource
     )
 }
 

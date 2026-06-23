@@ -127,15 +127,12 @@ pub struct RaceParameters {
 pub struct OutputParameters {
     pub event_type: Option<String>,
     pub data: Value,
+    /// artifact declarations: name/source pairs promoted to run-level by this output node.
+    pub items: Vec<ArtifactItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct DeliverableParameters {
-    pub items: Vec<DeliverableItem>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeliverableItem {
+pub struct ArtifactItem {
     pub name: String,
     /// value-ref that resolves to an artifact descriptor (or array of them) at runtime.
     pub source: Value,

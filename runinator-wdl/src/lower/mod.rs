@@ -579,13 +579,22 @@ impl Lowerer {
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
             StmtKind::Yield(value) => self.lower_yield(value, stmt, id, next),
-            StmtKind::Deliverable(deliverable) => {
-                self.lower_deliverable(deliverable, stmt, id, next)
-            }
             StmtKind::Input(input) => self.lower_input(input, stmt, id, next),
             StmtKind::Approval(approval) => self.lower_approval(approval, stmt, id, next),
             StmtKind::Gate(gate) => self.lower_gate(gate, stmt, id, next),
             StmtKind::Signal(signal) => self.lower_signal(signal, stmt, id, next),
+            StmtKind::Assert(assert) => self.lower_assert(assert, stmt, id, next),
+            StmtKind::Transform(transform) => self.lower_transform(transform, stmt, id, next),
+            StmtKind::Audit(audit) => self.lower_audit(audit, stmt, id, next),
+            StmtKind::Checkpoint(checkpoint) => self.lower_checkpoint(checkpoint, stmt, id, next),
+            StmtKind::Mutex(mutex) => self.lower_mutex(mutex, stmt, id, next),
+            StmtKind::Throttle(throttle) => self.lower_throttle(throttle, stmt, id, next),
+            StmtKind::Await(await_stmt) => self.lower_await(await_stmt, stmt, id, next),
+            StmtKind::Debounce(debounce) => self.lower_debounce(debounce, stmt, id, next),
+            StmtKind::Collect(collect) => self.lower_collect(collect, stmt, id, next),
+            StmtKind::Barrier(barrier) => self.lower_barrier(barrier, stmt, id, next),
+            StmtKind::CircuitBreaker(cb) => self.lower_circuit_breaker(cb, stmt, id, next),
+            StmtKind::EventSource(es) => self.lower_event_source(es, stmt, id, next),
             StmtKind::Config(config) => self.lower_config(config, stmt, id, next),
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
             StmtKind::If(if_stmt) => {
@@ -852,6 +861,16 @@ impl Lowerer {
             None => Value::Null,
         };
         params.insert("data".into(), data);
+        if !output.items.is_empty() {
+            let mut items = Vec::with_capacity(output.items.len());
+            for (name, source) in &output.items {
+                let mut entry = Map::new();
+                entry.insert("name".into(), Value::String(name.clone()));
+                entry.insert("source".into(), self.lower_expr(source)?);
+                items.push(Value::Object(entry));
+            }
+            params.insert("items".into(), Value::Array(items));
+        }
         let mut fields = vec![
             ("parameters", Value::Object(params)),
             (
@@ -861,34 +880,6 @@ impl Lowerer {
         ];
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "output", fields));
-        Ok(())
-    }
-
-    fn lower_deliverable(
-        &mut self,
-        deliverable: &DeliverableStmt,
-        stmt: &Stmt,
-        id: &str,
-        next: &str,
-    ) -> Result<(), WdlError> {
-        let mut items = Vec::with_capacity(deliverable.items.len());
-        for (name, source) in &deliverable.items {
-            let mut entry = Map::new();
-            entry.insert("name".into(), Value::String(name.clone()));
-            entry.insert("source".into(), self.lower_expr(source)?);
-            items.push(Value::Object(entry));
-        }
-        let mut params = Map::new();
-        params.insert("items".into(), Value::Array(items));
-        let mut fields = vec![
-            ("parameters", Value::Object(params)),
-            (
-                "transitions",
-                self.leaf_transitions(&stmt.transitions, "next", next)?,
-            ),
-        ];
-        self.apply_annotations(&mut fields, stmt);
-        self.push(node(id, "deliverable", fields));
         Ok(())
     }
 
@@ -1013,6 +1004,257 @@ impl Lowerer {
         ];
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "signal", fields));
+        Ok(())
+    }
+
+    // build the standard fields for a leaf coordination/resilience node: parameters, on_success
+    // transitions, an optional node timeout, and annotations. keeps the lower_* bodies focused on
+    // their parameter shapes.
+    fn leaf_fields(
+        &self,
+        params: Map,
+        stmt: &Stmt,
+        next: &str,
+        timeout: Option<i64>,
+    ) -> Result<Vec<(&'static str, Value)>, WdlError> {
+        let mut fields = vec![
+            ("parameters", Value::Object(params)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
+            ),
+        ];
+        if let Some(seconds) = timeout {
+            fields.push(("timeout_seconds", Value::from(seconds)));
+        }
+        self.apply_annotations(&mut fields, stmt);
+        Ok(fields)
+    }
+
+    fn lower_assert(
+        &mut self,
+        assert: &AssertStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut assertions = Vec::with_capacity(assert.assertions.len());
+        for (name, cond) in &assert.assertions {
+            let mut entry = Map::new();
+            entry.insert("name".into(), Value::String(name.clone()));
+            entry.insert("condition".into(), self.lower_cond(cond)?);
+            entry.insert("message".into(), Value::String(name.clone()));
+            assertions.push(Value::Object(entry));
+        }
+        let mut params = Map::new();
+        params.insert("assertions".into(), Value::Array(assertions));
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "assert", fields));
+        Ok(())
+    }
+
+    fn lower_transform(
+        &mut self,
+        transform: &TransformStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut bindings = Map::new();
+        for (name, value) in &transform.bindings {
+            bindings.insert(name.clone(), self.lower_expr(value)?);
+        }
+        let mut params = Map::new();
+        params.insert("bindings".into(), Value::Object(bindings));
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "transform", fields));
+        Ok(())
+    }
+
+    fn lower_audit(
+        &mut self,
+        audit: &AuditStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("action".into(), self.lower_expr(&audit.action)?);
+        if let Some(actor) = &audit.actor {
+            params.insert("actor".into(), self.lower_expr(actor)?);
+        }
+        if let Some(target) = &audit.target {
+            params.insert("target".into(), self.lower_expr(target)?);
+        }
+        if let Some(reason) = &audit.reason {
+            params.insert("reason".into(), self.lower_expr(reason)?);
+        }
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "audit", fields));
+        Ok(())
+    }
+
+    fn lower_checkpoint(
+        &mut self,
+        checkpoint: &CheckpointStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(checkpoint.name.clone()));
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "checkpoint", fields));
+        Ok(())
+    }
+
+    fn lower_mutex(
+        &mut self,
+        mutex: &MutexStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(mutex.name.clone()));
+        if let Some(poll) = mutex.poll_interval {
+            params.insert("poll_interval_seconds".into(), Value::from(poll));
+        }
+        let fields = self.leaf_fields(params, stmt, next, mutex.timeout)?;
+        self.push(node(id, "mutex", fields));
+        Ok(())
+    }
+
+    fn lower_throttle(
+        &mut self,
+        throttle: &ThrottleStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(throttle.name.clone()));
+        params.insert(
+            "max_per_window".into(),
+            Value::from(throttle.max_per_window),
+        );
+        params.insert(
+            "window_seconds".into(),
+            Value::from(throttle.window_seconds),
+        );
+        if let Some(poll) = throttle.poll_interval {
+            params.insert("poll_interval_seconds".into(), Value::from(poll));
+        }
+        let fields = self.leaf_fields(params, stmt, next, throttle.timeout)?;
+        self.push(node(id, "throttle", fields));
+        Ok(())
+    }
+
+    fn lower_await(
+        &mut self,
+        await_stmt: &AwaitStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("run_ids".into(), self.lower_expr(&await_stmt.run_ids)?);
+        if let Some(mode) = &await_stmt.mode {
+            params.insert("mode".into(), Value::String(mode.clone()));
+        }
+        if let Some(poll) = await_stmt.poll_interval {
+            params.insert("poll_interval_seconds".into(), Value::from(poll));
+        }
+        let fields = self.leaf_fields(params, stmt, next, await_stmt.timeout)?;
+        self.push(node(id, "await_run", fields));
+        Ok(())
+    }
+
+    fn lower_debounce(
+        &mut self,
+        debounce: &DebounceStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(debounce.name.clone()));
+        params.insert("delay_seconds".into(), Value::from(debounce.delay_seconds));
+        if let Some(key) = &debounce.key {
+            params.insert("trigger_key".into(), self.lower_expr(key)?);
+        }
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "debounce", fields));
+        Ok(())
+    }
+
+    fn lower_collect(
+        &mut self,
+        collect: &CollectStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(collect.name.clone()));
+        params.insert("max".into(), Value::from(collect.max));
+        let fields = self.leaf_fields(params, stmt, next, collect.timeout)?;
+        self.push(node(id, "collect", fields));
+        Ok(())
+    }
+
+    fn lower_barrier(
+        &mut self,
+        barrier: &BarrierStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(barrier.name.clone()));
+        params.insert("count".into(), Value::from(barrier.count));
+        if let Some(poll) = barrier.poll_interval {
+            params.insert("poll_interval_seconds".into(), Value::from(poll));
+        }
+        let fields = self.leaf_fields(params, stmt, next, barrier.timeout)?;
+        self.push(node(id, "barrier", fields));
+        Ok(())
+    }
+
+    fn lower_circuit_breaker(
+        &mut self,
+        cb: &CircuitBreakerStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(cb.name.clone()));
+        params.insert("threshold".into(), Value::from(cb.threshold));
+        params.insert("window_seconds".into(), Value::from(cb.window_seconds));
+        params.insert("cooldown_seconds".into(), Value::from(cb.cooldown_seconds));
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "circuit_breaker", fields));
+        Ok(())
+    }
+
+    fn lower_event_source(
+        &mut self,
+        es: &EventSourceStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("event_type".into(), Value::String(es.event_type.clone()));
+        if let Some(filter) = &es.filter {
+            params.insert("filter".into(), self.lower_cond(filter)?);
+        }
+        if let Some(max) = es.max {
+            params.insert("max".into(), Value::from(max));
+        }
+        let fields = self.leaf_fields(params, stmt, next, es.timeout)?;
+        self.push(node(id, "event_source", fields));
         Ok(())
     }
 
@@ -1236,11 +1478,22 @@ fn control_prefix(kind: &StmtKind) -> &'static str {
         StmtKind::Wait(_) => "wait",
         StmtKind::Output(_) => "output",
         StmtKind::Yield(_) => "yield",
-        StmtKind::Deliverable(_) => "deliverable",
         StmtKind::Input(_) => "input",
         StmtKind::Approval(_) => "approval",
         StmtKind::Gate(_) => "gate",
         StmtKind::Signal(_) => "signal",
+        StmtKind::Assert(_) => "assert",
+        StmtKind::Transform(_) => "transform",
+        StmtKind::Audit(_) => "audit",
+        StmtKind::Checkpoint(_) => "checkpoint",
+        StmtKind::Mutex(_) => "mutex",
+        StmtKind::Throttle(_) => "throttle",
+        StmtKind::Await(_) => "await_run",
+        StmtKind::Debounce(_) => "debounce",
+        StmtKind::Collect(_) => "collect",
+        StmtKind::Barrier(_) => "barrier",
+        StmtKind::CircuitBreaker(_) => "circuit_breaker",
+        StmtKind::EventSource(_) => "event_source",
         StmtKind::Config(_) => "config",
         StmtKind::Fail(_) => "fail_node",
         StmtKind::If(_) => "if",

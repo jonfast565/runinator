@@ -245,9 +245,9 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `workflow_node_runs/${escape(arg<string>(args, "nodeRunId"))}/artifacts`
   },
-  fetch_workflow_run_deliverables: {
+  fetch_workflow_run_artifacts: {
     method: "GET",
-    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/deliverables`
+    path: (args) => `workflow_runs/${escape(arg<string>(args, "workflowRunId"))}/artifacts`
   },
   create_workflow_run: {
     method: "POST",

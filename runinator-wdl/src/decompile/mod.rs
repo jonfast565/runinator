@@ -624,12 +624,23 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Subflow
                 | WorkflowNodeKind::Wait
                 | WorkflowNodeKind::Output
-                | WorkflowNodeKind::Deliverable
                 | WorkflowNodeKind::Input
                 | WorkflowNodeKind::Approval
                 | WorkflowNodeKind::Gate
                 | WorkflowNodeKind::Signal
-                | WorkflowNodeKind::Config => {
+                | WorkflowNodeKind::Config
+                | WorkflowNodeKind::Assert
+                | WorkflowNodeKind::Transform
+                | WorkflowNodeKind::Audit
+                | WorkflowNodeKind::Checkpoint
+                | WorkflowNodeKind::Mutex
+                | WorkflowNodeKind::Throttle
+                | WorkflowNodeKind::AwaitRun
+                | WorkflowNodeKind::Debounce
+                | WorkflowNodeKind::Collect
+                | WorkflowNodeKind::Barrier
+                | WorkflowNodeKind::CircuitBreaker
+                | WorkflowNodeKind::EventSource => {
                     let success = self.emit_leaf(node, stop)?;
                     // keep walking only into a fresh linear successor; a jump to a terminal, the
                     // region stop, or an already-emitted node was rendered as an explicit arrow by
@@ -919,11 +930,22 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
             WorkflowNodeKind::Output => Ok((self.output_text(node)?, false)),
-            WorkflowNodeKind::Deliverable => Ok((self.deliverable_text(node)?, false)),
             WorkflowNodeKind::Input => Ok((self.input_text(node)?, false)),
             WorkflowNodeKind::Approval => Ok((self.approval_text(node)?, false)),
             WorkflowNodeKind::Gate => Ok((self.gate_text(node)?, false)),
             WorkflowNodeKind::Signal => Ok((self.signal_text(node)?, false)),
+            WorkflowNodeKind::Assert => Ok((self.assert_text(node)?, false)),
+            WorkflowNodeKind::Transform => Ok((self.transform_text(node)?, false)),
+            WorkflowNodeKind::Audit => Ok((self.audit_text(node)?, false)),
+            WorkflowNodeKind::Checkpoint => Ok((self.checkpoint_text(node)?, false)),
+            WorkflowNodeKind::Mutex => Ok((self.mutex_text(node)?, false)),
+            WorkflowNodeKind::Throttle => Ok((self.throttle_text(node)?, false)),
+            WorkflowNodeKind::AwaitRun => Ok((self.await_text(node)?, false)),
+            WorkflowNodeKind::Debounce => Ok((self.debounce_text(node)?, false)),
+            WorkflowNodeKind::Collect => Ok((self.collect_text(node)?, false)),
+            WorkflowNodeKind::Barrier => Ok((self.barrier_text(node)?, false)),
+            WorkflowNodeKind::CircuitBreaker => Ok((self.circuit_breaker_text(node)?, false)),
+            WorkflowNodeKind::EventSource => Ok((self.event_source_text(node)?, false)),
             WorkflowNodeKind::Config => Ok((self.config_text(node)?, false)),
             other => Err(WdlError::Decompile(format!("unexpected leaf {other:?}"))),
         }
@@ -1249,6 +1271,52 @@ impl<'a> Decompiler<'a> {
     }
 
     fn output_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let items = node
+            .parameters
+            .get("items")
+            .and_then(Value::as_array)
+            .filter(|v| !v.is_empty());
+        // block form when artifact items are present.
+        if let Some(items) = items {
+            let base = self.indent;
+            let mut out = String::from("output {\n");
+            let event = node.parameters.get("event_type").and_then(Value::as_str);
+            let data = node.parameters.get("data");
+            let has_event_data =
+                event.is_some() || matches!(data, Some(v) if !matches!(v, Value::Null));
+            if has_event_data {
+                out.push_str(&"    ".repeat(base + 1));
+                out.push_str("emit");
+                if let Some(event_type) = event {
+                    out.push_str(&format!(" {}", quote(event_type)));
+                }
+                match data {
+                    None | Some(Value::Null) => out.push_str(" {}"),
+                    Some(d @ Value::Object(_)) => {
+                        out.push_str(&format!(" {}", self.expr_multiline(d, base + 1)?))
+                    }
+                    Some(other) => {
+                        let rendered = self.expr(other)?;
+                        if event.is_some() {
+                            out.push_str(&format!(" {rendered}"));
+                        } else {
+                            out.push_str(&format!(" ({rendered})"));
+                        }
+                    }
+                }
+                out.push('\n');
+            }
+            for item in items {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+                let source = item.get("source").cloned().unwrap_or(Value::Null);
+                out.push_str(&"    ".repeat(base + 1));
+                out.push_str(&format!("{name} = {}\n", self.expr(&source)?));
+            }
+            out.push_str(&"    ".repeat(base));
+            out.push('}');
+            return Ok(out);
+        }
+        // shorthand `emit` form for event-only nodes (idempotent for legacy emit nodes).
         let mut text = "emit".to_string();
         let event = node.parameters.get("event_type").and_then(Value::as_str);
         if let Some(event_type) = event {
@@ -1271,22 +1339,6 @@ impl<'a> Decompiler<'a> {
             }
         }
         Ok(text)
-    }
-
-    fn deliverable_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
-        let base = self.indent;
-        let mut out = String::from("deliverable {\n");
-        if let Some(items) = node.parameters.get("items").and_then(Value::as_array) {
-            for item in items {
-                let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
-                let source = item.get("source").cloned().unwrap_or(Value::Null);
-                out.push_str(&"    ".repeat(base + 1));
-                out.push_str(&format!("{name} = {}\n", self.expr(&source)?));
-            }
-        }
-        out.push_str(&"    ".repeat(base));
-        out.push('}');
-        Ok(out)
     }
 
     fn input_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -1393,6 +1445,241 @@ impl<'a> Decompiler<'a> {
             if !entries.is_empty() {
                 text.push_str(&format!(" {}", self.entries_object(&entries, base)?));
             }
+        }
+        Ok(text)
+    }
+
+    fn assert_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let assertions = node
+            .parameters
+            .get("assertions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if assertions.is_empty() {
+            return Ok("assert {}".to_string());
+        }
+        let base = self.indent;
+        let pad = "    ".repeat(base + 1);
+        let mut out = String::from("assert {\n");
+        for assertion in &assertions {
+            let name = assertion
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let cond = assertion.get("condition").cloned().unwrap_or(Value::Null);
+            out.push_str(&format!("{pad}{}: {}\n", quote(name), self.cond(&cond)?));
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        Ok(out)
+    }
+
+    fn transform_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let bindings = node
+            .parameters
+            .get("bindings")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let entries = match bindings.as_object() {
+            Some(map) if !map.is_empty() => map,
+            _ => return Ok("transform {}".to_string()),
+        };
+        let base = self.indent;
+        let pad = "    ".repeat(base + 1);
+        let mut out = String::from("transform {\n");
+        for (name, value) in entries.iter() {
+            out.push_str(&format!("{pad}{name} = {}\n", self.expr(value)?));
+        }
+        out.push_str(&"    ".repeat(base));
+        out.push('}');
+        Ok(out)
+    }
+
+    fn audit_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let action = node
+            .parameters
+            .get("action")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let mut text = format!("audit action {}", self.expr(&action)?);
+        for field in ["actor", "target", "reason"] {
+            if let Some(value) = node.parameters.get(field) {
+                text.push_str(&format!(" {field} {}", self.expr(value)?));
+            }
+        }
+        Ok(text)
+    }
+
+    fn checkpoint_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok(format!("checkpoint {}", quote(name)))
+    }
+
+    fn mutex_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let mut text = format!("mutex {}", quote(name));
+        if let Some(poll) = node
+            .parameters
+            .get("poll_interval_seconds")
+            .and_then(Value::as_i64)
+        {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        // the node timeout round-trips through the `@timeout(...)` annotation prefix, so it is not
+        // rendered inline here (doing so would double-emit it).
+        Ok(text)
+    }
+
+    fn throttle_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let rate = node
+            .parameters
+            .get("max_per_window")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let window = node
+            .parameters
+            .get("window_seconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut text = format!("throttle {} rate {rate} per {window}s", quote(name));
+        if let Some(poll) = node
+            .parameters
+            .get("poll_interval_seconds")
+            .and_then(Value::as_i64)
+        {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        Ok(text)
+    }
+
+    fn await_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let run_ids = node
+            .parameters
+            .get("run_ids")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let mut text = format!("await {}", self.expr(&run_ids)?);
+        if let Some(mode) = node.parameters.get("mode").and_then(Value::as_str) {
+            text.push_str(&format!(" mode {}", quote(mode)));
+        }
+        if let Some(poll) = node
+            .parameters
+            .get("poll_interval_seconds")
+            .and_then(Value::as_i64)
+        {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        Ok(text)
+    }
+
+    fn debounce_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let delay = node
+            .parameters
+            .get("delay_seconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut text = format!("debounce {} delay {delay}s", quote(name));
+        if let Some(key) = node.parameters.get("trigger_key") {
+            text.push_str(&format!(" key {}", self.expr(key)?));
+        }
+        Ok(text)
+    }
+
+    fn collect_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let max = node
+            .parameters
+            .get("max")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let text = format!("collect {} max {max}", quote(name));
+        Ok(text)
+    }
+
+    fn barrier_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let count = node
+            .parameters
+            .get("count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut text = format!("barrier {} count {count}", quote(name));
+        if let Some(poll) = node
+            .parameters
+            .get("poll_interval_seconds")
+            .and_then(Value::as_i64)
+        {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        Ok(text)
+    }
+
+    fn circuit_breaker_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let threshold = node
+            .parameters
+            .get("threshold")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let window = node
+            .parameters
+            .get("window_seconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let cooldown = node
+            .parameters
+            .get("cooldown_seconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        Ok(format!(
+            "circuit_breaker {} threshold {threshold} window {window}s cooldown {cooldown}s",
+            quote(name)
+        ))
+    }
+
+    fn event_source_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let event_type = node
+            .parameters
+            .get("event_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let mut text = format!("event_source type {}", quote(event_type));
+        if let Some(filter) = node.parameters.get("filter") {
+            text.push_str(&format!(" filter {}", self.cond(filter)?));
+        }
+        if let Some(max) = node.parameters.get("max").and_then(Value::as_i64) {
+            text.push_str(&format!(" max {max}"));
         }
         Ok(text)
     }
@@ -1955,12 +2242,23 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
         kind,
         WorkflowNodeKind::Wait
             | WorkflowNodeKind::Output
-            | WorkflowNodeKind::Deliverable
             | WorkflowNodeKind::Input
             | WorkflowNodeKind::Approval
             | WorkflowNodeKind::Gate
             | WorkflowNodeKind::Signal
             | WorkflowNodeKind::Config
+            | WorkflowNodeKind::Assert
+            | WorkflowNodeKind::Transform
+            | WorkflowNodeKind::Audit
+            | WorkflowNodeKind::Checkpoint
+            | WorkflowNodeKind::Mutex
+            | WorkflowNodeKind::Throttle
+            | WorkflowNodeKind::AwaitRun
+            | WorkflowNodeKind::Debounce
+            | WorkflowNodeKind::Collect
+            | WorkflowNodeKind::Barrier
+            | WorkflowNodeKind::CircuitBreaker
+            | WorkflowNodeKind::EventSource
     )
 }
 

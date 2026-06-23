@@ -326,8 +326,8 @@ pub enum RunCommands {
     },
     /// Rename a workflow run.
     Rename { id: Uuid, name: Option<String> },
-    /// List the run-level deliverables a workflow run produced.
-    Deliverables { id: Uuid },
+    /// List the run-level artifacts a workflow run produced.
+    Artifacts { id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

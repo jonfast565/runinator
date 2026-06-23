@@ -42,7 +42,7 @@ pub(super) async fn runtime_context<T: DatabaseImpl>(
         runinator_workflows::apply_input_defaults(&mut context, &snapshot.input_type);
     }
     // expose each node's emitted artifacts under `steps.<node_id>.artifacts` so downstream nodes
-    // (and deliverable nodes) can ref them like any other output value.
+    // (and output nodes declaring artifacts) can ref them like any other output value.
     inject_node_artifacts(db, workflow_run.id, node_runs, &mut context).await;
     context
 }

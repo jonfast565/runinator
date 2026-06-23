@@ -22,8 +22,8 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     workflows::{
-        NewWorkflowRunDeliverable, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
+        NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
     },
 };
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
@@ -1887,71 +1887,71 @@ where
             .collect())
     }
 
-    async fn add_workflow_run_deliverable(
+    async fn add_workflow_run_artifact(
         &self,
-        deliverable: &NewWorkflowRunDeliverable,
-    ) -> Result<WorkflowRunDeliverable, SendableError> {
+        artifact: &NewWorkflowRunArtifact,
+    ) -> Result<WorkflowRunArtifact, SendableError> {
         let columns = "id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at";
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_run_deliverables (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_run_artifacts (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
-            .bind(deliverable.workflow_run_id)
-            .bind(deliverable.node_id.as_str())
-            .bind(deliverable.artifact_id)
-            .bind(deliverable.name.as_str())
-            .bind(deliverable.mime_type.as_str())
-            .bind(deliverable.size_bytes)
-            .bind(deliverable.uri.as_str())
-            .bind(deliverable.metadata.to_string())
+            .bind(artifact.workflow_run_id)
+            .bind(artifact.node_id.as_str())
+            .bind(artifact.artifact_id)
+            .bind(artifact.name.as_str())
+            .bind(artifact.mime_type.as_str())
+            .bind(artifact.size_bytes)
+            .bind(artifact.uri.as_str())
+            .bind(artifact.metadata.to_string())
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
             let row = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_run_deliverables WHERE id = ?"
+                "SELECT {columns} FROM workflow_run_artifacts WHERE id = ?"
             )))
             .bind(id)
             .fetch_one(&mut *conn)
             .await?;
-            return Ok(mappers::row_to_workflow_run_deliverable(&row));
+            return Ok(mappers::row_to_workflow_run_artifact(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_run_deliverables (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at)
+            "INSERT INTO workflow_run_artifacts (id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
         .bind(id)
-        .bind(deliverable.workflow_run_id)
-        .bind(deliverable.node_id.as_str())
-        .bind(deliverable.artifact_id)
-        .bind(deliverable.name.as_str())
-        .bind(deliverable.mime_type.as_str())
-        .bind(deliverable.size_bytes)
-        .bind(deliverable.uri.as_str())
-        .bind(deliverable.metadata.to_string())
+        .bind(artifact.workflow_run_id)
+        .bind(artifact.node_id.as_str())
+        .bind(artifact.artifact_id)
+        .bind(artifact.name.as_str())
+        .bind(artifact.mime_type.as_str())
+        .bind(artifact.size_bytes)
+        .bind(artifact.uri.as_str())
+        .bind(artifact.metadata.to_string())
         .bind(created_at)
         .fetch_one(self.pool())
         .await?;
-        Ok(mappers::row_to_workflow_run_deliverable(&row))
+        Ok(mappers::row_to_workflow_run_artifact(&row))
     }
 
-    async fn fetch_workflow_run_deliverables(
+    async fn fetch_workflow_run_artifacts(
         &self,
         workflow_run_id: Uuid,
-    ) -> Result<Vec<WorkflowRunDeliverable>, SendableError> {
+    ) -> Result<Vec<WorkflowRunArtifact>, SendableError> {
         let rows = sqlx::query(&self.render(
-            "SELECT id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_run_deliverables WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC",
+            "SELECT id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_run_artifacts WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC",
         ))
         .bind(workflow_run_id)
         .fetch_all(self.pool())
         .await?;
         Ok(rows
             .iter()
-            .map(mappers::row_to_workflow_run_deliverable)
+            .map(mappers::row_to_workflow_run_artifact)
             .collect())
     }
 

@@ -349,11 +349,24 @@ impl Formatter {
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Output(output) => self.output(output),
             StmtKind::Yield(value) => format!("yield {}", format_expr(value)),
-            StmtKind::Deliverable(deliverable) => self.deliverable(deliverable),
             StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
             StmtKind::Gate(gate) => self.gate(gate),
             StmtKind::Signal(signal) => self.signal(signal),
+            StmtKind::Assert(assert) => self.assert(assert),
+            StmtKind::Transform(transform) => self.transform(transform),
+            StmtKind::Audit(audit) => self.audit(audit),
+            StmtKind::Checkpoint(checkpoint) => {
+                format!("checkpoint {}", quote(&checkpoint.name))
+            }
+            StmtKind::Mutex(mutex) => self.mutex(mutex),
+            StmtKind::Throttle(throttle) => self.throttle(throttle),
+            StmtKind::Await(await_stmt) => self.await_node(await_stmt),
+            StmtKind::Debounce(debounce) => self.debounce(debounce),
+            StmtKind::Collect(collect) => self.collect(collect),
+            StmtKind::Barrier(barrier) => self.barrier(barrier),
+            StmtKind::CircuitBreaker(cb) => self.circuit_breaker(cb),
+            StmtKind::EventSource(es) => self.event_source(es),
             StmtKind::Config(config) => self.config(config),
             StmtKind::Fail(expr) => match expr {
                 Some(expr) => format!("fail {}", format_expr(expr)),
@@ -583,7 +596,38 @@ impl Formatter {
         text
     }
 
-    fn output(&self, output: &OutputStmt) -> String {
+    fn output(&mut self, output: &OutputStmt) -> String {
+        if !output.items.is_empty() {
+            // block form when artifact items are declared.
+            let mut out = String::from("output {\n");
+            self.indent += 1;
+            let has_event = output.event_type.is_some() || output.data.is_some();
+            if has_event {
+                self.push_indent(&mut out);
+                out.push_str("emit");
+                if let Some(event_type) = &output.event_type {
+                    out.push_str(&format!(" {}", quote(event_type)));
+                }
+                if let Some(data) = &output.data {
+                    let rendered = format_expr_multiline(data, self.indent);
+                    if output.event_type.is_some() || matches!(data.kind, ExprKind::Object(_)) {
+                        out.push_str(&format!(" {rendered}"));
+                    } else {
+                        out.push_str(&format!(" ({rendered})"));
+                    }
+                }
+                out.push('\n');
+            }
+            for (name, source) in &output.items {
+                self.push_indent(&mut out);
+                out.push_str(&format!("{name} = {}\n", format_expr(source)));
+            }
+            self.indent -= 1;
+            self.push_indent(&mut out);
+            out.push('}');
+            return out;
+        }
+        // shorthand emit form for event-only nodes.
         let mut text = "emit".to_string();
         if let Some(event_type) = &output.event_type {
             text.push_str(&format!(" {}", quote(event_type)));
@@ -599,19 +643,6 @@ impl Formatter {
             }
         }
         text
-    }
-
-    fn deliverable(&mut self, deliverable: &DeliverableStmt) -> String {
-        let mut out = String::from("deliverable {\n");
-        self.indent += 1;
-        for (name, source) in &deliverable.items {
-            self.push_indent(&mut out);
-            out.push_str(&format!("{name} = {}\n", format_expr(source)));
-        }
-        self.indent -= 1;
-        self.push_indent(&mut out);
-        out.push('}');
-        out
     }
 
     fn input_stmt(&self, input: &InputStmt) -> String {
@@ -679,6 +710,148 @@ impl Formatter {
             return format!("set meta {}", format_expr_multiline(metadata, self.indent));
         }
         "set meta {}".to_string()
+    }
+
+    fn assert(&mut self, assert: &AssertStmt) -> String {
+        if assert.assertions.is_empty() {
+            return "assert {}".to_string();
+        }
+        let mut out = String::from("assert {\n");
+        self.indent += 1;
+        for (name, cond) in &assert.assertions {
+            self.push_indent(&mut out);
+            out.push_str(&format!("{}: {}\n", quote(name), format_cond(cond)));
+        }
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        out
+    }
+
+    fn transform(&mut self, transform: &TransformStmt) -> String {
+        if transform.bindings.is_empty() {
+            return "transform {}".to_string();
+        }
+        let mut out = String::from("transform {\n");
+        self.indent += 1;
+        for (name, value) in &transform.bindings {
+            self.push_indent(&mut out);
+            out.push_str(&format!("{name} = {}\n", format_expr(value)));
+        }
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        out
+    }
+
+    fn audit(&self, audit: &AuditStmt) -> String {
+        let mut text = format!("audit action {}", format_expr(&audit.action));
+        if let Some(actor) = &audit.actor {
+            text.push_str(&format!(" actor {}", format_expr(actor)));
+        }
+        if let Some(target) = &audit.target {
+            text.push_str(&format!(" target {}", format_expr(target)));
+        }
+        if let Some(reason) = &audit.reason {
+            text.push_str(&format!(" reason {}", format_expr(reason)));
+        }
+        text
+    }
+
+    fn mutex(&self, mutex: &MutexStmt) -> String {
+        let mut text = format!("mutex {}", quote(&mutex.name));
+        if let Some(poll) = mutex.poll_interval {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = mutex.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
+    }
+
+    fn throttle(&self, throttle: &ThrottleStmt) -> String {
+        let mut text = format!(
+            "throttle {} rate {} per {}s",
+            quote(&throttle.name),
+            throttle.max_per_window,
+            throttle.window_seconds
+        );
+        if let Some(poll) = throttle.poll_interval {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = throttle.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
+    }
+
+    fn await_node(&self, await_stmt: &AwaitStmt) -> String {
+        let mut text = format!("await {}", format_expr(&await_stmt.run_ids));
+        if let Some(mode) = &await_stmt.mode {
+            text.push_str(&format!(" mode {}", quote(mode)));
+        }
+        if let Some(poll) = await_stmt.poll_interval {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = await_stmt.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
+    }
+
+    fn debounce(&self, debounce: &DebounceStmt) -> String {
+        let mut text = format!(
+            "debounce {} delay {}s",
+            quote(&debounce.name),
+            debounce.delay_seconds
+        );
+        if let Some(key) = &debounce.key {
+            text.push_str(&format!(" key {}", format_expr(key)));
+        }
+        text
+    }
+
+    fn collect(&self, collect: &CollectStmt) -> String {
+        let mut text = format!("collect {} max {}", quote(&collect.name), collect.max);
+        if let Some(timeout) = collect.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
+    }
+
+    fn barrier(&self, barrier: &BarrierStmt) -> String {
+        let mut text = format!("barrier {} count {}", quote(&barrier.name), barrier.count);
+        if let Some(poll) = barrier.poll_interval {
+            text.push_str(&format!(" every {poll}s"));
+        }
+        if let Some(timeout) = barrier.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
+    }
+
+    fn circuit_breaker(&self, cb: &CircuitBreakerStmt) -> String {
+        format!(
+            "circuit_breaker {} threshold {} window {}s cooldown {}s",
+            quote(&cb.name),
+            cb.threshold,
+            cb.window_seconds,
+            cb.cooldown_seconds
+        )
+    }
+
+    fn event_source(&self, es: &EventSourceStmt) -> String {
+        let mut text = format!("event_source type {}", quote(&es.event_type));
+        if let Some(filter) = &es.filter {
+            text.push_str(&format!(" filter {}", format_cond(filter)));
+        }
+        if let Some(max) = es.max {
+            text.push_str(&format!(" max {max}"));
+        }
+        if let Some(timeout) = es.timeout {
+            text.push_str(&format!(" timeout {timeout}s"));
+        }
+        text
     }
 
     fn if_stmt(&mut self, if_stmt: &IfStmt) -> String {

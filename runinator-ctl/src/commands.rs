@@ -682,23 +682,23 @@ async fn runs(client: &Client, command: &RunCommands, json_output: bool) -> Resu
             "renamed workflow run",
             json_output,
         )?,
-        RunCommands::Deliverables { id } => {
-            let deliverables = client.fetch_workflow_run_deliverables(*id).await?;
+        RunCommands::Artifacts { id } => {
+            let artifacts = client.fetch_workflow_run_artifacts(*id).await?;
             if json_output {
-                return output::json(&deliverables);
+                return output::json(&artifacts);
             }
-            if deliverables.is_empty() {
-                println!("no deliverables for run {id}");
+            if artifacts.is_empty() {
+                println!("no artifacts for run {id}");
                 return Ok(());
             }
-            for deliverable in deliverables {
+            for artifact in artifacts {
                 println!(
                     "{}\t{}\t{}\t{} bytes\t{}",
-                    deliverable.id,
-                    deliverable.name,
-                    deliverable.mime_type,
-                    deliverable.size_bytes,
-                    deliverable.uri
+                    artifact.id,
+                    artifact.name,
+                    artifact.mime_type,
+                    artifact.size_bytes,
+                    artifact.uri
                 );
             }
         }

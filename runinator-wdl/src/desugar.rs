@@ -122,13 +122,11 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
             if let Some(data) = output.data.as_mut() {
                 expand_expr(data, aliases)?;
             }
-        }
-        StmtKind::Yield(value) => expand_expr(value, aliases)?,
-        StmtKind::Deliverable(deliverable) => {
-            for (_, source) in deliverable.items.iter_mut() {
+            for (_, source) in output.items.iter_mut() {
                 expand_expr(source, aliases)?;
             }
         }
+        StmtKind::Yield(value) => expand_expr(value, aliases)?,
         StmtKind::Input(input) => {
             if let Some(prompt) = input.prompt.as_mut() {
                 expand_expr(prompt, aliases)?;
@@ -199,6 +197,49 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_block(body, aliases)?;
             }
         }
+        StmtKind::Assert(assert) => {
+            for (_, cond) in assert.assertions.iter_mut() {
+                expand_cond(cond, aliases)?;
+            }
+        }
+        StmtKind::Transform(transform) => {
+            for (_, value) in transform.bindings.iter_mut() {
+                expand_expr(value, aliases)?;
+            }
+        }
+        StmtKind::Audit(audit) => {
+            expand_expr(&mut audit.action, aliases)?;
+            for value in [
+                audit.actor.as_mut(),
+                audit.target.as_mut(),
+                audit.reason.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                expand_expr(value, aliases)?;
+            }
+        }
+        StmtKind::Await(await_stmt) => {
+            expand_expr(&mut await_stmt.run_ids, aliases)?;
+        }
+        StmtKind::Debounce(debounce) => {
+            if let Some(key) = debounce.key.as_mut() {
+                expand_expr(key, aliases)?;
+            }
+        }
+        StmtKind::EventSource(es) => {
+            if let Some(filter) = es.filter.as_mut() {
+                expand_cond(filter, aliases)?;
+            }
+        }
+        // these carry no spread-bearing expressions.
+        StmtKind::Checkpoint(_)
+        | StmtKind::Mutex(_)
+        | StmtKind::Throttle(_)
+        | StmtKind::Collect(_)
+        | StmtKind::Barrier(_)
+        | StmtKind::CircuitBreaker(_) => {}
     }
     Ok(())
 }

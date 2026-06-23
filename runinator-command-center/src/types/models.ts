@@ -65,6 +65,18 @@ export type WorkflowNodeKind =
   | "input"
   | "subflow"
   | "config"
+  | "assert"
+  | "transform"
+  | "audit"
+  | "checkpoint"
+  | "mutex"
+  | "throttle"
+  | "await_run"
+  | "debounce"
+  | "collect"
+  | "barrier"
+  | "circuit_breaker"
+  | "event_source"
   | "end"
   | "fail";
 
@@ -267,7 +279,7 @@ export interface RunArtifact {
   created_at: string;
 }
 
-export interface WorkflowRunDeliverable {
+export interface WorkflowRunArtifact {
   id: string;
   workflow_run_id: string;
   node_id: string;

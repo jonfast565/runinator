@@ -250,7 +250,7 @@ pub(crate) async fn get_workflow_node_run_artifacts<T: DatabaseImpl>(
     }
 }
 
-pub(crate) async fn get_workflow_run_deliverables<T: DatabaseImpl>(
+pub(crate) async fn get_workflow_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -265,10 +265,10 @@ pub(crate) async fn get_workflow_run_deliverables<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::fetch_workflow_run_deliverables(db.as_ref(), workflow_run_id).await {
-        Ok(deliverables) => (
+    match repository::fetch_workflow_run_artifacts(db.as_ref(), workflow_run_id).await {
+        Ok(artifacts) => (
             StatusCode::OK,
-            Json(ApiResponse::WorkflowRunDeliverables(deliverables)),
+            Json(ApiResponse::WorkflowRunArtifacts(artifacts)),
         ),
         Err(err) => api_error(err.to_string()),
     }

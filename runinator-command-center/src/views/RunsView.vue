@@ -104,8 +104,8 @@
               </section>
               <section class="runs-detail-section">
                 <div class="runs-section-header">
-                  <h2 class="runs-detail-heading">Deliverables</h2>
-                  <span>{{ deliverables.length ? `${deliverables.length} for this run` : "No deliverables for this run" }}</span>
+                  <h2 class="runs-detail-heading">Artifacts</h2>
+                  <span>{{ runArtifacts.length ? `${runArtifacts.length} for this run` : "No artifacts for this run" }}</span>
                 </div>
                 <div class="table-scroll compact-scroll">
                   <table>
@@ -120,16 +120,16 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="!deliverables.length" class="muted">
-                        <td colspan="6">No deliverables available.</td>
+                      <tr v-if="!runArtifacts.length" class="muted">
+                        <td colspan="6">No artifacts available.</td>
                       </tr>
-                      <tr v-for="deliverable in deliverables" :key="deliverable.id">
-                        <td>{{ deliverable.name }}</td>
-                        <td>{{ deliverable.node_id }}</td>
-                        <td>{{ deliverable.mime_type }}</td>
-                        <td>{{ deliverable.size_bytes }}</td>
-                        <td>{{ formatDate(deliverable.created_at) }}</td>
-                        <td><button class="btn" @click="download(deliverable.artifact_id, deliverable.name)">Download</button></td>
+                      <tr v-for="artifact in runArtifacts" :key="artifact.id">
+                        <td>{{ artifact.name }}</td>
+                        <td>{{ artifact.node_id }}</td>
+                        <td>{{ artifact.mime_type }}</td>
+                        <td>{{ artifact.size_bytes }}</td>
+                        <td>{{ formatDate(artifact.created_at) }}</td>
+                        <td><button class="btn" @click="download(artifact.artifact_id, artifact.name)">Download</button></td>
                       </tr>
                     </tbody>
                   </table>
@@ -150,7 +150,7 @@ import {
   downloadArtifactInBrowser,
   downloadArtifactToPath,
   fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowRunDeliverables
+  fetchWorkflowRunArtifacts
 } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
 import JsonEditor from "../components/shared/JsonEditor.vue";
@@ -164,13 +164,13 @@ import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
 import { useAppStore } from "../stores/app";
 import { useWorkflowsStore } from "../stores/workflows";
-import type { RunArtifact, WorkflowRunDeliverable } from "../types/models";
+import type { RunArtifact, WorkflowRunArtifact } from "../types/models";
 import { formatDate, pretty } from "../utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
 const artifacts = ref<RunArtifact[]>([]);
-const deliverables = ref<WorkflowRunDeliverable[]>([]);
+const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 
 async function download(artifactId: string, name: string) {
   await app.runOperation(`Downloading ${name}`, async () => {
@@ -193,7 +193,7 @@ watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
   artifacts.value = id ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
 }, { immediate: true });
 watch(() => workflows.selectedWorkflowRunId, async (id) => {
-  deliverables.value = id ? await app.runOperation("Loading deliverables", () => fetchWorkflowRunDeliverables(id)).catch(() => []) : [];
+  runArtifacts.value = id ? await app.runOperation("Loading artifacts", () => fetchWorkflowRunArtifacts(id)).catch(() => []) : [];
 }, { immediate: true });
 
 const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);

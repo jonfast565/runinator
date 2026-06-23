@@ -24,8 +24,8 @@ use runinator_models::{
     },
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
-        NewWorkflowRunDeliverable, WorkflowAction, WorkflowBundle, WorkflowDefinition,
-        WorkflowGraph, WorkflowNodeRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+        NewWorkflowRunArtifact, WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph,
+        WorkflowNodeRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
 use runinator_wdl::WdlFragmentKind;
@@ -1889,10 +1889,10 @@ fn result_consumer_backoff_grows_and_is_capped() {
 }
 
 #[tokio::test]
-async fn deliverables_promote_node_artifacts_to_the_run() {
+async fn output_node_promotes_artifacts_to_the_run() {
     let (db, path) = test_db().await;
     let node_run = create_node_run(&db).await;
-    // a node artifact, then a deliverable promoting it to the run.
+    // a node artifact, then an output node promoting it to the run.
     let artifact = db
         .add_workflow_node_run_artifact(
             node_run.id,
@@ -1916,7 +1916,7 @@ async fn deliverables_promote_node_artifacts_to_the_run() {
     assert_eq!(run_artifacts[0].id, artifact.id);
 
     let stored = db
-        .add_workflow_run_deliverable(&NewWorkflowRunDeliverable {
+        .add_workflow_run_artifact(&NewWorkflowRunArtifact {
             workflow_run_id: node_run.workflow_run_id,
             node_id: node_run.node_id.clone(),
             artifact_id: artifact.id,
@@ -1930,14 +1930,14 @@ async fn deliverables_promote_node_artifacts_to_the_run() {
         .unwrap();
     assert_eq!(stored.name, "report");
 
-    let deliverables = db
-        .fetch_workflow_run_deliverables(node_run.workflow_run_id)
+    let artifacts = db
+        .fetch_workflow_run_artifacts(node_run.workflow_run_id)
         .await
         .unwrap();
-    assert_eq!(deliverables.len(), 1);
-    assert_eq!(deliverables[0].artifact_id, artifact.id);
-    assert_eq!(deliverables[0].name, "report");
-    assert_eq!(deliverables[0].uri, "memory://dump.csv");
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].artifact_id, artifact.id);
+    assert_eq!(artifacts[0].name, "report");
+    assert_eq!(artifacts[0].uri, "memory://dump.csv");
     let _ = std::fs::remove_file(path);
 }
 

@@ -12,7 +12,7 @@ use runinator_models::{
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
         api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
         api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_run,
-        api_workflow_run_command, api_workflow_run_deliverables, api_workflow_run_nodes,
+        api_workflow_run_artifacts, api_workflow_run_command, api_workflow_run_nodes,
         api_workflow_run_rename, api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_AUTH_CONFIG,
         API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH, API_CREDENTIALS, API_IDEMPOTENCY_KEYS,
@@ -37,7 +37,7 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
     },
 };
 use uuid::Uuid;
@@ -1062,16 +1062,16 @@ where
         Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
     }
 
-    pub async fn fetch_workflow_run_deliverables(
+    pub async fn fetch_workflow_run_artifacts(
         &self,
         workflow_run_id: Uuid,
-    ) -> Result<Vec<WorkflowRunDeliverable>> {
+    ) -> Result<Vec<WorkflowRunArtifact>> {
         let url = self
-            .build_url(&api_workflow_run_deliverables(workflow_run_id))
+            .build_url(&api_workflow_run_artifacts(workflow_run_id))
             .await?;
         let response = self.client.get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowRunDeliverable>>().await?)
+        Ok(response.json::<Vec<WorkflowRunArtifact>>().await?)
     }
 
     pub async fn fetch_workflow_node_run_artifacts(

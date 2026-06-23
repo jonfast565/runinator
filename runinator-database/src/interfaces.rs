@@ -18,8 +18,8 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
     workflows::{
-        NewWorkflowRunDeliverable, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunDeliverable, WorkflowStatus, WorkflowTrigger,
+        NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
     },
 };
 
@@ -388,17 +388,17 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRunArtifact>, SendableError>> + Send;
 
-    /// Promote a node artifact to a run-level deliverable.
-    fn add_workflow_run_deliverable(
+    /// Promote a node artifact to a run-level artifact via an output node.
+    fn add_workflow_run_artifact(
         &self,
-        deliverable: &NewWorkflowRunDeliverable,
-    ) -> impl Future<Output = Result<WorkflowRunDeliverable, SendableError>> + Send;
+        artifact: &NewWorkflowRunArtifact,
+    ) -> impl Future<Output = Result<WorkflowRunArtifact, SendableError>> + Send;
 
-    /// Fetch run-level deliverables for a workflow run.
-    fn fetch_workflow_run_deliverables(
+    /// Fetch run-level artifacts declared by output nodes for a workflow run.
+    fn fetch_workflow_run_artifacts(
         &self,
         workflow_run_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkflowRunDeliverable>, SendableError>> + Send;
+    ) -> impl Future<Output = Result<Vec<WorkflowRunArtifact>, SendableError>> + Send;
 
     /// Apply a workflow result event once; returns false for duplicate events.
     fn apply_workflow_result_event(

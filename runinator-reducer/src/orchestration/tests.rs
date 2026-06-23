@@ -1,6 +1,20 @@
 use super::action::{default_foreign_language_runtime, foreign_language_runtime};
+use super::assert::evaluate_assertions;
+use super::await_run::parse_await_mode;
+use super::barrier::arrivals_complete;
+use super::circuit_breaker::is_circuit_open;
+use super::collect::threshold_reached;
+use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
-use runinator_models::workflows::{WorkflowNode, WorkflowNodeRun};
+use super::event_source::event_type_matches;
+use super::mutex::record_is_held_by_other;
+use super::throttle::bucket_has_tokens;
+use super::transform::resolve_bindings;
+use runinator_models::{
+    value::Value,
+    workflows::{WorkflowNode, WorkflowNodeRun},
+};
+use uuid::Uuid;
 
 fn reentry_node(max_visits: i64, on_exhausted: bool) -> WorkflowNode {
     let mut reentry = serde_json::json!({ "enabled": true, "max_visits": max_visits });
@@ -98,4 +112,196 @@ fn default_foreign_language_runtime_has_image_and_empty_setup_script() {
             .and_then(|value| value.as_str()),
         Some("")
     );
+}
+
+// --- new node type unit tests ---
+
+#[test]
+fn assert_node_returns_violations_for_failing_conditions() {
+    // `{"all": []}` is vacuously true; `{"any": []}` is vacuously false.
+    let params = serde_json::from_str::<Value>(
+        r#"{
+        "assertions": [
+            { "name": "always_true",  "condition": {"all": []}, "message": "should not appear" },
+            { "name": "always_false", "condition": {"any": []}, "message": "invariant violated" }
+        ]
+    }"#,
+    )
+    .unwrap()
+    .into();
+    let context = serde_json::from_str::<Value>("{}").unwrap().into();
+    let violations = evaluate_assertions(&params, &context);
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].name, "always_false");
+    assert_eq!(violations[0].message, "invariant violated");
+}
+
+#[test]
+fn transform_node_resolves_literal_bindings() {
+    let params = serde_json::from_str::<Value>(r#"{ "bindings": { "x": 42, "label": "hello" } }"#)
+        .unwrap()
+        .into();
+    let context = serde_json::from_str::<Value>("{}").unwrap().into();
+    let result = resolve_bindings(&params, &context);
+    assert_eq!(result.get("x").and_then(|v| v.as_i64()), Some(42));
+    assert_eq!(result.get("label").and_then(|v| v.as_str()), Some("hello"));
+}
+
+#[test]
+fn audit_node_build_record_includes_required_fields() {
+    use super::audit::build_audit_record;
+    let run_id = Uuid::now_v7();
+    let resolved = serde_json::from_str::<Value>(
+        r#"{ "actor": "alice", "action": "approved", "target": "pr-42" }"#,
+    )
+    .unwrap()
+    .into();
+    let record = build_audit_record(run_id, "my_audit", &resolved);
+    assert_eq!(
+        record.get("action").and_then(|v| v.as_str()),
+        Some("approved")
+    );
+    assert_eq!(record.get("actor").and_then(|v| v.as_str()), Some("alice"));
+    assert_eq!(
+        record.get("node_id").and_then(|v| v.as_str()),
+        Some("my_audit")
+    );
+}
+
+#[test]
+fn checkpoint_node_parses_name_from_params() {
+    use super::checkpoint::parse_checkpoint_name;
+    let with_name = serde_json::from_str::<Value>(r#"{ "name": "after-ingest" }"#)
+        .unwrap()
+        .into();
+    assert_eq!(parse_checkpoint_name(&with_name, "node1"), "after-ingest");
+    let without_name = serde_json::from_str::<Value>("{}").unwrap().into();
+    assert_eq!(parse_checkpoint_name(&without_name, "node1"), "node1");
+}
+
+#[test]
+fn mutex_record_is_held_by_other_respects_released_flag() {
+    let run_a = Uuid::now_v7();
+    let run_b = Uuid::now_v7();
+    let held = serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run_a}" }}"#))
+        .unwrap()
+        .into();
+    // held by run_a, checking from run_b → held by other.
+    assert!(record_is_held_by_other(&held, run_b));
+    // held by run_a, checking from run_a itself → not held by other.
+    assert!(!record_is_held_by_other(&held, run_a));
+    let released = serde_json::from_str::<Value>(&format!(
+        r#"{{ "held_by_run_id": "{run_a}", "released_at": 1 }}"#
+    ))
+    .unwrap()
+    .into();
+    // released records are never considered held.
+    assert!(!record_is_held_by_other(&released, run_b));
+}
+
+#[test]
+fn throttle_bucket_has_tokens_resets_on_expired_window() {
+    let now = chrono::Utc::now().timestamp();
+    // window started 120s ago; max 5/60s → window expired, always has tokens.
+    let expired = serde_json::from_str::<Value>(&format!(
+        r#"{{ "window_start": {}, "tokens_used": 5 }}"#,
+        now - 120
+    ))
+    .unwrap()
+    .into();
+    assert!(bucket_has_tokens(&expired, 5, 60));
+    // window is fresh and tokens exhausted → no tokens.
+    let full = serde_json::from_str::<Value>(&format!(
+        r#"{{ "window_start": {}, "tokens_used": 5 }}"#,
+        now
+    ))
+    .unwrap()
+    .into();
+    assert!(!bucket_has_tokens(&full, 5, 60));
+    // window is fresh but capacity remains → has tokens.
+    let partial = serde_json::from_str::<Value>(&format!(
+        r#"{{ "window_start": {}, "tokens_used": 3 }}"#,
+        now
+    ))
+    .unwrap()
+    .into();
+    assert!(bucket_has_tokens(&partial, 5, 60));
+}
+
+#[test]
+fn await_run_node_defaults_to_all_mode() {
+    let params_all = serde_json::from_str::<Value>(r#"{ "mode": "all" }"#)
+        .unwrap()
+        .into();
+    let params_any = serde_json::from_str::<Value>(r#"{ "mode": "any" }"#)
+        .unwrap()
+        .into();
+    let params_missing = serde_json::from_str::<Value>("{}").unwrap().into();
+    assert_eq!(parse_await_mode(&params_all), "all");
+    assert_eq!(parse_await_mode(&params_any), "any");
+    assert_eq!(parse_await_mode(&params_missing), "all");
+}
+
+#[test]
+fn debounce_node_detects_elapsed_deadline() {
+    let past = chrono::Utc::now().timestamp() - 10;
+    let future = chrono::Utc::now().timestamp() + 60;
+    assert!(deadline_elapsed(past));
+    assert!(!deadline_elapsed(future));
+}
+
+#[test]
+fn collect_node_threshold_detection() {
+    assert!(threshold_reached(5, 5));
+    assert!(threshold_reached(10, 5));
+    assert!(!threshold_reached(4, 5));
+    // threshold 0 means no threshold; never triggered by count alone.
+    assert!(!threshold_reached(100, 0));
+}
+
+#[test]
+fn barrier_node_arrivals_complete() {
+    assert!(arrivals_complete(3, 3));
+    assert!(arrivals_complete(5, 3));
+    assert!(!arrivals_complete(2, 3));
+    // expected 0 is degenerate; never complete.
+    assert!(!arrivals_complete(0, 0));
+}
+
+#[test]
+fn circuit_breaker_open_respects_cooldown() {
+    let now = chrono::Utc::now().timestamp();
+    // tripped recently → open during cooldown.
+    let open = serde_json::from_str::<Value>(&format!(
+        r#"{{ "circuit_state": "open", "last_tripped_at": {} }}"#,
+        now - 30
+    ))
+    .unwrap()
+    .into();
+    assert!(is_circuit_open(&open, 120, now));
+    // tripped long ago → cooldown elapsed → not open.
+    let recovered = serde_json::from_str::<Value>(&format!(
+        r#"{{ "circuit_state": "open", "last_tripped_at": {} }}"#,
+        now - 300
+    ))
+    .unwrap()
+    .into();
+    assert!(!is_circuit_open(&recovered, 120, now));
+    // closed state → never open regardless.
+    let closed =
+        serde_json::from_str::<Value>(r#"{ "circuit_state": "closed", "last_tripped_at": 0 }"#)
+            .unwrap()
+            .into();
+    assert!(!is_circuit_open(&closed, 120, now));
+}
+
+#[test]
+fn event_source_type_matching() {
+    let event = serde_json::from_str::<Value>(r#"{ "type": "file.uploaded" }"#)
+        .unwrap()
+        .into();
+    assert!(event_type_matches(&event, "file.uploaded"));
+    assert!(!event_type_matches(&event, "user.created"));
+    // wildcard matches everything.
+    assert!(event_type_matches(&event, "*"));
 }

@@ -1,0 +1,3 @@
+RENAME TABLE workflow_run_deliverables TO workflow_run_artifacts;
+
+ALTER TABLE workflow_run_artifacts RENAME INDEX idx_workflow_run_deliverables_run TO idx_workflow_run_artifacts_run;

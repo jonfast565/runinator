@@ -67,10 +67,10 @@ pub const COMPUTE_NODE_FAILED: ErrorDescriptor = ErrorDescriptor::new(
     "In-process compute node failed to evaluate",
 );
 
-pub const DELIVERABLE_SOURCE_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
+pub const ARTIFACT_SOURCE_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI143",
-    "workflow.deliverable.source_unresolved",
-    "Deliverable source did not resolve to an artifact",
+    "workflow.output.artifact_source_unresolved",
+    "Output artifact source did not resolve to an artifact",
 );
 pub const FOREIGN_LANGUAGE_CONFIG_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI144",
@@ -78,7 +78,68 @@ pub const FOREIGN_LANGUAGE_CONFIG_MISSING: ErrorDescriptor = ErrorDescriptor::ne
     "Foreign language runtime config is missing",
 );
 
+pub const ASSERT_PARAMS_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI150",
+    "workflow.assert.params_missing",
+    "Assert node is missing an assertions parameter",
+);
+pub const TRANSFORM_PARAMS_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI151",
+    "workflow.transform.params_missing",
+    "Transform node is missing a bindings parameter",
+);
+pub const MUTEX_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI152",
+    "workflow.mutex.name_missing",
+    "Mutex node is missing a name parameter",
+);
+pub const THROTTLE_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI153",
+    "workflow.throttle.name_missing",
+    "Throttle node is missing a name parameter",
+);
+pub const AWAIT_RUN_IDS_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI154",
+    "workflow.await_run.run_ids_missing",
+    "AwaitRun node is missing a run_ids parameter",
+);
+pub const DEBOUNCE_DELAY_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI155",
+    "workflow.debounce.delay_missing",
+    "Debounce node is missing a delay_seconds parameter",
+);
+pub const COLLECT_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI156",
+    "workflow.collect.name_missing",
+    "Collect node is missing a name parameter",
+);
+pub const BARRIER_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI157",
+    "workflow.barrier.name_missing",
+    "Barrier node is missing a name parameter",
+);
+pub const CIRCUIT_BREAKER_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI158",
+    "workflow.circuit_breaker.name_missing",
+    "CircuitBreaker node is missing a name parameter",
+);
+pub const EVENT_SOURCE_TYPE_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI159",
+    "workflow.event_source.type_missing",
+    "EventSource node is missing an event_type parameter",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
+    ASSERT_PARAMS_MISSING,
+    TRANSFORM_PARAMS_MISSING,
+    MUTEX_NAME_MISSING,
+    THROTTLE_NAME_MISSING,
+    AWAIT_RUN_IDS_MISSING,
+    DEBOUNCE_DELAY_MISSING,
+    COLLECT_NAME_MISSING,
+    BARRIER_NAME_MISSING,
+    CIRCUIT_BREAKER_NAME_MISSING,
+    EVENT_SOURCE_TYPE_MISSING,
     WORKFLOW_NOT_FOUND,
     WORKFLOW_RUN_NOT_FOUND,
     WORKFLOW_RUN_SNAPSHOT_MISSING,
@@ -92,7 +153,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     SUBFLOW_TARGET_MISSING,
     SUBFLOW_INVALID_ID,
     COMPUTE_NODE_FAILED,
-    DELIVERABLE_SOURCE_UNRESOLVED,
+    ARTIFACT_SOURCE_UNRESOLVED,
     FOREIGN_LANGUAGE_CONFIG_MISSING,
 ];
 

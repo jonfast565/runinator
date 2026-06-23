@@ -8,10 +8,10 @@ use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_value_ref;
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
-    ApprovalParameters, BranchPolicy, DeliverableItem, DeliverableParameters, GateParameters,
-    InputParameters, JoinParameters, LoopParameters, MapParameters, OutputParameters,
-    ParallelParameters, RaceParameters, SignalParameters, SwitchCase, SwitchParameters,
-    TryParameters, WaitParameters, WorkflowValueRef,
+    ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
+    JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
+    RaceParameters, SignalParameters, SwitchCase, SwitchParameters, TryParameters, WaitParameters,
+    WorkflowValueRef,
 };
 use runinator_models::orchestration::GateKind;
 
@@ -145,41 +145,32 @@ pub fn parse_output_parameters(
     let object = parameter_object(node)?;
     let event_type = optional_string(object.get("event_type"));
     let data = object.get("data").cloned().unwrap_or(Value::Null);
-    Ok(OutputParameters { event_type, data })
-}
-
-pub fn parse_deliverable_parameters(
-    node: &WorkflowNode,
-) -> Result<DeliverableParameters, WorkflowValidationError> {
-    let object = parameter_object(node)?;
-    let entries = object
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_parameters(node, "deliverable.items must be an array"))?;
-    if entries.is_empty() {
-        return Err(invalid_parameters(
-            node,
-            "deliverable.items cannot be empty",
-        ));
-    }
-    let mut items = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let entry = entry
-            .as_object()
-            .ok_or_else(|| invalid_parameters(node, "deliverable.items entry must be an object"))?;
-        let name = entry
-            .get("name")
-            .and_then(Value::as_str)
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| invalid_parameters(node, "deliverable item requires a name"))?;
-        let source = entry
-            .get("source")
-            .cloned()
-            .ok_or_else(|| invalid_parameters(node, "deliverable item requires a source"))?;
-        items.push(DeliverableItem { name, source });
-    }
-    Ok(DeliverableParameters { items })
+    let items = if let Some(entries) = object.get("items").and_then(Value::as_array) {
+        let mut items = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let entry = entry
+                .as_object()
+                .ok_or_else(|| invalid_parameters(node, "output.items entry must be an object"))?;
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| invalid_parameters(node, "output artifact item requires a name"))?;
+            let source = entry.get("source").cloned().ok_or_else(|| {
+                invalid_parameters(node, "output artifact item requires a source")
+            })?;
+            items.push(ArtifactItem { name, source });
+        }
+        items
+    } else {
+        Vec::new()
+    };
+    Ok(OutputParameters {
+        event_type,
+        data,
+        items,
+    })
 }
 
 pub fn parse_input_parameters(node: &WorkflowNode) -> InputParameters {
@@ -343,9 +334,6 @@ pub(crate) fn validate_control_node_parameters(
         }
         WorkflowNodeKind::Output => {
             parse_output_parameters(node)?;
-        }
-        WorkflowNodeKind::Deliverable => {
-            parse_deliverable_parameters(node)?;
         }
         WorkflowNodeKind::Input => {
             let _ = parse_input_parameters(node);

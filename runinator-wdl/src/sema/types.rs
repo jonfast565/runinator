@@ -211,13 +211,11 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
             if let Some(data) = &output.data {
                 check_expr(data, env, diagnostics);
             }
-        }
-        StmtKind::Yield(value) => check_expr(value, env, diagnostics),
-        StmtKind::Deliverable(deliverable) => {
-            for (_, source) in &deliverable.items {
+            for (_, source) in &output.items {
                 check_expr(source, env, diagnostics);
             }
         }
+        StmtKind::Yield(value) => check_expr(value, env, diagnostics),
         StmtKind::Input(input) => {
             if let Some(prompt) = &input.prompt {
                 check_expr(prompt, env, diagnostics);
@@ -314,6 +312,47 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_block(finally, env, diagnostics);
             }
         }
+        StmtKind::Assert(assert) => {
+            for (_, cond) in &assert.assertions {
+                check_cond(cond, env, diagnostics);
+            }
+        }
+        StmtKind::Transform(transform) => {
+            for (_, value) in &transform.bindings {
+                check_expr(value, env, diagnostics);
+            }
+        }
+        StmtKind::Audit(audit) => {
+            check_expr(&audit.action, env, diagnostics);
+            for value in [
+                audit.actor.as_ref(),
+                audit.target.as_ref(),
+                audit.reason.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_expr(value, env, diagnostics);
+            }
+        }
+        StmtKind::Await(await_stmt) => check_expr(&await_stmt.run_ids, env, diagnostics),
+        StmtKind::Debounce(debounce) => {
+            if let Some(key) = &debounce.key {
+                check_expr(key, env, diagnostics);
+            }
+        }
+        StmtKind::EventSource(es) => {
+            if let Some(filter) = &es.filter {
+                check_cond(filter, env, diagnostics);
+            }
+        }
+        // these carry no expressions to type-check.
+        StmtKind::Checkpoint(_)
+        | StmtKind::Mutex(_)
+        | StmtKind::Throttle(_)
+        | StmtKind::Collect(_)
+        | StmtKind::Barrier(_)
+        | StmtKind::CircuitBreaker(_) => {}
     }
 }
 

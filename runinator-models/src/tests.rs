@@ -223,7 +223,6 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         ("map", WorkflowNodeKind::Map),
         ("race", WorkflowNodeKind::Race),
         ("output", WorkflowNodeKind::Output),
-        ("deliverable", WorkflowNodeKind::Deliverable),
         ("input", WorkflowNodeKind::Input),
         ("config", WorkflowNodeKind::Config),
     ] {
@@ -235,6 +234,14 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         .unwrap();
         assert_eq!(node.kind, expected);
     }
+    // "deliverable" is a legacy alias for "output" (backward compat for stored workflow JSON).
+    let node: WorkflowNode = serde_json::from_value(json!({
+        "id": "legacy",
+        "kind": "deliverable",
+        "parameters": {}
+    }))
+    .unwrap();
+    assert_eq!(node.kind, WorkflowNodeKind::Output);
 }
 
 #[test]

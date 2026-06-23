@@ -159,13 +159,25 @@ stmt_body = {
   | map_stmt
   | wait_cond_stmt
   | wait_stmt
+  | output_stmt
   | emit_stmt
   | yield_stmt
-  | deliverable_stmt
   | input_stmt
   | approval_stmt
   | gate_stmt
   | signal_stmt
+  | assert_stmt
+  | transform_stmt
+  | audit_stmt
+  | checkpoint_stmt
+  | mutex_stmt
+  | throttle_stmt
+  | await_stmt
+  | debounce_stmt
+  | collect_stmt
+  | barrier_stmt
+  | circuit_breaker_stmt
+  | event_source_stmt
   | config_stmt
   | fail_stmt
   | subflow_stmt
@@ -227,15 +239,17 @@ wait_initial = { "initial" ~ string }
 // the leading string is the event type; the trailing expression is the payload. an object
 // payload keeps its brace form (`emit "x" { a: 1 }`); other payloads are any expression, and
 // the decompiler parenthesizes an event-less scalar so it is not mistaken for the event type.
+// shorthand for an output node with no artifact items; kept for backward compat.
 emit_stmt = { "emit" ~ string? ~ expr? }
+
+// block form merging event emission and artifact declarations into one output node.
+// an optional `emit` sub-line declares the event; `name = expr` lines declare artifacts.
+output_stmt   = { "output" ~ "{" ~ output_line* ~ "}" }
+output_line   = _{ emit_stmt | artifact_line }
+artifact_line = { ident ~ "=" ~ expr }
 
 // supplies the value of an enclosing bound control region. lowers to a pure compute node.
 yield_stmt = { "yield" ~ expr }
-
-// names upstream artifacts as run-level deliverables. each `name = expr` entry binds a label to an
-// artifact-valued expression (typically `step.artifacts` or a single artifact).
-deliverable_stmt = { "deliverable" ~ "{" ~ deliverable_item* ~ "}" }
-deliverable_item = { ident ~ "=" ~ expr }
 
 input_stmt = { "input" ~ expr? }
 
@@ -257,6 +271,62 @@ gate_timeout = { "timeout" ~ duration }
 // (via annotation) bounds the wait.
 signal_stmt  = { "signal" ~ string ~ signal_key? ~ object? }
 signal_key   = { "key" ~ expr }
+
+// shared poll/timeout clauses for the coordination/resilience leaves below. `every` tunes the
+// re-arm interval of a parking node; `timeout` bounds its total wait (carried on the node).
+poll_every   = { "every" ~ duration }
+node_timeout = { "timeout" ~ duration }
+
+// inline invariant validation. each line names a boolean assertion; a run fails (listing every
+// violation) when any condition is false. `assert { "amount_positive": context.amount > 0 }`.
+assert_stmt  = { "assert" ~ "{" ~ assert_line* ~ "}" }
+assert_line  = { string ~ ":" ~ cond ~ ","? }
+
+// inline data reshape. each line binds a named context variable to an expression, surfaced
+// downstream as the node output's `bindings`. `transform { total = sum(items) }`.
+transform_stmt = { "transform" ~ "{" ~ transform_line* ~ "}" }
+transform_line = { ident ~ "=" ~ expr ~ ","? }
+
+// a compliance audit record. `action` is required; `actor`/`target`/`reason` are optional. each
+// value is an expression resolved against context. `audit action "approved" actor context.user`.
+audit_stmt   = { "audit" ~ audit_field+ }
+audit_field  = { audit_kw ~ expr }
+audit_kw     = { "action" | "actor" | "target" | "reason" }
+
+// a named state snapshot for later rollback. `checkpoint "after-ingest"`.
+checkpoint_stmt = { "checkpoint" ~ string }
+
+// a named cross-run exclusive lock. parks until the lease is free. `mutex "deploy" timeout 300s`.
+mutex_stmt   = { "mutex" ~ string ~ poll_every? ~ node_timeout? }
+
+// a named cross-run rate limiter (n per window). `throttle "github" rate 10 per 60s`.
+throttle_stmt = { "throttle" ~ string ~ "rate" ~ integer ~ "per" ~ duration ~ poll_every? ~ node_timeout? }
+
+// wait for other run(s) to reach a terminal state. the expression yields the run-id array; `mode`
+// is `all` (default) or `any`. `await context.prep_run_ids mode "all" timeout 1800s`.
+await_stmt   = { "await" ~ expr ~ await_mode? ~ poll_every? ~ node_timeout? }
+await_mode   = { "mode" ~ string }
+
+// a trailing-delay debounce. the window resets on each external reset call. `debounce "f" delay 30s`.
+debounce_stmt = { "debounce" ~ string ~ "delay" ~ duration ~ debounce_key? }
+debounce_key  = { "key" ~ expr }
+
+// a timed accumulator. proceeds when the item count hits `max` or the timeout elapses.
+// `collect "events" max 50 timeout 300s`.
+collect_stmt = { "collect" ~ string ~ "max" ~ integer ~ node_timeout? }
+
+// a multi-run rendezvous. proceeds once `count` runs have arrived. `barrier "sync" count 4`.
+barrier_stmt = { "barrier" ~ string ~ "count" ~ integer ~ poll_every? ~ node_timeout? }
+
+// a cross-run failure guard. when too many failures land in the window, the circuit trips and
+// arrivals fast-fail until cooldown. `circuit_breaker "api" threshold 5 window 60s cooldown 120s`.
+circuit_breaker_stmt = { "circuit_breaker" ~ string ~ "threshold" ~ integer ~ "window" ~ duration ~ "cooldown" ~ duration }
+
+// stream-driven iteration. parks on an event subscription; each matching event drives one body
+// iteration. `event_source type "file.uploaded" filter event.size > 1000 max 100 timeout 3600s`.
+event_source_stmt = { "event_source" ~ "type" ~ string ~ event_filter? ~ event_max? ~ node_timeout? }
+event_filter = { "filter" ~ cond }
+event_max    = { "max" ~ integer }
 
 config_stmt = { "set" ~ (config_name | config_meta) }
 config_name = { "name" ~ "=" ~ expr }

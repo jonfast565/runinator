@@ -271,6 +271,8 @@ pub struct OutputPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_type: Option<String>,
     pub data: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<Value>,
 }
 
 /// input node state while it waits for a user response in the ui.
@@ -435,6 +437,173 @@ pub struct ApprovalRecord {
     pub resource_type: String,
     pub external_id: String,
     pub metadata: Value,
+}
+
+// --- new node state and output types ---
+
+/// one failing assertion in an assert node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssertViolation {
+    pub name: String,
+    pub message: String,
+}
+
+/// assert node output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssertOutput {
+    pub passed: bool,
+    pub violations: Vec<AssertViolation>,
+}
+
+/// transform node output: the resolved binding map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransformOutput {
+    pub bindings: Value,
+}
+
+/// audit node output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Uuid>,
+    pub actor: Option<String>,
+    pub action: String,
+    pub target: Option<String>,
+}
+
+/// checkpoint node output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointOutput {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_id: Option<Uuid>,
+}
+
+/// mutex node-run state while the run is parked waiting to acquire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutexState {
+    pub name: String,
+    pub poll_interval: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+}
+
+/// mutex node output on acquisition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutexOutput {
+    pub name: String,
+    pub acquired: bool,
+}
+
+/// throttle node-run state while parked waiting for a token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThrottleState {
+    pub name: String,
+    pub poll_interval: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+}
+
+/// throttle node output on admission.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThrottleOutput {
+    pub name: String,
+    pub admitted: bool,
+}
+
+/// await_run node-run state while parked watching sibling run(s).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AwaitRunState {
+    pub run_ids: Vec<Uuid>,
+    pub mode: String,
+    pub poll_interval: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+}
+
+/// await_run node output when the satisfaction policy is met.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AwaitRunOutput {
+    pub run_ids: Vec<Uuid>,
+    pub mode: String,
+    pub statuses: Vec<String>,
+}
+
+/// debounce node-run state while parked waiting for the trailing window to lapse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebounceState {
+    pub deadline_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_key: Option<String>,
+}
+
+/// debounce node output when the window lapses with no new trigger.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebounceOutput {
+    pub deadline_unix: i64,
+}
+
+/// collect node-run state while parked accumulating items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectState {
+    pub name: String,
+    pub items: Vec<Value>,
+    pub threshold: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+}
+
+/// collect node output when the threshold or timeout is reached.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectOutput {
+    pub items: Vec<Value>,
+    pub count: usize,
+    /// `"threshold"` or `"timeout"`.
+    pub reason: String,
+}
+
+/// barrier node-run state while parked waiting for N arrivals.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BarrierState {
+    pub name: String,
+    pub expected_count: i64,
+    pub arrivals: Vec<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+}
+
+/// barrier node output when the last arrival completes the rendezvous.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BarrierOutput {
+    pub name: String,
+    pub arrivals: Vec<Uuid>,
+}
+
+/// circuit_breaker node-run state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerState {
+    pub name: String,
+    /// `"closed"`, `"open"`, or `"half_open"`.
+    pub circuit_state: String,
+}
+
+/// circuit_breaker node output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerOutput {
+    pub name: String,
+    pub circuit_state: String,
+    pub tripped: bool,
+}
+
+/// event_source node-run state while subscribed to the event stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventSourceState {
+    pub event_type: String,
+    pub events_processed: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_events: Option<i64>,
 }
 
 /// gate row payload the reducer inserts when a gate node first parks a run.

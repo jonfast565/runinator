@@ -1,8 +1,9 @@
 use super::context::runtime_context;
 use super::*;
 use super::{
-    action, approval, basic, compensation, compute, context, control_flow, map, subflow,
-    transitions, wait,
+    action, approval, assert, audit, await_run, barrier, basic, checkpoint, circuit_breaker,
+    collect, compensation, compute, context, control_flow, debounce, event_source, map, mutex,
+    output, signal, subflow, throttle, transform, transitions, wait,
 };
 use uuid::Uuid;
 
@@ -289,9 +290,6 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         runinator_models::workflows::WorkflowNodeKind::Output => {
             output::process_output_node(db, &workflow_run, node, &node_runs).await?;
         }
-        runinator_models::workflows::WorkflowNodeKind::Deliverable => {
-            deliverable::process_deliverable_node(db, &workflow_run, node, &node_runs).await?;
-        }
         runinator_models::workflows::WorkflowNodeKind::Input => {
             input::process_input_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
         }
@@ -390,6 +388,86 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 )
                 .await?;
             }
+        }
+        runinator_models::workflows::WorkflowNodeKind::Assert => {
+            assert::process_assert_node(db, &workflow_run, node, &node_runs).await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Transform => {
+            transform::process_transform_node(db, &workflow_run, node, &node_runs).await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Audit => {
+            audit::process_audit_node(db, &workflow_run, node, &node_runs).await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Checkpoint => {
+            checkpoint::process_checkpoint_node(db, &workflow_run, node, &node_runs).await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Mutex => {
+            return mutex::process_mutex_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
+                .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Throttle => {
+            return throttle::process_throttle_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::AwaitRun => {
+            return await_run::process_await_run_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Debounce => {
+            return debounce::process_debounce_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Collect => {
+            return collect::process_collect_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::Barrier => {
+            return barrier::process_barrier_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
+        }
+        runinator_models::workflows::WorkflowNodeKind::CircuitBreaker => {
+            circuit_breaker::process_circuit_breaker_node(db, &workflow_run, node, &node_runs)
+                .await?;
+        }
+        runinator_models::workflows::WorkflowNodeKind::EventSource => {
+            return event_source::process_event_source_node(
+                db,
+                &workflow_run,
+                node,
+                latest.as_ref(),
+                &node_runs,
+            )
+            .await;
         }
     }
 

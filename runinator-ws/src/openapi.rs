@@ -213,7 +213,7 @@ enum Example {
     NodeRunInput,
     NodeRunClaim,
     NodeRunRelease,
-    DeliverableList,
+    ArtifactList,
     CatalogItem,
     AutomationRecord,
     GateResolution,
@@ -1665,16 +1665,16 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
     ),
     endpoint(
         "get",
-        "/workflow_runs/{id}/deliverables",
+        "/workflow_runs/{id}/artifacts",
         "Workflow Runs",
-        "List workflow run deliverables",
-        "Lists deliverables produced by completed nodes in one workflow run.",
+        "List workflow run artifacts",
+        "Lists artifacts declared by output nodes in one workflow run.",
         false,
         None,
         &[],
         200,
-        "workflow run deliverables",
-        Example::DeliverableList,
+        "workflow run artifacts",
+        Example::ArtifactList,
     ),
     endpoint(
         "get",
@@ -2662,8 +2662,8 @@ fn example_value(example: Example) -> Option<Value> {
         Example::NodeRunRelease => {
             json!({ "replica_id": UUID_EXAMPLE, "released_at": "2026-06-18T12:05:00Z" })
         }
-        Example::DeliverableList => {
-            json!([{ "node_id": "report", "name": "summary", "value": { "ok": true } }])
+        Example::ArtifactList => {
+            json!([{ "id": UUID_EXAMPLE, "workflow_run_id": UUID_EXAMPLE, "node_id": "report", "artifact_id": UUID_EXAMPLE, "name": "summary", "mime_type": "application/pdf", "size_bytes": 1024, "uri": "s3://bucket/key", "metadata": {}, "created_at": "2026-06-22T12:00:00Z" }])
         }
         Example::CatalogItem => {
             json!({ "item_type": "provider_metadata", "uri": "runinator://providers/std", "value": provider_example() })
