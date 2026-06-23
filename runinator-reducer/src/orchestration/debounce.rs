@@ -127,3 +127,20 @@ pub(super) async fn process_debounce_node<T: DatabaseImpl>(
     enqueue_debounce_poll(db, workflow_run.id, node, deadline).await?;
     Ok(ReadyNodeDisposition::Complete)
 }
+
+pub(super) struct DebounceHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for DebounceHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_debounce_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
+                .await
+        }
+    }
+}

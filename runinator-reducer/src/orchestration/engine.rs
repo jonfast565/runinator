@@ -1,9 +1,10 @@
 use super::context::runtime_context;
+use super::handler::{NodeHandler, NodeHandlerContext};
 use super::*;
 use super::{
     action, approval, assert, audit, await_run, barrier, basic, checkpoint, circuit_breaker,
-    collect, compensation, compute, context, control_flow, debounce, event_source, map, mutex,
-    output, signal, subflow, throttle, transform, transitions, wait,
+    collect, compensation, control_flow, debounce, event_source, gate, input, map, mutex, output,
+    signal, subflow, throttle, transform, transitions, wait,
 };
 use uuid::Uuid;
 
@@ -156,322 +157,51 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         return Ok(ReadyNodeDisposition::Complete);
     }
 
-    match &node.kind {
-        runinator_models::workflows::WorkflowNodeKind::Start => {
-            let node_run =
-                transitions::ensure_node_run(db, &workflow_run, node, latest.as_ref()).await?;
-            transitions::transition_from_node(
-                db,
-                &workflow_run,
-                node,
-                &node_run,
-                WorkflowStatus::Succeeded,
-                None,
-                Some("start_reached".into()),
-                &node_runs,
-            )
-            .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Action => {
-            // pure `std.run` compute nodes reduce in-process; everything else dispatches to a
-            // worker through the action outbox.
-            if compute::is_inprocess_compute(node) {
-                compute::process_compute_node(
-                    db,
-                    &workflow,
-                    &workflow_run,
-                    node,
-                    &node_runs,
-                    &nodes,
-                )
-                .await?;
-            } else {
-                action::process_action_node(
-                    db,
-                    &workflow,
-                    &workflow_run,
-                    node,
-                    latest.as_ref(),
-                    &node_runs,
-                )
-                .await?;
-            }
-            return Ok(ReadyNodeDisposition::Complete);
-        }
-        runinator_models::workflows::WorkflowNodeKind::Wait => {
-            return wait::process_wait_node(db, &workflow_run, node, latest.as_ref()).await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Condition => {
-            let node_run = db
-                .create_workflow_node_run(
-                    workflow_run.id,
-                    node.id.clone(),
-                    node.parameters.clone().into(),
-                )
-                .await?;
-            let context = runtime_context(db, &workflow_run, &node_runs).await;
-            let matched = runinator_workflows::evaluate_condition(&node.condition, &context)
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-            let (status, reason) = if matched {
-                (WorkflowStatus::Succeeded, "condition_matched")
-            } else {
-                (WorkflowStatus::Blocked, "condition_unmatched")
-            };
-            transitions::transition_from_node(
-                db,
-                &workflow_run,
-                node,
-                &node_run,
-                status,
-                None,
-                Some(reason.into()),
-                &node_runs,
-            )
-            .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Switch => {
-            let node_run = db
-                .create_workflow_node_run(
-                    workflow_run.id,
-                    node.id.clone(),
-                    node.parameters.clone().into(),
-                )
-                .await?;
-            let params = runinator_workflows::parse_switch_parameters(node)
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-            let context = runtime_context(db, &workflow_run, &node_runs).await;
-            let target = runinator_workflows::evaluate_switch(&params, &context)
-                .map_err(|err| -> SendableError { Box::new(err) })?;
-            let output = SwitchOutput {
-                target: target.clone(),
-            }
-            .to_wire_value()?;
-            db.update_workflow_node_run(
-                node_run.id,
-                if target.is_some() {
-                    WorkflowStatus::Succeeded
-                } else {
-                    WorkflowStatus::Blocked
-                },
-                Some(node_run.attempt + 1),
-                None,
-                Some(output),
-                None,
-                Some("switch_evaluated".into()),
-                None,
-            )
-            .await?;
-            match target {
-                Some(target) => {
-                    db.update_workflow_run_status(
-                        workflow_run.id,
-                        WorkflowStatus::Running,
-                        Some(target),
-                        None,
-                        None,
-                    )
-                    .await?;
-                }
-                None => {
-                    transitions::transition_from_node(
-                        db,
-                        &workflow_run,
-                        node,
-                        &node_run,
-                        WorkflowStatus::Blocked,
-                        None,
-                        Some("Switch did not match a target".into()),
-                        &node_runs,
-                    )
-                    .await?;
-                }
-            }
-        }
-        runinator_models::workflows::WorkflowNodeKind::Output => {
-            output::process_output_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Input => {
-            input::process_input_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Config => {
-            basic::process_config_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::End => {
-            transitions::ensure_completed_node_run(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                "end_reached",
-            )
-            .await?;
-            db.update_workflow_run_status(
-                workflow_run.id,
-                WorkflowStatus::Succeeded,
-                Some(node.id.clone()),
-                None,
-                None,
-            )
-            .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Fail => {
-            // saga rollback: unwind compensations of succeeded nodes before terminating `Failed`.
-            return compensation::process_fail_node(
-                db,
-                &workflow,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Loop => {
-            control_flow::process_loop_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Parallel => {
-            control_flow::process_parallel_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Join => {
-            control_flow::process_join_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Map => {
-            map::process_map_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Race => {
-            control_flow::process_race_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Try => {
-            control_flow::process_try_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Approval => {
-            approval::process_approval_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Gate => {
-            return gate::process_gate_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Signal => {
-            signal::process_signal_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Subflow => {
-            if let Err(err) =
-                subflow::process_subflow_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                    .await
-            {
-                // a subflow error would otherwise bubble up and retry forever while the run stays
-                // non-terminal. surface it as a failed node so the workflow can follow on_failure.
-                let node_run =
-                    transitions::ensure_node_run(db, &workflow_run, node, latest.as_ref()).await?;
-                transitions::transition_from_node(
-                    db,
-                    &workflow_run,
-                    node,
-                    &node_run,
-                    WorkflowStatus::Failed,
-                    None,
-                    Some(format!("Subflow node {} failed: {err}", node.id)),
-                    &node_runs,
-                )
-                .await?;
-            }
-        }
-        runinator_models::workflows::WorkflowNodeKind::Assert => {
-            assert::process_assert_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Transform => {
-            transform::process_transform_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Audit => {
-            audit::process_audit_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Checkpoint => {
-            checkpoint::process_checkpoint_node(db, &workflow_run, node, &node_runs).await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Mutex => {
-            return mutex::process_mutex_node(db, &workflow_run, node, latest.as_ref(), &node_runs)
-                .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Throttle => {
-            return throttle::process_throttle_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::AwaitRun => {
-            return await_run::process_await_run_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Debounce => {
-            return debounce::process_debounce_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Collect => {
-            return collect::process_collect_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::Barrier => {
-            return barrier::process_barrier_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-        runinator_models::workflows::WorkflowNodeKind::CircuitBreaker => {
-            circuit_breaker::process_circuit_breaker_node(db, &workflow_run, node, &node_runs)
-                .await?;
-        }
-        runinator_models::workflows::WorkflowNodeKind::EventSource => {
-            return event_source::process_event_source_node(
-                db,
-                &workflow_run,
-                node,
-                latest.as_ref(),
-                &node_runs,
-            )
-            .await;
-        }
-    }
+    let ctx = NodeHandlerContext {
+        db,
+        workflow: &workflow,
+        workflow_run: &workflow_run,
+        node,
+        latest: latest.as_ref(),
+        node_runs: &node_runs,
+        nodes: &nodes,
+    };
 
-    Ok(ReadyNodeDisposition::Complete)
+    let disposition = match &node.kind {
+        WorkflowNodeKind::Start => basic::StartHandler.process(&ctx).await?,
+        WorkflowNodeKind::Action => action::ActionHandler.process(&ctx).await?,
+        WorkflowNodeKind::Wait => wait::WaitHandler.process(&ctx).await?,
+        WorkflowNodeKind::Condition => basic::ConditionHandler.process(&ctx).await?,
+        WorkflowNodeKind::Switch => basic::SwitchHandler.process(&ctx).await?,
+        WorkflowNodeKind::Output => output::OutputHandler.process(&ctx).await?,
+        WorkflowNodeKind::Input => input::InputHandler.process(&ctx).await?,
+        WorkflowNodeKind::Config => basic::ConfigHandler.process(&ctx).await?,
+        WorkflowNodeKind::End => basic::EndHandler.process(&ctx).await?,
+        WorkflowNodeKind::Fail => compensation::FailHandler.process(&ctx).await?,
+        WorkflowNodeKind::Loop => control_flow::LoopHandler.process(&ctx).await?,
+        WorkflowNodeKind::Parallel => control_flow::ParallelHandler.process(&ctx).await?,
+        WorkflowNodeKind::Join => control_flow::JoinHandler.process(&ctx).await?,
+        WorkflowNodeKind::Map => map::MapHandler.process(&ctx).await?,
+        WorkflowNodeKind::Race => control_flow::RaceHandler.process(&ctx).await?,
+        WorkflowNodeKind::Try => control_flow::TryHandler.process(&ctx).await?,
+        WorkflowNodeKind::Approval => approval::ApprovalHandler.process(&ctx).await?,
+        WorkflowNodeKind::Gate => gate::GateHandler.process(&ctx).await?,
+        WorkflowNodeKind::Signal => signal::SignalHandler.process(&ctx).await?,
+        WorkflowNodeKind::Subflow => subflow::SubflowHandler.process(&ctx).await?,
+        WorkflowNodeKind::Assert => assert::AssertHandler.process(&ctx).await?,
+        WorkflowNodeKind::Transform => transform::TransformHandler.process(&ctx).await?,
+        WorkflowNodeKind::Audit => audit::AuditHandler.process(&ctx).await?,
+        WorkflowNodeKind::Checkpoint => checkpoint::CheckpointHandler.process(&ctx).await?,
+        WorkflowNodeKind::Mutex => mutex::MutexHandler.process(&ctx).await?,
+        WorkflowNodeKind::Throttle => throttle::ThrottleHandler.process(&ctx).await?,
+        WorkflowNodeKind::AwaitRun => await_run::AwaitRunHandler.process(&ctx).await?,
+        WorkflowNodeKind::Debounce => debounce::DebounceHandler.process(&ctx).await?,
+        WorkflowNodeKind::Collect => collect::CollectHandler.process(&ctx).await?,
+        WorkflowNodeKind::Barrier => barrier::BarrierHandler.process(&ctx).await?,
+        WorkflowNodeKind::CircuitBreaker => circuit_breaker::CircuitBreakerHandler.process(&ctx).await?,
+        WorkflowNodeKind::EventSource => event_source::EventSourceHandler.process(&ctx).await?,
+    };
+    Ok(disposition)
 }
 
 #[derive(Debug, PartialEq, Eq)]

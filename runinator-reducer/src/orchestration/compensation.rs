@@ -196,3 +196,27 @@ async fn finalize_fail<T: DatabaseImpl>(
     .await?;
     Ok(ReadyNodeDisposition::Complete)
 }
+
+pub(super) struct FailHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for FailHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_fail_node(
+                ctx.db,
+                ctx.workflow,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
+        }
+    }
+}

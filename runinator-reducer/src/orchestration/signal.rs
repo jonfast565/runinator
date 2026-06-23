@@ -110,3 +110,21 @@ async fn resolve_correlation_key<T: DatabaseImpl>(
     }
     Some(resolved.to_string())
 }
+
+pub(super) struct SignalHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for SignalHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_signal_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
+                .await?;
+            Ok(ReadyNodeDisposition::Complete)
+        }
+    }
+}

@@ -44,7 +44,19 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
   "output",
   "input",
   "config",
-  "subflow"
+  "subflow",
+  "assert",
+  "transform",
+  "audit",
+  "checkpoint",
+  "mutex",
+  "throttle",
+  "await_run",
+  "debounce",
+  "collect",
+  "barrier",
+  "circuit_breaker",
+  "event_source"
 ];
 
 // icon name and a one-line description for every node kind, used by node chrome and the palette.
@@ -73,11 +85,29 @@ export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo
   subflow: { icon: "workflow", description: "Invokes another workflow as a nested step." },
   config: { icon: "gear", description: "Sets configuration values for downstream nodes." },
   end: { icon: "flag", description: "Terminal node that completes the run successfully." },
-  fail: { icon: "alert", description: "Terminal node that ends the run as failed." }
+  fail: { icon: "alert", description: "Terminal node that ends the run as failed." },
+  assert: { icon: "check", description: "Evaluates named boolean assertions; fails with a structured violation list." },
+  transform: { icon: "gear", description: "Resolves named expression bindings into the run context; no side effects." },
+  audit: { icon: "file", description: "Appends a tamper-evident audit record to the workflow log." },
+  checkpoint: { icon: "save", description: "Snapshots run state at a named point; enables rollback via the control-plane API." },
+  mutex: { icon: "lock", description: "Acquires a named distributed mutex; parks until the lock is available." },
+  throttle: { icon: "hourglass", description: "Enforces a cross-run rate limit; parks until a token is available." },
+  await_run: { icon: "runs", description: "Waits for one or more independently-started runs to reach a terminal state." },
+  debounce: { icon: "clock", description: "Parks with a trailing delay that resets on re-trigger; collapses event bursts." },
+  collect: { icon: "list", description: "Accumulates externally-delivered items until a count or time threshold is met." },
+  barrier: { icon: "join", description: "Parks until N runs reach this named barrier; the last arrival releases all waiters." },
+  circuit_breaker: { icon: "shield", description: "Tracks failure rates across runs; fast-fails or routes to fallback when tripped." },
+  event_source: { icon: "bell", description: "Subscribes to a named event stream; drives a body subgraph on each matching event." }
 };
 
 export function workflowNodeKindIcon(kind: string): string {
   return workflowNodeKindInfo[kind as WorkflowNodeKind]?.icon ?? "box";
+}
+
+// human-friendly label for a node kind: the wire value is snake_case (e.g. `await_run`,
+// `circuit_breaker`), which reads poorly in the palette/chrome, so render it title-cased.
+export function workflowNodeKindLabel(kind: string): string {
+  return titleCase(kind);
 }
 
 export function workflowNodeKindDescription(kind: string): string {
@@ -912,6 +942,54 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
       break;
     case "subflow":
       node.subflow_id = "";
+      break;
+    case "assert":
+      node.parameters = { assertions: [] };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "transform":
+      node.parameters = { bindings: {} };
+      node.transitions = { next: nodeRef("end") };
+      break;
+    case "audit":
+      node.parameters = { action: "" };
+      node.transitions = { next: nodeRef("end") };
+      break;
+    case "checkpoint":
+      node.parameters = { name: "checkpoint" };
+      node.transitions = { next: nodeRef("end") };
+      break;
+    case "mutex":
+      node.parameters = { name: "my-mutex" };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "throttle":
+      node.parameters = { name: "my-throttle", max_per_window: 10, window_seconds: 60 };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "await_run":
+      node.parameters = { run_ids: [], mode: "all" };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "debounce":
+      node.parameters = { name: "my-debounce", delay_seconds: 30 };
+      node.transitions = { on_success: nodeRef("end") };
+      break;
+    case "collect":
+      node.parameters = { name: "my-collect", max: 10 };
+      node.transitions = { on_success: nodeRef("end") };
+      break;
+    case "barrier":
+      node.parameters = { name: "my-barrier", count: 2 };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "circuit_breaker":
+      node.parameters = { name: "my-circuit-breaker", threshold: 5, window_seconds: 60, cooldown_seconds: 30 };
+      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
+      break;
+    case "event_source":
+      node.parameters = { event_type: "" };
+      node.transitions = { on_success: nodeRef("end") };
       break;
   }
   return node;

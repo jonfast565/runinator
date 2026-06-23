@@ -308,3 +308,21 @@ async fn cancel_children<T: DatabaseImpl>(
     }
     Ok(())
 }
+
+pub(super) struct MapHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for MapHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_map_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
+                .await?;
+            Ok(ReadyNodeDisposition::Complete)
+        }
+    }
+}

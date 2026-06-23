@@ -6,7 +6,7 @@
     <div class="node-topline">
       <span class="node-kind">
         <Icon :name="kindIcon" :size="12" class="node-kind-icon" />
-        <span>{{ data.kind }}</span>
+        <span>{{ kindLabel }}</span>
       </span>
       <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
       <span v-if="isWaitingState" class="node-waiting-icon" title="Waiting">
@@ -18,12 +18,12 @@
         v-if="kindDescription"
         class="node-info"
         role="note"
-        :aria-label="`${data.kind} node: ${kindDescription}`"
+        :aria-label="`${kindLabel} node: ${kindDescription}`"
         @click.stop
       >
         <Icon name="info" :size="12" />
         <span class="node-info-pop" role="tooltip">
-          <strong>{{ data.kind }}</strong>
+          <strong>{{ kindLabel }}</strong>
           {{ kindDescription }}
         </span>
       </span>
@@ -122,7 +122,7 @@ import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { isInputWaitingStatus } from "../../utils/inputs";
 import { statusClassForNode } from "../../utils/status";
-import { workflowNodeKindIcon, workflowNodeKindDescription } from "../../utils/workflows";
+import { workflowNodeKindIcon, workflowNodeKindDescription, workflowNodeKindLabel } from "../../utils/workflows";
 import { deliverSignal, resolveWorkflowInput } from "../../api/commandCenterApi";
 import type { GateRecord, WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
 import JsonEditor from "../shared/JsonEditor.vue";
@@ -172,6 +172,7 @@ const gateReasonDraft = ref("");
 const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
 const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
+const kindLabel = computed(() => workflowNodeKindLabel(props.data.kind));
 const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
 const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
 const isInputPending = computed(() => isInputWaitingStatus(props.data.status));

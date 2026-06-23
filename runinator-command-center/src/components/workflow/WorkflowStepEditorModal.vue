@@ -21,7 +21,7 @@
             Node Kind
             <select v-model="workflows.stepEditor.kind" :disabled="workflows.selectedStepKindLocked">
               <option value="start">start</option>
-              <option v-for="kind in workflows.workflowNodeKinds" :key="kind" :value="kind">{{ kind }}</option>
+              <option v-for="kind in workflows.workflowNodeKinds" :key="kind" :value="kind">{{ workflowNodeKindLabel(kind) }}</option>
               <option value="end">end</option>
               <option value="fail">fail</option>
             </select>
@@ -452,6 +452,7 @@ import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflow-references";
+import { workflowNodeKindLabel } from "../../utils/workflows";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
 

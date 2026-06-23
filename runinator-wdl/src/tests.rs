@@ -5324,3 +5324,101 @@ fn new_node_kinds_compile_and_round_trip() {
 
     assert_round_trips_unordered(src);
 }
+
+/// every optional clause of the coordination/resilience node kinds survives a round trip. the
+/// happy-path test above omits these (audit's actor/target/reason, an event_source filter, a
+/// debounce key, the various `every` poll clauses), so they are exercised here one shape at a time.
+#[test]
+fn new_node_kinds_optional_clauses_round_trip() {
+    let bodies = [
+        (
+            "audit-all-fields",
+            "audit action \"reviewed\" actor params.user target \"acct\" reason \"policy\"",
+        ),
+        (
+            "event_source-filter",
+            "event_source type \"file.uploaded\" filter params.size > 1000 max 100 timeout 3600s",
+        ),
+        ("debounce-key", "debounce \"f\" delay 30s key params.user"),
+        (
+            "await-mode-poll-timeout",
+            "await params.run_ids mode \"any\" every 15s timeout 1800s",
+        ),
+        ("mutex-poll", "mutex \"deploy\" every 5s timeout 300s"),
+        (
+            "throttle-poll",
+            "throttle \"gh\" rate 10 per 60s every 5s timeout 120s",
+        ),
+        (
+            "barrier-poll",
+            "barrier \"sync\" count 4 every 5s timeout 600s",
+        ),
+        ("collect-timeout", "collect \"events\" max 50 timeout 300s"),
+        (
+            "circuit_breaker",
+            "circuit_breaker \"api\" threshold 5 window 60s cooldown 120s",
+        ),
+        (
+            "assert-multi",
+            "assert {\n    \"positive\": params.amount > 0\n    \"bounded\": params.amount < 100\n  }",
+        ),
+        (
+            "transform-multi",
+            "transform {\n    doubled = params.amount * 2\n    who = params.user\n  }",
+        ),
+    ];
+    for (label, body) in bodies {
+        let src = format!(
+            "workflow \"Opt\" v1 {{\n  params {{ run_ids: string[], amount: int, user: string, size: int }}\n  node seed <- console.run(command: \"echo go\")\n  {body}\n  node finish <- console.run(command: \"echo done\")\n}}\n"
+        );
+        let first = compile_str(&src, &default_test_options())
+            .unwrap_or_else(|err| panic!("compile {label} failed: {err}"));
+        let wdl = decompile(&first).unwrap_or_else(|err| panic!("decompile {label} failed: {err}"));
+        let second = compile_str(&wdl, &default_test_options())
+            .unwrap_or_else(|err| panic!("recompile {label} failed: {err}\n--- wdl ---\n{wdl}"));
+        assert_eq!(
+            graph_value(&first),
+            graph_value(&second),
+            "{label} diverged on round trip\n--- wdl ---\n{wdl}"
+        );
+    }
+}
+
+/// a disconnected node (no incoming edge — e.g. one just added in the editor before the author
+/// wires it) must still appear in the decompiled wdl rather than silently vanishing.
+#[test]
+fn decompile_preserves_disconnected_node() {
+    let definition: runinator_models::workflows::WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "name": "Orphan",
+        "definition": {
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "end" } } },
+                { "id": "lonely", "kind": "mutex", "parameters": { "name": "deploy-lock" }, "transitions": {} },
+                { "id": "end", "kind": "end" }
+            ]
+        }
+    }))
+    .expect("deserialize definition");
+
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(
+        wdl.contains("mutex \"deploy-lock\""),
+        "disconnected node dropped from decompiled wdl:\n{wdl}"
+    );
+    // and the node id is preserved via the `@id(...)` annotation so re-import is stable.
+    assert!(
+        wdl.contains("@id(\"lonely\")"),
+        "missing id annotation:\n{wdl}"
+    );
+
+    let recompiled = compile_str(&wdl, &default_test_options()).expect("recompile");
+    assert!(
+        recompiled
+            .definition
+            .nodes
+            .iter()
+            .any(|node| node.id == "lonely"),
+        "disconnected node lost after round trip"
+    );
+}

@@ -1,4 +1,7 @@
+use std::future::Future;
+
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
+use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{arm_node_timeout, retry_or_transition, time_out, timed_out};
 use super::*;
 use uuid::Uuid;
@@ -195,5 +198,42 @@ fn build_action_command(
         attempt: node_run.attempt + 1,
         parameters,
         trace_id: Uuid::now_v7(),
+    }
+}
+
+pub(super) struct ActionHandler;
+
+impl<T: DatabaseImpl> NodeHandler<T> for ActionHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a NodeHandlerContext<'a, T>,
+    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            if super::compute::is_inprocess_compute(ctx.node) {
+                super::compute::process_compute_node(
+                    ctx.db,
+                    ctx.workflow,
+                    ctx.workflow_run,
+                    ctx.node,
+                    ctx.node_runs,
+                    ctx.nodes,
+                )
+                .await?;
+            } else {
+                process_action_node(
+                    ctx.db,
+                    ctx.workflow,
+                    ctx.workflow_run,
+                    ctx.node,
+                    ctx.latest,
+                    ctx.node_runs,
+                )
+                .await?;
+            }
+            Ok(ReadyNodeDisposition::Complete)
+        }
     }
 }

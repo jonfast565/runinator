@@ -70,3 +70,20 @@ pub(super) async fn process_assert_node<T: DatabaseImpl>(
     .await?;
     Ok(())
 }
+
+pub(super) struct AssertHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AssertHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_assert_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            Ok(ReadyNodeDisposition::Complete)
+        }
+    }
+}

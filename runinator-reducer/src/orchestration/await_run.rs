@@ -190,3 +190,20 @@ pub(super) async fn process_await_run_node<T: DatabaseImpl>(
     arm_node_timeout(db, workflow_run.id, node).await?;
     Ok(ReadyNodeDisposition::Complete)
 }
+
+pub(super) struct AwaitRunHandler;
+
+impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AwaitRunHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_await_run_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
+                .await
+        }
+    }
+}

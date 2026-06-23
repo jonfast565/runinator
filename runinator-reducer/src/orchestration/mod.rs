@@ -51,6 +51,7 @@ mod debounce;
 mod engine;
 mod event_source;
 mod gate;
+mod handler;
 mod input;
 mod map;
 mod mutex;

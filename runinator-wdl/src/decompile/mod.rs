@@ -152,6 +152,34 @@ pub fn decompile_definition(
         decompiler.emit_region(&id, None)?;
     }
 
+    // emit any remaining nodes with no incoming reference at all (true orphans). a node freshly
+    // added in the editor is disconnected until the author wires it; without this pass it has no
+    // path from `start` and would silently vanish from the decompiled wdl. nodes that are unvisited
+    // but still referenced somewhere (a join consumed by its parallel, a convergence target) are
+    // left alone, since force-emitting them at top level would double-render. authored order keeps
+    // output stable.
+    let referenced = referenced_node_ids(graph);
+    let orphan_ids: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            !decompiler.visited.contains(&node.id)
+                && !referenced.contains(&node.id)
+                && Some(&node.id) != graph.start.as_ref()
+                && !matches!(
+                    node.kind,
+                    WorkflowNodeKind::Start | WorkflowNodeKind::End | WorkflowNodeKind::Fail
+                )
+        })
+        .map(|node| node.id.clone())
+        .collect();
+    for id in orphan_ids {
+        if decompiler.visited.contains(&id) {
+            continue;
+        }
+        decompiler.emit_region(&id, None)?;
+    }
+
     decompiler.indent -= 1;
     decompiler.line("}");
     if definition.namespace.is_some() {
@@ -159,6 +187,22 @@ pub fn decompile_definition(
         decompiler.line("}");
     }
     Ok(decompiler.out)
+}
+
+/// collect every node id referenced as a target anywhere in the graph: typed transitions, branch
+/// targets, and any `{"$node": "..."}` ref nested in node parameters (control-flow targets, join
+/// dependencies, switch cases, etc.). a node absent from this set has no incoming edge.
+fn referenced_node_ids(graph: &runinator_models::workflows::WorkflowGraph) -> HashSet<String> {
+    let mut referenced = HashSet::new();
+    for node in &graph.nodes {
+        for target in transition_targets(&node.transitions) {
+            referenced.insert(target);
+        }
+        let mut param_refs = Vec::new();
+        collect_node_refs(node.parameters.as_value(), &mut param_refs);
+        referenced.extend(param_refs);
+    }
+    referenced
 }
 
 /// recover declared `let` types from the graph metadata sidecar at `/wdl/types` as rendered wdl

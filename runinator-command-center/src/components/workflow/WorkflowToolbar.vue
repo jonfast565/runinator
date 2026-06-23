@@ -36,7 +36,7 @@
           >
             <Icon :name="workflowNodeKindInfo[kind]?.icon ?? 'box'" :size="14" class="node-menu-icon" />
             <span class="node-menu-text">
-              <span class="node-menu-label">{{ kind }}</span>
+              <span class="node-menu-label">{{ workflowNodeKindLabel(kind) }}</span>
               <span class="node-menu-desc">{{ workflowNodeKindInfo[kind]?.description }}</span>
             </span>
           </button>
@@ -127,7 +127,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
-import { workflowNodeKindInfo } from "../../utils/workflows";
+import { workflowNodeKindInfo, workflowNodeKindLabel } from "../../utils/workflows";
 import Icon from "../shared/Icon.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 import ShareWorkflowModal from "./ShareWorkflowModal.vue";
