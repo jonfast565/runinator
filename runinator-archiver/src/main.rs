@@ -11,6 +11,8 @@ use std::{
     sync::Arc,
 };
 
+use tokio::sync::Notify;
+
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
@@ -60,6 +62,8 @@ async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), Sen
     fs::create_dir_all(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
     info!("Runinator archiver started as {archiver_id}");
+    let shutdown = Arc::new(Notify::new());
+    spawn_liveness(&config, shutdown.clone());
     loop {
         if let Err(err) = run_once(db.as_ref(), &config, &archiver_id).await {
             error!("Archiver pass failed: {err}");
@@ -70,11 +74,21 @@ async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), Sen
                     warn!("Failed to listen for shutdown signal: {err}");
                 }
                 info!("Runinator archiver shutting down");
+                shutdown.notify_waiters();
                 return Ok(());
             }
             _ = tokio::time::sleep(config.interval) => {}
         }
     }
+}
+
+// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
+fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
+    runinator_utilities::liveness::spawn_liveness(
+        &config.liveness_file,
+        runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
+        shutdown,
+    )
 }
 
 async fn run_once<T: DatabaseImpl>(

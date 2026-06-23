@@ -51,6 +51,15 @@ struct InFlightAction {
 #[cfg(test)]
 mod tests;
 
+// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
+fn spawn_liveness(config: &config::Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
+    runinator_utilities::liveness::spawn_liveness(
+        &config.liveness_file,
+        runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
+        shutdown,
+    )
+}
+
 fn main() -> Result<(), SendableError> {
     startup::startup("Runinator Worker")?;
 
@@ -71,19 +80,7 @@ async fn run(config: config::Config) -> Result<(), SendableError> {
     let api_client = build_api_client(&config)?;
     let shutdown = Arc::new(Notify::new());
 
-    if !config.liveness_file.trim().is_empty() {
-        let path = config.liveness_file.clone();
-        let liveness_shutdown = shutdown.clone();
-        tokio::spawn(async move {
-            loop {
-                let _ = std::fs::write(&path, b"");
-                tokio::select! {
-                    _ = liveness_shutdown.notified() => return,
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
-                }
-            }
-        });
-    }
+    spawn_liveness(&config, shutdown.clone());
     let replica_session = match register_worker_replica(&api_client, &config).await {
         Ok(session) => Some(session),
         Err(err) => {

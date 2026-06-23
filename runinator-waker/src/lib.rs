@@ -11,6 +11,16 @@ use tokio::sync::Notify;
 
 use crate::config::Config;
 
+/// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
+/// returns none when no liveness file is configured.
+pub fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
+    runinator_utilities::liveness::spawn_liveness(
+        &config.liveness_file,
+        runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
+        shutdown,
+    )
+}
+
 /// consume wakes, sleep until each is due, then publish a drive on the ingress channel. multiple
 /// waker replicas share a consumer group so each wake is handled once; a not-yet-due wake is
 /// returned to the broker (nack) after a bounded sleep so the lease never expires under us and

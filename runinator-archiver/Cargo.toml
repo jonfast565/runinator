@@ -16,3 +16,4 @@ uuid = { version = "1.18", features = ["v4"] }
 runinator-database = { path = "../runinator-database" }
 runinator-db-cli = { path = "../runinator-db-cli" }
 runinator-models = { path = "../runinator-models" }
+runinator-utilities = { path = "../runinator-utilities" }

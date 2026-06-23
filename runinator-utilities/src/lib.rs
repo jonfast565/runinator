@@ -3,6 +3,7 @@ pub mod data_export;
 pub mod dirutils;
 pub mod errors;
 pub mod ffiutils;
+pub mod liveness;
 pub mod logger;
 pub mod pack;
 pub mod secret_cipher;

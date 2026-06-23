@@ -91,6 +91,14 @@ pub struct Cli {
         default_value = "7d"
     )]
     pub idempotency_retention: String,
+
+    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec.
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_LIVENESS_FILE",
+        default_value = "/tmp/runinator-archiver-liveness"
+    )]
+    pub liveness_file: String,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +118,7 @@ pub struct Config {
     pub dead_letter_retention: Option<Duration>,
     pub audit_log_retention: Option<Duration>,
     pub idempotency_retention: Option<Duration>,
+    pub liveness_file: String,
 }
 
 impl Config {
@@ -139,6 +148,7 @@ impl Config {
             dead_letter_retention: parse_optional_duration(&cli.dead_letter_retention)?,
             audit_log_retention: parse_optional_duration(&cli.audit_log_retention)?,
             idempotency_retention: parse_optional_duration(&cli.idempotency_retention)?,
+            liveness_file: cli.liveness_file,
         })
     }
 }

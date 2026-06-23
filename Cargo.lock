@@ -5365,6 +5365,7 @@ dependencies = [
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",
+ "runinator-utilities",
  "serde_json",
  "tokio",
  "uuid",
