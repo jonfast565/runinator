@@ -1,0 +1,22 @@
+# Static AWS profile for the worker. Only the SSO *token* rotates (that lives in
+# the aws-sso-cache Secret runinator-secret-sync pushes); the profile itself is
+# stable, so it ships as a ConfigMap. Replace the placeholders with your IAM
+# Identity Center values. The profile name here must match the profile used in
+# the sync config's aws-sso job and the AWS_PROFILE env in worker-creds-patch.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-config
+  namespace: runinator
+data:
+  config: |
+    [sso-session corp]
+    sso_start_url = https://your-org.awsapps.com/start
+    sso_region = us-east-1
+    sso_registration_scopes = sso:account:access
+
+    [profile runinator]
+    sso_session = corp
+    sso_account_id = "000000000000"
+    sso_role_name = YourPermissionSet
+    region = us-east-1

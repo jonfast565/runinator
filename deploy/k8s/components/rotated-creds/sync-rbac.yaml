@@ -1,0 +1,51 @@
+# OPTIONAL. Apply this only if you run runinator-secret-sync as a Kubernetes
+# ServiceAccount (e.g. from a CI/automation host) rather than as your own
+# kubeconfig identity. The sync engine authenticates through the local kubeconfig, so
+# on a workstation with cluster-admin-ish access you do NOT need this — your user
+# can already create/update Secrets.
+#
+# It grants the minimum the engine needs: get/create/update the two managed
+# Secrets in the runinator namespace. To use it, build a kubeconfig from the
+# token Secret below and pass it via --kubeconfig.
+#
+#   kubectl apply -f sync-rbac.yaml
+#   kubectl -n runinator get secret runinator-secret-sync-token -o jsonpath='{.data.token}' | base64 -d
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runinator-secret-sync
+  namespace: runinator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runinator-secret-sync
+  namespace: runinator
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runinator-secret-sync
+  namespace: runinator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runinator-secret-sync
+subjects:
+  - kind: ServiceAccount
+    name: runinator-secret-sync
+    namespace: runinator
+---
+# Long-lived token for the ServiceAccount (k8s >=1.24 does not auto-create one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: runinator-secret-sync-token
+  namespace: runinator
+  annotations:
+    kubernetes.io/service-account.name: runinator-secret-sync
+type: kubernetes.io/service-account-token

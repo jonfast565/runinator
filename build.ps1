@@ -381,9 +381,12 @@ function Join-HostSubPath {
     return "$cleanRoot/$cleanChild"
 }
 
-function Build-ClaudeKeyRefresh {
-    # macOS-only host helper that mirrors the Claude Code Keychain login into a
-    # file. Built here purely to compile-check it; it is never containerized.
+function Build-CredentialTools {
+    # Host-only credential tooling, compile-checked here but never containerized:
+    #   tools/keychain-export        - macOS Swift helper that reads a secret from
+    #                                  the login Keychain.
+    #   tools/runinator-secret-sync  - Go config-driven engine that syncs arbitrary
+    #                                  credentials into Kubernetes Secrets / files.
     param(
         [Parameter(Mandatory)]
         [string]$WorkspacePath,
@@ -391,27 +394,37 @@ function Build-ClaudeKeyRefresh {
         [string]$Configuration = 'release'
     )
 
-    $toolPath = Join-Path -Path $WorkspacePath -ChildPath 'tools/claude-key-refresh'
-    if (-not (Test-Path -LiteralPath (Join-Path -Path $toolPath -ChildPath 'Package.swift'))) {
-        return
-    }
-
+    # the Swift extractor is macOS-only (Security framework / Keychain).
     $isMac = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
-    if (-not $isMac) {
-        Write-Step 'Skipping claude-key-refresh build (macOS-only Keychain helper).'
-        return
+    $swiftPath = Join-Path -Path $WorkspacePath -ChildPath 'tools/keychain-export'
+    if ((Test-Path -LiteralPath (Join-Path -Path $swiftPath -ChildPath 'Package.swift'))) {
+        if (-not $isMac) {
+            Write-Step 'Skipping keychain-export build (macOS-only Keychain helper).'
+        } elseif (-not (Get-Command -Name 'swift' -ErrorAction SilentlyContinue)) {
+            Write-Warning 'swift toolchain not found on PATH; skipping keychain-export build.'
+        } else {
+            Write-Step "Building keychain-export (Swift Keychain helper, $Configuration)"
+            try {
+                Invoke-ExternalCommand -FilePath 'swift' -Arguments @('build', '-c', $Configuration) -WorkingDirectory $swiftPath
+            } catch {
+                Write-Warning "keychain-export build failed: $_"
+            }
+        }
     }
 
-    if (-not (Get-Command -Name 'swift' -ErrorAction SilentlyContinue)) {
-        Write-Warning 'swift toolchain not found on PATH; skipping claude-key-refresh build.'
-        return
-    }
-
-    Write-Step "Building claude-key-refresh (Swift Keychain helper, $Configuration)"
-    try {
-        Invoke-ExternalCommand -FilePath 'swift' -Arguments @('build', '-c', $Configuration) -WorkingDirectory $toolPath
-    } catch {
-        Write-Warning "claude-key-refresh build failed: $_"
+    # the Go sync engine builds on any host with the Go toolchain.
+    $goPath = Join-Path -Path $WorkspacePath -ChildPath 'tools/runinator-secret-sync'
+    if ((Test-Path -LiteralPath (Join-Path -Path $goPath -ChildPath 'go.mod'))) {
+        if (-not (Get-Command -Name 'go' -ErrorAction SilentlyContinue)) {
+            Write-Warning 'go toolchain not found on PATH; skipping runinator-secret-sync build.'
+        } else {
+            Write-Step 'Building runinator-secret-sync (Go credential sync engine)'
+            try {
+                Invoke-ExternalCommand -FilePath 'go' -Arguments @('build', './...') -WorkingDirectory $goPath
+            } catch {
+                Write-Warning "runinator-secret-sync build failed: $_"
+            }
+        }
     }
 }
 
@@ -1389,7 +1402,7 @@ try {
 
     # build the macOS-only Keychain helper alongside the workspace (never containerized).
     if (-not $SkipBuild) {
-        Build-ClaudeKeyRefresh -WorkspacePath $workspacePath
+        Build-CredentialTools -WorkspacePath $workspacePath
     }
 
     if ($Mode -eq 'Local') {

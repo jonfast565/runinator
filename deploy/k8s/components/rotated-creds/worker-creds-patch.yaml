@@ -1,0 +1,56 @@
+# Strategic-merge patch: mount the rotator-managed credentials into the worker.
+#
+# - AWS SSO token cache is mounted as a WHOLE directory (no subPath) so Secret
+#   updates propagate to the running pod within the kubelet sync period; the SDK
+#   re-reads the cache on its next refresh, so the few-hourly SSO rotation lands
+#   without a pod restart.
+# - The Claude credential is injected via subPath at the single file path the
+#   `claude` binary reads, leaving the rest of ~/.claude writable for session
+#   state. subPath mounts do NOT receive live Secret updates, so a Claude
+#   re-login is picked up on the next pod restart — acceptable because the Claude
+#   OAuth login rotates rarely.
+# - Both Secret volumes are optional so workers still start before the rotator's
+#   first push (AWS/Claude actions simply fail until the Secret exists).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-worker
+  namespace: runinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: HOME
+              value: /home/runinator
+            - name: AWS_PROFILE
+              value: runinator
+            - name: AWS_CONFIG_FILE
+              value: /etc/aws/config
+          volumeMounts:
+            - name: aws-config
+              mountPath: /etc/aws
+              readOnly: true
+            - name: aws-sso-cache
+              mountPath: /home/runinator/.aws/sso/cache
+              readOnly: true
+            - name: claude-credentials
+              mountPath: /home/runinator/.claude/.credentials.json
+              subPath: .credentials.json
+              readOnly: true
+      volumes:
+        - name: aws-config
+          configMap:
+            name: aws-config
+        - name: aws-sso-cache
+          secret:
+            secretName: aws-sso-cache
+            optional: true
+        - name: claude-credentials
+          secret:
+            secretName: claude-credentials
+            optional: true
+            items:
+              - key: .credentials.json
+                path: .credentials.json

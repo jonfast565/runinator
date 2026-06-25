@@ -1,0 +1,21 @@
+# Consume the credentials pushed by tools/runinator-secret-sync. The sync engine
+# (run on an operator workstation) creates and refreshes these Secrets in this
+# namespace (names come from its config; the example spec uses):
+#
+#   aws-sso-cache      - the AWS IAM Identity Center (SSO) token cache, rotated
+#                        every few hours as the SSO session is renewed.
+#   claude-credentials - the Claude Code OAuth login blob.
+#
+# This component mounts them into the worker pod at the home-directory locations
+# the AWS SDK and the `claude` binary expect, and supplies the static AWS profile
+# via a ConfigMap. It replaces the local overlay's hostPath aws-creds/claude-creds
+# patches, which only work on a single-node cluster. Enable it from an overlay's
+# `components:` list (real/remote clusters such as EKS).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - aws-config-configmap.yaml
+
+patches:
+  - path: worker-creds-patch.yaml
