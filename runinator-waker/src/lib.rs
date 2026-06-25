@@ -13,7 +13,10 @@ use crate::config::Config;
 
 /// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
 /// returns none when no liveness file is configured.
-pub fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
+pub fn spawn_liveness(
+    config: &Config,
+    shutdown: Arc<Notify>,
+) -> Option<tokio::task::JoinHandle<()>> {
     runinator_utilities::liveness::spawn_liveness(
         &config.liveness_file,
         runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,

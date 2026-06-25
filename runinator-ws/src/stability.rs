@@ -17,6 +17,8 @@ const METRIC_RESULT_DUPLICATE: &str = "runinator_ws_result_events_duplicate_tota
 const METRIC_RESULT_RETRIED: &str = "runinator_ws_result_events_retried_total";
 const METRIC_RESULT_DEAD_LETTERED: &str = "runinator_ws_result_events_dead_lettered_total";
 const METRIC_RESULT_RECEIVE_ERRORS: &str = "runinator_ws_result_receive_errors_total";
+const METRIC_HANDLER_PANICS: &str = "runinator_ws_handler_panics_total";
+const METRIC_BACKGROUND_LOOP_FAILURES: &str = "runinator_ws_background_loop_failures_total";
 
 static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -72,6 +74,19 @@ pub(crate) fn result_event_dead_lettered() {
 pub(crate) fn result_receive_error() {
     RESULT_RECEIVE_ERRORS.fetch_add(1, Ordering::Relaxed);
     metrics::counter!(METRIC_RESULT_RECEIVE_ERRORS).increment(1);
+}
+
+/// a request handler panicked and was recovered by the catch-panic layer (the connection got a 500
+/// instead of being dropped). exported for alerting; a nonzero rate points at a reachable panic.
+pub(crate) fn record_handler_panic() {
+    metrics::counter!(METRIC_HANDLER_PANICS).increment(1);
+}
+
+/// a background orchestration loop exited unexpectedly (panic or early return). this is fatal for the
+/// replica, which shuts down so it can restart and resume from durable state rather than silently
+/// stalling with a dead loop.
+pub(crate) fn record_background_loop_failure() {
+    metrics::counter!(METRIC_BACKGROUND_LOOP_FAILURES).increment(1);
 }
 
 pub(crate) fn snapshot() -> StabilityCounters {

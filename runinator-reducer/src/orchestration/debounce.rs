@@ -139,8 +139,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for DebounceHandler {
         T: 'a,
     {
         async move {
-            process_debounce_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await
+            process_debounce_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
         }
     }
 }

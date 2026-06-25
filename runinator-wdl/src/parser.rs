@@ -15,6 +15,20 @@ use crate::errors::{Span, WdlError};
 #[grammar = "wdl.pest"]
 struct WdlParser;
 
+/// borrow the workflow currently being assembled, or report the body declaration that appeared
+/// before any `workflow` header.
+fn require_active<'a>(
+    active: &'a mut Option<Workflow>,
+    inner: &Pair<Rule>,
+) -> Result<&'a mut Workflow, WdlError> {
+    active.as_mut().ok_or_else(|| {
+        WdlError::syntax(
+            span_of(inner),
+            "workflow declaration must come before workflow body declarations",
+        )
+    })
+}
+
 /// parse wdl source into a Document ast.
 pub fn parse_document(src: &str) -> Result<Document, WdlError> {
     let mut pairs =
@@ -73,23 +87,8 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                     span,
                 });
             }
-            Rule::params_block
-            | Rule::import_decl
-            | Rule::trigger_decl
-            | Rule::watch_decl
-            | Rule::alias_decl
-            | Rule::type_decl
-            | Rule::start_decl
-            | Rule::stmt
-                if active.is_none() =>
-            {
-                return Err(WdlError::syntax(
-                    span_of(&inner),
-                    "workflow declaration must come before workflow body declarations",
-                ));
-            }
             Rule::params_block => {
-                let workflow = active.as_mut().expect("active workflow");
+                let workflow = require_active(&mut active, &inner)?;
                 if workflow.input.is_some() {
                     return Err(WdlError::syntax(
                         span_of(&inner),
@@ -98,40 +97,34 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                 }
                 workflow.input = Some(parse_params_block(inner)?);
             }
-            Rule::import_decl => active
-                .as_mut()
-                .expect("active workflow")
-                .imports
-                .push(parse_import_decl(inner)?),
-            Rule::trigger_decl => active
-                .as_mut()
-                .expect("active workflow")
-                .triggers
-                .push(parse_trigger_decl(inner)?),
-            Rule::watch_decl => active
-                .as_mut()
-                .expect("active workflow")
-                .watches
-                .push(parse_watch_decl(inner)?),
-            Rule::alias_decl => active
-                .as_mut()
-                .expect("active workflow")
-                .aliases
-                .push(parse_alias_decl(inner)?),
-            Rule::type_decl => active
-                .as_mut()
-                .expect("active workflow")
-                .type_decls
-                .push(parse_type_decl(inner)?),
-            Rule::start_decl => {
-                active.as_mut().expect("active workflow").start =
-                    Some(parse_target(first_inner(inner)?)?)
+            Rule::import_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.imports.push(parse_import_decl(inner)?);
             }
-            Rule::stmt => active
-                .as_mut()
-                .expect("active workflow")
-                .body
-                .push(parse_stmt(inner)?),
+            Rule::trigger_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.triggers.push(parse_trigger_decl(inner)?);
+            }
+            Rule::watch_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.watches.push(parse_watch_decl(inner)?);
+            }
+            Rule::alias_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.aliases.push(parse_alias_decl(inner)?);
+            }
+            Rule::type_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.type_decls.push(parse_type_decl(inner)?);
+            }
+            Rule::start_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.start = Some(parse_target(first_inner(inner)?)?);
+            }
+            Rule::stmt => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.body.push(parse_stmt(inner)?);
+            }
             _ => {}
         }
     }

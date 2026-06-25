@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use axum::response::IntoResponse;
 use axum::{
     Extension, Router,
     extract::DefaultBodyLimit,
@@ -17,7 +18,10 @@ use runinator_models::api_routes::{
     API_WDL_FORMAT, API_WDL_HOVER, API_WDL_IMPORT, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
     API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
 };
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
+
+use crate::models::{ApiError, ApiResponse};
 
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
@@ -601,4 +605,32 @@ pub fn build_router<T: DatabaseImpl>(
             auth_middleware::<T>,
         ))
         .layer(cors)
+        // outermost layer: recover from any panic in a handler or inner middleware so a single bad
+        // request returns a 500 instead of dropping the connection or poisoning the runtime.
+        .layer(CatchPanicLayer::custom(handle_panic))
 }
+
+/// turn a recovered handler panic into the standard json error envelope. the panic payload is logged
+/// in full; the client gets a generic message so internal details are not leaked.
+pub(crate) fn handle_panic(
+    panic: Box<dyn std::any::Any + Send + 'static>,
+) -> axum::response::Response {
+    let detail = panic
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string());
+    log::error!("recovered from panic in HTTP handler: {detail}");
+    crate::stability::record_handler_panic();
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(ApiResponse::ApiError(ApiError::new(
+            "internal server error",
+        ))),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+#[path = "router_tests.rs"]
+mod tests;

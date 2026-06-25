@@ -97,6 +97,11 @@ pub const BROKER_KAFKA: ErrorDescriptor =
     ErrorDescriptor::new("RUNI174", "ws.broker.kafka", "Kafka broker error");
 pub const BROKER_RABBITMQ: ErrorDescriptor =
     ErrorDescriptor::new("RUNI176", "ws.broker.rabbitmq", "RabbitMQ broker error");
+pub const BACKGROUND_LOOP_EXITED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI177",
+    "ws.background.loop_exited",
+    "A background orchestration loop exited unexpectedly",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
@@ -119,6 +124,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     BROKER_UNKNOWN_BACKEND,
     BROKER_KAFKA,
     BROKER_RABBITMQ,
+    BACKGROUND_LOOP_EXITED,
 ];
 
 /// web service engine error dictionary.

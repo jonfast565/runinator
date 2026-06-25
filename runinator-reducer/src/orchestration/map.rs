@@ -320,8 +320,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for MapHandler {
         T: 'a,
     {
         async move {
-            process_map_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_map_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

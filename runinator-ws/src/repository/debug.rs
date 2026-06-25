@@ -531,7 +531,12 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     // phase d: support resuming from a specific step.
     if let Some(target_node_id) = from_step_id.as_deref() {
         let ancestor_ids = ancestors_in_snapshot(&snapshot, target_node_id)?;
-        state["replay"]["from_step_id"] = Value::String(target_node_id.into());
+        if let Some(replay) = state.get_mut("replay").and_then(Value::as_object_mut) {
+            replay.insert(
+                "from_step_id".to_string(),
+                Value::String(target_node_id.into()),
+            );
+        }
         let new_run = db
             .create_workflow_run(
                 source.workflow_id,

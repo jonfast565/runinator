@@ -102,8 +102,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ApprovalHandler {
         T: 'a,
     {
         async move {
-            process_approval_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_approval_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

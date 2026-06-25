@@ -663,9 +663,12 @@ impl Lowerer {
             transitions: TransitionClause::default(),
             compensation: None,
         };
-        let compute = match &synthetic.kind {
-            StmtKind::Compute(compute) => compute,
-            _ => unreachable!(),
+        // the synthetic statement is built as a compute above; guard the invariant instead of
+        // panicking if that ever changes.
+        let StmtKind::Compute(compute) = &synthetic.kind else {
+            return Err(WdlError::lower(
+                "synthetic value collector statement must be a compute statement",
+            ));
         };
         self.lower_compute(compute, &synthetic, id, next)
     }

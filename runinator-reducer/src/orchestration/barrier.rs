@@ -224,8 +224,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for BarrierHandler {
         T: 'a,
     {
         async move {
-            process_barrier_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await
+            process_barrier_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
         }
     }
 }

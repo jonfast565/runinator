@@ -228,11 +228,13 @@ pub(crate) fn unique_node_id(base: &str, ids: &mut HashSet<String>) -> String {
     if ids.insert(base.to_string()) {
         return base.to_string();
     }
-    for index in 2.. {
+    // a u64 counter cannot be exhausted before memory is, so this always returns without panicking.
+    let mut index: u64 = 2;
+    loop {
         let candidate = format!("{base}_{index}");
         if ids.insert(candidate.clone()) {
             return candidate;
         }
+        index += 1;
     }
-    unreachable!("node id generation should always find an unused id")
 }

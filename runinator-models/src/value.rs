@@ -387,14 +387,14 @@ mod private {
     impl<T> Sealed for &T where T: ?Sized + Sealed {}
 }
 
-/// types usable as an index into a [`Value`] via [`Value::get`].
+/// types usable as an index into a [`Value`] via [`Value::get`]. read access only; a missing or
+/// type-mismatched index yields `None` rather than panicking, so there is no fallible mutable
+/// indexing operator. use [`Value::get_mut`] (or build the value explicitly) to mutate.
 pub trait Index: private::Sealed {
     #[doc(hidden)]
     fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value>;
     #[doc(hidden)]
     fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value>;
-    #[doc(hidden)]
-    fn index_or_insert<'v>(&self, value: &'v mut Value) -> &'v mut Value;
 }
 
 impl Index for usize {
@@ -409,18 +409,6 @@ impl Index for usize {
         match value {
             Value::Array(list) => list.get_mut(*self),
             _ => None,
-        }
-    }
-
-    fn index_or_insert<'v>(&self, value: &'v mut Value) -> &'v mut Value {
-        match value {
-            Value::Array(list) => {
-                let len = list.len();
-                list.get_mut(*self).unwrap_or_else(|| {
-                    panic!("index {self} out of bounds (len {len}) on a value array")
-                })
-            }
-            _ => panic!("cannot access index {self} of non-array value"),
         }
     }
 }
@@ -439,17 +427,6 @@ impl Index for str {
             _ => None,
         }
     }
-
-    fn index_or_insert<'v>(&self, value: &'v mut Value) -> &'v mut Value {
-        // auto-vivify: a null target becomes an object, mirroring `serde_json`.
-        if value.is_null() {
-            *value = Value::Object(Map::new());
-        }
-        match value {
-            Value::Object(map) => map.entry(self.to_owned()).or_insert(Value::Null),
-            _ => panic!("cannot access key {self:?} of non-object value"),
-        }
-    }
 }
 
 impl Index for String {
@@ -459,10 +436,6 @@ impl Index for String {
 
     fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
         self.as_str().index_into_mut(value)
-    }
-
-    fn index_or_insert<'v>(&self, value: &'v mut Value) -> &'v mut Value {
-        self.as_str().index_or_insert(value)
     }
 }
 
@@ -477,10 +450,6 @@ where
     fn index_into_mut<'v>(&self, value: &'v mut Value) -> Option<&'v mut Value> {
         (**self).index_into_mut(value)
     }
-
-    fn index_or_insert<'v>(&self, value: &'v mut Value) -> &'v mut Value {
-        (**self).index_or_insert(value)
-    }
 }
 
 impl<I: Index> std::ops::Index<I> for Value {
@@ -489,12 +458,6 @@ impl<I: Index> std::ops::Index<I> for Value {
     fn index(&self, index: I) -> &Value {
         static NULL: Value = Value::Null;
         index.index_into(self).unwrap_or(&NULL)
-    }
-}
-
-impl<I: Index> std::ops::IndexMut<I> for Value {
-    fn index_mut(&mut self, index: I) -> &mut Value {
-        index.index_or_insert(self)
     }
 }
 

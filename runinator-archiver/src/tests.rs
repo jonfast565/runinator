@@ -94,7 +94,8 @@ async fn spawn_liveness_writes_the_configured_file() {
     let config = config_with_liveness(&path.to_string_lossy());
 
     let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let handle = super::spawn_liveness(&config, shutdown.clone()).expect("a path should spawn a task");
+    let handle =
+        super::spawn_liveness(&config, shutdown.clone()).expect("a path should spawn a task");
 
     for _ in 0..50 {
         if path.exists() {

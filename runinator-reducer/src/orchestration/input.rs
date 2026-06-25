@@ -86,8 +86,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for InputHandler {
         T: 'a,
     {
         async move {
-            process_input_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_input_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

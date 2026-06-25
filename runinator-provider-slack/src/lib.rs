@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod errors;
+mod read;
 
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
@@ -12,6 +13,7 @@ use runinator_models::{
         ResultMetadata, RuninatorType,
     },
     runs::{ProviderExecutionRequest, TaskExecutionResult},
+    types::RuninatorField,
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use serde::Deserialize;
@@ -31,6 +33,39 @@ struct SendMessageParams {
     unfurl_media: Option<bool>,
 }
 
+// typed shape of a Slack message attachment, used to validate the `attachments`
+// parameter at runtime. unknown fields are ignored (Slack accepts more), so this
+// type-checks the known fields without rejecting forward-compatible ones. the
+// matching metadata schema is attachment_type().
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct SlackAttachment {
+    fallback: Option<String>,
+    color: Option<String>,
+    pretext: Option<String>,
+    author_name: Option<String>,
+    author_link: Option<String>,
+    author_icon: Option<String>,
+    title: Option<String>,
+    title_link: Option<String>,
+    text: Option<String>,
+    fields: Option<Vec<AttachmentField>>,
+    image_url: Option<String>,
+    thumb_url: Option<String>,
+    footer: Option<String>,
+    footer_icon: Option<String>,
+    ts: Option<i64>,
+    mrkdwn_in: Option<Vec<String>>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct AttachmentField {
+    title: Option<String>,
+    value: Option<String>,
+    short: Option<bool>,
+}
+
 #[derive(Clone)]
 pub struct SlackProvider;
 
@@ -40,31 +75,34 @@ impl Provider for SlackProvider {
     }
 
     fn metadata(&self) -> ProviderMetadata {
+        let mut actions = vec![
+            ActionMetadata::new("send_message", "Send a Slack message")
+                .with_parameters(vec![
+                    token_param(),
+                    ParameterMetadata::required("channel", RuninatorType::String),
+                    ParameterMetadata::required("text", RuninatorType::String),
+                    ParameterMetadata::optional(
+                        "attachments",
+                        RuninatorType::array(attachment_type()),
+                    )
+                    .with_description("Slack attachment array (typed)."),
+                    ParameterMetadata::optional(
+                        "blocks",
+                        RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
+                    )
+                    .with_description("Slack block kit array."),
+                    ParameterMetadata::optional("thread_ts", RuninatorType::String),
+                    ParameterMetadata::optional("mrkdwn", RuninatorType::Boolean),
+                    ParameterMetadata::optional("unfurl_links", RuninatorType::Boolean),
+                    ParameterMetadata::optional("unfurl_media", RuninatorType::Boolean),
+                ])
+                .with_results(slack_results()),
+        ];
+        actions.extend(read::read_action_metadata());
+
         ProviderMetadata {
             name: self.name(),
-            actions: vec![
-                ActionMetadata::new("send_message", "Send a Slack message")
-                    .with_parameters(vec![
-                        token_param(),
-                        ParameterMetadata::required("channel", RuninatorType::String),
-                        ParameterMetadata::required("text", RuninatorType::String),
-                        ParameterMetadata::optional(
-                            "attachments",
-                            RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
-                        )
-                        .with_description("Slack attachment array."),
-                        ParameterMetadata::optional(
-                            "blocks",
-                            RuninatorType::array(RuninatorType::map(RuninatorType::Any)),
-                        )
-                        .with_description("Slack block kit array."),
-                        ParameterMetadata::optional("thread_ts", RuninatorType::String),
-                        ParameterMetadata::optional("mrkdwn", RuninatorType::Boolean),
-                        ParameterMetadata::optional("unfurl_links", RuninatorType::Boolean),
-                        ParameterMetadata::optional("unfurl_media", RuninatorType::Boolean),
-                    ])
-                    .with_results(slack_results()),
-            ],
+            actions,
             metadata: ProviderRuntimeMetadata {
                 credential_scopes: vec!["slack".into()],
                 contract: None,
@@ -78,27 +116,43 @@ impl Provider for SlackProvider {
         _sink: Option<Arc<dyn ProviderEventSink>>,
         _token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        let function = request.action_function.as_str();
-        let params: SendMessageParams = match function {
-            "send" | "send_message" => parse_params(&request)?,
-            other => {
-                return Err(UNSUPPORTED_ACTION.error(other));
-            }
-        };
-        let token = params.token.clone();
-        let payload = build_send_message_payload(params)?;
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(request.timeout_secs.max(1) as u64))
-            .user_agent("runinator")
-            .build()?;
-        let response = client
-            .post("https://slack.com/api/chat.postMessage")
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .json(&payload)
-            .send()?;
-        slack_response(response)
+        match request.action_function.as_str() {
+            "send" | "send_message" => send_message(request),
+            other => match read::find_action(other) {
+                Some(def) => read::execute_read(def, &request),
+                None => Err(UNSUPPORTED_ACTION.error(other)),
+            },
+        }
     }
+}
+
+fn send_message(request: ProviderExecutionRequest) -> Result<TaskExecutionResult, SendableError> {
+    let params: SendMessageParams = parse_params(&request)?;
+    let token = params.token.clone();
+    let payload = build_send_message_payload(params)?;
+    let client = build_client(request.timeout_secs)?;
+    let response = client
+        .post("https://slack.com/api/chat.postMessage")
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(&payload)
+        .send()?;
+    let output = parse_slack_ok(response)?;
+    Ok(TaskExecutionResult {
+        message: Some("slack message sent".into()),
+        output_json: Some(output),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
+}
+
+// shared blocking client honoring the request timeout.
+pub(crate) fn build_client(timeout_secs: i64) -> Result<reqwest::blocking::Client, SendableError> {
+    reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs.max(1) as u64))
+        .user_agent("runinator")
+        .build()
+        .map_err(|err| -> SendableError { Box::new(err) })
 }
 
 runinator_provider_support::provider_parse_params!(crate::errors::INVALID_PARAMS);
@@ -108,7 +162,10 @@ fn build_send_message_payload(params: SendMessageParams) -> Result<Value, Sendab
     payload.insert("channel".into(), json!(params.channel));
     payload.insert("text".into(), json!(params.text));
 
-    insert_array_param(&mut payload, "attachments", params.attachments)?;
+    if let Some(attachments) = params.attachments {
+        validate_attachments(&attachments)?;
+        payload.insert("attachments".into(), attachments);
+    }
     insert_array_param(&mut payload, "blocks", params.blocks)?;
 
     if let Some(thread_ts) = params.thread_ts {
@@ -142,9 +199,11 @@ fn insert_array_param(
     Ok(())
 }
 
-fn slack_response(
+// validates a Slack Web API response (HTTP status + the JSON `ok` field) and
+// returns the parsed body. shared by the send and read paths.
+pub(crate) fn parse_slack_ok(
     response: reqwest::blocking::Response,
-) -> Result<TaskExecutionResult, SendableError> {
+) -> Result<Value, SendableError> {
     let status = response.status();
     let text = response.text()?;
     if !status.is_success() {
@@ -161,17 +220,79 @@ fn slack_response(
             .unwrap_or("Slack API returned ok=false");
         return Err(API_ERROR.error(message));
     }
-
-    Ok(TaskExecutionResult {
-        message: Some("slack message sent".into()),
-        output_json: Some(output),
-        chunks: Vec::new(),
-        artifacts: Vec::new(),
-    })
+    Ok(output)
 }
 
-fn token_param() -> ParameterMetadata {
+pub(crate) fn token_param() -> ParameterMetadata {
     ParameterMetadata::required("token", RuninatorType::String).secret()
+}
+
+// type-checks the attachments array against SlackAttachment, accepting unknown
+// fields. errors carry the serde message so the offending field is identifiable.
+fn validate_attachments(value: &Value) -> Result<(), SendableError> {
+    let bridged = serde_json::to_value(value)
+        .map_err(|err| INVALID_PARAMS.error(format!("attachments: {err}")))?;
+    serde_json::from_value::<Vec<SlackAttachment>>(bridged)
+        .map_err(|err| INVALID_PARAMS.error(format!("attachments: {err}")))?;
+    Ok(())
+}
+
+// metadata schema mirroring SlackAttachment; open (additional Any) so extra Slack
+// fields remain valid while the known ones are typed for the WDL/command-center.
+fn attachment_type() -> RuninatorType {
+    RuninatorType::open_typed_structure(
+        [
+            ("fallback", RuninatorField::optional(RuninatorType::String)),
+            ("color", RuninatorField::optional(RuninatorType::String)),
+            ("pretext", RuninatorField::optional(RuninatorType::String)),
+            (
+                "author_name",
+                RuninatorField::optional(RuninatorType::String),
+            ),
+            (
+                "author_link",
+                RuninatorField::optional(RuninatorType::String),
+            ),
+            (
+                "author_icon",
+                RuninatorField::optional(RuninatorType::String),
+            ),
+            ("title", RuninatorField::optional(RuninatorType::String)),
+            (
+                "title_link",
+                RuninatorField::optional(RuninatorType::String),
+            ),
+            ("text", RuninatorField::optional(RuninatorType::String)),
+            (
+                "fields",
+                RuninatorField::optional(RuninatorType::array(attachment_field_type())),
+            ),
+            ("image_url", RuninatorField::optional(RuninatorType::String)),
+            ("thumb_url", RuninatorField::optional(RuninatorType::String)),
+            ("footer", RuninatorField::optional(RuninatorType::String)),
+            (
+                "footer_icon",
+                RuninatorField::optional(RuninatorType::String),
+            ),
+            ("ts", RuninatorField::optional(RuninatorType::Integer)),
+            (
+                "mrkdwn_in",
+                RuninatorField::optional(RuninatorType::array(RuninatorType::String)),
+            ),
+        ],
+        RuninatorType::Any,
+    )
+}
+
+fn attachment_field_type() -> RuninatorType {
+    RuninatorType::open_typed_structure(
+        [
+            ("title", RuninatorField::optional(RuninatorType::String)),
+            ("value", RuninatorField::optional(RuninatorType::String)),
+            ("short", RuninatorField::optional(RuninatorType::Boolean)),
+        ],
+        RuninatorType::Any,
+    )
 }
 
 fn slack_results() -> Vec<ResultMetadata> {

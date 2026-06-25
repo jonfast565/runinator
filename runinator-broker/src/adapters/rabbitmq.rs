@@ -110,13 +110,13 @@ impl RabbitMqBroker {
 #[cfg(feature = "rabbitmq")]
 use futures_util::StreamExt;
 #[cfg(feature = "rabbitmq")]
+use log::{info, warn};
+#[cfg(feature = "rabbitmq")]
 use parking_lot::Mutex;
 #[cfg(feature = "rabbitmq")]
 use std::{collections::HashMap, sync::Arc};
 #[cfg(feature = "rabbitmq")]
 use tokio::sync::Mutex as AsyncMutex;
-#[cfg(feature = "rabbitmq")]
-use log::{info, warn};
 
 #[cfg(feature = "rabbitmq")]
 struct RabbitMqBrokerInner {
@@ -518,8 +518,7 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
-        let result =
-            receive_json::<ControlCommand>(self, RabbitMqChannel::Control, consumer).await;
+        let result = receive_json::<ControlCommand>(self, RabbitMqChannel::Control, consumer).await;
         if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
             self.inner.control_consumers.lock().remove(consumer);
         }
@@ -599,8 +598,7 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
-        let result =
-            receive_json::<IngressMessage>(self, RabbitMqChannel::Ingress, consumer).await;
+        let result = receive_json::<IngressMessage>(self, RabbitMqChannel::Ingress, consumer).await;
         if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
             self.inner.ingress_consumers.lock().remove(consumer);
         }
@@ -632,13 +630,11 @@ impl Broker for RabbitMqBroker {
             let mut guard = subscriber.lock().await;
             guard.next().await
         };
-        if delivery_result.is_none() {
+        let Some(delivery) = delivery_result else {
             self.inner.event_consumers.lock().remove(consumer);
             return Err(BrokerError::ConsumerStreamEnded);
-        }
-        let delivery = delivery_result
-            .unwrap()
-            .map_err(rabbitmq_error("receive_event"))?;
+        };
+        let delivery = delivery.map_err(rabbitmq_error("receive_event"))?;
         let message: EventMessage = serde_json::from_slice(&delivery.data)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         // auto-ack consumer: nothing to track.

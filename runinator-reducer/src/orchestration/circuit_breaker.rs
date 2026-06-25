@@ -189,8 +189,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for CircuitBreakerHandler {
         T: 'a,
     {
         async move {
-            process_circuit_breaker_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs)
-                .await?;
+            process_circuit_breaker_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

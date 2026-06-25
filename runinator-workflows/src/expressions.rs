@@ -197,7 +197,7 @@ pub(crate) fn parse_expression(
                     .map(Box::new)
             };
             Ok(WorkflowExpression::Cond {
-                condition: Box::new(parse_expression(map.get(EXPR_IF).expect("checked above"))?),
+                condition: branch(EXPR_IF)?,
                 then: branch(EXPR_THEN)?,
                 otherwise: branch(EXPR_ELSE)?,
             })
@@ -913,7 +913,9 @@ pub(crate) fn resolve_value_ref(
         WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
         WorkflowRefSource::Config => context.get(REF_CONFIG),
         WorkflowRefSource::Local => context.get(REF_LOCAL),
-        WorkflowRefSource::NodeOutput(_) => unreachable!("handled above"),
+        // node-output refs are resolved before this point; treat any that reach here as unresolved
+        // rather than panicking, so a malformed reference surfaces as a validation error.
+        WorkflowRefSource::NodeOutput(_) => None,
     }
     .ok_or_else(|| {
         WorkflowValidationError::InvalidValueRef(serialize_value_ref(reference).to_string())

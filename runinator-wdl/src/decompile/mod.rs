@@ -2132,13 +2132,15 @@ impl<'a> Decompiler<'a> {
         if !active.contains(&"item".to_string()) {
             return "item".to_string();
         }
-        for index in 2.. {
+        // a u64 counter cannot be exhausted before memory is, so this always returns without panicking.
+        let mut index: u64 = 2;
+        loop {
             let candidate = format!("item{index}");
             if !active.contains(&candidate) {
                 return candidate;
             }
+            index += 1;
         }
-        unreachable!()
     }
 
     /// find the nearest node reachable from every input (the structured merge point).

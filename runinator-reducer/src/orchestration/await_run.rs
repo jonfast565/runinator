@@ -202,8 +202,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AwaitRunHandler {
         T: 'a,
     {
         async move {
-            process_await_run_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await
+            process_await_run_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
         }
     }
 }

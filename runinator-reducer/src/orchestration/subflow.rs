@@ -332,9 +332,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for SubflowHandler {
         T: 'a,
     {
         async move {
-            if let Err(err) =
-                process_subflow_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                    .await
+            if let Err(err) = process_subflow_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
             {
                 // a subflow error would otherwise bubble up and retry forever while the run stays
                 // non-terminal. surface it as a failed node so the workflow can follow on_failure.

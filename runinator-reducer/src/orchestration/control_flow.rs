@@ -648,8 +648,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for LoopHandler {
         T: 'a,
     {
         async move {
-            process_loop_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_loop_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -664,8 +670,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ParallelHandler {
         T: 'a,
     {
         async move {
-            process_parallel_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_parallel_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -680,8 +692,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for JoinHandler {
         T: 'a,
     {
         async move {
-            process_join_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_join_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -696,8 +714,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for RaceHandler {
         T: 'a,
     {
         async move {
-            process_race_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_race_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -712,8 +736,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for TryHandler {
         T: 'a,
     {
         async move {
-            process_try_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_try_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

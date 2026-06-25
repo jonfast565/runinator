@@ -229,8 +229,14 @@ impl<T: DatabaseImpl> NodeHandler<T> for StartHandler {
         T: 'a,
     {
         async move {
-            process_start_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await?;
+            process_start_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

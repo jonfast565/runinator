@@ -205,7 +205,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for GateHandler {
         T: 'a,
     {
         async move {
-            process_gate_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs).await
+            process_gate_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
         }
     }
 }

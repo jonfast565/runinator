@@ -198,7 +198,9 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         WorkflowNodeKind::Debounce => debounce::DebounceHandler.process(&ctx).await?,
         WorkflowNodeKind::Collect => collect::CollectHandler.process(&ctx).await?,
         WorkflowNodeKind::Barrier => barrier::BarrierHandler.process(&ctx).await?,
-        WorkflowNodeKind::CircuitBreaker => circuit_breaker::CircuitBreakerHandler.process(&ctx).await?,
+        WorkflowNodeKind::CircuitBreaker => {
+            circuit_breaker::CircuitBreakerHandler.process(&ctx).await?
+        }
         WorkflowNodeKind::EventSource => event_source::EventSourceHandler.process(&ctx).await?,
     };
     Ok(disposition)

@@ -699,7 +699,9 @@ fn resolve_ref_type(
         // config is typed from the stored settings schema (`{ scope: { name: type } }`); an
         // open struct keeps not-yet-configured keys permissive (`any`) instead of erroring.
         WorkflowRefSource::Config => &context.config,
-        WorkflowRefSource::Local => unreachable!("handled above"),
+        // local refs are fully resolved by the block above; if one ever reaches here, stay permissive
+        // (`any`) like the local fallback rather than panicking.
+        WorkflowRefSource::Local => return Ok(WorkflowType::Any),
         WorkflowRefSource::NodeOutput(node) => {
             context.node_outputs.get(node.as_str()).ok_or_else(|| {
                 WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())

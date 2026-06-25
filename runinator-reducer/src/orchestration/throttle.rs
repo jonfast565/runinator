@@ -273,8 +273,14 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ThrottleHandler {
         T: 'a,
     {
         async move {
-            process_throttle_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest, ctx.node_runs)
-                .await
+            process_throttle_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
         }
     }
 }

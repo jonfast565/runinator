@@ -52,7 +52,10 @@ struct InFlightAction {
 mod tests;
 
 // touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
-fn spawn_liveness(config: &config::Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
+fn spawn_liveness(
+    config: &config::Config,
+    shutdown: Arc<Notify>,
+) -> Option<tokio::task::JoinHandle<()>> {
     runinator_utilities::liveness::spawn_liveness(
         &config.liveness_file,
         runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
