@@ -1,7 +1,9 @@
 pub mod discovery;
 pub mod errors;
+pub mod targeting;
 pub mod wire;
 
+pub use targeting::{ActionTarget, ConsumerProfile};
 pub use wire::{WireCodec, WireError};
 
 use chrono::{DateTime, Utc};
@@ -56,6 +58,10 @@ pub struct ActionCommand {
     pub attempt: i64,
     #[serde(default)]
     pub parameters: Value,
+    /// runtime routing key selecting which worker(s) may receive this action. the reducer stamps it
+    /// at dispatch; defaults to `Any` for backward-compatible deserialization of older messages.
+    #[serde(default)]
+    pub target: ActionTarget,
     /// correlation id propagated across the ws -> broker -> worker hop so spans/logs for one action
     /// execution line up. defaults for backward-compatible deserialization of older messages.
     #[serde(default = "Uuid::now_v7")]

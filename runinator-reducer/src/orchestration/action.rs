@@ -4,9 +4,45 @@ use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{arm_node_timeout, retry_or_transition, time_out, timed_out};
 use super::*;
+use runinator_comm::ActionTarget;
+use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use uuid::Uuid;
 
 const FOREIGN_LANGUAGE_SCOPE: &str = "foreign_languages";
+
+// the session-bound local-files provider runs only on the desktop replica that launched the run.
+const LOCAL_PROVIDER: &str = "local";
+// how often a node parked for an unavailable desktop worker re-checks for it to reconnect.
+const LOCAL_TARGET_POLL_SECONDS: i64 = 5;
+// a replica whose heartbeat is older than this is treated as disconnected; mirrors the ws reaper.
+const REPLICA_STALE_SECONDS: i64 = 30;
+
+// the routing decision for an action node: dispatch now to a resolved target, or park until the
+// bound worker becomes available.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TargetResolution {
+    Ready(ActionTarget),
+    Park,
+}
+
+/// pure routing policy: general-pool providers go to `Any`; the session-bound local provider pins to
+/// its launching replica when that replica is live, otherwise parks. split out from the db lookup so
+/// the decision is unit-testable.
+pub(super) fn target_for(
+    provider: &str,
+    trigger_replica_id: Option<Uuid>,
+    replica_live: bool,
+) -> TargetResolution {
+    if provider != LOCAL_PROVIDER {
+        return TargetResolution::Ready(ActionTarget::Any);
+    }
+    match trigger_replica_id {
+        Some(replica_id) if replica_live => {
+            TargetResolution::Ready(ActionTarget::Replica { replica_id })
+        }
+        _ => TargetResolution::Park,
+    }
+}
 
 pub(super) fn foreign_language_runtime(language: &str) -> Option<(&'static str, &'static str)> {
     match language {
@@ -59,6 +95,19 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             }
             return Ok(());
         }
+        // a node parked waiting for its bound desktop worker; honor the timeout, otherwise fall
+        // through to re-resolve the target (the worker may have reconnected) reusing this run.
+        if node_run.status == WorkflowStatus::Waiting && timed_out(node, node_run) {
+            return time_out(
+                db,
+                workflow_run,
+                node,
+                node_run,
+                "Local worker did not become available",
+                node_runs,
+            )
+            .await;
+        }
         if node_run.status.is_terminal() {
             retry_or_transition(
                 db,
@@ -75,7 +124,9 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         }
     }
 
-    let node_run = match latest.filter(|run| run.status == WorkflowStatus::Queued) {
+    let node_run = match latest
+        .filter(|run| matches!(run.status, WorkflowStatus::Queued | WorkflowStatus::Waiting))
+    {
         Some(node_run) => node_run.clone(),
         None => {
             db.create_workflow_node_run(
@@ -86,10 +137,24 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             .await?
         }
     };
+    // resolve routing before any observable dispatch: a session-bound action whose desktop worker is
+    // not connected parks (and re-checks) instead of being published to a queue no one drains.
+    let target = match resolve_action_target(db, workflow_run, action).await? {
+        TargetResolution::Ready(target) => target,
+        TargetResolution::Park => {
+            return park_for_target(db, workflow_run, node, &node_run).await;
+        }
+    };
     let attempt = node_run.attempt + 1;
     let parameters =
         build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
-    let command = build_action_command(workflow_run.id, &node_run, action, parameters.clone());
+    let command = build_action_command(
+        workflow_run.id,
+        &node_run,
+        action,
+        parameters.clone(),
+        target,
+    );
     // scope the dedupe key to the attempt: outbox rows persist after publish, so a retry reusing
     // the node run's key would collide with the already-published row and never dispatch again.
     db.enqueue_action_dispatch(
@@ -188,6 +253,7 @@ fn build_action_command(
     node_run: &WorkflowNodeRun,
     action: &WorkflowAction,
     parameters: Value,
+    target: ActionTarget,
 ) -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
@@ -197,8 +263,96 @@ fn build_action_command(
         action: action.clone(),
         attempt: node_run.attempt + 1,
         parameters,
+        target,
         trace_id: Uuid::now_v7(),
     }
+}
+
+/// decide which worker(s) may run this action. general-pool actions go to `Any`; the session-bound
+/// local-files provider is pinned to the desktop replica that launched the run, and parks when that
+/// replica is not currently connected so the action is never published into a queue no one drains.
+async fn resolve_action_target<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    action: &WorkflowAction,
+) -> Result<TargetResolution, SendableError> {
+    // only consult the registry when a local action actually has a launching replica to check.
+    let replica_live = match (
+        action.provider == LOCAL_PROVIDER,
+        workflow_run.trigger_actor_replica_id,
+    ) {
+        (true, Some(replica_id)) => replica_is_live(db, replica_id).await?,
+        _ => false,
+    };
+    Ok(target_for(
+        &action.provider,
+        workflow_run.trigger_actor_replica_id,
+        replica_live,
+    ))
+}
+
+/// whether a worker replica has heartbeated recently enough to receive work.
+async fn replica_is_live<T: DatabaseImpl>(db: &T, replica_id: Uuid) -> Result<bool, SendableError> {
+    let stale_before = Utc::now() - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
+    let live = db
+        .fetch_replicas(
+            Some(ReplicaKind::Worker),
+            Some(ReplicaStatus::Live),
+            stale_before,
+        )
+        .await?;
+    Ok(live.iter().any(|replica| replica.replica_id == replica_id))
+}
+
+/// park an action node whose bound worker is unavailable: mark it waiting (once) with the node's
+/// timeout armed, then re-arm a poll so it re-checks when the worker reconnects.
+async fn park_for_target<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_run: &WorkflowNodeRun,
+) -> Result<(), SendableError> {
+    if node_run.status != WorkflowStatus::Waiting {
+        db.update_workflow_node_run(
+            node_run.id,
+            WorkflowStatus::Waiting,
+            None,
+            None,
+            None,
+            None,
+            Some("awaiting_local_worker".into()),
+            None,
+        )
+        .await?;
+        db.update_workflow_run_status(
+            workflow_run.id,
+            WorkflowStatus::Waiting,
+            Some(node.id.clone()),
+            None,
+            None,
+        )
+        .await?;
+        arm_node_timeout(db, workflow_run.id, node).await?;
+    }
+    enqueue_target_poll(db, workflow_run.id, node).await
+}
+
+/// schedule the next re-check of a parked action node's bound worker.
+async fn enqueue_target_poll<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node: &WorkflowNode,
+) -> Result<(), SendableError> {
+    let poll_at = Utc::now() + chrono::Duration::seconds(LOCAL_TARGET_POLL_SECONDS);
+    let event = NewOrchestrationEvent::new(
+        workflow_run_id,
+        Some(node.id.clone()),
+        "local_target_poll",
+        runinator_models::json!({ "node_id": node.id }),
+    );
+    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+        .await?;
+    Ok(())
 }
 
 pub(super) struct ActionHandler;

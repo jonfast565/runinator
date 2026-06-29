@@ -28,6 +28,7 @@ members = [
     "runinator-provider-git",
     "runinator-provider-github",
     "runinator-provider-jira",
+    "runinator-provider-local-files",
     "runinator-provider-catalog",
     "runinator-provider-slack",
     "runinator-provider-sql",

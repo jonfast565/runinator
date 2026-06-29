@@ -5,9 +5,9 @@ use crate::{
         ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
         ReceiveWakeResponse,
     },
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
+    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
+    ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -54,6 +54,33 @@ impl HttpBroker {
             ))),
         }
     }
+
+    async fn receive_request(
+        &self,
+        request: ReceiveRequest,
+    ) -> Result<BrokerDelivery, BrokerError> {
+        let url = self.endpoint("receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected receive status: {status}"
+            ))),
+        }
+    }
 }
 
 #[async_trait]
@@ -83,29 +110,19 @@ impl Broker for HttpBroker {
     }
 
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        let url = self.endpoint("receive")?;
-        let response = self
-            .client
-            .post(url)
-            .json(&ReceiveRequest {
-                consumer: consumer.to_string(),
-            })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        self.receive_request(ReceiveRequest {
+            consumer: consumer.to_string(),
+            profile: None,
+        })
+        .await
+    }
 
-        match response.status() {
-            StatusCode::OK => {
-                let payload = response
-                    .json::<ReceiveResponse>()
-                    .await
-                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
-                Ok(payload.delivery)
-            }
-            status => Err(BrokerError::Internal(format!(
-                "unexpected receive status: {status}"
-            ))),
-        }
+    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
+        self.receive_request(ReceiveRequest {
+            consumer: profile.id.clone(),
+            profile: Some(profile.clone()),
+        })
+        .await
     }
 
     async fn ack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
@@ -173,6 +190,7 @@ impl Broker for HttpBroker {
             .post(url)
             .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
+                profile: None,
             })
             .send()
             .await
@@ -223,6 +241,7 @@ impl Broker for HttpBroker {
             .post(url)
             .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
+                profile: None,
             })
             .send()
             .await
@@ -277,6 +296,7 @@ impl Broker for HttpBroker {
             .post(url)
             .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
+                profile: None,
             })
             .send()
             .await
@@ -331,6 +351,7 @@ impl Broker for HttpBroker {
             .post(url)
             .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
+                profile: None,
             })
             .send()
             .await
@@ -383,6 +404,7 @@ impl Broker for HttpBroker {
             .post(url)
             .json(&ReceiveRequest {
                 consumer: consumer.to_string(),
+                profile: None,
             })
             .send()
             .await

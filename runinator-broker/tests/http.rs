@@ -42,6 +42,7 @@ async fn http_broker_delivers_published_messages() {
             },
             attempt: 1,
             parameters: json!({ "value": true }),
+            target: Default::default(),
             trace_id: Uuid::nil(),
         },
         dedupe_key: Some("http-test".into()),
@@ -199,6 +200,82 @@ fn action_command() -> ActionCommand {
         },
         attempt: 1,
         parameters: json!({ "value": true }),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
+}
+
+fn bearer_client(token: &str) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn http_broker_auth_gates_and_scopes_by_replica() {
+    use runinator_auth::AuthConfig;
+    use runinator_broker::http::auth::BrokerAuth;
+    use runinator_broker::http::server::serve_with_auth;
+    use runinator_broker::ConsumerProfile;
+    use runinator_comm::ActionTarget;
+
+    let secret = b"broker-integration-secret".to_vec();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve_with_auth(
+        listener,
+        runinator_broker::in_memory::InMemoryBroker::new(),
+        Some(Arc::new(BrokerAuth::new(secret.clone(), None))),
+    ));
+    let base = Url::parse(&format!("http://{addr}/")).unwrap();
+
+    // no token: every gated endpoint is rejected.
+    let anon = HttpBroker::new(base.clone(), reqwest::Client::new());
+    assert!(anon.receive("c").await.is_err());
+
+    // a replica-scoped token authenticates and pins the consumer to its replica.
+    let replica = Uuid::now_v7();
+    let config = AuthConfig {
+        enabled: true,
+        jwt_secret: secret,
+        jwt_secret_previous: None,
+        access_ttl_secs: 60,
+        refresh_ttl_secs: 60,
+    };
+    let (token, _) = runinator_auth::issue_replica_token(&config, Uuid::now_v7(), replica).unwrap();
+    let authed = HttpBroker::new(base.clone(), bearer_client(&token));
+
+    let mut command = action_command();
+    command.target = ActionTarget::Replica {
+        replica_id: replica,
+    };
+    authed
+        .publish(BrokerMessage {
+            command: command.clone(),
+            dedupe_key: Some("auth-scope".into()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    // presenting a different replica id is forbidden, even with a valid token.
+    let imposter = ConsumerProfile::shared("desktop")
+        .with_replica_id(Uuid::now_v7())
+        .exclusive();
+    assert!(authed.receive_for(&imposter).await.is_err());
+
+    // receiving for the token's own replica succeeds.
+    let profile = ConsumerProfile::shared("desktop")
+        .with_replica_id(replica)
+        .exclusive();
+    let delivery = authed.receive_for(&profile).await.unwrap();
+    assert_eq!(delivery.command.command_id, command.command_id);
+
+    server.abort();
 }

@@ -12,7 +12,9 @@ pub use capabilities::{
 };
 pub use errors::BrokerError;
 pub use factory::{build_kafka_broker, build_rabbitmq_broker};
-pub use runinator_comm::{ControlCommand, UiEvent, WakeCommand, WsIngressCommand};
+pub use runinator_comm::{
+    ActionTarget, ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
+};
 pub use types::{
     BrokerDelivery, BrokerMessage, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
     IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
@@ -31,8 +33,18 @@ pub trait Broker: Send + Sync + 'static {
     /// Publish a message to the broker, optionally using a deduplication key.
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError>;
 
-    /// Wait for and retrieve the next available delivery for the supplied consumer group.
+    /// Wait for and retrieve the next available delivery for the supplied consumer group. A plain
+    /// consumer is treated as a general-pool ([`ConsumerProfile::shared`]) consumer, so it never
+    /// receives replica- or label-targeted actions intended for a specific worker.
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError>;
+
+    /// Wait for and retrieve the next delivery whose target matches `profile`. The targeting-aware
+    /// path: an exclusive consumer (e.g. the desktop worker) only receives `Replica`/`Labels`
+    /// targets it satisfies, never general-pool `Any` work. Backends that do not route default to
+    /// the plain [`Broker::receive`] keyed by the profile id.
+    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
+        self.receive(&profile.id).await
+    }
 
     /// Acknowledge successful processing of a delivery.
     async fn ack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;

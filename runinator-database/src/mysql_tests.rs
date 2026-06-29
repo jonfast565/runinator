@@ -101,6 +101,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
 }

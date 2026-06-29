@@ -1054,6 +1054,7 @@ fn action_command(
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
 }

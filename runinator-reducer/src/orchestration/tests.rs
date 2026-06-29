@@ -1,4 +1,6 @@
-use super::action::{default_foreign_language_runtime, foreign_language_runtime};
+use super::action::{
+    TargetResolution, default_foreign_language_runtime, foreign_language_runtime, target_for,
+};
 use super::assert::evaluate_assertions;
 use super::await_run::parse_await_mode;
 use super::barrier::arrivals_complete;
@@ -10,6 +12,7 @@ use super::event_source::event_type_matches;
 use super::mutex::record_is_held_by_other;
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
+use runinator_comm::ActionTarget;
 use runinator_models::{
     value::Value,
     workflows::{WorkflowNode, WorkflowNodeRun},
@@ -46,6 +49,39 @@ fn node_run(node_id: &str, status: &str) -> WorkflowNodeRun {
         "message": null,
     }))
     .expect("node run")
+}
+
+#[test]
+fn general_pool_actions_target_any() {
+    let replica = Uuid::now_v7();
+    // a non-local provider always goes to the general pool, regardless of the launching replica.
+    assert_eq!(
+        target_for("console", Some(replica), true),
+        TargetResolution::Ready(ActionTarget::Any)
+    );
+    assert_eq!(
+        target_for("console", None, false),
+        TargetResolution::Ready(ActionTarget::Any)
+    );
+}
+
+#[test]
+fn local_actions_pin_to_a_live_launching_replica_else_park() {
+    let replica = Uuid::now_v7();
+    // bound desktop is connected: pin the action to that exact replica.
+    assert_eq!(
+        target_for("local", Some(replica), true),
+        TargetResolution::Ready(ActionTarget::Replica {
+            replica_id: replica
+        })
+    );
+    // bound desktop is offline: park rather than publish into a queue no one drains.
+    assert_eq!(
+        target_for("local", Some(replica), false),
+        TargetResolution::Park
+    );
+    // no launching replica recorded: nowhere local to run, so park.
+    assert_eq!(target_for("local", None, true), TargetResolution::Park);
 }
 
 #[test]

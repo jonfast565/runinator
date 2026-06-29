@@ -13,7 +13,7 @@ use runinator_utilities::app_data;
 use tokio::time;
 use uuid::Uuid;
 
-use crate::provider_repository::resolve_provider;
+use crate::provider_repository::{ProviderFactory, resolve_provider};
 
 pub struct ExecutionOutcome {
     pub task_result: ExecutionTaskResult,
@@ -35,6 +35,7 @@ impl ExecutionTaskResult {
 }
 
 pub async fn execute_task(
+    providers: &ProviderFactory,
     libraries: Arc<HashMap<String, Plugin>>,
     action: WorkflowAction,
     workflow_node_run_id: Uuid,
@@ -50,7 +51,7 @@ pub async fn execute_task(
         return canceled_outcome(started_at);
     }
 
-    match resolve_provider(&libraries, &action) {
+    match resolve_provider(providers, &libraries, &action) {
         Ok(provider) => {
             let action_metadata = match provider_action_metadata(provider.as_ref(), &action) {
                 Ok(metadata) => metadata,

@@ -57,6 +57,10 @@ where
             .receive(&consumer)
             .await
             .map(|delivery| TcpResponse::Delivery { delivery }),
+        Ok(TcpRequest::ReceiveFor { profile }) => broker
+            .receive_for(&profile)
+            .await
+            .map(|delivery| TcpResponse::Delivery { delivery }),
         Ok(TcpRequest::ReceiveControl { consumer }) => broker
             .receive_control(&consumer)
             .await

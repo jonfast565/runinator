@@ -1,5 +1,6 @@
 <template>
   <section class="pane replicas-pane">
+    <LocalWorkerPanel />
     <div class="replicas-layout">
       <aside class="panel replicas-list-panel">
         <div class="panel-toolbar">
@@ -116,6 +117,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
 import { useAppStore } from "../stores/app";
 import type { ReplicaKind } from "../types/models";
 import { formatDate, pretty } from "../utils/format";

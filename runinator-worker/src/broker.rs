@@ -11,9 +11,7 @@ use runinator_models::errors::{RuntimeError, SendableError};
 
 use crate::config;
 
-pub(crate) async fn build_broker(
-    config: &config::Config,
-) -> Result<Arc<dyn Broker>, SendableError> {
+pub async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableError> {
     runinator_broker::ensure_named_workflow_result_channel(
         &config.broker_backend,
         &config.broker_result_topic,

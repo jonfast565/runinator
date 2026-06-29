@@ -2001,6 +2001,7 @@ fn action_command(
         },
         attempt: 1,
         parameters: json!({}),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
 }

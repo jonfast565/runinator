@@ -137,6 +137,7 @@ async fn dispatch_compensation<T: DatabaseImpl>(
         action,
         attempt: 1,
         parameters,
+        target: Default::default(),
         trace_id: Uuid::now_v7(),
     };
     db.enqueue_action_dispatch(

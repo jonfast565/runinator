@@ -193,6 +193,7 @@ fn action_command() -> ActionCommand {
         },
         attempt: 1,
         parameters: json!({ "value": true }),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
 }

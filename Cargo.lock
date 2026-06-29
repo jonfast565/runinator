@@ -5411,6 +5411,7 @@ dependencies = [
  "parking_lot",
  "rdkafka",
  "reqwest",
+ "runinator-auth",
  "runinator-comm",
  "runinator-models",
  "serde",
@@ -5440,10 +5441,16 @@ dependencies = [
  "chrono",
  "mime_guess",
  "reqwest",
+ "runinator-api",
+ "runinator-broker",
+ "runinator-comm",
  "runinator-models",
+ "runinator-plugin",
  "runinator-provider-catalog",
+ "runinator-provider-local-files",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-worker",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -5718,6 +5725,19 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "runinator-provider-local-files"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mime_guess",
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-provider-support",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

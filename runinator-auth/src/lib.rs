@@ -116,6 +116,34 @@ pub fn issue_access_token(
         iat: now,
         exp,
         jti: Uuid::new_v4().to_string(),
+        rid: None,
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(&config.jwt_secret),
+    )
+    .map(|token| (token, exp))
+    .map_err(|err| err.to_string())
+}
+
+/// issue a replica-scoped broker token: a JWT whose `rid` claim pins it to one worker replica. the
+/// broker verifies it and refuses any consumer profile presenting a different replica id, so a client
+/// cannot impersonate another user's desktop worker. returns the token and its expiry.
+pub fn issue_replica_token(
+    config: &AuthConfig,
+    user_id: Uuid,
+    replica_id: Uuid,
+) -> Result<(String, i64), String> {
+    let now = Utc::now().timestamp();
+    let exp = now + config.access_ttl_secs;
+    let claims = Claims {
+        sub: user_id.to_string(),
+        adm: false,
+        iat: now,
+        exp,
+        jti: Uuid::new_v4().to_string(),
+        rid: Some(replica_id.to_string()),
     };
     encode(
         &Header::new(Algorithm::HS256),

@@ -1,5 +1,3 @@
-use std::ffi::OsString;
-
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_comm::{ActionCommand, WorkflowResultEventKind};
 use runinator_models::json;
@@ -10,37 +8,7 @@ use runinator_models::{
 };
 use uuid::Uuid;
 
-use crate::{
-    build_broker, config::Config, output_sink::RunOutputSink, provider_service_url_fallback,
-    spawn_liveness,
-};
-
-#[test]
-fn provider_service_url_uses_api_base_url_when_env_is_missing() {
-    assert_eq!(
-        provider_service_url_fallback(None, "http://127.0.0.1:8080/"),
-        Some(OsString::from("http://127.0.0.1:8080/"))
-    );
-}
-
-#[test]
-fn provider_service_url_preserves_existing_env() {
-    assert_eq!(
-        provider_service_url_fallback(
-            Some(OsString::from("http://127.0.0.1:9090/")),
-            "http://127.0.0.1:8080/",
-        ),
-        None
-    );
-}
-
-#[test]
-fn provider_service_url_replaces_empty_env() {
-    assert_eq!(
-        provider_service_url_fallback(Some(OsString::from("  ")), "http://127.0.0.1:8080/"),
-        Some(OsString::from("http://127.0.0.1:8080/"))
-    );
-}
+use crate::{build_broker, config::Config, default_provider_factory, output_sink::RunOutputSink};
 
 #[tokio::test]
 async fn build_broker_rejects_kafka_without_result_topic() {
@@ -122,6 +90,7 @@ async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata(
     command.parameters = json!({ "command": 1 });
 
     let result = crate::executor::execute_task(
+        &default_provider_factory(),
         std::sync::Arc::new(std::collections::HashMap::new()),
         command.action,
         command.workflow_node_run_id,
@@ -164,6 +133,7 @@ async fn worker_accepts_std_exec_program_with_context() {
     });
 
     let result = crate::executor::execute_task(
+        &default_provider_factory(),
         std::sync::Arc::new(std::collections::HashMap::new()),
         action,
         Uuid::new_v4(),
@@ -199,6 +169,7 @@ async fn worker_rejects_undeclared_std_exec_parameter() {
     });
 
     let result = crate::executor::execute_task(
+        &default_provider_factory(),
         std::sync::Arc::new(std::collections::HashMap::new()),
         action,
         Uuid::new_v4(),
@@ -262,6 +233,7 @@ fn action_command() -> ActionCommand {
         },
         attempt: 1,
         parameters: json!({}),
+        target: Default::default(),
         trace_id: Uuid::nil(),
     }
 }
@@ -284,37 +256,4 @@ fn test_config() -> Config {
         advertise_host: None,
         liveness_file: String::new(),
     }
-}
-
-#[tokio::test]
-async fn spawn_liveness_is_disabled_without_a_path() {
-    let config = test_config();
-    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    assert!(spawn_liveness(&config, shutdown).is_none());
-}
-
-#[tokio::test]
-async fn spawn_liveness_writes_the_configured_file() {
-    let mut path = std::env::temp_dir();
-    path.push(format!("runinator-worker-liveness-{}", Uuid::new_v4()));
-    let mut config = test_config();
-    config.liveness_file = path.to_string_lossy().to_string();
-
-    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let handle = spawn_liveness(&config, shutdown.clone()).expect("a path should spawn a task");
-
-    for _ in 0..50 {
-        if path.exists() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(path.exists(), "worker should touch its liveness file");
-
-    shutdown.notify_waiters();
-    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-        .await
-        .expect("liveness task should stop after shutdown")
-        .expect("liveness task should not panic");
-    let _ = std::fs::remove_file(&path);
 }

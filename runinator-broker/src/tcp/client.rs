@@ -1,8 +1,8 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
+    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
+    ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use std::time::Duration;
@@ -102,6 +102,21 @@ impl Broker for TcpBroker {
         match self
             .receive_request(TcpRequest::Receive {
                 consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::Delivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected action delivery response".into(),
+            )),
+        }
+    }
+
+    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveFor {
+                profile: profile.clone(),
             })
             .await?
         {

@@ -102,3 +102,48 @@ The desktop client is feature-complete but light on polish; these are user-facin
 ## Note
 
 This roadmap is a survey for prioritization — no single item is fully specified for execution yet. Pick one (e.g. "do 1.1") to get a detailed, file-by-file implementation plan.
+
+---
+
+## Tier 5 — Remaining production gaps (2026-06-29 survey)
+
+Tier 1 operational hardening is largely done (retry/backoff/jitter, executor lease, DLQ/audit, tracing+`trace_id`, `/metrics`, rate limiting, `/health`+`/ready`, graceful shutdown, per-node cancellation). These are the gaps that remain before leaning on the runtime in production.
+
+### 5.1 Waker has no test coverage — highest residual risk
+- The waker is the timer/relay heartbeat of the whole system: if it stalls, nothing fires. It currently has zero tests (also noted in 4.1). Add an integration test for the `wake → ingress → drive` path and an alert/metric on wake-channel lag before relying on it in prod.
+
+### 5.2 Slow failover on a dead worker
+- `EXECUTOR_LEASE_GRACE_SECONDS = 60` (`runinator-worker/src/main.rs`) means a crashed worker's node run is not reclaimable until `timeout_seconds + 60s` elapses. With long job timeouts, a pod crash strands that node for the full timeout window. Consider invalidating the lease off the worker replica heartbeat (already tracked via `register_replica_session`/`spawn_replica_heartbeat`) instead of only the action deadline.
+
+### 5.3 Panic hardening (carryover from 4.3)
+- `expect()` clusters in `runinator-wdl/src/parser.rs:92-132` and `runinator-ws/src/openapi.rs` (11 calls). A malformed pack or request should not be able to panic a handler. Convert runtime-path panics to structured `RuntimeError`s per the error-dictionary convention.
+
+### 5.4 DB migration parity tests
+- No tests exercise sqlite↔postgres (↔mysql) schema parity (carryover from 4.1). Schema drift between backends is a classic production surprise; add round-trip/migration parity tests in `runinator-database`.
+
+---
+
+## Tier 6 — Worker / job authoring pitfalls
+
+These are footguns when creating new providers and workflow jobs, grounded in `runinator-worker/src/executor.rs` and `main.rs`. Worth capturing in a provider-authoring checklist so new jobs inherit the right defaults.
+
+### 6.1 Make every provider action idempotent (the big one)
+- The executor lease (`claim_workflow_node_run_executor`) prevents *concurrent* duplicate execution, but it **fail-opens on a transport error** (`main.rs:513-517`) and only protects while held. A worker that crashes *after* a side effect but *before* `broker.ack` will redeliver and re-execute. Any action with external side effects (charges, posts, writes) must dedupe on its own key — `workflow_node_run_id` is available in the request and is a natural idempotency key.
+
+### 6.2 A timeout stops *waiting*, not the work
+- Provider code runs in `spawn_blocking` (`executor.rs:69`). On timeout the `CancellationToken` is cancelled, but a provider that never polls the token (or has no internal client timeout) keeps running on a blocking thread after the node is already marked `TimedOut`. Consequences: (a) Tokio blocking-pool thread leak (default 512 — exhaust it and the worker wedges), and (b) a "timed out" job still mutating the outside world. **Rule for new providers:** honor the cancellation token in any loop, and set an explicit client timeout ≤ `request.timeout_secs`.
+
+### 6.3 Don't model "wait for X" as a long-running task
+- Each in-flight action pins one blocking thread *and* one concurrency permit for its whole duration. A task that sleeps/polls for an hour burns both the entire time. Use the `wait` / `gate` / `signal` node kinds, which park in the reducer with zero worker footprint. Tasks should be short, active work.
+
+### 6.4 Tune `max_concurrent_actions` per workload
+- It is a single per-worker semaphore across *all* action types (`main.rs:255`). One memory-heavy job × high concurrency can OOM the pod and starve light jobs queued behind it. For heterogeneous workloads, run separate worker deployments tuned per workload rather than one large pool.
+
+### 6.5 Consumer-group default differs by backend (horizontal-scaling gotcha)
+- `broker_consumer_id` defaults to the shared group `runinator-workers` on **kafka**, but to a fresh per-worker `worker_id` UUID on **rabbitmq/http/tcp/in-memory** (`config.rs:90`). Whether N workers *compete* for actions or each receives *every* action depends on the backend's consumer-id→group mapping. **When scaling workers on a non-kafka backend, set `broker_consumer_id` explicitly to the same value across the fleet** so they compete instead of double-executing. Verify on the chosen backend before scaling past one worker.
+
+### 6.6 Secret resolution is on the job's critical path
+- `resolve_secret_refs` runs per delivery (`main.rs:532`). If the settings store is unavailable, the job publishes `Failed` and acks — it does *not* retry at the broker level. Jobs touching `secret://` refs should carry a node-level `retry` policy so a transient secret-store blip recovers.
+
+### 6.7 Result-publish failures redeliver the whole action
+- If a job succeeds but `publish_status`/`flush` fails (`main.rs:636,680`), the delivery is nacked and the entire action re-runs — looping back to 6.1. Idempotency (6.1) is the mitigation here too.

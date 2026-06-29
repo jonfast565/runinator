@@ -1,7 +1,7 @@
 use crate::{
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
+    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
+    ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -117,22 +117,35 @@ impl Broker for InMemoryBroker {
         Ok(())
     }
 
-    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        // a plain consumer is a general-pool consumer; it must not pick up replica/label-targeted
+        // deliveries intended for a specific worker.
+        self.receive_for(&ConsumerProfile::shared(consumer)).await
+    }
+
+    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
                 reclaim_expired_actions(&mut guard, Instant::now());
-                if let Some(delivery) = guard.queue.pop_front() {
-                    guard.inflight.insert(
-                        delivery.delivery_id,
-                        Leased {
-                            delivery: delivery.clone(),
-                            leased_until: Instant::now() + self.lease_duration,
-                        },
-                    );
-                    Some(delivery)
-                } else {
-                    None
+                // scan for the first delivery whose target matches this consumer. a non-matching
+                // head must not block matching deliveries queued behind it.
+                let index = guard
+                    .queue
+                    .iter()
+                    .position(|delivery| delivery.command.target.matches(profile));
+                match index.and_then(|index| guard.queue.remove(index)) {
+                    Some(delivery) => {
+                        guard.inflight.insert(
+                            delivery.delivery_id,
+                            Leased {
+                                delivery: delivery.clone(),
+                                leased_until: Instant::now() + self.lease_duration,
+                            },
+                        );
+                        Some(delivery)
+                    }
+                    None => None,
                 }
             } {
                 return Ok(delivery);
@@ -672,6 +685,51 @@ mod tests {
         assert!(matches!(b.event, UiEvent::WorkflowsChanged));
     }
 
+    #[tokio::test]
+    async fn receive_for_routes_targeted_actions_to_the_matching_consumer() {
+        use runinator_comm::{ActionTarget, ConsumerProfile};
+
+        let broker = InMemoryBroker::new();
+        let replica = Uuid::now_v7();
+
+        // a replica-targeted action and a general-pool (Any) action share the queue.
+        let mut targeted = action_command();
+        targeted.target = ActionTarget::Replica {
+            replica_id: replica,
+        };
+        let any = action_command();
+        broker
+            .publish(BrokerMessage {
+                command: targeted.clone(),
+                dedupe_key: Some("targeted".into()),
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        broker
+            .publish(BrokerMessage {
+                command: any.clone(),
+                dedupe_key: Some("any".into()),
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        // an exclusive consumer bound to the replica only sees the targeted action, even though it
+        // sits ahead of nothing special; it must never receive the Any action.
+        let desktop = ConsumerProfile::shared("desktop")
+            .with_replica_id(replica)
+            .exclusive();
+        let delivery = broker.receive_for(&desktop).await.unwrap();
+        assert_eq!(delivery.command.command_id, targeted.command_id);
+        broker.ack("desktop", delivery.delivery_id).await.unwrap();
+
+        // a general-pool consumer picks up the remaining Any action.
+        let server = ConsumerProfile::shared("server");
+        let delivery = broker.receive_for(&server).await.unwrap();
+        assert_eq!(delivery.command.command_id, any.command_id);
+    }
+
     fn action_command() -> ActionCommand {
         ActionCommand {
             command_id: Uuid::new_v4(),
@@ -688,6 +746,7 @@ mod tests {
             },
             attempt: 1,
             parameters: json!({}),
+            target: Default::default(),
             trace_id: Uuid::nil(),
         }
     }

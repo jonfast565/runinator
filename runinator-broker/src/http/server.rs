@@ -1,18 +1,20 @@
 use crate::{
+    http::auth::{AuthIdentity, BrokerAuth},
     http::types::{
         AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishEventRequest,
         PublishIngressRequest, PublishRequest, PublishResultRequest, PublishWakeRequest,
         ReceiveControlResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
         ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
-    Broker, BrokerError,
+    Broker, BrokerError, ConsumerProfile,
 };
 use axum::{
-    extract::State,
+    extract::{Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::Serialize;
 use std::{net::SocketAddr, sync::Arc};
@@ -30,15 +32,29 @@ impl<B> Clone for AppState<B> {
     }
 }
 
+/// run an http broker, applying the bearer-token gate configured via env (open when none is set).
 pub async fn run_server<B>(addr: SocketAddr, broker: B) -> Result<(), std::io::Error>
 where
     B: Broker,
 {
     let listener = TcpListener::bind(addr).await?;
-    serve(listener, broker).await
+    serve_with_auth(listener, broker, BrokerAuth::from_env().map(Arc::new)).await
 }
 
+/// serve without authentication (used by tests and in-process/trusted deployments).
 pub async fn serve<B>(listener: TcpListener, broker: B) -> Result<(), std::io::Error>
+where
+    B: Broker,
+{
+    serve_with_auth(listener, broker, None).await
+}
+
+/// serve with an optional bearer-token gate. `None` leaves every endpoint open.
+pub async fn serve_with_auth<B>(
+    listener: TcpListener,
+    broker: B,
+    auth: Option<Arc<BrokerAuth>>,
+) -> Result<(), std::io::Error>
 where
     B: Broker,
 {
@@ -70,9 +86,79 @@ where
         .route("/poll", post(poll::<B>))
         .route("/ack", post(ack::<B>))
         .route("/nack", post(nack::<B>))
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(auth, authenticate));
 
     axum::serve(listener, app).await
+}
+
+// gate every endpoint (except /health) behind the bearer token when auth is configured; attach the
+// resolved identity so authz-aware handlers can read it. open (anonymous) when `auth` is `None`.
+async fn authenticate(
+    State(auth): State<Option<Arc<BrokerAuth>>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if request.uri().path() == "/health" {
+        request.extensions_mut().insert(AuthIdentity(None));
+        return next.run(request).await;
+    }
+    let identity = match auth.as_deref() {
+        None => AuthIdentity(None),
+        Some(auth) => match bearer_token(&request).and_then(|token| auth.verify(&token)) {
+            Some(claims) => AuthIdentity(Some(claims)),
+            None => return unauthorized(),
+        },
+    };
+    request.extensions_mut().insert(identity);
+    next.run(request).await
+}
+
+fn bearer_token(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .map(|token| token.trim().to_string())
+}
+
+fn unauthorized() -> Response {
+    (StatusCode::UNAUTHORIZED, "missing or invalid broker token").into_response()
+}
+
+fn forbidden(detail: &str) -> Response {
+    (StatusCode::FORBIDDEN, detail.to_string()).into_response()
+}
+
+/// authorize an action receive: a replica-scoped token (`rid`) may only receive for its own replica,
+/// closing cross-replica impersonation. an unscoped (plain user) token is allowed; auth-disabled
+/// requests carry no constraint.
+pub(crate) fn authorize_receive(
+    identity: &AuthIdentity,
+    profile: Option<&ConsumerProfile>,
+) -> Result<(), Response> {
+    let Some(claims) = &identity.0 else {
+        return Ok(());
+    };
+    let Some(rid) = &claims.rid else {
+        return Ok(());
+    };
+    match profile.and_then(|profile| profile.replica_id) {
+        Some(replica_id) if replica_id.to_string() == *rid => Ok(()),
+        _ => Err(forbidden("token is scoped to a different replica")),
+    }
+}
+
+// a replica-scoped token must use the targeted /receive path, not the general-pool /poll drain.
+fn authorize_poll(identity: &AuthIdentity) -> Result<(), Response> {
+    match &identity.0 {
+        Some(claims) if claims.rid.is_some() => Err(forbidden(
+            "replica-scoped token cannot use the general poll path",
+        )),
+        _ => Ok(()),
+    }
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -330,21 +416,36 @@ where
 
 async fn receive<B>(
     State(state): State<AppState<B>>,
+    Extension(identity): Extension<AuthIdentity>,
     Json(request): Json<ReceiveRequest>,
 ) -> Response
 where
     B: Broker,
 {
-    match state.broker.receive(&request.consumer).await {
+    if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
+        return response;
+    }
+    let result = match &request.profile {
+        Some(profile) => state.broker.receive_for(profile).await,
+        None => state.broker.receive(&request.consumer).await,
+    };
+    match result {
         Ok(delivery) => json_response(StatusCode::OK, ReceiveResponse { delivery }),
         Err(err) => error_response(err),
     }
 }
 
-async fn poll<B>(State(state): State<AppState<B>>, Json(request): Json<PollRequest>) -> Response
+async fn poll<B>(
+    State(state): State<AppState<B>>,
+    Extension(identity): Extension<AuthIdentity>,
+    Json(request): Json<PollRequest>,
+) -> Response
 where
     B: Broker,
 {
+    if let Err(response) = authorize_poll(&identity) {
+        return response;
+    }
     let poll_result = if let Some(timeout_ms) = request.timeout_ms {
         let broker = state.broker.clone();
         let consumer = request.consumer.clone();

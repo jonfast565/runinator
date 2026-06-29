@@ -198,6 +198,11 @@ pub struct Claims {
     pub exp: i64,
     /// token id, for future revocation lists.
     pub jti: String,
+    /// optional replica capability: when set, scopes a broker token to exactly one worker replica so
+    /// the broker can authorize a consumer's targeting without a registry lookup. absent on ordinary
+    /// user access tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rid: Option<String>,
 }
 
 /// how a request was authenticated.
