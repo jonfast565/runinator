@@ -4,7 +4,12 @@
 //! and fall back to the connection ip for anonymous/public requests. buckets live in process memory;
 //! each replica limits independently, which is the intended behavior for a horizontally scaled api.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, sync::Mutex, time::Instant};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, Mutex, OnceLock},
+    time::Instant,
+};
 
 use axum::{
     body::Body,
@@ -88,6 +93,28 @@ impl RateLimiter {
         }
         Err((1.0 - bucket.tokens) / rate)
     }
+}
+
+/// strict, always-on throttle for the unauthenticated auth endpoints, keyed by client ip. it runs
+/// independently of the configurable global limiter so credential brute force stays bounded even
+/// when general rate limiting is disabled. the slow refill with a small burst tolerates a few
+/// legitimate retries while making online password guessing impractical.
+fn login_throttle() -> &'static RateLimiter {
+    static THROTTLE: OnceLock<RateLimiter> = OnceLock::new();
+    THROTTLE.get_or_init(|| {
+        RateLimiter::new(RateLimitConfig {
+            enabled: true,
+            // ~1 sustained attempt every 5 seconds.
+            requests_per_second: 0.2,
+            // absorb a short burst of honest retries before throttling kicks in.
+            burst: 10.0,
+        })
+    })
+}
+
+/// spend one login attempt for `ip`. returns `Err(retry_after_secs)` when the bucket is empty.
+pub fn check_login_attempt(ip: IpAddr) -> Result<(), f64> {
+    login_throttle().check(&format!("login:{ip}"))
 }
 
 /// paths exempt from rate limiting so health/metrics scrapers are never throttled.

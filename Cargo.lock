@@ -5493,6 +5493,7 @@ dependencies = [
  "runinator-auth",
  "runinator-comm",
  "runinator-models",
+ "runinator-utilities",
  "serde_json",
  "sqlx",
  "tokio",

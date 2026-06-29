@@ -104,8 +104,9 @@ pub(crate) struct CliArgs {
     )]
     pub auth_refresh_ttl_seconds: i64,
 
-    /// Enable per-principal/per-IP rate limiting on the HTTP API. Off by default.
-    #[arg(long, env = "RUNINATOR_RATE_LIMIT_ENABLED", default_value_t = false)]
+    /// Enable per-principal/per-IP rate limiting on the HTTP API. On by default; set to false to
+    /// disable. The unauthenticated auth endpoints carry a separate, always-on brute-force throttle.
+    #[arg(long, env = "RUNINATOR_RATE_LIMIT_ENABLED", default_value_t = true)]
     pub rate_limit_enabled: bool,
 
     /// Sustained requests per second allowed per principal/IP (token-bucket refill rate).

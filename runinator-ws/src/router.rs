@@ -116,7 +116,6 @@ pub fn build_router<T: DatabaseImpl>(
         .expose_headers(Any);
 
     Router::new()
-        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
@@ -605,6 +604,10 @@ pub fn build_router<T: DatabaseImpl>(
             auth_middleware::<T>,
         ))
         .layer(cors)
+        // cap request bodies for every route. layered here (after all routes are added) so axum
+        // actually applies it; placed before `Router::new()` had any routes, it wrapped nothing and
+        // requests silently fell back to axum's stricter 2 MB default. 10 MB accommodates pack uploads.
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         // outermost layer: recover from any panic in a handler or inner middleware so a single bad
         // request returns a 500 instead of dropping the connection or poisoning the runtime.
         .layer(CatchPanicLayer::custom(handle_panic))

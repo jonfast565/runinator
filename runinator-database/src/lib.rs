@@ -6,6 +6,7 @@ use log::{info, warn};
 use runinator_models::auth::{ApiKey, ApiKeyRecord};
 use runinator_models::errors::SendableError;
 use runinator_models::settings::SettingKind;
+use runinator_utilities::secret_cipher::SecretCipher;
 use uuid::Uuid;
 
 pub mod archive;
@@ -65,17 +66,40 @@ const SECRET_NAME: &str = "jwt_secret";
 const SECRET_NAME_PREVIOUS: &str = "jwt_secret_previous";
 const DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME: &str = "bootstrap-service";
 
+// the cipher protecting persisted auth secrets at rest, keyed from the environment
+// (`RUNINATOR_CREDENTIAL_KEY` plus rotation-overlap keys). it is the same cipher the web service
+// uses for user settings, so the jwt signing secret is protected exactly like every other secret.
+fn auth_cipher() -> SecretCipher {
+    SecretCipher::from_env()
+}
+
+// open a persisted auth secret. values written by the current scheme carry the authenticated-
+// encryption header and are aead-opened; legacy values written before encryption was applied are
+// headerless plaintext and returned as-is (never fed through the legacy xor path, which would
+// corrupt a true plaintext).
+fn open_auth_secret(cipher: &SecretCipher, value: Vec<u8>) -> Result<Vec<u8>, SendableError> {
+    if !SecretCipher::is_sealed(&value) {
+        return Ok(value);
+    }
+    cipher.try_decrypt(&value).ok_or_else(|| {
+        Box::new(std::io::Error::other(
+            "could not decrypt the persisted jwt secret; the credential key may be missing or wrong",
+        )) as SendableError
+    })
+}
+
 pub async fn ensure_jwt_secret<T: DatabaseImpl>(
     db: &T,
     explicit: Option<String>,
 ) -> Result<Vec<u8>, SendableError> {
+    let cipher = auth_cipher();
     if let Some(secret) = explicit.filter(|s| !s.is_empty()) {
         let bytes = secret.into_bytes();
         db.upsert_setting(
             SettingKind::Secret,
             SECRET_SCOPE.into(),
             SECRET_NAME.into(),
-            bytes.clone(),
+            cipher.encrypt(&bytes),
             Utc::now().timestamp(),
         )
         .await?;
@@ -86,7 +110,20 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
         .await?
     {
         if !record.value.is_empty() {
-            return Ok(record.value);
+            let was_sealed = SecretCipher::is_sealed(&record.value);
+            let plaintext = open_auth_secret(&cipher, record.value)?;
+            // migrate a legacy plaintext secret to the encrypted-at-rest scheme on first bootstrap.
+            if !was_sealed {
+                db.upsert_setting(
+                    SettingKind::Secret,
+                    SECRET_SCOPE.into(),
+                    SECRET_NAME.into(),
+                    cipher.encrypt(&plaintext),
+                    Utc::now().timestamp(),
+                )
+                .await?;
+            }
+            return Ok(plaintext);
         }
     }
     let generated = runinator_auth::random_secret(48);
@@ -94,7 +131,7 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
         SettingKind::Secret,
         SECRET_SCOPE.into(),
         SECRET_NAME.into(),
-        generated.clone(),
+        cipher.encrypt(&generated),
         Utc::now().timestamp(),
     )
     .await?;
@@ -102,16 +139,16 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
 }
 
 pub async fn load_jwt_secret<T: DatabaseImpl>(db: &T) -> Result<Vec<u8>, SendableError> {
-    let secret = db
+    let record = db
         .fetch_setting(SettingKind::Secret, SECRET_SCOPE.into(), SECRET_NAME.into())
         .await?
-        .filter(|record| !record.value.is_empty())
-        .map(|record| record.value);
-    secret.ok_or_else(|| {
-        Box::new(std::io::Error::other(
+        .filter(|record| !record.value.is_empty());
+    let Some(record) = record else {
+        return Err(Box::new(std::io::Error::other(
             "missing auth jwt secret; run runinator-bootstrap before starting runinator-ws",
-        )) as SendableError
-    })
+        )) as SendableError);
+    };
+    open_auth_secret(&auth_cipher(), record.value)
 }
 
 /// persist or clear the previous jwt signing secret. an explicit non-empty value is upserted; an
@@ -126,7 +163,7 @@ pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
                 SettingKind::Secret,
                 SECRET_SCOPE.into(),
                 SECRET_NAME_PREVIOUS.into(),
-                secret.into_bytes(),
+                auth_cipher().encrypt(secret.as_bytes()),
                 Utc::now().timestamp(),
             )
             .await
@@ -146,15 +183,18 @@ pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
 pub async fn load_jwt_secret_previous<T: DatabaseImpl>(
     db: &T,
 ) -> Result<Option<Vec<u8>>, SendableError> {
-    Ok(db
+    let record = db
         .fetch_setting(
             SettingKind::Secret,
             SECRET_SCOPE.into(),
             SECRET_NAME_PREVIOUS.into(),
         )
         .await?
-        .map(|record| record.value)
-        .filter(|value| !value.is_empty()))
+        .filter(|record| !record.value.is_empty());
+    match record {
+        Some(record) => Ok(Some(open_auth_secret(&auth_cipher(), record.value)?)),
+        None => Ok(None),
+    }
 }
 
 /// seed the configured bootstrap admin. by default this only provisions the user into an empty user

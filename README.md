@@ -380,19 +380,23 @@ without invalidating live tokens or stranding stored secrets:
   new secret as the primary and the old one as `*_PREVIOUS`, redeploy so bootstrap
   persists both, wait past the access-token TTL, then clear `*_PREVIOUS` (bootstrap
   deletes the slot) and redeploy to retire the old key.
-- **Credential encryption key.** Stored settings are encrypted with
-  `RUNINATOR_CREDENTIAL_KEY` (the primary) and tagged with a short key id;
-  `RUNINATOR_CREDENTIAL_KEY_PREVIOUS` (comma-separated) lists prior keys still
-  accepted on decrypt. To rotate: set the new key as the primary and the old one
-  as `*_PREVIOUS`, redeploy ws, `POST /credentials/reencrypt` (admin) to re-tag
-  every stored value with the new key, then clear `*_PREVIOUS` and redeploy.
-- **Rate limiting.** Set `RUNINATOR_RATE_LIMIT_ENABLED=true` to gate the HTTP API
-  with an in-memory token bucket keyed by the authenticated principal (falling
-  back to the connection IP). Tune it with `RUNINATOR_RATE_LIMIT_RPS` (sustained
-  requests per second, default `50`) and `RUNINATOR_RATE_LIMIT_BURST` (bucket
-  size, default `100`). Each ws replica limits independently; `/health`, `/ready`,
-  and `/metrics` are exempt. Over-limit requests get `429` with a `Retry-After`
-  header.
+- **Credential encryption key.** Stored settings — including the JWT signing
+  secret — are encrypted at rest with `RUNINATOR_CREDENTIAL_KEY` (the primary)
+  and tagged with a short key id; `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`
+  (comma-separated) lists prior keys still accepted on decrypt. To rotate: set the
+  new key as the primary and the old one as `*_PREVIOUS`, redeploy ws,
+  `POST /credentials/reencrypt` (admin) to re-tag every stored value with the new
+  key, then clear `*_PREVIOUS` and redeploy. A signing secret persisted before
+  encryption was added is migrated to the encrypted form on the next bootstrap.
+- **Rate limiting.** On by default; set `RUNINATOR_RATE_LIMIT_ENABLED=false` to
+  disable. It gates the HTTP API with an in-memory token bucket keyed by the
+  authenticated principal (falling back to the connection IP). Tune it with
+  `RUNINATOR_RATE_LIMIT_RPS` (sustained requests per second, default `50`) and
+  `RUNINATOR_RATE_LIMIT_BURST` (bucket size, default `100`). Each ws replica limits
+  independently; `/health`, `/ready`, and `/metrics` are exempt. Over-limit
+  requests get `429` with a `Retry-After` header. Independently, the unauthenticated
+  `/auth/login` endpoint carries an always-on per-IP brute-force throttle (a small
+  burst, then ~1 attempt every 5s) that cannot be disabled.
 
 ### Quick start (local cluster)
 

@@ -15,6 +15,7 @@ uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
 runinator-auth = { path = "../runinator-auth" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
+runinator-utilities = { path = "../runinator-utilities" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

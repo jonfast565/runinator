@@ -1,6 +1,11 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::{ConnectInfo, Path},
+    http::StatusCode,
+};
 use chrono::{Duration, Utc};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
@@ -37,6 +42,16 @@ fn forbidden(message: &str) -> Reply {
     (
         StatusCode::FORBIDDEN,
         Json(ApiResponse::ApiError(ApiError::new(message))),
+    )
+}
+
+fn too_many_requests(retry_after_secs: f64) -> Reply {
+    let secs = retry_after_secs.ceil().max(1.0) as u64;
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ApiResponse::ApiError(ApiError::new(&format!(
+            "too many login attempts; retry in {secs}s"
+        )))),
     )
 }
 
@@ -142,18 +157,32 @@ pub(crate) async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -
 pub(crate) async fn login<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<LoginRequest>,
 ) -> Reply {
+    // bound credential brute force per client ip before doing any work.
+    if let Err(retry_after) = crate::rate_limit::check_login_attempt(addr.ip()) {
+        return too_many_requests(retry_after);
+    }
     let username = request.username.clone();
     let credential = match db.fetch_local_credential(request.username).await {
-        Ok(Some(credential)) => credential,
-        Ok(None) => {
-            audit_login_failure(db.as_ref(), &username, "unknown user").await;
-            return unauthorized("invalid username or password");
-        }
+        Ok(credential) => credential,
         Err(err) => return api_error(err.to_string()),
     };
-    if credential.user.disabled || !verify_password(&request.password, &credential.password_hash) {
+    // always perform an argon2 verification so login timing does not reveal whether the username
+    // exists. an unknown user verifies against a throwaway hash; the result is discarded below.
+    let password_ok = match &credential {
+        Some(credential) => verify_password(&request.password, &credential.password_hash),
+        None => {
+            runinator_auth::dummy_verify(&request.password);
+            false
+        }
+    };
+    let Some(credential) = credential else {
+        audit_login_failure(db.as_ref(), &username, "unknown user").await;
+        return unauthorized("invalid username or password");
+    };
+    if credential.user.disabled || !password_ok {
         let reason = if credential.user.disabled {
             "account disabled"
         } else {

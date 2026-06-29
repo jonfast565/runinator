@@ -62,6 +62,19 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// run a verification against a fixed dummy hash and discard the result. callers use this on the
+/// "no such user" login path so a failed login costs the same argon2 work whether or not the
+/// username exists, defeating username enumeration via response timing.
+pub fn dummy_verify(password: &str) {
+    static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let hash = DUMMY_HASH.get_or_init(|| {
+        // the password behind this hash is irrelevant; we only need a valid, stable phc string so
+        // the verify performs the same work as a real one.
+        hash_password("runinator-dummy-verify").unwrap_or_default()
+    });
+    let _ = verify_password(password, hash);
+}
+
 // ---- random bytes / tokens / api keys ----
 
 /// cryptographically random bytes (e.g. for the signing secret).

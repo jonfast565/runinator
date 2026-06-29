@@ -169,6 +169,13 @@ impl SecretCipher {
     fn find_key(&self, id: [u8; KEY_ID_LEN]) -> Option<&CipherKey> {
         self.keys().find(|key| !key.is_empty() && key.id == id)
     }
+
+    /// whether `value` carries the authenticated-encryption header, i.e. was sealed by this cipher
+    /// family. callers that store values both encrypted and (for legacy reasons) in the clear use
+    /// this to avoid feeding a true plaintext through the legacy xor decrypt path.
+    pub fn is_sealed(value: &[u8]) -> bool {
+        parse_sealed(value).is_some()
+    }
 }
 
 impl std::fmt::Debug for SecretCipher {
