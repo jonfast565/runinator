@@ -3,11 +3,12 @@ use std::{env, ffi::OsString, sync::Arc, time::Duration};
 use log::{error, info, warn};
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
-    spawn_replica_heartbeat,
+    spawn_replica_heartbeat_with_telemetry,
 };
 use runinator_comm::ConsumerProfile;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
+use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use runinator_utilities::startup;
 use tokio::sync::Notify;
 
@@ -29,7 +30,8 @@ fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task:
 }
 
 fn main() -> Result<(), SendableError> {
-    startup::startup("Runinator Worker")?;
+    // held for the process lifetime so otel signals flush on shutdown.
+    let _telemetry = startup::startup("Runinator Worker")?;
 
     let config = parse_config()?;
     configure_provider_service_url(&config);
@@ -56,13 +58,20 @@ async fn run(config: Config) -> Result<(), SendableError> {
             None
         }
     };
-    let _heartbeat = replica_session
-        .clone()
-        .map(|session| spawn_replica_heartbeat(api_client.clone(), session, shutdown.clone()));
+    let telemetry = Arc::new(TelemetryCollector::new());
+    let _heartbeat = replica_session.clone().map(|session| {
+        spawn_replica_heartbeat_with_telemetry(
+            api_client.clone(),
+            session,
+            shutdown.clone(),
+            Some(telemetry.clone()),
+        )
+    });
     let mut worker_task = {
         let runtime = WorkerRuntime {
             broker: broker.clone(),
-            profile: ConsumerProfile::shared(config.broker_consumer_id.clone()),
+            profile: ConsumerProfile::shared(config.broker_consumer_id.clone())
+                .with_labels(config.labels.clone()),
             libraries: Arc::clone(&libraries),
             api_client: api_client.clone(),
             replica_id: replica_session.as_ref().map(ReplicaSession::replica_id),
@@ -168,11 +177,12 @@ async fn register_worker_replica(
             port: None,
             base_path: None,
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: runinator_models::json!({
+            attributes: attributes_with_host_metadata(&runinator_models::json!({
                 "broker_backend": config.broker_backend,
                 "broker_client_id": config.broker_client_id,
                 "broker_consumer_id": config.broker_consumer_id,
-            }),
+                "labels": config.labels,
+            })),
             heartbeat_interval: Duration::from_secs(10),
         },
     )

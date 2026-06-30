@@ -302,6 +302,12 @@ async fn process_delivery(
     delivery: BrokerDelivery,
     in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
 ) -> Result<(), SendableError> {
+    // link this execution span to the trace that dispatched the action (w3c context from the broker
+    // message). a no-op when the dispatcher had otel off.
+    runinator_utilities::telemetry::apply_trace_context(
+        &tracing::Span::current(),
+        &delivery.command.trace_context,
+    );
     let command = delivery.command.clone();
     let action = command.action.clone();
     let token = CancellationToken::new();

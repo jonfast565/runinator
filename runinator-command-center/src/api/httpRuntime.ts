@@ -370,6 +370,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   fetch_providers: { method: "GET", path: () => "providers" },
   fetch_replicas: { method: "GET", path: () => "replicas" },
+  fetch_node_backends: { method: "GET", path: () => "nodes/backends" },
+  fetch_nodes: { method: "GET", path: () => "nodes" },
+  scale_nodes: { method: "POST", path: () => "nodes/scale", body: (args) => arg(args, "request") },
+  stop_node: { method: "POST", path: () => "nodes/stop", body: (args) => arg(args, "request") },
   fetch_credentials: { method: "GET", path: () => "credentials" },
   fetch_credential: {
     method: "GET",

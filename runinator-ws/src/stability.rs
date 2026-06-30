@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use opentelemetry::metrics::Counter;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -21,6 +22,36 @@ const METRIC_HANDLER_PANICS: &str = "runinator_ws_handler_panics_total";
 const METRIC_BACKGROUND_LOOP_FAILURES: &str = "runinator_ws_background_loop_failures_total";
 
 static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
+
+// otel counter handles, lazily bound to the global meter so the same stability counters also export
+// over otlp when otel is configured (a no-op meter otherwise). prometheus stays the source for the
+// /metrics endpoint; this is an additive parallel path.
+struct OtelCounters {
+    result_applied: Counter<u64>,
+    result_duplicate: Counter<u64>,
+    result_retried: Counter<u64>,
+    result_dead_lettered: Counter<u64>,
+    result_receive_errors: Counter<u64>,
+    handler_panics: Counter<u64>,
+    background_loop_failures: Counter<u64>,
+}
+
+static OTEL_COUNTERS: OnceLock<OtelCounters> = OnceLock::new();
+
+fn otel_counters() -> &'static OtelCounters {
+    OTEL_COUNTERS.get_or_init(|| {
+        let meter = opentelemetry::global::meter("runinator-ws");
+        OtelCounters {
+            result_applied: meter.u64_counter(METRIC_RESULT_APPLIED).build(),
+            result_duplicate: meter.u64_counter(METRIC_RESULT_DUPLICATE).build(),
+            result_retried: meter.u64_counter(METRIC_RESULT_RETRIED).build(),
+            result_dead_lettered: meter.u64_counter(METRIC_RESULT_DEAD_LETTERED).build(),
+            result_receive_errors: meter.u64_counter(METRIC_RESULT_RECEIVE_ERRORS).build(),
+            handler_panics: meter.u64_counter(METRIC_HANDLER_PANICS).build(),
+            background_loop_failures: meter.u64_counter(METRIC_BACKGROUND_LOOP_FAILURES).build(),
+        }
+    })
+}
 
 /// install the prometheus recorder once per process. safe to call repeatedly; only the first call
 /// wins. must run before the result consumer starts so early increments are recorded.
@@ -55,31 +86,37 @@ pub(crate) fn result_event_applied(applied: bool) {
     if applied {
         RESULT_EVENTS_APPLIED.fetch_add(1, Ordering::Relaxed);
         metrics::counter!(METRIC_RESULT_APPLIED).increment(1);
+        otel_counters().result_applied.add(1, &[]);
     } else {
         RESULT_EVENTS_DUPLICATE.fetch_add(1, Ordering::Relaxed);
         metrics::counter!(METRIC_RESULT_DUPLICATE).increment(1);
+        otel_counters().result_duplicate.add(1, &[]);
     }
 }
 
 pub(crate) fn result_event_retried() {
     RESULT_EVENTS_RETRIED.fetch_add(1, Ordering::Relaxed);
     metrics::counter!(METRIC_RESULT_RETRIED).increment(1);
+    otel_counters().result_retried.add(1, &[]);
 }
 
 pub(crate) fn result_event_dead_lettered() {
     RESULT_EVENTS_DEAD_LETTERED.fetch_add(1, Ordering::Relaxed);
     metrics::counter!(METRIC_RESULT_DEAD_LETTERED).increment(1);
+    otel_counters().result_dead_lettered.add(1, &[]);
 }
 
 pub(crate) fn result_receive_error() {
     RESULT_RECEIVE_ERRORS.fetch_add(1, Ordering::Relaxed);
     metrics::counter!(METRIC_RESULT_RECEIVE_ERRORS).increment(1);
+    otel_counters().result_receive_errors.add(1, &[]);
 }
 
 /// a request handler panicked and was recovered by the catch-panic layer (the connection got a 500
 /// instead of being dropped). exported for alerting; a nonzero rate points at a reachable panic.
 pub(crate) fn record_handler_panic() {
     metrics::counter!(METRIC_HANDLER_PANICS).increment(1);
+    otel_counters().handler_panics.add(1, &[]);
 }
 
 /// a background orchestration loop exited unexpectedly (panic or early return). this is fatal for the
@@ -87,6 +124,7 @@ pub(crate) fn record_handler_panic() {
 /// stalling with a dead loop.
 pub(crate) fn record_background_loop_failure() {
     metrics::counter!(METRIC_BACKGROUND_LOOP_FAILURES).increment(1);
+    otel_counters().background_loop_failures.add(1, &[]);
 }
 
 pub(crate) fn snapshot() -> StabilityCounters {

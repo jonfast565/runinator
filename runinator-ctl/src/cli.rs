@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use runinator_models::provisioning::ProvisionBackend;
+use runinator_models::replicas::ReplicaKind;
 use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
 use runinator_wdl::TypePolicy;
@@ -55,6 +57,38 @@ impl From<CliTyping> for TypePolicy {
         match policy {
             CliTyping::Strict => TypePolicy::Strict,
             CliTyping::Permissive => TypePolicy::Permissive,
+        }
+    }
+}
+
+/// cli-facing provisioning backend, mapped to the shared `ProvisionBackend`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliProvisionBackend {
+    Supervisor,
+    Kubernetes,
+}
+
+impl From<CliProvisionBackend> for ProvisionBackend {
+    fn from(backend: CliProvisionBackend) -> Self {
+        match backend {
+            CliProvisionBackend::Supervisor => ProvisionBackend::Supervisor,
+            CliProvisionBackend::Kubernetes => ProvisionBackend::Kubernetes,
+        }
+    }
+}
+
+/// cli-facing node kind, mapped to the shared `ReplicaKind`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliNodeKind {
+    Worker,
+    Waker,
+}
+
+impl From<CliNodeKind> for ReplicaKind {
+    fn from(kind: CliNodeKind) -> Self {
+        match kind {
+            CliNodeKind::Worker => ReplicaKind::Worker,
+            CliNodeKind::Waker => ReplicaKind::Waker,
         }
     }
 }
@@ -137,6 +171,46 @@ pub enum Commands {
     Settings {
         #[command(subcommand)]
         command: SettingsCommands,
+    },
+    /// Spin up, scale, and stop worker/waker nodes on demand.
+    Nodes {
+        #[command(subcommand)]
+        command: NodeCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NodeCommands {
+    /// List provisioning backends and current node group sizing.
+    List,
+    /// Add nodes of a kind on a backend, raising the desired count by --count.
+    SpinUp {
+        #[arg(long, value_enum)]
+        backend: CliProvisionBackend,
+        #[arg(long, value_enum)]
+        kind: CliNodeKind,
+        /// How many nodes to add to the current desired count.
+        #[arg(long, default_value_t = 1)]
+        count: u32,
+        /// Routing label as KEY=VALUE applied to spun-up nodes; repeat for multiple.
+        #[arg(long = "label")]
+        labels: Vec<String>,
+    },
+    /// Set the exact desired node count for a kind on a backend.
+    Scale {
+        #[arg(long, value_enum)]
+        backend: CliProvisionBackend,
+        #[arg(long, value_enum)]
+        kind: CliNodeKind,
+        #[arg(long)]
+        desired: u32,
+    },
+    /// Stop and remove a single node instance by id.
+    Stop {
+        #[arg(long, value_enum)]
+        backend: CliProvisionBackend,
+        #[arg(long)]
+        node: String,
     },
 }
 

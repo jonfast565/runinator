@@ -29,7 +29,7 @@ RUN rustup install 1.91.1 && \
         -p runinator-ctl \
         -p runinator-bootstrap \
         -p runinator-plugin-console \
-        --features runinator-ws/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq
+        --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-worker/rabbitmq,runinator-waker/rabbitmq
 
 # ---- shared runtime base ----
 FROM debian:bookworm-slim AS runtime-base

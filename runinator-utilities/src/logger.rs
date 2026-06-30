@@ -1,14 +1,29 @@
 use log::{error, info};
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use runinator_models::errors::SendableError;
+use std::sync::OnceLock;
 use std::{env, fs, fs::File, path::PathBuf, sync::Mutex};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::app_data;
+use crate::telemetry::{self, TelemetryGuard};
+
+// ensures the global subscriber is installed at most once per process. plugins loaded into a
+// service process (e.g. console plugin) call back in via a ctor; the second call becomes a no-op
+// instead of failing to install a duplicate subscriber or standing up duplicate otel exporters.
+static INITIALIZED: OnceLock<()> = OnceLock::new();
 
 /// install the global tracing subscriber: structured spans/events to stdout plus a log file, with
-/// the existing `log` macros bridged in. honors `RUNINATOR_LOG` (an `EnvFilter` directive); falls
-/// back to `info`.
-pub fn setup_logger() -> Result<(), SendableError> {
+/// the existing `log` macros bridged in. when otel is configured (`OTEL_EXPORTER_OTLP_ENDPOINT`),
+/// also bridges spans and log events to the otlp exporters under `service_name`. honors
+/// `RUNINATOR_LOG` (an `EnvFilter` directive); falls back to `info`. returns a guard that flushes
+/// otel on drop; keep it alive for the process lifetime.
+pub fn setup_logger(service_name: &str) -> Result<TelemetryGuard, SendableError> {
+    if INITIALIZED.set(()).is_err() {
+        // already initialized in this process; do not stand up a second subscriber/exporter set.
+        return Ok(TelemetryGuard::disabled());
+    }
+
     let log_file = open_log_file()?;
 
     let filter = EnvFilter::try_from_env("RUNINATOR_LOG")
@@ -21,14 +36,28 @@ pub fn setup_logger() -> Result<(), SendableError> {
         .with_target(true)
         .with_writer(Mutex::new(log_file));
 
+    let telemetry = telemetry::init(service_name)?;
+    // the otel layers are `Option`s, which are themselves no-op `Layer`s when `None`, so the same
+    // registry composition covers both the otel-on and otel-off cases.
+    let otel_trace_layer = telemetry
+        .tracer
+        .clone()
+        .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer));
+    let otel_log_layer = telemetry
+        .logger_provider
+        .as_ref()
+        .map(OpenTelemetryTracingBridge::new);
+
     tracing_subscriber::registry()
         .with(filter)
         .with(stdout_layer)
         .with(file_layer)
+        .with(otel_trace_layer)
+        .with(otel_log_layer)
         .try_init()
         .map_err(|err| -> SendableError { Box::new(std::io::Error::other(err.to_string())) })?;
 
-    Ok(())
+    Ok(telemetry.guard)
 }
 
 pub fn print_env() -> std::io::Result<()> {

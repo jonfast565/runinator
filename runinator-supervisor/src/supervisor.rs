@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     config::{Paths, ProcessConfig, SupervisorConfig, resolve_path},
+    control::{ControlCommand, drain as drain_control},
     display::{clear_screen, render_snapshot},
     os::{is_process_running, send_kill, send_terminate},
     snapshot::{ProcessSnapshot, StateSnapshot, write_snapshot},
@@ -60,6 +61,8 @@ struct ManagedProcess {
     logs_dir: PathBuf,
     log_path: PathBuf,
     start_count: u32,
+    // set when a control command stopped this process, so the poll loop does not auto-restart it.
+    manual_stop: bool,
 }
 
 pub fn start_daemon(paths: &Paths) -> Result<(), DynError> {
@@ -123,6 +126,7 @@ pub fn run_supervisor(
 ) -> Result<(), DynError> {
     fs::create_dir_all(&paths.state_dir)?;
     fs::create_dir_all(&paths.logs_dir)?;
+    fs::create_dir_all(&paths.control_dir)?;
     remove_file_if_exists(&paths.stop_file)?;
 
     if let Some(pid) = read_pid(&paths.pid_file)?
@@ -141,6 +145,9 @@ pub fn run_supervisor(
     let started_at = Utc::now();
     let restart_delay = Duration::from_millis(config.restart_delay_ms);
 
+    // discard any control commands left over from a previous run before honoring new ones.
+    let _ = drain_control(&paths.control_dir);
+
     for process in &mut processes {
         if process.config.autostart {
             attempt_start(process, restart_delay)?;
@@ -151,6 +158,11 @@ pub fn run_supervisor(
 
     loop {
         let now = Instant::now();
+
+        for command in drain_control(&paths.control_dir) {
+            apply_control(&mut processes, command, paths, restart_delay)?;
+        }
+
         for process in &mut processes {
             poll_process(process, now, restart_delay)?;
         }
@@ -236,41 +248,118 @@ fn build_processes(
 ) -> Result<Vec<ManagedProcess>, DynError> {
     let mut processes = Vec::with_capacity(config.processes.len());
     for process in &config.processes {
-        let command_raw = Path::new(&process.command);
-        let command_path = if command_raw.components().count() > 1 || command_raw.is_absolute() {
-            resolve_path(&paths.config_dir, command_raw)
-        } else {
-            command_raw.to_path_buf()
-        };
-
-        let cwd_path = match &process.cwd {
-            Some(raw) => resolve_path(&paths.config_dir, Path::new(raw)),
-            None => paths.config_dir.clone(),
-        };
-
-        let log_path = paths
-            .logs_dir
-            .join(format!("not-started__{}.log", sanitize_name(&process.name)));
-
-        processes.push(ManagedProcess {
-            config: process.clone(),
-            command_path,
-            cwd_path,
-            child: None,
-            status: ProcStatus::Stopped,
-            started_at_utc: None,
-            started_instant: None,
-            restarts: 0,
-            last_exit_code: None,
-            last_error: None,
-            next_restart_at: None,
-            restart_history: VecDeque::new(),
-            logs_dir: paths.logs_dir.clone(),
-            log_path,
-            start_count: 0,
-        });
+        processes.push(build_one_process(process, paths));
     }
     Ok(processes)
+}
+
+// turns a single process config into a managed (not yet started) process. shared by the static
+// startup list and the dynamic add-process control command.
+fn build_one_process(process: &ProcessConfig, paths: &Paths) -> ManagedProcess {
+    let command_raw = Path::new(&process.command);
+    let command_path = if command_raw.components().count() > 1 || command_raw.is_absolute() {
+        resolve_path(&paths.config_dir, command_raw)
+    } else {
+        command_raw.to_path_buf()
+    };
+
+    let cwd_path = match &process.cwd {
+        Some(raw) => resolve_path(&paths.config_dir, Path::new(raw)),
+        None => paths.config_dir.clone(),
+    };
+
+    let log_path = paths
+        .logs_dir
+        .join(format!("not-started__{}.log", sanitize_name(&process.name)));
+
+    ManagedProcess {
+        config: process.clone(),
+        command_path,
+        cwd_path,
+        child: None,
+        status: ProcStatus::Stopped,
+        started_at_utc: None,
+        started_instant: None,
+        restarts: 0,
+        last_exit_code: None,
+        last_error: None,
+        next_restart_at: None,
+        restart_history: VecDeque::new(),
+        logs_dir: paths.logs_dir.clone(),
+        log_path,
+        start_count: 0,
+        manual_stop: false,
+    }
+}
+
+// applies one dynamic control command to the live process table.
+fn apply_control(
+    processes: &mut Vec<ManagedProcess>,
+    command: ControlCommand,
+    paths: &Paths,
+    restart_delay: Duration,
+) -> Result<(), DynError> {
+    match command {
+        ControlCommand::AddProcess { process } => {
+            // a re-add replaces the existing entry of the same name.
+            if let Some(idx) = processes.iter().position(|p| p.config.name == process.name) {
+                stop_one(&mut processes[idx]);
+                processes.remove(idx);
+            }
+            let autostart = process.autostart;
+            processes.push(build_one_process(&process, paths));
+            if autostart && let Some(added) = processes.last_mut() {
+                attempt_start(added, restart_delay)?;
+            }
+        }
+        ControlCommand::StartProcess { name } => {
+            if let Some(process) = processes.iter_mut().find(|p| p.config.name == name)
+                && process.child.is_none()
+            {
+                attempt_start(process, restart_delay)?;
+            }
+        }
+        ControlCommand::StopProcess { name } => {
+            if let Some(process) = processes.iter_mut().find(|p| p.config.name == name) {
+                stop_one(process);
+            }
+        }
+        ControlCommand::RemoveProcess { name } => {
+            if let Some(idx) = processes.iter().position(|p| p.config.name == name) {
+                stop_one(&mut processes[idx]);
+                processes.remove(idx);
+            }
+        }
+    }
+    Ok(())
+}
+
+// terminates a single managed process on request, marking it so the poll loop will not restart it.
+fn stop_one(process: &mut ManagedProcess) {
+    process.manual_stop = true;
+    process.next_restart_at = None;
+    process.started_instant = None;
+    if let Some(mut child) = process.child.take() {
+        let _ = send_terminate(child.id());
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if let Ok(Some(status)) = child.try_wait() {
+                process.last_exit_code = status.code();
+                append_process_log_event(process, &format!("stopped status={status}"));
+                process.status = ProcStatus::Stopped;
+                return;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        // still alive; the poll loop will reap it and manual_stop blocks the restart path.
+        process.child = Some(child);
+        process.status = ProcStatus::Stopping;
+        return;
+    }
+    process.status = ProcStatus::Stopped;
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -290,6 +379,7 @@ fn sanitize_name(name: &str) -> String {
 }
 
 fn attempt_start(process: &mut ManagedProcess, restart_delay: Duration) -> Result<(), DynError> {
+    process.manual_stop = false;
     process.status = ProcStatus::Starting;
     let started_at = Utc::now();
     process.start_count = process.start_count.saturating_add(1);
@@ -388,6 +478,12 @@ fn handle_exit(process: &mut ManagedProcess, status: ExitStatus, restart_delay: 
     process.started_instant = None;
     process.last_exit_code = status.code();
     append_process_log_event(process, &format!("exited status={status}"));
+
+    if process.manual_stop {
+        process.status = ProcStatus::Stopped;
+        process.next_restart_at = None;
+        return;
+    }
 
     if status.success() {
         process.status = ProcStatus::Exited;

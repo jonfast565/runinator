@@ -1,0 +1,24 @@
+# OpenTelemetry stack for viewing traces/metrics/logs from the runinator services.
+#
+# Adds an OpenTelemetry Collector (OTLP receiver), Jaeger (trace UI), Prometheus (scrapes the
+# collector's metrics), and Grafana (dashboards over Prometheus + Jaeger), and patches the
+# runinator-common ConfigMap to set OTEL_EXPORTER_OTLP_ENDPOINT so ws/worker/waker export to the
+# collector. Enable it from an overlay's `components:` list. Removing it from the list turns otel
+# back off (the binaries no-op without the endpoint var).
+#
+# View after deploying:
+#   kubectl -n runinator port-forward svc/runinator-grafana 3000:3000     # dashboards -> http://localhost:3000
+#   kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686    # traces -> http://localhost:16686
+#   kubectl -n runinator port-forward svc/runinator-prometheus 9090:9090  # raw metrics -> http://localhost:9090
+#   kubectl -n runinator logs deploy/runinator-otel-collector             # logs + a copy of all signals
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - otel-collector.yaml
+  - jaeger.yaml
+  - prometheus.yaml
+  - grafana.yaml
+
+patches:
+  - path: common-config-patch.yaml

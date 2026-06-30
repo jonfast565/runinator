@@ -60,10 +60,29 @@ where
         Self { client, locator }
     }
 
+    // inject the active w3c trace context (e.g. `traceparent`) into an outbound request so the web
+    // service continues this trace. a no-op when otel is off (no headers added).
+    fn traced(
+        &self,
+        builder: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        let mut headers = reqwest::header::HeaderMap::new();
+        runinator_utilities::telemetry::inject_into_headers(&mut headers);
+        builder.headers(headers)
+    }
+
+    fn http_get<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::blocking::RequestBuilder {
+        self.traced(self.client.get(url))
+    }
+
+    fn http_post<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::blocking::RequestBuilder {
+        self.traced(self.client.post(url))
+    }
+
     /// Fetch provider/action metadata for task authoring.
     pub fn fetch_providers(&self) -> Result<Vec<ProviderMetadata>> {
         let url = self.build_url(API_PROVIDERS)?;
-        let response = self.client.get(url.clone()).send()?;
+        let response = self.http_get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<Vec<ProviderMetadata>>()?)
     }
@@ -71,7 +90,7 @@ where
     /// Register provider/action metadata with the web service.
     pub fn upsert_provider(&self, provider: &ProviderMetadata) -> Result<ProviderMetadata> {
         let url = self.build_url(API_PROVIDERS)?;
-        let response = self.client.post(url.clone()).json(provider).send()?;
+        let response = self.http_post(url.clone()).json(provider).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<ProviderMetadata>()?)
     }
@@ -84,14 +103,14 @@ where
     ) -> Result<WorkflowDefinition> {
         let mut url = self.build_url(&api_workflow_duplicate(workflow_id))?;
         url.query_pairs_mut().append_pair("bump", bump.as_str());
-        let response = self.client.post(url.clone()).send()?;
+        let response = self.http_post(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowDefinition>()?)
     }
 
     pub fn validate_workflow(&self, workflow: &WorkflowDefinition) -> Result<WorkflowDefinition> {
         let url = self.build_url(API_WORKFLOWS_VALIDATE)?;
-        let response = self.client.post(url.clone()).json(workflow).send()?;
+        let response = self.http_post(url.clone()).json(workflow).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowDefinition>()?)
     }
@@ -99,7 +118,7 @@ where
     /// POST a typed bundle to its associated import endpoint.
     pub fn import_bundle<B: Bundle>(&self, bundle: &B) -> Result<B> {
         let url = self.build_url(B::RESOURCE)?;
-        let response = self.client.post(url.clone()).json(bundle).send()?;
+        let response = self.http_post(url.clone()).json(bundle).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<B>()?)
     }
@@ -108,8 +127,7 @@ where
     pub fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
         let url = self.build_url(API_WORKFLOWS_IMPORT)?;
         let response = self
-            .client
-            .post(url.clone())
+            .http_post(url.clone())
             .header(
                 WORKFLOW_JSON_IMPORT_RISK_HEADER,
                 WORKFLOW_JSON_IMPORT_RISK_ACK,
@@ -134,8 +152,7 @@ where
             url.set_query(Some("overwrite=true"));
         }
         let response = self
-            .client
-            .post(url.clone())
+            .http_post(url.clone())
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(body)
             .send()?;
@@ -156,7 +173,7 @@ where
             .map(|id| format!("{}/export", api_workflow(id)))
             .unwrap_or_else(|| runinator_models::api_routes::API_WORKFLOWS_EXPORT.into());
         let url = self.build_url(&path)?;
-        let response = self.client.get(url.clone()).send()?;
+        let response = self.http_get(url.clone()).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowBundle>()?)
     }
@@ -179,7 +196,7 @@ where
         command: &str,
     ) -> Result<TaskResponse> {
         let url = self.build_url(&api_workflow_run_command(workflow_run_id, command))?;
-        let response = self.client.post(url.clone()).json(&json!({})).send()?;
+        let response = self.http_post(url.clone()).json(&json!({})).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<TaskResponse>()?)
     }

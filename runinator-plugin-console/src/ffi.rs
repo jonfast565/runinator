@@ -11,7 +11,9 @@ const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"
 
 #[ctor(unsafe)]
 fn constructor() {
-    if let Err(err) = logger::setup_logger() {
+    // loaded into the worker process, which has usually already installed logging; this call is a
+    // no-op there. the returned guard is dropped immediately since the host owns telemetry shutdown.
+    if let Err(err) = logger::setup_logger("Console Plugin") {
         eprintln!("logger not set up: {err}");
     }
 }

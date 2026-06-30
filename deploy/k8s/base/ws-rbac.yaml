@@ -1,0 +1,38 @@
+# RBAC for the on-demand node provisioner (kubernetes backend). The web service scales the
+# worker/waker Deployments and can delete a single pod to drain it. Only granted when the ws image
+# is built with the `kubernetes` feature and RUNINATOR_PROVISIONER_K8S_ENABLED=true.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runinator-ws
+  namespace: runinator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runinator-ws-provisioner
+  namespace: runinator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runinator-ws-provisioner
+  namespace: runinator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runinator-ws-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: runinator-ws
+    namespace: runinator

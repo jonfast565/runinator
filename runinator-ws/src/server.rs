@@ -76,7 +76,9 @@ pub async fn run_webserver<T: DatabaseImpl>(
             port: Some(port),
             base_path: Some("/".into()),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: advertisement.attributes.clone(),
+            attributes: runinator_utilities::resource_telemetry::attributes_with_host_metadata(
+                &advertisement.attributes,
+            ),
         },
         None,
     )
@@ -87,6 +89,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let heartbeat_instance = instance.clone();
     let heartbeat_host = advertisement.host.clone();
     let heartbeat_attributes = advertisement.attributes.clone();
+    let heartbeat_telemetry =
+        std::sync::Arc::new(runinator_utilities::resource_telemetry::TelemetryCollector::new());
     // every long-lived loop runs in this set so an unexpected exit (panic or early return) is
     // observed at the join below instead of silently leaving a dead loop behind.
     let mut background: JoinSet<()> = JoinSet::new();
@@ -103,6 +107,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
                     return;
                 }
                 _ = ticker.tick() => {
+                    let attributes = runinator_utilities::resource_telemetry::attributes_with_telemetry(
+                        &heartbeat_attributes,
+                        heartbeat_telemetry.as_ref(),
+                    );
                     let _ = crate::repository::heartbeat_replica(
                         heartbeat_db.as_ref(),
                         web_replica.replica_id,
@@ -112,7 +120,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
                             host: heartbeat_host.clone(),
                             port: Some(port),
                             base_path: Some("/".into()),
-                            attributes: heartbeat_attributes.clone(),
+                            attributes,
                         },
                         None,
                     ).await;
@@ -167,7 +175,13 @@ pub async fn run_webserver<T: DatabaseImpl>(
             rate_limit.burst
         );
     }
-    let app = build_router(pool, bus, broker, auth_config, rate_limit);
+    let provisioner = Arc::new(runinator_provisioner::build_registry(
+        crate::provisioner_config::from_env(),
+    ));
+    if !provisioner.is_empty() {
+        log::info!("on-demand node provisioning is ENABLED");
+    }
+    let app = build_router(pool, bus, broker, provisioner, auth_config, rate_limit);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(

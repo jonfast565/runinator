@@ -1148,6 +1148,12 @@ fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), Wdl
             }
         }
         "mcp" => modifiers.mcp = true,
+        "runner" => {
+            let value = positional
+                .first()
+                .ok_or_else(|| WdlError::syntax(span, "runner requires a string argument"))?;
+            modifiers.runner = Some(expect_string(value, "runner")?);
+        }
         "reentry" => {
             let max = named
                 .iter()

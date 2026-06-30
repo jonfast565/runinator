@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-prometheus-config
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      # the otlp metrics pushed by ws/worker/waker, re-exposed by the collector's prometheus exporter.
+      - job_name: runinator-otlp
+        static_configs:
+          - targets: ["runinator-otel-collector.runinator.svc.cluster.local:8889"]
+      # the collector's own pipeline telemetry (throughput, refused/dropped points).
+      - job_name: otel-collector
+        static_configs:
+          - targets: ["runinator-otel-collector.runinator.svc.cluster.local:8888"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-prometheus
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-prometheus
+  template:
+    metadata:
+      labels:
+        app: runinator-prometheus
+        app.kubernetes.io/part-of: runinator
+        app.kubernetes.io/component: observability
+    spec:
+      containers:
+        - name: prometheus
+          # stores samples in an emptyDir; fine for viewing, not for long retention.
+          image: prom/prometheus:v3.1.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=6h"
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: runinator-prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-prometheus
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+spec:
+  selector:
+    app: runinator-prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

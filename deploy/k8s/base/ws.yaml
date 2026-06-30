@@ -29,6 +29,7 @@ spec:
       labels:
         app: runinator-ws
     spec:
+      serviceAccountName: runinator-ws
       initContainers:
         - name: db-bootstrap
           image: runinator-bootstrap:dev
@@ -69,6 +70,16 @@ spec:
             # (load_jwt_secret) and shared across replicas; only the toggle lives here.
             - name: RUNINATOR_AUTH_ENABLED
               value: "true"
+            # on-demand node provisioning via the kubernetes backend. requires the ws image built
+            # with `--features kubernetes` and the runinator-ws-provisioner RBAC role.
+            - name: RUNINATOR_PROVISIONER_K8S_ENABLED
+              value: "true"
+            - name: RUNINATOR_PROVISIONER_K8S_NAMESPACE
+              value: "runinator"
+            - name: RUNINATOR_PROVISIONER_K8S_WORKER_DEPLOYMENT
+              value: "runinator-worker"
+            - name: RUNINATOR_PROVISIONER_K8S_WAKER_DEPLOYMENT
+              value: "runinator-waker"
           envFrom:
             - configMapRef:
                 name: runinator-common

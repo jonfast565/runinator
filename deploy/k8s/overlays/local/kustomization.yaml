@@ -7,6 +7,12 @@ resources:
   - ../../base
   - local-secrets.yaml
 
+# OpenTelemetry collector + Jaeger trace UI, and point the services at the collector. View traces at
+# http://localhost:16686 after `kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686`.
+# See components/observability/kustomization.yaml for metrics/logs viewing. Drop this line to disable.
+components:
+  - ../../components/observability
+
 # Single-node / local cluster (k3d, minikube, kind). PVCs use the cluster's
 # default StorageClass (e.g. local-path on k3d). If your local cluster has no
 # default storage provisioner, see overlays/local/README.md for a hostPath

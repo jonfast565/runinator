@@ -82,5 +82,6 @@ fn test_config() -> Config {
         worker_id: Uuid::new_v4(),
         advertise_host: None,
         liveness_file: String::new(),
+        labels: Default::default(),
     }
 }

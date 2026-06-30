@@ -1,0 +1,10 @@
+# point every service that reads runinator-common (ws, worker, waker) at the in-cluster collector.
+# the otlp http/protobuf exporter appends /v1/{traces,metrics,logs} to this base url. presence of
+# this var is what turns otel on in each binary; remove the component to turn it back off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-common
+  namespace: runinator
+data:
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://runinator-otel-collector.runinator.svc.cluster.local:4318"

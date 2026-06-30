@@ -18,6 +18,7 @@ use runinator_models::api_routes::{
     API_WDL_FORMAT, API_WDL_HOVER, API_WDL_IMPORT, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
     API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
 };
+use runinator_provisioner::ProvisionerRegistry;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -69,6 +70,7 @@ use crate::handlers::{
     observability::{get_audit_log, get_dead_letters},
     packs::import_pack,
     providers::{get_providers, import_provider_bundle, upsert_provider},
+    provisioning::{get_node_backends, get_nodes, scale_nodes, stop_node},
     replicas::{
         get_replica_providers, get_replicas, heartbeat_replica, mark_replica_offline,
         register_replica, upsert_replica_provider,
@@ -104,6 +106,7 @@ pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
     events: EventSender,
     broker: Arc<dyn Broker>,
+    provisioner: Arc<ProvisionerRegistry>,
     auth: AuthConfig,
     rate_limit: RateLimitConfig,
 ) -> Router {
@@ -233,6 +236,10 @@ pub fn build_router<T: DatabaseImpl>(
                 .post(upsert_replica_provider::<T>)
                 .layer(Extension(pool.clone())),
         )
+        .route("/nodes/backends", get(get_node_backends))
+        .route("/nodes", get(get_nodes))
+        .route("/nodes/scale", post(scale_nodes))
+        .route("/nodes/stop", post(stop_node))
         .route(
             API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
@@ -592,6 +599,7 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .layer(Extension(events))
         .layer(Extension(broker))
+        .layer(Extension(provisioner))
         .layer(Extension(auth_config_arc.clone()))
         // the rate limiter is layered inside the auth middleware so it can key by the resolved
         // principal; auth inserts the `AuthContext` before this layer runs.
@@ -608,9 +616,30 @@ pub fn build_router<T: DatabaseImpl>(
         // actually applies it; placed before `Router::new()` had any routes, it wrapped nothing and
         // requests silently fell back to axum's stricter 2 MB default. 10 MB accommodates pack uploads.
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
-        // outermost layer: recover from any panic in a handler or inner middleware so a single bad
-        // request returns a 500 instead of dropping the connection or poisoning the runtime.
+        // recover from any panic in a handler or inner middleware so a single bad request returns a
+        // 500 instead of dropping the connection or poisoning the runtime.
         .layer(CatchPanicLayer::custom(handle_panic))
+        // outermost layer: open a request span parented to any inbound w3c trace context so logs and
+        // otel spans for this request continue the caller's distributed trace.
+        .layer(axum::middleware::from_fn(trace_propagation_middleware))
+}
+
+/// open a per-request tracing span and re-parent it onto any inbound `traceparent` header so the
+/// server side of a distributed trace links to the caller. a no-op for trace context when otel is
+/// off, leaving an ordinary local span.
+async fn trace_propagation_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use tracing::Instrument;
+
+    let span = tracing::info_span!(
+        "http_request",
+        method = %request.method(),
+        path = %request.uri().path(),
+    );
+    runinator_utilities::telemetry::apply_http_context(&span, request.headers());
+    next.run(request).instrument(span).await
 }
 
 /// turn a recovered handler panic into the standard json error envelope. the panic payload is logged

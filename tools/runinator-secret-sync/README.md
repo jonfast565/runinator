@@ -90,6 +90,21 @@ kube-secret sink's namespace). A kube client is only built when at least one
 `claude-credentials` via subPath at `~/.claude/.credentials.json`). The Secret
 names there must match the `kube-secret` sink names in your config.
 
+## Scoped specs and the runinator pack
+
+`secret-sync.claude.json` and `secret-sync.aws.json` are single-credential specs
+(the `claude` and `aws-sso` jobs split out of `secret-sync.example.json`). The
+engine has no per-job flag, so scoping is done by passing one of these with
+`--config`. Add future **API-key** credential files as new jobs in the relevant
+scoped spec — no workflow change needed.
+
+The `packs/creds-sync` pack schedules this engine from runinator itself: two
+hourly workflows whose `console.run` node (pinned with `.runner("creds-sync")`)
+invokes `scripts/sync-secrets.sh --config <scoped spec> --once`. That node only
+runs on a worker started with `RUNINATOR_WORKER_LABELS=runner=creds-sync` on the
+operator's workstation (local logins + kubeconfig); if none is connected the run
+parks then fails. See `packs/creds-sync/README.md`.
+
 ## RBAC
 
 Running as your own kubeconfig identity needs no setup. To run as a dedicated

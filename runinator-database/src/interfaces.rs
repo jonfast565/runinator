@@ -535,6 +535,12 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         stale_before: DateTime<Utc>,
     ) -> impl Future<Output = Result<Vec<ReplicaRecord>, SendableError>> + Send;
 
+    /// Count node runs currently held by each executor replica, keyed by replica id. reflects live
+    /// executor claims, so the count is the number of tasks actively running on each worker.
+    fn count_running_node_runs_by_executor(
+        &self,
+    ) -> impl Future<Output = Result<Vec<(Uuid, i64)>, SendableError>> + Send;
+
     /// Upsert a provider registration for a worker replica.
     fn upsert_replica_provider_registration(
         &self,

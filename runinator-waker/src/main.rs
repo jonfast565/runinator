@@ -4,7 +4,7 @@ use log::{error, info};
 use reqwest::Url;
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_session,
-    spawn_replica_heartbeat,
+    spawn_replica_heartbeat_with_telemetry,
 };
 use runinator_broker::{
     Broker,
@@ -15,6 +15,7 @@ use runinator_broker::{
 };
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
+use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use tokio::sync::Notify;
 
 use runinator_utilities::startup;
@@ -25,7 +26,8 @@ use runinator_waker::{
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    startup::startup("Runinator Waker")?;
+    // held for the process lifetime so otel signals flush on shutdown.
+    let _telemetry = startup::startup("Runinator Waker")?;
 
     info!("Parse waker config");
     let config = parse_config()?;
@@ -48,20 +50,21 @@ async fn main() -> Result<(), SendableError> {
             port: None,
             base_path: None,
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: runinator_models::json!({
+            attributes: attributes_with_host_metadata(&runinator_models::json!({
                 "broker_backend": config.broker_backend,
                 "broker_client_id": config.broker_client_id,
                 "consumer_group": config.waker_consumer_group,
-            }),
+            })),
             heartbeat_interval: std::time::Duration::from_secs(10),
         },
     )
     .await
     {
-        Ok(session) => Some(spawn_replica_heartbeat(
+        Ok(session) => Some(spawn_replica_heartbeat_with_telemetry(
             api_client.clone(),
             session,
             notify.clone(),
+            Some(Arc::new(TelemetryCollector::new())),
         )),
         Err(err) => {
             error!("Failed to register waker replica: {}", err);

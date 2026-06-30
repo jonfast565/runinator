@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
 use uuid::Uuid;
@@ -513,6 +514,11 @@ pub struct WorkflowAction {
     pub mcp_enabled: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// routing labels a worker must carry to receive this action. empty means the general pool. the
+    /// reducer maps a non-empty selector to a labelled broker target and parks until a matching worker
+    /// is live.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub required_labels: BTreeMap<String, String>,
 }
 
 fn default_timeout_seconds() -> i64 {
@@ -536,6 +542,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             pub mcp_enabled: bool,
             #[serde(default)]
             pub tags: Vec<String>,
+            #[serde(default)]
+            pub required_labels: BTreeMap<String, String>,
             #[serde(flatten)]
             pub extra: Map,
         }
@@ -555,6 +563,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             configuration,
             mcp_enabled: raw.mcp_enabled,
             tags: raw.tags,
+            required_labels: raw.required_labels,
         })
     }
 }

@@ -240,6 +240,8 @@ pub struct Modifiers {
     pub tags: Vec<String>,
     pub mcp: bool,
     pub reentry: Option<Reentry>,
+    /// `.runner("<type>")`: require a worker carrying the `runner=<type>` label to execute this node.
+    pub runner: Option<String>,
 }
 
 /// `.retry(max, backoff: <s>, max: <s>, jitter: <bool>, on: any|failure|timeout)`. only `max` is

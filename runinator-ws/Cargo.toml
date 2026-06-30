@@ -23,6 +23,7 @@ utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 tracing = "0.1"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.16", default-features = false }
+opentelemetry = "0.32"
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }
@@ -34,6 +35,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-supervisor = { path = "../runinator-supervisor" }
+runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-wdl = { path = "../runinator-wdl" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
@@ -43,3 +45,5 @@ async-trait = "0.1"
 [features]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
+# cloud builds: enable the kube-rs node provisioner backend.
+kubernetes = ["runinator-provisioner/kubernetes"]

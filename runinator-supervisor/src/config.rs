@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::types::DynError;
 
@@ -20,7 +20,7 @@ pub struct SupervisorConfig {
     pub processes: Vec<ProcessConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessConfig {
     pub name: String,
     pub command: String,
@@ -45,6 +45,7 @@ pub struct Paths {
     pub pid_file: PathBuf,
     pub stop_file: PathBuf,
     pub state_file: PathBuf,
+    pub control_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub supervisor_log: PathBuf,
 }
@@ -89,6 +90,7 @@ pub fn load_config(path: &Path) -> Result<(SupervisorConfig, Paths), DynError> {
         pid_file: state_dir.join("supervisor.pid"),
         stop_file: state_dir.join("stop"),
         state_file: state_dir.join("state.json"),
+        control_dir: state_dir.join("control"),
         logs_dir: state_dir.join("logs"),
         supervisor_log: state_dir.join("supervisor.log"),
         state_dir,

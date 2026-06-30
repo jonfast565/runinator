@@ -23,7 +23,8 @@ use runinator_utilities::{app_data, startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    startup::startup("Runinator Web Service")?;
+    // held for the process lifetime so otel signals flush on shutdown.
+    let _telemetry = startup::startup("Runinator Web Service")?;
 
     let args = CliArgs::parse();
 

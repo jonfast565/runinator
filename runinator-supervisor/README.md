@@ -14,6 +14,24 @@ runinator-supervisor --config runinator-supervisor.json status --watch
 runinator-supervisor --config runinator-supervisor.json stop
 ```
 
+### Dynamic processes
+
+A running supervisor can add, start, stop, and remove processes on the fly. These commands
+drop a request into the control queue (`<state_dir>/control`), which the running daemon drains
+each tick. This is the mechanism the web service's on-demand node provisioner uses to spin up
+worker/waker nodes.
+
+```bash
+runinator-supervisor process add --name worker-2 --command ./target/debug/runinator-worker \
+  --arg --broker-backend --arg tcp --env RUST_LOG=info
+runinator-supervisor process start worker-2
+runinator-supervisor process stop worker-2
+runinator-supervisor process remove worker-2
+```
+
+Manually-stopped processes are not auto-restarted; `process start` resumes them and re-arms the
+crash-restart policy.
+
 ## Config shape
 
 `runinator-supervisor.json`:
@@ -56,6 +74,7 @@ When `state_dir` is omitted, supervisor state defaults to
 - `<state_dir>/state.json`
 - `<state_dir>/supervisor.log`
 - `<state_dir>/logs/<process>.log`
+- `<state_dir>/control/` — dynamic add/start/stop/remove command queue
 
 The repository's local supervisor config runs `runinatorctl workflows apply`
 once on startup to import the workflow pack. The checked-in supervisor config

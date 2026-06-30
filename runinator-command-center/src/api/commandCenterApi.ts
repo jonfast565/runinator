@@ -599,6 +599,61 @@ export async function fetchReplicas() {
   return command<ReplicaListResponse>("fetch_replicas");
 }
 
+// --- on-demand node provisioning (supervisor / kubernetes backends) ---
+
+export interface NodeBackendInfo {
+  backend: string;
+  kinds: string[];
+  available: boolean;
+}
+
+export interface NodeBackendsResponse {
+  backends: NodeBackendInfo[];
+}
+
+export interface ProvisionedGroup {
+  backend: string;
+  kind: string;
+  name: string;
+  desired: number;
+  available: number;
+  manageable: boolean;
+}
+
+export interface NodeSpec {
+  labels?: Record<string, string>;
+  image?: string | null;
+  extra_args?: string[];
+}
+
+export interface ScaleNodesRequest {
+  backend: string;
+  kind: string;
+  desired: number;
+  spec?: NodeSpec;
+}
+
+export interface StopNodeRequest {
+  backend: string;
+  node_id: string;
+}
+
+export async function fetchNodeBackends() {
+  return command<NodeBackendsResponse>("fetch_node_backends");
+}
+
+export async function fetchNodes() {
+  return command<ProvisionedGroup[]>("fetch_nodes");
+}
+
+export async function scaleNodes(request: ScaleNodesRequest) {
+  return command<ProvisionedGroup>("scale_nodes", { request });
+}
+
+export async function stopNode(request: StopNodeRequest) {
+  return command<JsonRecord>("stop_node", { request });
+}
+
 // --- embedded desktop worker (tauri runtime only) ---
 
 export interface LocalWorkerStatus {

@@ -70,6 +70,8 @@ use crate::models::ApiError;
         crate::handlers::runs::get_workflow_runs,
         crate::handlers::providers::get_providers,
         crate::handlers::replicas::get_replicas,
+        crate::handlers::provisioning::get_node_backends,
+        crate::handlers::provisioning::get_nodes,
         crate::handlers::observability::get_dead_letters,
         crate::handlers::observability::get_audit_log,
     ),

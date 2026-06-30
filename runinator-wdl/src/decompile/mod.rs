@@ -1229,6 +1229,9 @@ impl<'a> Decompiler<'a> {
         if action.mcp_enabled {
             modifiers.push(".mcp()".to_string());
         }
+        if let Some(runner) = action.required_labels.get("runner") {
+            modifiers.push(format!(".runner({})", quote(runner)));
+        }
         if node.reentry.enabled {
             modifiers.push(format!(".reentry({})", node.reentry.max_visits));
         }

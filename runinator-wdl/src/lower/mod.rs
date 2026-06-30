@@ -717,6 +717,11 @@ impl Lowerer {
                 ),
             );
         }
+        if let Some(runner) = &action.modifiers.runner {
+            let mut labels = Map::new();
+            labels.insert("runner".into(), Value::String(runner.clone()));
+            action_obj.insert("required_labels".into(), Value::Object(labels));
+        }
 
         let mut fields = vec![
             ("action", Value::Object(action_obj)),
@@ -765,6 +770,11 @@ impl Lowerer {
                         .collect(),
                 ),
             );
+        }
+        if let Some(runner) = &action.modifiers.runner {
+            let mut labels = Map::new();
+            labels.insert("runner".into(), Value::String(runner.clone()));
+            obj.insert("required_labels".into(), Value::Object(labels));
         }
         Ok(Value::Object(obj))
     }

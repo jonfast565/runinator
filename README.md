@@ -144,6 +144,27 @@ The default worker configuration processes up to four actions concurrently. Tune
 `--max-concurrent-actions` when long-running actions should not block unrelated
 workflow action pickup.
 
+### On-demand nodes
+
+Worker and waker nodes can be spun up and scaled down on demand through the web
+service's pluggable provisioner. Two backends are available: `supervisor` (adds
+dynamic local processes through the running `runinator-supervisor` control queue)
+and `kubernetes` (scales the worker/waker Deployments via kube-rs; the ws image
+must be built with `--features kubernetes` and the `runinator-ws-provisioner`
+RBAC role applied). Enable a backend with `RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED`
+or `RUNINATOR_PROVISIONER_K8S_ENABLED`. The supervisor backend reads its spawn
+templates from `RUNINATOR_PROVISIONER_SUPERVISOR_WORKER` /
+`..._WAKER` (JSON `{ "command", "args", "env", "cwd" }`).
+
+Drive it from the CLI or the command center's Node Pools panel (Replicas view):
+
+```bash
+runinatorctl nodes list
+runinatorctl nodes spin-up --backend supervisor --kind worker --count 2
+runinatorctl nodes scale --backend kubernetes --kind worker --desired 5
+runinatorctl nodes stop --backend supervisor --node prov-worker-<id>
+```
+
 The web service owns the reducer and drives workflows over the broker: it
 publishes scheduled work on the `wake` channel, and the `runinator-waker` (a
 small, broker-only timer/relay) sleeps until each ready node is due and then
@@ -332,6 +353,56 @@ The v1 control-flow runtime is controller-driven and still uses one `active_node
 `parallel` and `race` advance branch roots sequentially through persisted workflow state,
 and `map.concurrency` is reserved for a future multi-active-node runtime. Branch/body/item
 nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
+
+## Observability
+
+Every service binary (`ws`, `worker`, `waker`) emits structured logs to stdout and
+a log file via `tracing`, filtered by `RUNINATOR_LOG` (an `EnvFilter` directive,
+default `info`). The web service additionally exposes Prometheus metrics at
+`/metrics`.
+
+OpenTelemetry export is **off by default and turns on purely from the standard
+`OTEL_*` environment variables** — no CLI flags or config-file options. When
+`OTEL_EXPORTER_OTLP_ENDPOINT` (or a signal-specific
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT`) is set, each binary stands up
+OTLP exporters for **traces, metrics, and logs** over OTLP HTTP/protobuf;
+`OTEL_SDK_DISABLED=true` forces it off. The service name defaults to the binary
+(e.g. `Runinator Web Service`) and is overridable with `OTEL_SERVICE_NAME` /
+`OTEL_RESOURCE_ATTRIBUTES`.
+
+Trace context propagates across hops using W3C `traceparent`: inbound HTTP requests
+to the web service continue the caller's trace, and the reducer stamps the active
+context onto each `ActionCommand` so a worker's execution span links back to the
+dispatching trace. Prometheus `/metrics` remains available alongside OTLP metrics.
+
+```bash
+# point all binaries at a local OpenTelemetry Collector (OTLP/HTTP on :4318)
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+cargo run -p runinator-supervisor -- start
+```
+
+**In Kubernetes**, the `components/observability` kustomize component deploys an
+OpenTelemetry Collector, Jaeger (trace UI), Prometheus (scrapes the collector), and
+Grafana (dashboards over Prometheus + Jaeger), and points the services at the
+collector. It is enabled in the `local` overlay by default; add
+`../../components/observability` to another overlay's `components:` list to turn it
+on there (and remove it to turn otel back off). After deploying:
+
+```bash
+# dashboards — open Grafana at http://localhost:3000 (anonymous admin; "Runinator
+# Overview" dashboard is provisioned, with Prometheus + Jaeger datasources wired up)
+kubectl -n runinator port-forward svc/runinator-grafana 3000:3000
+# traces — open the Jaeger UI at http://localhost:16686
+kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686
+# raw metrics — the Prometheus UI / API at http://localhost:9090
+kubectl -n runinator port-forward svc/runinator-prometheus 9090:9090
+# logs (and a copy of every signal) — the collector's debug exporter
+kubectl -n runinator logs deploy/runinator-otel-collector
+```
+
+Grafana's anonymous-admin login is for convenient local viewing; lock it down (set
+a real admin password and disable anonymous access) before using it on a shared
+cluster.
 
 ## Kubernetes
 

@@ -55,6 +55,11 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
     let replicas = db
         .fetch_replicas(replica_type, status, stale_before)
         .await?;
+    let running_tasks = db
+        .count_running_node_runs_by_executor()
+        .await?
+        .into_iter()
+        .collect::<std::collections::HashMap<Uuid, i64>>();
     let counts = runinator_models::replicas::ReplicaCounts {
         workers: replicas
             .iter()
@@ -76,7 +81,11 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
             })
             .count() as i64,
     };
-    Ok(ReplicaListResponse { counts, replicas })
+    Ok(ReplicaListResponse {
+        counts,
+        replicas,
+        running_tasks,
+    })
 }
 
 pub async fn upsert_replica_provider_registration<T: DatabaseImpl>(

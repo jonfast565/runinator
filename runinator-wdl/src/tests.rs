@@ -498,6 +498,38 @@ fn retry_config_round_trips() {
 }
 
 #[test]
+fn runner_modifier_lowers_and_round_trips() {
+    let src = r#"
+        workflow "Runner" v1 {
+            node go <- console.run(command: "echo hi")
+                .runner("creds-sync")
+                .timeout(300s)
+        }
+    "#;
+    let definition = compile(src);
+    let action = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .and_then(|node| node.action.as_ref())
+        .expect("action node");
+    assert_eq!(
+        action.required_labels.get("runner").map(String::as_str),
+        Some("creds-sync"),
+        "runner modifier should lower to required_labels.runner"
+    );
+
+    // the decompiled source must surface `.runner("creds-sync")` and round-trip.
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(
+        wdl.contains(".runner(\"creds-sync\")"),
+        "decompiled source missing runner modifier:\n{wdl}"
+    );
+    assert_round_trips(src);
+}
+
+#[test]
 fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
     // a for-loop with no limit: the back-edge, the continuation, the block id, and `limit none`.
     let wdl = assert_round_trips_explicit(

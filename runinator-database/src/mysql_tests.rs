@@ -98,11 +98,13 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
             configuration: WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
+            required_labels: Default::default(),
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
         target: Default::default(),
         trace_id: Uuid::nil(),
+        trace_context: Default::default(),
     }
 }
 

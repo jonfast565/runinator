@@ -2728,6 +2728,27 @@ where
         Ok(replicas)
     }
 
+    async fn count_running_node_runs_by_executor(&self) -> Result<Vec<(Uuid, i64)>, SendableError> {
+        // a held executor claim (current_executor_replica_id set) marks a node run that is actively
+        // executing on that worker, so grouping the live claims yields the running-task count per
+        // replica.
+        let rows = sqlx::query(&self.render(
+            "SELECT current_executor_replica_id AS replica_id, COUNT(*) AS running_count
+             FROM workflow_node_runs
+             WHERE current_executor_replica_id IS NOT NULL
+             GROUP BY current_executor_replica_id",
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        let mut counts = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let replica_id: Uuid = row.try_get("replica_id")?;
+            let running_count: i64 = row.try_get("running_count")?;
+            counts.push((replica_id, running_count));
+        }
+        Ok(counts)
+    }
+
     async fn upsert_replica_provider_registration(
         &self,
         replica_id: Uuid,

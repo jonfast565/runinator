@@ -743,11 +743,13 @@ mod tests {
                 configuration: runinator_models::workflows::WorkflowObject::default(),
                 mcp_enabled: false,
                 tags: Vec::new(),
+                required_labels: Default::default(),
             },
             attempt: 1,
             parameters: json!({}),
             target: Default::default(),
             trace_id: Uuid::nil(),
+            trace_context: Default::default(),
         }
     }
 }

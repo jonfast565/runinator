@@ -44,6 +44,34 @@ pub(super) fn target_for(
     }
 }
 
+/// pure routing policy for a label-targeted action: dispatch to any worker carrying the required
+/// labels when one is live, otherwise park until one connects. split from the db lookup for testing.
+pub(super) fn target_for_labels(
+    required_labels: &std::collections::BTreeMap<String, String>,
+    worker_available: bool,
+) -> TargetResolution {
+    if worker_available {
+        TargetResolution::Ready(ActionTarget::Labels {
+            selector: required_labels.clone(),
+        })
+    } else {
+        TargetResolution::Park
+    }
+}
+
+/// whether a replica's advertised `attributes.labels` object is a superset of the required selector.
+pub(super) fn replica_labels_match(
+    attributes: &Value,
+    required_labels: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    let Some(labels) = attributes.get("labels").and_then(Value::as_object) else {
+        return false;
+    };
+    required_labels
+        .iter()
+        .all(|(key, value)| labels.get(key).and_then(Value::as_str) == Some(value.as_str()))
+}
+
 pub(super) fn foreign_language_runtime(language: &str) -> Option<(&'static str, &'static str)> {
     match language {
         "python" | "py" => Some(("python", "python:3.12")),
@@ -265,6 +293,8 @@ fn build_action_command(
         parameters,
         target,
         trace_id: Uuid::now_v7(),
+        // capture the dispatching trace so the worker's execution span joins this trace.
+        trace_context: runinator_utilities::telemetry::current_trace_context(),
     }
 }
 
@@ -276,6 +306,12 @@ async fn resolve_action_target<T: DatabaseImpl>(
     workflow_run: &WorkflowRun,
     action: &WorkflowAction,
 ) -> Result<TargetResolution, SendableError> {
+    // an explicit label requirement takes precedence over provider-based routing: dispatch to a live
+    // worker that carries the labels, otherwise park until one connects (the node timeout fails it).
+    if !action.required_labels.is_empty() {
+        let worker_available = live_worker_matches_labels(db, &action.required_labels).await?;
+        return Ok(target_for_labels(&action.required_labels, worker_available));
+    }
     // only consult the registry when a local action actually has a launching replica to check.
     let replica_live = match (
         action.provider == LOCAL_PROVIDER,
@@ -289,6 +325,24 @@ async fn resolve_action_target<T: DatabaseImpl>(
         workflow_run.trigger_actor_replica_id,
         replica_live,
     ))
+}
+
+/// whether any live worker replica advertises labels that satisfy the action's required selector.
+async fn live_worker_matches_labels<T: DatabaseImpl>(
+    db: &T,
+    required_labels: &std::collections::BTreeMap<String, String>,
+) -> Result<bool, SendableError> {
+    let stale_before = Utc::now() - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
+    let live = db
+        .fetch_replicas(
+            Some(ReplicaKind::Worker),
+            Some(ReplicaStatus::Live),
+            stale_before,
+        )
+        .await?;
+    Ok(live
+        .iter()
+        .any(|replica| replica_labels_match(&replica.attributes, required_labels)))
 }
 
 /// whether a worker replica has heartbeated recently enough to receive work.

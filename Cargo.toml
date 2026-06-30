@@ -37,6 +37,7 @@ members = [
     "runinator-utilities",
     "runinator-broker",
     "runinator-supervisor",
+    "runinator-provisioner",
     "runinator-mcp",
     "runinator-workflows",
     "runinator-wdl",

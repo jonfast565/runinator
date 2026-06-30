@@ -62,7 +62,12 @@ node deploy <- github.deploy()
 `done` and `fail` are reserved targets (the terminal nodes).
 
 **Chaining is configuration.** `.timeout(60s) .retry(3) .tags("ci","release") .mcp()
-.reentry(5)` on actions.
+.reentry(5) .runner("creds-sync")` on actions.
+
+`.runner("<type>")` requires the action to run on a worker advertising the `runner=<type>` label
+(`RUNINATOR_WORKER_LABELS`). The reducer dispatches it to a live matching worker and parks the node
+until one connects, so pair it with `.timeout(...)` to fail the run when no such worker is available.
+Lowers to the action's `required_labels` (`{ "runner": "<type>" }`).
 
 `.retry(max, backoff: <dur>, max: <dur>, jitter: <bool>, on: any|failure|timeout)` — only `max`
 (attempt count) is required. `backoff` is the first-retry delay and doubles each attempt up to the

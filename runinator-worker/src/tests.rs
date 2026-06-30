@@ -126,6 +126,7 @@ async fn worker_accepts_std_exec_program_with_context() {
         configuration: runinator_models::workflows::WorkflowObject::default(),
         mcp_enabled: false,
         tags: Vec::new(),
+        required_labels: Default::default(),
     };
     let parameters = json!({
         "program": [ { "$return": { "ok": true } } ],
@@ -161,6 +162,7 @@ async fn worker_rejects_undeclared_std_exec_parameter() {
         configuration: runinator_models::workflows::WorkflowObject::default(),
         mcp_enabled: false,
         tags: Vec::new(),
+        required_labels: Default::default(),
     };
     let parameters = json!({
         "program": [ { "$return": true } ],
@@ -204,6 +206,7 @@ fn worker_validates_provider_output_fields_when_present() {
         configuration: runinator_models::workflows::WorkflowObject::default(),
         mcp_enabled: false,
         tags: Vec::new(),
+        required_labels: Default::default(),
     };
     let result = TaskExecutionResult {
         message: None,
@@ -230,11 +233,13 @@ fn action_command() -> ActionCommand {
             configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
+            required_labels: Default::default(),
         },
         attempt: 1,
         parameters: json!({}),
         target: Default::default(),
         trace_id: Uuid::nil(),
+        trace_context: Default::default(),
     }
 }
 
@@ -255,5 +260,6 @@ fn test_config() -> Config {
         worker_id: Uuid::new_v4(),
         advertise_host: None,
         liveness_file: String::new(),
+        labels: Default::default(),
     }
 }

@@ -9,6 +9,16 @@ colored = "3.1.1"
 env_logger = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+# opentelemetry: otlp uses the http/protobuf transport with a blocking client and dedicated-thread
+# batch/periodic processors, so telemetry can be installed before any tokio runtime exists.
+opentelemetry = "0.32"
+opentelemetry_sdk = "0.32"
+opentelemetry-otlp = "0.32"
+opentelemetry-appender-tracing = "0.32"
+opentelemetry-semantic-conventions = "0.32"
+opentelemetry-http = "0.32"
+tracing-opentelemetry = "0.33"
+http = "1"
 tokio = { version = "1", features = ["full"] }
 csv = "1"
 rust_xlsxwriter = "0.94.1"
@@ -18,5 +28,11 @@ serde_json = "1"
 zip = { version = "7.2", default-features = false }
 chacha20poly1305 = "0.10"
 sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+# cpu/memory sampling for replica resource telemetry.
+sysinfo = "0.33"
+# best-effort nvidia gpu telemetry; loads libnvidia-ml dynamically at runtime, so it builds on
+# every platform and simply reports no gpus when the library or a device is absent.
+nvml-wrapper = "0.10"
 
 runinator-models = { path = "../runinator-models" }

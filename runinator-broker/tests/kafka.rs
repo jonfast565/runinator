@@ -195,5 +195,6 @@ fn action_command() -> ActionCommand {
         parameters: json!({ "value": true }),
         target: Default::default(),
         trace_id: Uuid::nil(),
+        trace_context: Default::default(),
     }
 }

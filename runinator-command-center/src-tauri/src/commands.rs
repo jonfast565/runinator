@@ -1094,6 +1094,32 @@ pub async fn fetch_replicas(
 }
 
 #[tauri::command]
+pub async fn fetch_node_backends(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "nodes/backends").await
+}
+
+#[tauri::command]
+pub async fn fetch_nodes(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "nodes").await
+}
+
+#[tauri::command]
+pub async fn scale_nodes(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "nodes/scale", &request).await
+}
+
+#[tauri::command]
+pub async fn stop_node(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "nodes/stop", &request).await
+}
+
+#[tauri::command]
 pub async fn fetch_credentials(
     state: State<'_, CommandCenterState>,
 ) -> CommandResult<Vec<CredentialSummary>> {

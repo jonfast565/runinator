@@ -8,6 +8,7 @@ mod events;
 mod handlers;
 mod models;
 mod openapi;
+mod provisioner_config;
 pub mod orchestration {
     pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
 }

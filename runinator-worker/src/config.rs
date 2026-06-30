@@ -1,6 +1,7 @@
 use clap::Parser;
 use runinator_models::errors::SendableError;
 use runinator_utilities::app_data;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,9 @@ pub struct Config {
     pub worker_id: Uuid,
     pub advertise_host: Option<String>,
     pub liveness_file: String,
+    /// routing labels this worker advertises; the reducer pins label-targeted actions to a worker
+    /// whose labels are a superset of the action's required selector.
+    pub labels: BTreeMap<String, String>,
 }
 
 #[derive(Parser, Debug)]
@@ -74,6 +78,11 @@ struct CliArgs {
     /// probes when the worker has no http server. set to empty to disable.
     #[arg(long, default_value = "/tmp/runinator-worker-liveness")]
     liveness_file: String,
+
+    /// comma-separated routing labels this worker advertises, e.g. `runner=creds-sync,zone=onprem`.
+    /// actions that require a label are pinned to a worker carrying it (general pool when empty).
+    #[arg(long, env = "RUNINATOR_WORKER_LABELS")]
+    labels: Option<String>,
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {
@@ -111,7 +120,28 @@ pub fn parse_config() -> Result<Config, SendableError> {
         worker_id,
         advertise_host: args.advertise_host.filter(|value| !value.trim().is_empty()),
         liveness_file: args.liveness_file,
+        labels: parse_labels(args.labels.as_deref()),
     })
+}
+
+// parse a `k=v,k=v` label string into a map; blank entries and entries without a `=` are skipped.
+fn parse_labels(raw: Option<&str>) -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::new();
+    let Some(raw) = raw else {
+        return labels;
+    };
+    for entry in raw.split(',') {
+        let Some((key, value)) = entry.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        labels.insert(key.to_string(), value.to_string());
+    }
+    labels
 }
 
 fn plugin_search_paths(mut paths: Vec<String>) -> Vec<String> {

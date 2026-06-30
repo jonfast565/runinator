@@ -139,6 +139,7 @@ async fn dispatch_compensation<T: DatabaseImpl>(
         parameters,
         target: Default::default(),
         trace_id: Uuid::now_v7(),
+        trace_context: runinator_utilities::telemetry::current_trace_context(),
     };
     db.enqueue_action_dispatch(
         format!("compensation:{}:{}", workflow_run.id, node_run.id),

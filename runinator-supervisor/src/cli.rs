@@ -54,9 +54,42 @@ pub enum Commands {
         #[arg(short, long, default_value_t = false)]
         watch: bool,
     },
+    /// Add, start, stop, or remove a dynamic process in the running supervisor.
+    Process {
+        #[command(subcommand)]
+        command: ProcessCommands,
+    },
     #[command(hide = true)]
     Supervise {
         #[arg(long, default_value_t = false)]
         foreground: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProcessCommands {
+    /// Register (and start, unless --no-autostart) a new process.
+    Add {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        command: String,
+        /// A command-line argument; repeat for multiple.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+        /// An environment variable as KEY=VALUE; repeat for multiple.
+        #[arg(long = "env")]
+        env: Vec<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Do not start the process immediately after adding it.
+        #[arg(long, default_value_t = false)]
+        no_autostart: bool,
+    },
+    /// Start a registered process that is stopped.
+    Start { name: String },
+    /// Stop a running process without removing it.
+    Stop { name: String },
+    /// Stop and forget a process.
+    Remove { name: String },
 }

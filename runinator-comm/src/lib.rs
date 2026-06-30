@@ -66,6 +66,10 @@ pub struct ActionCommand {
     /// execution line up. defaults for backward-compatible deserialization of older messages.
     #[serde(default = "Uuid::now_v7")]
     pub trace_id: Uuid,
+    /// w3c trace context (e.g. `traceparent`) captured at dispatch so the worker's execution span
+    /// joins the dispatching trace. empty when otel is off; defaults for older messages.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub trace_context: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

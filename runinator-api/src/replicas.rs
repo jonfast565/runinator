@@ -6,6 +6,7 @@ use runinator_models::replicas::{
     ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
 };
 use runinator_models::value::Value;
+use runinator_utilities::resource_telemetry::{attributes_with_telemetry, TelemetryCollector};
 use tokio::{sync::Notify, task::JoinHandle};
 use uuid::Uuid;
 
@@ -122,6 +123,20 @@ pub fn spawn_replica_heartbeat<L>(
 where
     L: ServiceLocator + 'static,
 {
+    spawn_replica_heartbeat_with_telemetry(api_client, session, shutdown, None)
+}
+
+/// like [`spawn_replica_heartbeat`], but samples `collector` on every tick and folds live
+/// cpu/ram/gpu telemetry into the heartbeat attributes. pass `None` to send static attributes only.
+pub fn spawn_replica_heartbeat_with_telemetry<L>(
+    api_client: AsyncApiClient<L>,
+    session: ReplicaSession,
+    shutdown: Arc<Notify>,
+    collector: Option<Arc<TelemetryCollector>>,
+) -> JoinHandle<()>
+where
+    L: ServiceLocator + 'static,
+{
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(session.config.heartbeat_interval);
         loop {
@@ -136,8 +151,13 @@ where
                     return;
                 }
                 _ = ticker.tick() => {
+                    let mut request = session.heartbeat_request();
+                    if let Some(collector) = collector.as_ref() {
+                        request.attributes =
+                            attributes_with_telemetry(&session.config.attributes, collector);
+                    }
                     if let Err(err) = api_client
-                        .heartbeat_replica(session.replica_id(), &session.heartbeat_request())
+                        .heartbeat_replica(session.replica_id(), &request)
                         .await
                     {
                         warn!("Failed to heartbeat replica {}: {}", session.replica_id(), err);

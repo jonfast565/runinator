@@ -1,6 +1,7 @@
 <template>
   <section class="pane replicas-pane">
     <LocalWorkerPanel />
+    <NodePoolsPanel />
     <div class="replicas-layout">
       <aside class="panel replicas-list-panel">
         <div class="panel-toolbar">
@@ -118,6 +119,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
+import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import { useAppStore } from "../stores/app";
 import type { ReplicaKind } from "../types/models";
 import { formatDate, pretty } from "../utils/format";

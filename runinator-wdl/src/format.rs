@@ -529,6 +529,9 @@ impl Formatter {
         if action.modifiers.mcp {
             modifiers.push(".mcp()".to_string());
         }
+        if let Some(runner) = &action.modifiers.runner {
+            modifiers.push(format!(".runner({})", quote(runner)));
+        }
         if let Some(reentry) = &action.modifiers.reentry {
             let mut modifier = format!(".reentry(max: {}", reentry.max_visits);
             if let Some(target) = &reentry.on_exhausted {

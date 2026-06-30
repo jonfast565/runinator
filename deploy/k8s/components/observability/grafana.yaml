@@ -1,0 +1,216 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-grafana-datasources
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://runinator-prometheus.runinator.svc.cluster.local:9090
+        isDefault: true
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        access: proxy
+        url: http://runinator-jaeger.runinator.svc.cluster.local:16686
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-grafana-dashboards-provider
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: runinator
+        orgId: 1
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-grafana-dashboard-overview
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+data:
+  # queries match metric names by regex so the dashboard survives the collector's prometheus
+  # naming (unit/_total suffixes) without needing exact names.
+  overview.json: |
+    {
+      "uid": "runinator-overview",
+      "title": "Runinator Overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "10s",
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Result events / sec by outcome",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum by (__name__) (rate({__name__=~\"runinator_ws_result_events.*\"}[5m]))",
+              "legendFormat": "{{__name__}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Collector accepted metric points / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total[5m]))",
+              "legendFormat": "accepted"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Handler panics (total)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 9 },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum({__name__=~\"runinator_ws_handler_panics.*\"})"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Background loop failures (total)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 9 },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum({__name__=~\"runinator_ws_background_loop_failures.*\"})"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "stat",
+          "title": "Dead-lettered result events (total)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 6, "w": 6, "x": 12, "y": 9 },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum({__name__=~\"runinator_ws_result_events_dead_lettered.*\"})"
+            }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-grafana
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runinator-grafana
+  template:
+    metadata:
+      labels:
+        app: runinator-grafana
+        app.kubernetes.io/part-of: runinator
+        app.kubernetes.io/component: observability
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          env:
+            # anonymous admin so the local stack needs no login. lock this down for shared clusters.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Admin"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboards-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: datasources
+          configMap:
+            name: runinator-grafana-datasources
+        - name: dashboards-provider
+          configMap:
+            name: runinator-grafana-dashboards-provider
+        - name: dashboards
+          configMap:
+            name: runinator-grafana-dashboard-overview
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-grafana
+  namespace: runinator
+  labels:
+    app.kubernetes.io/part-of: runinator
+    app.kubernetes.io/component: observability
+spec:
+  selector:
+    app: runinator-grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

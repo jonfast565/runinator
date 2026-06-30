@@ -13,6 +13,7 @@ resources:
   - common-config.yaml
   - postgres.yaml
   - rabbitmq.yaml
+  - ws-rbac.yaml
   - ws.yaml
   - archiver.yaml
   - waker.yaml

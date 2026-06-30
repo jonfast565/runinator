@@ -1,5 +1,6 @@
 use super::action::{
-    TargetResolution, default_foreign_language_runtime, foreign_language_runtime, target_for,
+    TargetResolution, default_foreign_language_runtime, foreign_language_runtime,
+    replica_labels_match, target_for, target_for_labels,
 };
 use super::assert::evaluate_assertions;
 use super::await_run::parse_await_mode;
@@ -82,6 +83,42 @@ fn local_actions_pin_to_a_live_launching_replica_else_park() {
     );
     // no launching replica recorded: nowhere local to run, so park.
     assert_eq!(target_for("local", None, true), TargetResolution::Park);
+}
+
+#[test]
+fn label_targeted_actions_route_to_a_matching_worker_else_park() {
+    let mut selector = std::collections::BTreeMap::new();
+    selector.insert("runner".to_string(), "creds-sync".to_string());
+    // a live worker carries the label: dispatch a labelled target.
+    assert_eq!(
+        target_for_labels(&selector, true),
+        TargetResolution::Ready(ActionTarget::Labels {
+            selector: selector.clone()
+        })
+    );
+    // no matching worker connected: park (the node timeout later fails the run).
+    assert_eq!(target_for_labels(&selector, false), TargetResolution::Park);
+}
+
+#[test]
+fn replica_labels_match_requires_superset() {
+    let mut required = std::collections::BTreeMap::new();
+    required.insert("runner".to_string(), "creds-sync".to_string());
+
+    // exact and superset label sets match.
+    let exact = runinator_models::json!({ "labels": { "runner": "creds-sync" } });
+    assert!(replica_labels_match(&exact, &required));
+    let superset =
+        runinator_models::json!({ "labels": { "runner": "creds-sync", "zone": "onprem" } });
+    assert!(replica_labels_match(&superset, &required));
+
+    // wrong value, missing key, and absent labels object all fail to match.
+    let wrong = runinator_models::json!({ "labels": { "runner": "other" } });
+    assert!(!replica_labels_match(&wrong, &required));
+    let missing = runinator_models::json!({ "labels": { "zone": "onprem" } });
+    assert!(!replica_labels_match(&missing, &required));
+    let unlabeled = runinator_models::json!({ "broker_backend": "tcp" });
+    assert!(!replica_labels_match(&unlabeled, &required));
 }
 
 #[test]

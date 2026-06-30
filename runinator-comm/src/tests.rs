@@ -60,11 +60,13 @@ fn workflow_result_events_round_trip_with_json() {
             configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
+            required_labels: Default::default(),
         },
         attempt: 1,
         parameters: json!({}),
         target: Default::default(),
         trace_id: Uuid::nil(),
+        trace_context: Default::default(),
     };
     let event = WorkflowResultEvent::chunk(
         &command,

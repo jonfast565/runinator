@@ -1,0 +1,11 @@
+{
+  "item_type": "wdl_pack",
+  "name": "Worker Credential Sync Pack",
+  "version": 1,
+  "workflows": [
+    "wdl/update-claude-auth.wdl",
+    "wdl/update-aws-auth.wdl"
+  ],
+  "settings": "settings.wdls",
+  "triggers": []
+}
