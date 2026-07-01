@@ -112,12 +112,46 @@ pub async fn auth_middleware<T: DatabaseImpl>(
     let Some(presented) = extract_credential(&req) else {
         return unauthorized("missing credential");
     };
-    let Some(context) = runinator_auth::resolve_credential(&state.config, &state, &presented).await
+    let Some(mut context) =
+        runinator_auth::resolve_credential(&state.config, &state, &presented).await
     else {
         return unauthorized("invalid or expired credential");
     };
+    // jwt principals carry their active org in the token; api-key/service principals select one per
+    // request via `X-Org-Id`. resolve the header's org here so downstream handlers see org context.
+    if context.org_id.is_none() {
+        if let Some(org_id) = req
+            .headers()
+            .get("x-org-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
+        {
+            resolve_header_org(&state, &mut context, org_id).await;
+        }
+    }
     req.extensions_mut().insert(context);
     next.run(req).await
+}
+
+/// bind an `X-Org-Id` org onto the request's principal: members get their stored role; a platform
+/// admin gets org context with no role (they transcend org roles). a non-member non-admin is left
+/// org-less, so org-gated endpoints reject them.
+async fn resolve_header_org<T: DatabaseImpl>(
+    state: &AuthState<T>,
+    context: &mut AuthContext,
+    org_id: Uuid,
+) {
+    if let Some(user_id) = context.principal_id {
+        if let Ok(Some(membership)) = state.db.fetch_org_membership(org_id, user_id).await {
+            context.org_id = Some(org_id);
+            context.org_role = Some(membership.role);
+            return;
+        }
+    }
+    if context.is_admin {
+        context.org_id = Some(org_id);
+        context.org_role = None;
+    }
 }
 
 fn unauthorized(message: &str) -> Response {

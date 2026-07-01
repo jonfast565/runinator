@@ -177,6 +177,33 @@ pub enum Commands {
         #[command(subcommand)]
         command: NodeCommands,
     },
+    /// Manage organizations, their resource allocation, and usage/cost.
+    Orgs {
+        #[command(subcommand)]
+        command: OrgCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrgCommands {
+    /// List the organizations you belong to, with your role in each.
+    List,
+    /// Create an organization; you become its owner.
+    Create { name: String },
+    /// Show an org's dedicated node allocation and projected monthly cost.
+    Nodes { org: uuid::Uuid },
+    /// Set an org's dedicated node count for a kind on a backend (quota-enforced).
+    Scale {
+        org: uuid::Uuid,
+        #[arg(long, value_enum)]
+        backend: CliProvisionBackend,
+        #[arg(long, value_enum)]
+        kind: CliNodeKind,
+        #[arg(long)]
+        desired: u32,
+    },
+    /// Show an org's accrued usage and cost over the trailing 30 days.
+    Usage { org: uuid::Uuid },
 }
 
 #[derive(Debug, Subcommand)]

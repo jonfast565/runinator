@@ -24,6 +24,7 @@ const ACTION_DISPATCH_LEASE_SECONDS: i64 = 60;
 const MAX_INGRESS_ATTEMPTS: u32 = 3;
 const INGRESS_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 const REPLICA_REAP_INTERVAL: Duration = Duration::from_secs(60);
+const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
 
 /// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
 /// (the durable backstop). the broker dedupes wakes already in flight.
@@ -72,6 +73,40 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
                 return;
             }
             _ = tokio::time::sleep(REPLICA_REAP_INTERVAL) => {}
+        }
+    }
+}
+
+/// periodically record each org's dedicated node allocation into the usage ledger so per-org
+/// node-hours (and cost) can be integrated over time. sampling the recorded allocations keeps
+/// accounting exact and provisioner-independent; a missed sample only reduces temporal resolution.
+pub(crate) async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+    info!("Usage sampler started");
+    loop {
+        match db.list_all_resource_groups().await {
+            Ok(groups) => {
+                let now = chrono::Utc::now();
+                for group in groups {
+                    let sample = runinator_models::billing::UsageSample {
+                        org_id: group.org_id,
+                        backend: group.backend,
+                        kind: group.kind,
+                        node_count: group.desired,
+                        sampled_at: now,
+                    };
+                    if let Err(err) = db.insert_usage_sample(sample).await {
+                        warn!("Usage sample insert failed: {}", err);
+                    }
+                }
+            }
+            Err(err) => error!("Usage sampler iteration failed: {}", err),
+        }
+        tokio::select! {
+            _ = shutdown.notified() => {
+                info!("Usage sampler shutting down");
+                return;
+            }
+            _ = tokio::time::sleep(USAGE_SAMPLE_INTERVAL) => {}
         }
     }
 }

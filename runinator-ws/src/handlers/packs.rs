@@ -69,7 +69,14 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = crate::authz::require_admin(&ctx) {
+    // a platform admin imports globally; an org admin imports into their active org. imported
+    // workflows are stamped with `import_org` so the pack lands in the right tenant.
+    let import_org = ctx.org_id;
+    if let Some(org_id) = import_org {
+        if let Err(reply) = crate::authz::require_org_admin(&ctx, org_id) {
+            return reply;
+        }
+    } else if let Err(reply) = crate::authz::require_admin(&ctx) {
         return reply;
     }
     let overwrite = params.overwrite;
@@ -77,10 +84,11 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
         if !json_workflow_import_risk_acknowledged(&headers) {
             return json_workflow_import_risk_required();
         }
-        let bundle: WorkflowBundle = match serde_json::from_slice(&body) {
+        let mut bundle: WorkflowBundle = match serde_json::from_slice(&body) {
             Ok(bundle) => bundle,
             Err(err) => return bad_request(format!("invalid workflow bundle json: {err}")),
         };
+        stamp_bundle_org(&mut bundle, import_org);
         log::info!(
             "Importing json workflow bundle through pack endpoint: {} workflows, {} triggers (overwrite={overwrite})",
             bundle.workflows.len(),
@@ -101,10 +109,12 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
         );
     }
 
-    let (workflow_bundle, secret_bundle) = match runinator_utilities::pack::read_pack_zip(&body) {
+    let (mut workflow_bundle, secret_bundle) = match runinator_utilities::pack::read_pack_zip(&body)
+    {
         Ok(parsed) => parsed,
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
+    stamp_bundle_org(&mut workflow_bundle, import_org);
     log::info!(
         "Importing pack: {} workflows, {} triggers, {} secrets (overwrite={overwrite})",
         workflow_bundle.workflows.len(),
@@ -141,6 +151,13 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
             secrets,
         })),
     )
+}
+
+// stamp every workflow in an imported bundle with the target org so it lands in the caller's tenant.
+fn stamp_bundle_org(bundle: &mut WorkflowBundle, org_id: Option<uuid::Uuid>) {
+    for workflow in &mut bundle.workflows {
+        workflow.org_id = org_id;
+    }
 }
 
 fn is_json_content_type(headers: &HeaderMap) -> bool {

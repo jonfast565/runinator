@@ -46,6 +46,10 @@ pub struct NodeSpec {
     /// extra command-line args appended to spun-up nodes (supervisor backend).
     #[serde(default)]
     pub extra_args: Vec<String>,
+    /// backend-local group key that namespaces a node pool apart from the kind's default group, so
+    /// e.g. per-org dedicated pools scale independently. `None` uses the kind's default group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// one provisionable node group and its current sizing.

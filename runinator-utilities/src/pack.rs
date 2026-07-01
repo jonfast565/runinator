@@ -76,6 +76,7 @@ mod tests {
                 id: None,
                 name: "demo".into(),
                 namespace: None,
+                org_id: None,
                 version: runinator_models::semver::SemVer::new(1, 0, 0),
                 enabled: true,
                 input_type: Default::default(),

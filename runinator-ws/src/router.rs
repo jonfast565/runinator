@@ -47,6 +47,9 @@ use crate::handlers::{
         get_external_items, get_gate, get_gates, get_idempotency_key, open_gate,
         put_idempotency_key, reject_request,
     },
+    billing::{
+        get_org_nodes, get_org_quota, get_org_usage, get_rate_card, put_org_quota, scale_org_nodes,
+    },
     catalog::{get_catalog_items, upsert_catalog_item},
     credentials::{
         delete_credential, get_credential, import_secret_bundle, put_credential, reencrypt_settings,
@@ -68,6 +71,10 @@ use crate::handlers::{
         mark_notification_read,
     },
     observability::{get_audit_log, get_dead_letters},
+    orgs::{
+        add_org_member, create_org, delete_org, get_org, list_my_orgs, list_org_members, list_orgs,
+        remove_org_member, switch_org, update_org, update_org_member,
+    },
     packs::import_pack,
     providers::{get_providers, import_provider_bundle, upsert_provider},
     provisioning::{get_node_backends, get_nodes, scale_nodes, stop_node},
@@ -596,6 +603,58 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/teams/{id}/members/{user_id}",
             delete(remove_team_member::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/switch-org",
+            post(switch_org::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs",
+            get(list_orgs::<T>)
+                .post(create_org::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/me",
+            get(list_my_orgs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}",
+            get(get_org::<T>)
+                .patch(update_org::<T>)
+                .delete(delete_org::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/members",
+            get(list_org_members::<T>)
+                .post(add_org_member::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/members/{user_id}",
+            patch(update_org_member::<T>)
+                .delete(remove_org_member::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route("/rate-card", get(get_rate_card))
+        .route(
+            "/orgs/{id}/nodes",
+            get(get_org_nodes::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/nodes/scale",
+            post(scale_org_nodes::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/quota",
+            get(get_org_quota::<T>)
+                .put(put_org_quota::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/usage",
+            get(get_org_usage::<T>).layer(Extension(pool.clone())),
         )
         .layer(Extension(events))
         .layer(Extension(broker))

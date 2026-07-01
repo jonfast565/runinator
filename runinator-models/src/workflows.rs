@@ -20,6 +20,10 @@ pub struct WorkflowDefinition {
     /// the qualified identity `namespace + "." + name`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// the organization (tenant) that owns this workflow. `None` means platform-global / unassigned,
+    /// which keeps pre-tenancy workflows working unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<Uuid>,
     #[serde(default)]
     pub version: SemVer,
     #[serde(default)]

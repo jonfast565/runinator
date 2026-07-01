@@ -7,6 +7,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     auth::{ApiKey, ApiKeyRecord, Grant, Permission, PrincipalType, ResourceType},
     notifications::NewNotification,
+    orgs::OrgRole,
     runs::NewRunChunk,
     settings::SettingKind,
     workflows::{
@@ -997,6 +998,7 @@ fn workflow(name: &str) -> WorkflowDefinition {
         id: None,
         name: name.to_string(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
@@ -1166,6 +1168,63 @@ async fn users_grants_and_teams_round_trip() {
         .unwrap();
     assert_eq!(team_grants.len(), 1);
     assert_eq!(team_grants[0].permission, Permission::Run);
+}
+
+#[tokio::test]
+async fn orgs_and_memberships_round_trip() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-orgs-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let acme = db.create_org("Acme".into(), "acme".into()).await.unwrap();
+    let acme_id = acme.id.unwrap();
+    // slug is the unique routing identifier.
+    assert!(db.fetch_org_by_slug("acme".into()).await.unwrap().is_some());
+    assert_eq!(db.list_orgs().await.unwrap().len(), 1);
+
+    let user = db
+        .create_user("bob".into(), None, false, None)
+        .await
+        .unwrap();
+    let user_id = user.id.unwrap();
+
+    // membership is idempotent on (org, user); re-adding updates the role in place.
+    db.add_org_member(acme_id, user_id, OrgRole::Member)
+        .await
+        .unwrap();
+    db.add_org_member(acme_id, user_id, OrgRole::Admin)
+        .await
+        .unwrap();
+    let membership = db
+        .fetch_org_membership(acme_id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(membership.role, OrgRole::Admin);
+    assert_eq!(db.list_org_members(acme_id).await.unwrap().len(), 1);
+
+    // the user's org list carries their role in each org.
+    let user_orgs = db.list_user_orgs(user_id).await.unwrap();
+    assert_eq!(user_orgs.len(), 1);
+    assert_eq!(user_orgs[0].1, OrgRole::Admin);
+
+    // update flips the disabled flag and rename; slug is immutable.
+    let updated = db
+        .update_org(acme_id, Some("Acme Inc".into()), Some(true))
+        .await
+        .unwrap();
+    assert_eq!(updated.name, "Acme Inc");
+    assert!(updated.disabled);
+    assert_eq!(updated.slug, "acme");
+
+    // removing the member empties the roster; deleting the org clears everything.
+    db.remove_org_member(acme_id, user_id).await.unwrap();
+    assert!(db.list_org_members(acme_id).await.unwrap().is_empty());
+    db.delete_org(acme_id).await.unwrap();
+    assert!(db.fetch_org(acme_id).await.unwrap().is_none());
 }
 
 #[tokio::test]

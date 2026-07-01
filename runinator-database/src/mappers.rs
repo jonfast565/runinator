@@ -6,9 +6,12 @@ use runinator_models::{
         ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Permission, PrincipalType,
         ResourceType, Team, User,
     },
+    billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
+    orgs::{OrgMembership, OrgRole, Organization},
+    provisioning::ProvisionBackend,
     replicas::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
         TriggerSourceKind,
@@ -181,6 +184,63 @@ row_mapper!(row_to_team(row) -> Team {
     }
 });
 
+row_mapper!(row_to_organization(row) -> Organization {
+    Organization {
+        id: Some(row.get::<Uuid, _>("id")),
+        name: row.get::<String, _>("name"),
+        slug: row.get::<String, _>("slug"),
+        disabled: row.get::<bool, _>("disabled"),
+        created_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("created_at"), 0)
+            .unwrap_or_else(Utc::now),
+        updated_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("updated_at"), 0)
+            .unwrap_or_else(Utc::now),
+    }
+});
+
+row_mapper!(row_to_org_membership(row) -> OrgMembership {
+    OrgMembership {
+        org_id: row.get::<Uuid, _>("org_id"),
+        user_id: row.get::<Uuid, _>("user_id"),
+        role: OrgRole::from_str_lossy(&row.get::<String, _>("role")).unwrap_or(OrgRole::Member),
+        created_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("created_at"), 0)
+            .unwrap_or_else(Utc::now),
+    }
+});
+
+row_mapper!(row_to_org_quota(row) -> OrgQuota {
+    OrgQuota {
+        org_id: row.get::<Uuid, _>("org_id"),
+        max_nodes_per_kind: serde_json::from_str(&row.get::<String, _>("max_nodes_json"))
+            .unwrap_or_default(),
+        max_monthly_cents: row.get::<i64, _>("max_monthly_cents") as u32,
+    }
+});
+
+row_mapper!(row_to_usage_sample(row) -> UsageSample {
+    UsageSample {
+        org_id: row.get::<Uuid, _>("org_id"),
+        backend: ProvisionBackend::try_from(row.get::<String, _>("backend").as_str())
+            .unwrap_or(ProvisionBackend::Supervisor),
+        kind: ReplicaKind::try_from(row.get::<String, _>("kind").as_str())
+            .unwrap_or(ReplicaKind::Worker),
+        node_count: row.get::<i64, _>("node_count") as u32,
+        sampled_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("sampled_at"), 0)
+            .unwrap_or_else(Utc::now),
+    }
+});
+
+row_mapper!(row_to_org_resource_group(row) -> OrgResourceGroup {
+    OrgResourceGroup {
+        org_id: row.get::<Uuid, _>("org_id"),
+        backend: ProvisionBackend::try_from(row.get::<String, _>("backend").as_str())
+            .unwrap_or(ProvisionBackend::Supervisor),
+        kind: ReplicaKind::try_from(row.get::<String, _>("kind").as_str())
+            .unwrap_or(ReplicaKind::Worker),
+        desired: row.get::<i64, _>("desired") as u32,
+        dedicated: row.get::<bool, _>("dedicated"),
+    }
+});
+
 row_mapper!(row_to_grant(row) -> Grant {
     Grant {
         id: Some(row.get::<Uuid, _>("id")),
@@ -237,6 +297,7 @@ macro_rules! workflow_from_row {
             id: $row.get("id"),
             name: $row.get("name"),
             namespace: $row.get("namespace"),
+            org_id: $row.get("org_id"),
             version: $row.get::<String, _>("version").parse().unwrap_or_default(),
             enabled: $row.get("enabled"),
             input_type: parse_type($row.get::<String, _>("input_schema")),

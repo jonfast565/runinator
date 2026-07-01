@@ -654,6 +654,132 @@ export async function stopNode(request: StopNodeRequest) {
   return command<JsonRecord>("stop_node", { request });
 }
 
+// --- organizations (tenants), membership, resource allocation, and billing ---
+
+export type OrgRole = "owner" | "admin" | "member";
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgMembershipView {
+  org: Organization;
+  role: OrgRole;
+}
+
+export interface OrgMembership {
+  org_id: string;
+  user_id: string;
+  role: OrgRole;
+  created_at: string;
+}
+
+export interface OrgContextResponse {
+  access_token: string;
+  expires_in: number;
+  org: Organization;
+  role: OrgRole;
+}
+
+export interface OrgResourceGroup {
+  org_id: string;
+  backend: string;
+  kind: string;
+  desired: number;
+  dedicated: boolean;
+}
+
+export interface OrgNodesResponse {
+  groups: OrgResourceGroup[];
+  projected_monthly_cents: number;
+}
+
+export interface OrgQuota {
+  org_id: string;
+  max_nodes_per_kind: Record<string, number>;
+  max_monthly_cents: number;
+}
+
+export interface OrgUsage {
+  org_id: string;
+  since: string | null;
+  node_hours: Record<string, number>;
+  accrued_cents: number;
+}
+
+export interface RateEntry {
+  backend: string;
+  kind: string;
+  hourly_cents: number;
+}
+
+export interface RateCard {
+  entries: RateEntry[];
+}
+
+export interface ScaleOrgNodesRequest {
+  backend: string;
+  kind: string;
+  desired: number;
+}
+
+export async function listMyOrgs() {
+  return command<OrgMembershipView[]>("list_my_orgs");
+}
+
+export async function listOrgs() {
+  return command<Organization[]>("list_orgs");
+}
+
+export async function createOrg(name: string) {
+  return command<Organization>("create_org", { name });
+}
+
+export async function switchOrg(orgId: string) {
+  return command<OrgContextResponse>("switch_org", { orgId });
+}
+
+export async function listOrgMembers(orgId: string) {
+  return command<OrgMembership[]>("list_org_members", { orgId });
+}
+
+export async function addOrgMember(orgId: string, userId: string, role: OrgRole) {
+  return command<JsonRecord>("add_org_member", { orgId, userId, role });
+}
+
+export async function updateOrgMember(orgId: string, userId: string, role: OrgRole) {
+  return command<JsonRecord>("update_org_member", { orgId, userId, role });
+}
+
+export async function removeOrgMember(orgId: string, userId: string) {
+  return command<JsonRecord>("remove_org_member", { orgId, userId });
+}
+
+export async function fetchRateCard() {
+  return command<RateCard>("fetch_rate_card");
+}
+
+export async function fetchOrgNodes(orgId: string) {
+  return command<OrgNodesResponse>("fetch_org_nodes", { orgId });
+}
+
+export async function scaleOrgNodes(orgId: string, request: ScaleOrgNodesRequest) {
+  return command<OrgResourceGroup>("scale_org_nodes", { orgId, request });
+}
+
+export async function fetchOrgQuota(orgId: string) {
+  return command<OrgQuota>("fetch_org_quota", { orgId });
+}
+
+export async function fetchOrgUsage(orgId: string) {
+  return command<OrgUsage>("fetch_org_usage", { orgId });
+}
+
 // --- embedded desktop worker (tauri runtime only) ---
 
 export interface LocalWorkerStatus {

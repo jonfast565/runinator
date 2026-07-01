@@ -10,6 +10,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
 use runinator_models::{
+    billing::ScaleOrgNodesRequest,
     providers::ProviderMetadata,
     provisioning::{NodeSpec, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
     replicas::ReplicaKind,
@@ -25,7 +26,7 @@ use runinator_pack::source as pack;
 
 use crate::{
     cli::{
-        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, NodeCommands,
+        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, NodeCommands, OrgCommands,
         ProviderCommands, RunCommands, SettingsCommands, TriggerCommands, WdlCommands,
         WorkflowCommands,
     },
@@ -74,6 +75,45 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Wdl { command } => wdl(command, cli.json),
         Commands::Settings { command } => settings(client, command, cli.json).await,
         Commands::Nodes { command } => nodes(client, command, cli.json).await,
+        Commands::Orgs { command } => orgs(client, command, cli.json).await,
+    }
+}
+
+async fn orgs(client: &Client, command: &OrgCommands, json_output: bool) -> Result<()> {
+    match command {
+        OrgCommands::List => {
+            let value = client.list_my_orgs().await?;
+            output::json(&value)
+        }
+        OrgCommands::Create { name } => {
+            let value = client.create_org(name).await?;
+            if !json_output {
+                println!("created organization '{name}'");
+            }
+            output::json(&value)
+        }
+        OrgCommands::Nodes { org } => {
+            let value = client.fetch_org_nodes(*org).await?;
+            output::json(&value)
+        }
+        OrgCommands::Scale {
+            org,
+            backend,
+            kind,
+            desired,
+        } => {
+            let request = ScaleOrgNodesRequest {
+                backend: (*backend).into(),
+                kind: (*kind).into(),
+                desired: *desired,
+            };
+            let value = client.scale_org_nodes(*org, &request).await?;
+            output::json(&value)
+        }
+        OrgCommands::Usage { org } => {
+            let value = client.fetch_org_usage(*org).await?;
+            output::json(&value)
+        }
     }
 }
 

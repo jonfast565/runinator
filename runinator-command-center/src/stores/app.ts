@@ -41,6 +41,13 @@ export const navSections: NavSection[] = [
     ]
   },
   {
+    label: "Organization",
+    items: [
+      { tab: "Organization", label: "Organization", icon: "shield" },
+      { tab: "OrgResources", label: "Resources & Billing", icon: "box" }
+    ]
+  },
+  {
     label: "Admin",
     items: [
       { tab: "AdminSettings", label: "Settings", icon: "settings", adminOnly: true },

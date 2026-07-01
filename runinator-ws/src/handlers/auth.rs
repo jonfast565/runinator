@@ -107,8 +107,9 @@ async fn issue_session<T: DatabaseImpl>(
     user: User,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
-    let (access_token, _exp) =
-        issue_access_token(config, user_id, user.is_admin).map_err(|err| api_error(err))?;
+    // login issues an org-less token; the client selects an active org via /auth/switch-org.
+    let (access_token, _exp) = issue_access_token(config, user_id, user.is_admin, None, None)
+        .map_err(|err| api_error(err))?;
     let (refresh_token, refresh_hash) = new_refresh_token();
     let session = AuthSession {
         id: Uuid::new_v4(),

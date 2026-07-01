@@ -1,0 +1,268 @@
+<template>
+  <section class="pane res-pane">
+    <div v-if="!orgs.activeOrg" class="panel empty-state">
+      Select an organization on the Organization tab to manage its resources.
+    </div>
+
+    <template v-else>
+      <div class="panel">
+        <div class="panel-toolbar">
+          <h2>Resources — {{ orgs.activeOrg.name }}</h2>
+          <button class="btn" :disabled="loading" @click="refresh">
+            <Icon name="refresh" />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        <div class="res-summary">
+          <div class="res-stat">
+            <label>Projected monthly</label>
+            <div class="res-stat-value">{{ fmtCents(projectedMonthlyCents) }}</div>
+          </div>
+          <div class="res-stat">
+            <label>Accrued (30d)</label>
+            <div class="res-stat-value">{{ fmtCents(usage?.accrued_cents ?? 0) }}</div>
+          </div>
+          <div class="res-stat">
+            <label>Monthly budget</label>
+            <div class="res-stat-value">
+              {{ quota && quota.max_monthly_cents > 0 ? fmtCents(quota.max_monthly_cents) : "unlimited" }}
+            </div>
+          </div>
+        </div>
+
+        <div v-if="budgetPct !== null" class="budget-bar">
+          <div class="budget-fill" :class="{ over: budgetPct >= 100 }" :style="{ width: Math.min(budgetPct, 100) + '%' }"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-toolbar"><h2>Dedicated allocations</h2></div>
+        <div v-if="!groups.length" class="empty-state">No dedicated node pools. Scale one below.</div>
+        <table v-else class="res-table">
+          <thead>
+            <tr><th>Backend</th><th>Kind</th><th>Desired</th><th>Rate</th><th>Monthly</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="g in groups" :key="g.backend + g.kind">
+              <td>{{ g.backend }}</td>
+              <td>{{ g.kind }}</td>
+              <td>{{ g.desired }}</td>
+              <td>{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
+              <td>{{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="orgs.isActiveOrgAdmin" class="panel">
+        <div class="panel-toolbar"><h2>Scale a pool</h2></div>
+        <form class="res-scale" @submit.prevent="scale">
+          <select v-model="scaleBackend">
+            <option value="supervisor">supervisor</option>
+            <option value="kubernetes">kubernetes</option>
+          </select>
+          <select v-model="scaleKind">
+            <option value="worker">worker</option>
+            <option value="waker">waker</option>
+            <option value="webservice">webservice</option>
+          </select>
+          <input v-model.number="scaleDesired" type="number" min="0" />
+          <button class="btn primary" type="submit" :disabled="scaling">Set desired</button>
+          <span class="res-preview">
+            ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
+          </span>
+        </form>
+        <p class="res-note">
+          A worker pool with a positive count makes this org's workflows route to its dedicated,
+          <span class="mono">org={{ orgs.activeOrg.slug }}</span>-labeled workers.
+        </p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-toolbar"><h2>Node-hours (30d)</h2></div>
+        <div v-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
+        <table v-else class="res-table">
+          <thead><tr><th>Kind</th><th>Node-hours</th></tr></thead>
+          <tbody>
+            <tr v-for="[kind, hours] in usageKinds" :key="kind">
+              <td>{{ kind }}</td>
+              <td>{{ hours.toFixed(2) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+import Icon from "../components/shared/Icon.vue";
+import {
+  fetchOrgNodes,
+  fetchOrgQuota,
+  fetchOrgUsage,
+  fetchRateCard,
+  scaleOrgNodes,
+  type OrgQuota,
+  type OrgResourceGroup,
+  type OrgUsage,
+  type RateCard
+} from "../api/commandCenterApi";
+import { useAppStore } from "../stores/app";
+import { useOrgsStore } from "../stores/orgs";
+
+const HOURS_PER_MONTH = 730;
+
+const app = useAppStore();
+const orgs = useOrgsStore();
+const loading = ref(false);
+const scaling = ref(false);
+const groups = ref<OrgResourceGroup[]>([]);
+const projectedMonthlyCents = ref(0);
+const quota = ref<OrgQuota | null>(null);
+const usage = ref<OrgUsage | null>(null);
+const rateCard = ref<RateCard>({ entries: [] });
+
+const scaleBackend = ref("supervisor");
+const scaleKind = ref("worker");
+const scaleDesired = ref(1);
+
+const usageKinds = computed(() => Object.entries(usage.value?.node_hours ?? {}));
+const budgetPct = computed(() => {
+  if (!quota.value || quota.value.max_monthly_cents <= 0) return null;
+  return Math.round((projectedMonthlyCents.value / quota.value.max_monthly_cents) * 100);
+});
+
+function rate(backend: string, kind: string): number {
+  return rateCard.value.entries.find((e) => e.backend === backend && e.kind === kind)?.hourly_cents ?? 0;
+}
+
+function fmtCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+async function refresh() {
+  const orgId = orgs.activeOrgId;
+  if (!orgId) return;
+  loading.value = true;
+  try {
+    rateCard.value = await fetchRateCard().catch(() => ({ entries: [] }));
+    const nodes = await app
+      .runOperation("Loading resources", () => fetchOrgNodes(orgId))
+      .catch(() => ({ groups: [], projected_monthly_cents: 0 }));
+    groups.value = nodes.groups;
+    projectedMonthlyCents.value = nodes.projected_monthly_cents;
+    quota.value = await fetchOrgQuota(orgId).catch(() => null);
+    usage.value = await fetchOrgUsage(orgId).catch(() => null);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function scale() {
+  const orgId = orgs.activeOrgId;
+  if (!orgId) return;
+  scaling.value = true;
+  try {
+    await app.runOperation("Scaling pool", () =>
+      scaleOrgNodes(orgId, {
+        backend: scaleBackend.value,
+        kind: scaleKind.value,
+        desired: Math.max(0, Math.floor(scaleDesired.value))
+      })
+    );
+    await refresh();
+  } finally {
+    scaling.value = false;
+  }
+}
+
+watch(() => orgs.activeOrgId, refresh);
+onMounted(refresh);
+</script>
+
+<style scoped>
+.res-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.res-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.res-stat label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.res-stat-value {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.budget-bar {
+  margin-top: 12px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  overflow: hidden;
+}
+
+.budget-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.budget-fill.over {
+  background: var(--danger-fg);
+}
+
+.res-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.res-table th,
+.res-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.res-scale {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.res-scale input {
+  width: 90px;
+}
+
+.res-preview {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.res-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+</style>

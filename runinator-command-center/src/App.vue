@@ -19,6 +19,8 @@
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SecretsView v-if="app.activeTab === 'Configs'" setting-kind="config" />
     <SecretsView v-if="app.activeTab === 'Secrets'" setting-kind="secret" />
+    <OrganizationView v-if="app.activeTab === 'Organization'" />
+    <OrgResourcesView v-if="app.activeTab === 'OrgResources'" />
     <AdminSettingsView v-if="app.activeTab === 'AdminSettings'" />
     <PermissionsView v-if="app.activeTab === 'Permissions'" />
     <DeadLettersView v-if="app.activeTab === 'DeadLetters'" />
@@ -39,6 +41,7 @@ import LoginView from "./views/LoginView.vue";
 import { useArtifactsStore } from "./stores/artifacts";
 import { useNotificationsStore } from "./stores/notifications";
 import { useResourcesStore } from "./stores/resources";
+import { useOrgsStore } from "./stores/orgs";
 import { useSecretsStore } from "./stores/secrets";
 import { useWorkflowsStore } from "./stores/workflows";
 import { useProvidersStore } from "./stores/providers";
@@ -58,6 +61,8 @@ import ExternalItemsView from "./views/ExternalItemsView.vue";
 import GatesView from "./views/GatesView.vue";
 import SecretsView from "./views/SecretsView.vue";
 import PermissionsView from "./views/PermissionsView.vue";
+import OrganizationView from "./views/OrganizationView.vue";
+import OrgResourcesView from "./views/OrgResourcesView.vue";
 import AdminSettingsView from "./views/AdminSettingsView.vue";
 import DeadLettersView from "./views/DeadLettersView.vue";
 import AuditLogView from "./views/AuditLogView.vue";
@@ -67,6 +72,7 @@ const auth = useAuthStore();
 const isDesktop = isTauriRuntime();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
+const orgs = useOrgsStore();
 const artifacts = useArtifactsStore();
 const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
@@ -202,6 +208,7 @@ function clearBackendState() {
   adminSettings.clear();
   providers.clearProviders();
   permissions.clearPermissions();
+  orgs.clear();
   app.clearReplicaState();
 }
 
@@ -213,6 +220,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     notifications.refreshNotifications().catch(() => {}),
     secrets.refreshSecrets().catch(() => {}),
     app.refreshReplicas().catch(() => {}),
+    orgs.refresh().catch(() => {}),
     refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()
   ]);
 }

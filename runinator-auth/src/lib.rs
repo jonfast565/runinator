@@ -12,6 +12,7 @@ use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand::RngCore;
 use runinator_models::auth::{ApiKeyRecord, AuthContext, Claims, PrincipalKind};
+use runinator_models::orgs::OrgRole;
 use std::future::Future;
 use uuid::Uuid;
 
@@ -115,11 +116,14 @@ pub fn new_refresh_token() -> (String, String) {
 
 // ---- jwt access tokens ----
 
-/// issue an access token for a user. returns the token and its expiry (unix seconds).
+/// issue an access token for a user. `org`/`org_role` bind the token to an active organization when
+/// the user has selected one. returns the token and its expiry (unix seconds).
 pub fn issue_access_token(
     config: &AuthConfig,
     user_id: Uuid,
     is_admin: bool,
+    org: Option<Uuid>,
+    org_role: Option<OrgRole>,
 ) -> Result<(String, i64), String> {
     let now = Utc::now().timestamp();
     let exp = now + config.access_ttl_secs;
@@ -130,6 +134,8 @@ pub fn issue_access_token(
         exp,
         jti: Uuid::new_v4().to_string(),
         rid: None,
+        org: org.map(|id| id.to_string()),
+        orl: org_role.map(|role| role.as_str().to_string()),
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -157,6 +163,8 @@ pub fn issue_replica_token(
         exp,
         jti: Uuid::new_v4().to_string(),
         rid: Some(replica_id.to_string()),
+        org: None,
+        orl: None,
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -215,6 +223,8 @@ pub async fn resolve_credential<S: CredentialStore>(
             principal_id: claims.sub.parse::<Uuid>().ok(),
             is_admin: claims.adm,
             kind: PrincipalKind::User,
+            org_id: claims.org.as_deref().and_then(|id| id.parse::<Uuid>().ok()),
+            org_role: claims.orl.as_deref().and_then(OrgRole::from_str_lossy),
         });
     }
     let prefix = presented.split('.').next()?.to_string();
@@ -237,6 +247,9 @@ pub async fn resolve_credential<S: CredentialStore>(
         principal_id: record.key.user_id,
         is_admin: record.is_admin,
         kind: PrincipalKind::Service,
+        // service keys carry no org claim; the ws middleware resolves an org from `X-Org-Id`.
+        org_id: None,
+        org_role: None,
     })
 }
 
@@ -265,7 +278,7 @@ mod tests {
     fn access_token_round_trips_and_carries_admin() {
         let cfg = config();
         let user_id = Uuid::new_v4();
-        let (token, _exp) = issue_access_token(&cfg, user_id, true).expect("issue");
+        let (token, _exp) = issue_access_token(&cfg, user_id, true, None, None).expect("issue");
         let claims = verify_access_token(&cfg, &token).expect("verify");
         assert_eq!(claims.sub, user_id.to_string());
         assert!(claims.adm);
@@ -273,7 +286,8 @@ mod tests {
 
     #[test]
     fn access_token_rejected_under_wrong_secret() {
-        let (token, _) = issue_access_token(&config(), Uuid::new_v4(), false).expect("issue");
+        let (token, _) =
+            issue_access_token(&config(), Uuid::new_v4(), false, None, None).expect("issue");
         let other = AuthConfig {
             jwt_secret: b"different-secret".to_vec(),
             ..config()
@@ -285,7 +299,8 @@ mod tests {
     fn rotated_token_verifies_against_previous_secret() {
         // a token minted before rotation (signed with the old secret).
         let old = config();
-        let (token, _) = issue_access_token(&old, Uuid::new_v4(), false).expect("issue");
+        let (token, _) =
+            issue_access_token(&old, Uuid::new_v4(), false, None, None).expect("issue");
 
         // after rotation the old secret moves to the previous slot; new tokens use a fresh primary.
         let rotated = AuthConfig {

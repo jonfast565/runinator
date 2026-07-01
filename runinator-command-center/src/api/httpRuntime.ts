@@ -419,6 +419,65 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: () => "notifications/mark_all_read",
     body: () => ({})
+  },
+  // --- organizations (tenants), membership, resource allocation, and billing ---
+  list_my_orgs: { method: "GET", path: () => "orgs/me" },
+  list_orgs: { method: "GET", path: () => "orgs" },
+  create_org: {
+    method: "POST",
+    path: () => "orgs",
+    body: (args) => ({ name: arg(args, "name") })
+  },
+  switch_org: {
+    method: "POST",
+    path: () => "auth/switch-org",
+    body: (args) => ({ org_id: arg(args, "orgId") })
+  },
+  list_org_members: {
+    method: "GET",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/members`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") })
+  },
+  add_org_member: {
+    method: "POST",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/members`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") }),
+    body: (args) => ({ user_id: arg(args, "userId"), role: arg(args, "role") })
+  },
+  update_org_member: {
+    method: "PATCH",
+    path: (args) =>
+      `orgs/${escape(arg<string>(args, "orgId"))}/members/${escape(arg<string>(args, "userId"))}`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") }),
+    body: (args) => ({ role: arg(args, "role") })
+  },
+  remove_org_member: {
+    method: "DELETE",
+    path: (args) =>
+      `orgs/${escape(arg<string>(args, "orgId"))}/members/${escape(arg<string>(args, "userId"))}`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") })
+  },
+  fetch_rate_card: { method: "GET", path: () => "rate-card" },
+  fetch_org_nodes: {
+    method: "GET",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/nodes`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") })
+  },
+  scale_org_nodes: {
+    method: "POST",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/nodes/scale`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") }),
+    body: (args) => arg(args, "request")
+  },
+  fetch_org_quota: {
+    method: "GET",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/quota`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") })
+  },
+  fetch_org_usage: {
+    method: "GET",
+    path: (args) => `orgs/${escape(arg<string>(args, "orgId"))}/usage`,
+    headers: (args) => ({ "x-org-id": arg<string>(args, "orgId") })
   }
 };
 
