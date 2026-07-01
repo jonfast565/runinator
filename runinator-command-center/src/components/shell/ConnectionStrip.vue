@@ -81,23 +81,31 @@ function formatUptime(seconds: number): string {
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .connection-summary {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  overflow: hidden;
+  flex-wrap: nowrap;
 }
 .connection-cluster .service-url {
-  max-width: 220px;
+  max-width: clamp(120px, 18vw, 220px);
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .replica-summary {
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .stream-state {
@@ -122,9 +130,12 @@ function formatUptime(seconds: number): string {
 .supervisor-pills {
   display: flex;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
   gap: 4px;
 }
 .supervisor-pill {
+  flex: 0 0 auto;
   font-size: 10px;
   padding: 1px 7px;
   border-radius: 10px;
@@ -157,8 +168,27 @@ function formatUptime(seconds: number): string {
   border-color: #e2e8f0;
 }
 .supervisor-stale {
+  flex: 0 0 auto;
   font-size: 10px;
   color: #94a3b8;
   margin-left: 4px;
+}
+
+@media (max-width: 760px) {
+  .connection-cluster {
+    align-items: flex-start;
+  }
+
+  .connection-summary {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+  }
+
+  .connection-cluster .service-url,
+  .stream-state,
+  .replica-summary,
+  .supervisor-pills {
+    display: none;
+  }
 }
 </style>

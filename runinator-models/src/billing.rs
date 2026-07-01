@@ -52,6 +52,8 @@ impl RateCard {
                     ReplicaKind::Waker => 5,
                     ReplicaKind::Webservice => 10,
                     ReplicaKind::Postgres => 20,
+                    // the archiver is not a provisioned/billed node; it only registers for visibility.
+                    ReplicaKind::Archiver => 0,
                 };
                 entries.push(RateEntry {
                     backend,

@@ -13,6 +13,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 uuid = { version = "1.18", features = ["v4"] }
 
+runinator-api = { path = "../runinator-api" }
 runinator-database = { path = "../runinator-database" }
 runinator-db-cli = { path = "../runinator-db-cli" }
 runinator-models = { path = "../runinator-models" }

@@ -5710,6 +5710,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "log",
+ "runinator-api",
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",

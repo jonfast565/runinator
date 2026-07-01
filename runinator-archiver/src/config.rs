@@ -99,6 +99,19 @@ pub struct Cli {
         default_value = "/tmp/runinator-archiver-liveness"
     )]
     pub liveness_file: String,
+
+    /// web service base url. when set, the archiver registers itself in the replica list and
+    /// heartbeats; when unset it runs database-only as before.
+    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
+    pub api_base_url: Option<String>,
+
+    /// service api key presented to the web service when auth is enabled.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
+    /// stable address advertised to the replica list; in k8s this is the pod's dns name.
+    #[arg(long, env = "RUNINATOR_ADVERTISE_HOST")]
+    pub advertise_host: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +132,9 @@ pub struct Config {
     pub audit_log_retention: Option<Duration>,
     pub idempotency_retention: Option<Duration>,
     pub liveness_file: String,
+    pub api_base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub advertise_host: Option<String>,
 }
 
 impl Config {
@@ -149,6 +165,9 @@ impl Config {
             audit_log_retention: parse_optional_duration(&cli.audit_log_retention)?,
             idempotency_retention: parse_optional_duration(&cli.idempotency_retention)?,
             liveness_file: cli.liveness_file,
+            api_base_url: cli.api_base_url.filter(|value| !value.trim().is_empty()),
+            api_key: cli.api_key.filter(|value| !value.trim().is_empty()),
+            advertise_host: cli.advertise_host.filter(|value| !value.trim().is_empty()),
         })
     }
 }

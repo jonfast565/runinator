@@ -24,6 +24,8 @@
       <button
         v-if="!app.isRealtime"
         class="btn"
+        aria-label="Refresh"
+        title="Refresh"
         :disabled="app.serviceBlocked"
         @click="$emit('refresh')"
       >
@@ -33,6 +35,8 @@
       <button
         v-if="app.activeTab === 'Workflows'"
         class="btn btn-primary"
+        aria-label="Run workflow"
+        title="Run workflow"
         :disabled="app.serviceBlocked || !workflows.canRunWorkflow"
         @click="workflows.runSelectedWorkflow()"
       >

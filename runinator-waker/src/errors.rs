@@ -7,6 +7,11 @@ pub const SIGNAL_CTRL_C: ErrorDescriptor = ErrorDescriptor::new(
     "waker.signal.ctrl_c",
     "Failed to listen for Ctrl+C",
 );
+pub const REPLICA_REGISTER: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI302",
+    "waker.replica.register",
+    "Failed to register waker replica",
+);
 
 // broker wiring.
 pub const BROKER_INVALID_ENDPOINT: ErrorDescriptor = ErrorDescriptor::new(
@@ -31,6 +36,7 @@ pub const BROKER_RABBITMQ: ErrorDescriptor =
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     SIGNAL_CTRL_C,
+    REPLICA_REGISTER,
     BROKER_INVALID_ENDPOINT,
     BROKER_CLIENT,
     BROKER_UNKNOWN_BACKEND,

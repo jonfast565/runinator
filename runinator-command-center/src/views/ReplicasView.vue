@@ -176,6 +176,8 @@ function replicaKindLabel(kind: ReplicaKind): string {
       return "Waker";
     case "postgres":
       return "Postgres";
+    case "archiver":
+      return "Archiver";
   }
 }
 

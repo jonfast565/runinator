@@ -9,8 +9,9 @@
     </div>
 
     <p class="node-pools-hint">
-      Spin up or scale down worker and waker nodes on demand across the configured provisioning
-      backends.
+      Spin up or scale down runtime nodes on demand across the configured provisioning backends.
+      Desired/Ready are what the orchestrator reports for the workload; they can differ from the
+      Replicas list below, which only counts nodes that have registered and are heartbeating.
     </p>
 
     <div v-if="!backends.length" class="empty-state">
@@ -24,7 +25,7 @@
             <th>Backend</th>
             <th>Kind</th>
             <th>Desired</th>
-            <th>Live</th>
+            <th>Ready</th>
             <th class="node-pools-actions-col">Actions</th>
           </tr>
         </thead>
@@ -46,7 +47,7 @@
               </button>
               <button
                 class="btn"
-                :disabled="busy || !group.manageable || group.desired === 0"
+                :disabled="busy || !group.manageable || group.desired <= minDesired(group)"
                 title="Scale down one node"
                 @click="scaleBy(group, -1)"
               >
@@ -55,8 +56,10 @@
               </button>
               <button
                 class="btn"
-                :disabled="busy || !group.manageable || group.desired === 0"
-                title="Scale to zero"
+                :disabled="busy || !group.manageable || isProtected(group) || group.desired === 0"
+                :title="isProtected(group)
+                  ? `${group.kind} is a control-plane node and cannot be scaled to zero from here`
+                  : 'Scale to zero'"
                 @click="scaleTo(group, 0)"
               >
                 <span>Stop all</span>
@@ -91,6 +94,16 @@ const app = useAppStore();
 const auth = useAuthStore();
 
 const isAdmin = computed(() => !auth.required || (auth.user as any)?.is_admin === true);
+
+// webservice and postgres back the control plane; scaling them to zero from here would take down
+// the api or database, so keep a floor of one replica on these kinds.
+const PROTECTED_KINDS = new Set(["webservice", "postgres"]);
+function isProtected(group: ProvisionedGroup): boolean {
+  return PROTECTED_KINDS.has(group.kind);
+}
+function minDesired(group: ProvisionedGroup): number {
+  return isProtected(group) ? 1 : 0;
+}
 
 const backends = ref<NodeBackendInfo[]>([]);
 const groups = ref<ProvisionedGroup[]>([]);
@@ -128,7 +141,7 @@ async function scaleTo(group: ProvisionedGroup, desired: number) {
 }
 
 function scaleBy(group: ProvisionedGroup, delta: number) {
-  return scaleTo(group, Math.max(0, group.desired + delta));
+  return scaleTo(group, Math.max(minDesired(group), group.desired + delta));
 }
 
 onMounted(refresh);

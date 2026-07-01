@@ -34,6 +34,11 @@ pub const PROVIDER_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "worker.provider.not_found",
     "Cannot find plugin or provider",
 );
+pub const REPLICA_REGISTER: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI207",
+    "worker.replica.register",
+    "Failed to register worker replica",
+);
 
 // broker wiring.
 pub const BROKER_INVALID_ENDPOINT: ErrorDescriptor = ErrorDescriptor::new(
@@ -68,6 +73,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     API_CLIENT,
     CONCURRENCY_CLOSED,
     PROVIDER_NOT_FOUND,
+    REPLICA_REGISTER,
     BROKER_INVALID_ENDPOINT,
     BROKER_CLIENT,
     BROKER_UNKNOWN_BACKEND,

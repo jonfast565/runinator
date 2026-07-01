@@ -3,7 +3,10 @@ use std::ffi::OsString;
 use runinator_worker::Config;
 use uuid::Uuid;
 
-use crate::{provider_service_url_fallback, spawn_liveness};
+use crate::{
+    REGISTER_BASE_BACKOFF, REGISTER_MAX_BACKOFF, provider_service_url_fallback, register_backoff,
+    spawn_liveness,
+};
 
 #[test]
 fn provider_service_url_uses_api_base_url_when_env_is_missing() {
@@ -30,6 +33,16 @@ fn provider_service_url_replaces_empty_env() {
         provider_service_url_fallback(Some(OsString::from("  ")), "http://127.0.0.1:8080/"),
         Some(OsString::from("http://127.0.0.1:8080/"))
     );
+}
+
+#[test]
+fn register_backoff_grows_then_caps() {
+    assert_eq!(register_backoff(1), REGISTER_BASE_BACKOFF);
+    assert_eq!(register_backoff(2), REGISTER_BASE_BACKOFF * 2);
+    assert_eq!(register_backoff(3), REGISTER_BASE_BACKOFF * 4);
+    // large attempts saturate at the cap instead of overflowing.
+    assert_eq!(register_backoff(64), REGISTER_MAX_BACKOFF);
+    assert_eq!(register_backoff(u32::MAX), REGISTER_MAX_BACKOFF);
 }
 
 #[tokio::test]

@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::{error, info};
 use reqwest::Url;
 use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_session,
+    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
     spawn_replica_heartbeat_with_telemetry,
 };
 use runinator_broker::{
@@ -40,37 +41,38 @@ async fn main() -> Result<(), SendableError> {
         config.api_key.clone(),
     )
     .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
-    let _heartbeat = match register_replica_session(
-        &api_client,
-        ReplicaServiceConfig {
-            replica_type: ReplicaKind::Waker,
-            instance_id: config.waker_id.clone(),
-            display_name: Some(config.waker_id.clone()),
-            host: advertise_host(&config.advertise_host),
-            port: None,
-            base_path: None,
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: attributes_with_host_metadata(&runinator_models::json!({
-                "broker_backend": config.broker_backend,
-                "broker_client_id": config.broker_client_id,
-                "consumer_group": config.waker_consumer_group,
-            })),
-            heartbeat_interval: std::time::Duration::from_secs(10),
-        },
-    )
-    .await
-    {
-        Ok(session) => Some(spawn_replica_heartbeat_with_telemetry(
-            api_client.clone(),
-            session,
-            notify.clone(),
-            Some(Arc::new(TelemetryCollector::new())),
-        )),
-        Err(err) => {
-            error!("Failed to register waker replica: {}", err);
-            None
+    let service_config = ReplicaServiceConfig {
+        replica_type: ReplicaKind::Waker,
+        instance_id: config.waker_id.clone(),
+        display_name: Some(config.waker_id.clone()),
+        host: advertise_host(&config.advertise_host),
+        port: None,
+        base_path: None,
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        attributes: attributes_with_host_metadata(&runinator_models::json!({
+            "broker_backend": config.broker_backend,
+            "broker_client_id": config.broker_client_id,
+            "consumer_group": config.waker_consumer_group,
+        })),
+        heartbeat_interval: Duration::from_secs(10),
+    };
+    // registration is required: a waker that never registers is invisible in the replica registry
+    // and cannot heartbeat, so retry with backoff and fail loudly rather than run as a phantom. stay
+    // interruptible so ctrl_c during a retry window still shuts the process down cleanly.
+    let session = tokio::select! {
+        result = register_waker_replica_with_retry(&api_client, &service_config) => result?,
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
+            info!("Shutdown signal received before waker registration completed. Shutting down...");
+            return Ok(());
         }
     };
+    let _heartbeat = spawn_replica_heartbeat_with_telemetry(
+        api_client.clone(),
+        session,
+        notify.clone(),
+        Some(Arc::new(TelemetryCollector::new())),
+    );
 
     runinator_waker::spawn_liveness(&config, notify.clone());
 
@@ -92,6 +94,60 @@ async fn main() -> Result<(), SendableError> {
 
     info!("Waker shutdown complete.");
     Ok(())
+}
+
+// registration retry envelope: waker startup keeps trying while the web service is briefly
+// unreachable, then gives up so the process exits non-zero and the orchestrator restarts it.
+const REGISTER_MAX_ATTEMPTS: u32 = 8;
+const REGISTER_BASE_BACKOFF: Duration = Duration::from_secs(2);
+const REGISTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+// exponential backoff for the nth registration attempt (1-based), capped at REGISTER_MAX_BACKOFF.
+fn register_backoff(attempt: u32) -> Duration {
+    let factor = 1u32
+        .checked_shl(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    REGISTER_BASE_BACKOFF
+        .saturating_mul(factor)
+        .min(REGISTER_MAX_BACKOFF)
+}
+
+// register with bounded retries and loud logging, returning an error once attempts are exhausted so
+// the waker fails visibly instead of running unregistered.
+async fn register_waker_replica_with_retry(
+    api_client: &AsyncApiClient<StaticLocator>,
+    service_config: &ReplicaServiceConfig,
+) -> Result<ReplicaSession, SendableError> {
+    let mut attempt = 1;
+    loop {
+        match register_replica_session(api_client, service_config.clone()).await {
+            Ok(session) => {
+                if attempt > 1 {
+                    info!("Waker replica registered on attempt {}", attempt);
+                }
+                return Ok(session);
+            }
+            Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
+                error!(
+                    "Failed to register waker replica after {} attempts, giving up: {}",
+                    attempt, err
+                );
+                return Err(runinator_waker::errors::REPLICA_REGISTER.error(err));
+            }
+            Err(err) => {
+                let backoff = register_backoff(attempt);
+                error!(
+                    "Failed to register waker replica (attempt {}/{}), retrying in {}s: {}",
+                    attempt,
+                    REGISTER_MAX_ATTEMPTS,
+                    backoff.as_secs(),
+                    err
+                );
+                tokio::time::sleep(backoff).await;
+                attempt += 1;
+            }
+        }
+    }
 }
 
 // treat a blank advertise host as unset so the replica list omits it rather than storing "".

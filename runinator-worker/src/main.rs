@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, sync::Arc, time::Duration};
 
-use log::{error, info, warn};
+use log::{error, info};
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
     spawn_replica_heartbeat_with_telemetry,
@@ -51,22 +51,24 @@ async fn run(config: Config) -> Result<(), SendableError> {
     let shutdown = Arc::new(Notify::new());
 
     spawn_liveness(&config, shutdown.clone());
-    let replica_session = match register_worker_replica(&api_client, &config).await {
-        Ok(session) => Some(session),
-        Err(err) => {
-            warn!("Failed to register worker replica: {}", err);
-            None
+    // registration is required: a worker that never registers is invisible in the replica registry
+    // and cannot heartbeat, so retry with backoff and fail loudly rather than run as a phantom. stay
+    // interruptible so ctrl_c during a retry window still shuts the process down cleanly.
+    let replica_session = tokio::select! {
+        result = register_worker_replica_with_retry(&api_client, &config) => result?,
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
+            info!("Shutdown signal received before worker registration completed. Stopping worker...");
+            return Ok(());
         }
     };
     let telemetry = Arc::new(TelemetryCollector::new());
-    let _heartbeat = replica_session.clone().map(|session| {
-        spawn_replica_heartbeat_with_telemetry(
-            api_client.clone(),
-            session,
-            shutdown.clone(),
-            Some(telemetry.clone()),
-        )
-    });
+    let _heartbeat = spawn_replica_heartbeat_with_telemetry(
+        api_client.clone(),
+        replica_session.clone(),
+        shutdown.clone(),
+        Some(telemetry.clone()),
+    );
     let mut worker_task = {
         let runtime = WorkerRuntime {
             broker: broker.clone(),
@@ -74,7 +76,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
                 .with_labels(config.labels.clone()),
             libraries: Arc::clone(&libraries),
             api_client: api_client.clone(),
-            replica_id: replica_session.as_ref().map(ReplicaSession::replica_id),
+            replica_id: Some(replica_session.replica_id()),
             providers: default_provider_factory(),
             max_concurrent_actions: config.max_concurrent_actions,
             shutdown_grace: Duration::from_secs(config.shutdown_grace_seconds),
@@ -161,6 +163,60 @@ fn build_api_client(config: &Config) -> Result<AsyncApiClient<StaticLocator>, Se
     let locator = StaticLocator::new(config.api_base_url.clone());
     AsyncApiClient::with_credentials(locator, config.api_key.clone())
         .map_err(|err| errors::API_CLIENT.error(err))
+}
+
+// registration retry envelope: worker startup keeps trying while the web service is briefly
+// unreachable, then gives up so the process exits non-zero and the orchestrator restarts it.
+const REGISTER_MAX_ATTEMPTS: u32 = 8;
+const REGISTER_BASE_BACKOFF: Duration = Duration::from_secs(2);
+const REGISTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+// exponential backoff for the nth registration attempt (1-based), capped at REGISTER_MAX_BACKOFF.
+fn register_backoff(attempt: u32) -> Duration {
+    let factor = 1u32
+        .checked_shl(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    REGISTER_BASE_BACKOFF
+        .saturating_mul(factor)
+        .min(REGISTER_MAX_BACKOFF)
+}
+
+// register with bounded retries and loud logging, returning an error once attempts are exhausted so
+// the worker fails visibly instead of running unregistered.
+async fn register_worker_replica_with_retry(
+    api_client: &AsyncApiClient<StaticLocator>,
+    config: &Config,
+) -> Result<ReplicaSession, SendableError> {
+    let mut attempt = 1;
+    loop {
+        match register_worker_replica(api_client, config).await {
+            Ok(session) => {
+                if attempt > 1 {
+                    info!("Worker replica registered on attempt {}", attempt);
+                }
+                return Ok(session);
+            }
+            Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
+                error!(
+                    "Failed to register worker replica after {} attempts, giving up: {}",
+                    attempt, err
+                );
+                return Err(errors::REPLICA_REGISTER.error(err));
+            }
+            Err(err) => {
+                let backoff = register_backoff(attempt);
+                error!(
+                    "Failed to register worker replica (attempt {}/{}), retrying in {}s: {}",
+                    attempt,
+                    REGISTER_MAX_ATTEMPTS,
+                    backoff.as_secs(),
+                    err
+                );
+                tokio::time::sleep(backoff).await;
+                attempt += 1;
+            }
+        }
+    }
 }
 
 async fn register_worker_replica(

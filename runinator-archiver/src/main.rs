@@ -1,4 +1,5 @@
 mod config;
+mod errors;
 #[cfg(test)]
 mod tests;
 
@@ -9,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
+    time::Duration,
 };
 
 use tokio::sync::Notify;
@@ -17,12 +19,18 @@ use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
 use log::{error, info, warn};
+use runinator_api::{
+    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
+    spawn_replica_heartbeat_with_telemetry,
+};
 use runinator_database::{
     archive::{ArchiveRow, ArchiveTable},
     interfaces::DatabaseImpl,
 };
 use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
+use runinator_models::replicas::ReplicaKind;
+use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -64,6 +72,13 @@ async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), Sen
     info!("Runinator archiver started as {archiver_id}");
     let shutdown = Arc::new(Notify::new());
     spawn_liveness(&config, shutdown.clone());
+    // registration is optional: only when a web service url is configured does the archiver appear in
+    // the replica list and heartbeat. held for the loop lifetime so the heartbeat keeps running.
+    let _heartbeat = match register_replica(&config, &archiver_id, shutdown.clone()).await? {
+        Registration::Heartbeat(handle) => Some(handle),
+        Registration::Disabled => None,
+        Registration::Shutdown => return Ok(()),
+    };
     loop {
         if let Err(err) = run_once(db.as_ref(), &config, &archiver_id).await {
             error!("Archiver pass failed: {err}");
@@ -89,6 +104,119 @@ fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task:
         runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
         shutdown,
     )
+}
+
+// outcome of the optional replica registration at startup.
+enum Registration {
+    // registration succeeded; the heartbeat task keeps the replica live.
+    Heartbeat(tokio::task::JoinHandle<()>),
+    // no web service url configured; the archiver runs database-only.
+    Disabled,
+    // ctrl_c arrived during registration; the caller should exit cleanly.
+    Shutdown,
+}
+
+// register the archiver in the replica list when a web service url is configured, retrying with
+// backoff and staying interruptible so ctrl_c during startup still shuts the process down.
+async fn register_replica(
+    config: &Config,
+    archiver_id: &str,
+    shutdown: Arc<Notify>,
+) -> Result<Registration, SendableError> {
+    let Some(api_base_url) = config.api_base_url.as_deref() else {
+        info!("No web service url configured; running database-only without replica registration");
+        return Ok(Registration::Disabled);
+    };
+    let api_client = AsyncApiClient::with_credentials(
+        StaticLocator::new(api_base_url.to_string()),
+        config.api_key.clone(),
+    )
+    .map_err(|err| errors::REPLICA_REGISTER.error(err))?;
+    let service_config = ReplicaServiceConfig {
+        replica_type: ReplicaKind::Archiver,
+        instance_id: archiver_id.to_string(),
+        display_name: Some(archiver_id.to_string()),
+        host: config.advertise_host.clone(),
+        port: None,
+        base_path: None,
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        attributes: attributes_with_host_metadata(&runinator_models::json!({
+            "archive_dir": config.archive_dir.display().to_string(),
+        })),
+        heartbeat_interval: Duration::from_secs(10),
+    };
+    let session = tokio::select! {
+        result = register_archiver_replica_with_retry(&api_client, &service_config) => result?,
+        signal = tokio::signal::ctrl_c() => {
+            if let Err(err) = signal {
+                warn!("Failed to listen for shutdown signal: {err}");
+            }
+            info!("Shutdown signal received before archiver registration completed");
+            return Ok(Registration::Shutdown);
+        }
+    };
+    Ok(Registration::Heartbeat(
+        spawn_replica_heartbeat_with_telemetry(
+            api_client.clone(),
+            session,
+            shutdown,
+            Some(Arc::new(TelemetryCollector::new())),
+        ),
+    ))
+}
+
+// registration retry envelope: archiver startup keeps trying while the web service is briefly
+// unreachable, then gives up so the process exits non-zero and the orchestrator restarts it.
+const REGISTER_MAX_ATTEMPTS: u32 = 8;
+const REGISTER_BASE_BACKOFF: Duration = Duration::from_secs(2);
+const REGISTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+// exponential backoff for the nth registration attempt (1-based), capped at REGISTER_MAX_BACKOFF.
+fn register_backoff(attempt: u32) -> Duration {
+    let factor = 1u32
+        .checked_shl(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    REGISTER_BASE_BACKOFF
+        .saturating_mul(factor)
+        .min(REGISTER_MAX_BACKOFF)
+}
+
+// register with bounded retries and loud logging, returning an error once attempts are exhausted so
+// the archiver fails visibly instead of running unregistered.
+async fn register_archiver_replica_with_retry(
+    api_client: &AsyncApiClient<StaticLocator>,
+    service_config: &ReplicaServiceConfig,
+) -> Result<ReplicaSession, SendableError> {
+    let mut attempt = 1;
+    loop {
+        match register_replica_session(api_client, service_config.clone()).await {
+            Ok(session) => {
+                if attempt > 1 {
+                    info!("Archiver replica registered on attempt {}", attempt);
+                }
+                return Ok(session);
+            }
+            Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
+                error!(
+                    "Failed to register archiver replica after {} attempts, giving up: {}",
+                    attempt, err
+                );
+                return Err(errors::REPLICA_REGISTER.error(err));
+            }
+            Err(err) => {
+                let backoff = register_backoff(attempt);
+                error!(
+                    "Failed to register archiver replica (attempt {}/{}), retrying in {}s: {}",
+                    attempt,
+                    REGISTER_MAX_ATTEMPTS,
+                    backoff.as_secs(),
+                    err
+                );
+                tokio::time::sleep(backoff).await;
+                attempt += 1;
+            }
+        }
+    }
 }
 
 async fn run_once<T: DatabaseImpl>(
