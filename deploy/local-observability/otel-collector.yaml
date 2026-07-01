@@ -1,0 +1,40 @@
+# receive otlp from local runinator binaries. the rust exporters use otlp http/protobuf on 4318;
+# grpc stays enabled for ad-hoc tools.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # traces -> jaeger all-in-one, viewable at http://127.0.0.1:16686.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # metrics -> prometheus text exposition on :8889, scraped by local prometheus.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  # logs and a copy of every signal -> collector stdout.
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

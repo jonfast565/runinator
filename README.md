@@ -6,6 +6,7 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 
 - Rust toolchain with Cargo.
 - PowerShell 7+ if using `build.ps1`.
+- Docker with Compose if using the local observability helper.
 - kubectl if deploying to Kubernetes or launching the UI against a K8s stack.
 - pnpm if you want to build or run the Tauri `runinator-command-center` app.
 
@@ -16,6 +17,17 @@ The quickest path on macOS/Linux is:
 ```bash
 bash scripts/run-local.sh start
 ```
+
+To start the same supervisor stack with local OTLP export, Jaeger, and
+Prometheus already wired up:
+
+```bash
+bash scripts/run-local.sh observe
+```
+
+That command starts the checked-in Docker Compose observability stack, sets
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` for the supervisor daemon
+and its child services, then starts the normal local Runinator processes.
 
 That checked-in supervisor config defaults to SQLite, but the same local loop can
 target a server database without editing JSON:
@@ -57,6 +69,10 @@ bash scripts/run-local.sh watch
 bash scripts/run-local.sh logs
 bash scripts/run-local.sh logs --process web-service
 bash scripts/run-local.sh logs-watch --lines 40
+bash scripts/run-local.sh observe
+bash scripts/run-local.sh observability-status
+bash scripts/run-local.sh observability-logs
+bash scripts/run-local.sh observability-stop
 bash scripts/run-local.sh sync
 bash scripts/run-local.sh dev
 bash scripts/run-local.sh smoke-sync
@@ -408,6 +424,27 @@ service, also on Prometheus `/metrics`):
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 cargo run -p runinator-supervisor -- start
 ```
+
+For the checked-in local supervisor flow, prefer the one-command helper:
+
+```bash
+bash scripts/run-local.sh observe
+```
+
+It starts `deploy/local-observability/compose.yaml` with:
+
+- OpenTelemetry Collector receiving OTLP HTTP on `http://127.0.0.1:4318`
+  and OTLP gRPC on `127.0.0.1:4317`.
+- Jaeger at `http://127.0.0.1:16686` for traces.
+- Prometheus at `http://127.0.0.1:9090` scraping the collector's re-exported
+  OTLP metrics on `otel-collector:8889` plus collector self-metrics on `:8888`.
+
+After the stack starts, run `bash scripts/run-local.sh smoke-sync` or drive a
+workflow through the UI/CLI, then inspect traces in Jaeger and metrics in
+Prometheus. Use `bash scripts/run-local.sh observability-logs --lines 120` to
+inspect collector/exporter output, and use
+`bash scripts/run-local.sh observability-stop` to stop the local observability
+containers.
 
 **In Kubernetes**, the `components/observability` kustomize component deploys an
 OpenTelemetry Collector, Jaeger (trace UI), Prometheus (scrapes the collector), and

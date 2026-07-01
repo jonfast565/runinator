@@ -179,6 +179,16 @@
   flex-wrap: nowrap;
 }
 
+.topbar .org-select {
+  flex: 0 1 220px;
+  width: min(220px, 22vw);
+  min-width: 120px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .service-url {
   overflow: hidden;
   text-overflow: ellipsis;

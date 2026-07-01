@@ -52,14 +52,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import { listAuditLog } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
+import { useOrgsStore } from "../stores/orgs";
 import type { JsonRecord } from "../types/models";
 import { formatDate } from "../utils/format";
 
 const app = useAppStore();
+const orgs = useOrgsStore();
 const loading = ref(false);
 const rows = ref<JsonRecord[]>([]);
 const action = ref("");
@@ -71,6 +73,7 @@ function resourceLabel(row: JsonRecord): string {
 
 async function refresh() {
   loading.value = true;
+  rows.value = [];
   try {
     await app.runOperation("Loading audit log", async () => {
       rows.value = await listAuditLog(undefined, action.value || undefined, 200);
@@ -81,6 +84,7 @@ async function refresh() {
 }
 
 onMounted(refresh);
+watch(() => orgs.activeOrgId, refresh);
 </script>
 
 <style scoped>

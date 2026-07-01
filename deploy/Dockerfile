@@ -16,9 +16,12 @@
 # builds, so the expensive compile runs once for the whole set.
 
 # ---- shared builder: compile every binary once ----
-FROM rust:1.91.1-bookworm AS builder
+ARG ALPINE_VERSION=3.22
+FROM rust:1.91.1-alpine${ALPINE_VERSION} AS builder
 WORKDIR /workspace
+RUN apk add --no-cache build-base ca-certificates
 COPY . .
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN rustup install 1.91.1 && \
     rustup default 1.91.1 && \
     cargo build --release \
@@ -32,11 +35,10 @@ RUN rustup install 1.91.1 && \
         --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-worker/rabbitmq,runinator-waker/rabbitmq
 
 # ---- shared runtime base ----
-FROM debian:bookworm-slim AS runtime-base
-RUN groupadd --system runinator && useradd --system --gid runinator --home /home/runinator --create-home runinator \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM alpine:${ALPINE_VERSION} AS runtime-base
+RUN apk add --no-cache ca-certificates libgcc \
+    && addgroup -S runinator \
+    && adduser -S -D -G runinator -h /home/runinator runinator
 WORKDIR /home/runinator
 ENV RUST_LOG=info \
     RUST_BACKTRACE=1

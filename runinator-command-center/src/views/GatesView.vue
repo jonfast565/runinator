@@ -72,16 +72,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useGatesStore } from "../stores/gates";
+import { useOrgsStore } from "../stores/orgs";
 import { pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
 const gates = useGatesStore();
+const orgs = useOrgsStore();
 const reason = ref("");
 
 async function resolve(action: "open" | "close") {
@@ -89,7 +91,13 @@ async function resolve(action: "open" | "close") {
   reason.value = "";
 }
 
-onMounted(gates.refreshGates);
+async function refresh() {
+  gates.clearGates();
+  await gates.refreshGates();
+}
+
+onMounted(refresh);
+watch(() => orgs.activeOrgId, refresh);
 </script>
 
 <style scoped>

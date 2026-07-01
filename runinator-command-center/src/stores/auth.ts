@@ -30,6 +30,7 @@ export const useAuthStore = defineStore("auth", () => {
   const ready = ref(false);
   const user = ref<JsonRecord | null>(null);
   const error = ref("");
+  const accessTokenRevision = ref(0);
   let refreshToken: string | null = null;
 
   function persist(access: string | null, refresh: string | null) {
@@ -46,14 +47,14 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function apply(result: LoginResult) {
     persist(result.access_token, result.refresh_token);
-    await setAccessToken(result.access_token);
+    await publishAccessToken(result.access_token);
     user.value = result.user ?? null;
     authenticated.value = true;
   }
 
   async function clear() {
     persist(null, null);
-    await setAccessToken(null);
+    await publishAccessToken(null);
     authenticated.value = false;
     user.value = null;
   }
@@ -61,7 +62,12 @@ export const useAuthStore = defineStore("auth", () => {
   // swap the active access token in place (e.g. after switching org) while keeping the refresh token.
   async function applyAccessToken(access: string) {
     persist(access, refreshToken);
+    await publishAccessToken(access);
+  }
+
+  async function publishAccessToken(access: string | null) {
     await setAccessToken(access);
+    accessTokenRevision.value += 1;
   }
 
   async function tryRefresh(token: string): Promise<boolean> {
@@ -90,7 +96,7 @@ export const useAuthStore = defineStore("auth", () => {
     const refresh = safeGet(REFRESH_KEY);
     if (access) {
       refreshToken = refresh;
-      await setAccessToken(access);
+      await publishAccessToken(access);
       try {
         user.value = await fetchAuthMe();
         authenticated.value = true;
@@ -123,5 +129,5 @@ export const useAuthStore = defineStore("auth", () => {
     await clear();
   }
 
-  return { required, authenticated, ready, user, error, init, signIn, signOut, applyAccessToken };
+  return { required, authenticated, ready, user, error, accessTokenRevision, init, signIn, signOut, applyAccessToken };
 });

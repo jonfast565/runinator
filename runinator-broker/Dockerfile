@@ -1,16 +1,18 @@
-FROM rust:1.91.1-bookworm AS builder
+ARG ALPINE_VERSION=3.22
+FROM rust:1.91.1-alpine${ALPINE_VERSION} AS builder
 WORKDIR /workspace
+RUN apk add --no-cache build-base ca-certificates
 COPY . .
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN rustup install 1.91.1 && \
     rustup default 1.91.1 && \
     cargo build --release --bin runinator-broker
 
-FROM debian:bookworm-slim
+FROM alpine:${ALPINE_VERSION}
 
-RUN groupadd --system runinator && useradd --system --gid runinator --home /home/runinator --create-home runinator \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates libgcc \
+    && addgroup -S runinator \
+    && adduser -S -D -G runinator -h /home/runinator runinator
 
 WORKDIR /home/runinator
 COPY --from=builder /workspace/target/release/runinator-broker /usr/local/bin/runinator-broker

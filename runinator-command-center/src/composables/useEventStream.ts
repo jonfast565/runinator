@@ -1,6 +1,7 @@
 import { onBeforeUnmount, watch } from "vue";
 import { endpointForTab, isResourceTab, useAppStore } from "../stores/app";
 import { useArtifactsStore } from "../stores/artifacts";
+import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
 import { useResourcesStore } from "../stores/resources";
 import { useTasksStore } from "../stores/tasks";
@@ -17,6 +18,7 @@ export function useEventStream() {
   const resources = useResourcesStore();
   const artifacts = useArtifactsStore();
   const notifications = useNotificationsStore();
+  const auth = useAuthStore();
   // Tasks store still referenced by the rest of the app; we no longer poll it here.
   void useTasksStore;
 
@@ -176,6 +178,15 @@ export function useEventStream() {
       else startFallback();
     },
     { immediate: true }
+  );
+
+  watch(
+    () => auth.accessTokenRevision,
+    () => {
+      disconnect();
+      if (app.serviceUrl) connect();
+      else startFallback();
+    }
   );
 
   onBeforeUnmount(disconnect);

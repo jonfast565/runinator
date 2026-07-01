@@ -48,6 +48,8 @@ import { useProvidersStore } from "./stores/providers";
 import { usePermissionsStore } from "./stores/permissions";
 import { useAdminSettingsStore } from "./stores/adminSettings";
 import { useDisplayPreferencesStore } from "./stores/displayPreferences";
+import { useGatesStore } from "./stores/gates";
+import { useTasksStore } from "./stores/tasks";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
 import ReplicasView from "./views/ReplicasView.vue";
@@ -79,6 +81,8 @@ const secrets = useSecretsStore();
 const providers = useProvidersStore();
 const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
+const gates = useGatesStore();
+const tasks = useTasksStore();
 // initialize early so the theme data-theme attribute is set before first render.
 useDisplayPreferencesStore();
 useEventStream();
@@ -86,6 +90,7 @@ useEventStream();
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
 let replicaRefreshTimer = 0;
+let tenantRefreshId = 0;
 
 onMounted(async () => {
   unlistenUrl = await listenTauri<{ service_url?: string | null } | null>("service-url-changed", (event) => {
@@ -155,6 +160,14 @@ watch(
 );
 
 watch(
+  () => orgs.activeOrgId,
+  (orgId, previousOrgId) => {
+    if (!orgId || orgId === previousOrgId || !app.serviceUrl || !auth.authenticated) return;
+    void refreshTenantScopedState();
+  }
+);
+
+watch(
   () => app.activeTab,
   (tab) => {
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
@@ -205,11 +218,47 @@ function clearBackendState() {
   artifacts.clearArtifacts();
   notifications.clearNotifications();
   secrets.clearSecrets();
+  gates.clearGates();
+  tasks.clearTasks();
   adminSettings.clear();
   providers.clearProviders();
   permissions.clearPermissions();
   orgs.clear();
   app.clearReplicaState();
+}
+
+function clearTenantScopedState() {
+  workflows.clearServiceState({ discardDraft: true });
+  resources.clearResources();
+  artifacts.clearArtifacts();
+  notifications.clearNotifications();
+  secrets.clearSecrets();
+  permissions.clearPermissions();
+  gates.clearGates();
+  tasks.clearTasks();
+  providers.clearProviders();
+  app.clearReplicaState();
+}
+
+async function refreshTenantScopedState() {
+  const refreshId = ++tenantRefreshId;
+  clearTenantScopedState();
+  await Promise.all([
+    workflows.refreshWorkflows().catch(() => {}),
+    workflows.fetchRecentWorkflowRuns().catch(() => {}),
+    resources.refreshResources().catch(() => {}),
+    artifacts.refreshArtifacts().catch(() => {}),
+    notifications.refreshNotifications().catch(() => {}),
+    secrets.refreshSecrets().catch(() => {}),
+    permissions.refreshAll().catch(() => {}),
+    gates.refreshGates().catch(() => {}),
+    tasks.refreshTasks().catch(() => {}),
+    providers.fetchProviders().catch(() => {}),
+    app.refreshReplicas().catch(() => {})
+  ]);
+  if (refreshId === tenantRefreshId && orgs.activeOrg) {
+    app.setStatus(`Active organization: ${orgs.activeOrg.name}`);
+  }
 }
 
 async function refreshBackendState(refreshProviders: boolean) {
@@ -219,6 +268,8 @@ async function refreshBackendState(refreshProviders: boolean) {
     resources.refreshResources().catch(() => {}),
     notifications.refreshNotifications().catch(() => {}),
     secrets.refreshSecrets().catch(() => {}),
+    gates.refreshGates().catch(() => {}),
+    tasks.refreshTasks().catch(() => {}),
     app.refreshReplicas().catch(() => {}),
     orgs.refresh().catch(() => {}),
     refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useWorkflowRunStream } from "../useWorkflowRunStream";
+import { setHttpAuthToken } from "../../api/httpRuntime";
 import { useAppStore } from "../../stores/app";
+import { useAuthStore } from "../../stores/auth";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { WorkflowRunDetail } from "../../types/models";
 
@@ -34,6 +36,7 @@ describe("useWorkflowRunStream", () => {
       clearTimeout,
       setTimeout
     });
+    setHttpAuthToken(null);
   });
 
   afterEach(() => {
@@ -61,6 +64,27 @@ describe("useWorkflowRunStream", () => {
 
     expect(workflows.workflowRunDetail?.run.status).toBe("succeeded");
     expect(MockWebSocket.sockets).toHaveLength(1);
+    scope.stop();
+  });
+
+  it("reconnects open run streams when the access token changes", async () => {
+    const app = useAppStore();
+    const auth = useAuthStore();
+    const workflows = useWorkflowsStore();
+    app.setServiceUrl("http://127.0.0.1:8080/");
+    workflows.openRunInTab(RUN_ID);
+    workflows.activateRunTab(RUN_ID);
+
+    const scope = effectScope();
+    scope.run(() => useWorkflowRunStream());
+    await nextTick();
+
+    await auth.applyAccessToken("org-token-2");
+    await nextTick();
+
+    expect(MockWebSocket.sockets).toHaveLength(2);
+    expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
+    expect(MockWebSocket.sockets[1].url).toBe(`ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}?token=org-token-2`);
     scope.stop();
   });
 });

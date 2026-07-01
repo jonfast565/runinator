@@ -387,7 +387,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     if (workflow && !isDirty.value) await selectWorkflow(workflow);
   }
 
-  function clearServiceState() {
+  function clearServiceState(options: { discardDraft?: boolean } = {}) {
     workflows.value = [];
     workflowRuns.value = [];
     workflowRunDetail.value = null;
@@ -400,7 +400,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedWorkflowNodeRunId.value = null;
     clearWorkflowRunGates();
     clearWorkflowTriggerState();
-    if (isDirty.value) return;
+    if (isDirty.value && !options.discardDraft) return;
+    isDirty.value = false;
     selectedWorkflowId.value = null;
     Object.assign(workflowDraft, newWorkflowDraft());
     setWorkflowJsonSilently(pretty(workflowDraft.definition ?? { nodes: [] }));

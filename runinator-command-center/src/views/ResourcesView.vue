@@ -90,6 +90,7 @@ import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";
+import { useOrgsStore } from "../stores/orgs";
 import { formatDate, pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
@@ -99,6 +100,7 @@ const props = withDefaults(
 );
 
 const resourcesStore = useResourcesStore();
+const orgs = useOrgsStore();
 
 const title = computed(() => props.title || labelFor(props.endpoint));
 
@@ -107,11 +109,13 @@ function labelFor(endpoint: string): string {
 }
 
 async function refresh() {
+  resourcesStore.clearResources();
   await resourcesStore.refreshResourcesFor(props.endpoint);
 }
 
 onMounted(refresh);
 watch(() => props.endpoint, refresh);
+watch(() => orgs.activeOrgId, refresh);
 </script>
 
 <style scoped>

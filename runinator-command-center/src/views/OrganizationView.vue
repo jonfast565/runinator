@@ -148,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import {
   addOrgMember,
@@ -273,6 +273,14 @@ async function refreshMembers() {
     .catch(() => []);
 }
 
+async function refreshActiveOrgDetail() {
+  members.value = [];
+  teams.value = [];
+  selectedTeamId.value = null;
+  teamMembers.value = [];
+  await Promise.all([refreshMembers(), refreshTeams()]);
+}
+
 async function onSwitch(event: Event) {
   const orgId = (event.target as HTMLSelectElement).value;
   if (orgId && (await orgs.setActive(orgId))) await refreshMembers();
@@ -313,6 +321,7 @@ async function removeMember(userId: string) {
 }
 
 onMounted(refresh);
+watch(() => orgs.activeOrgId, refreshActiveOrgDetail);
 </script>
 
 <style scoped>

@@ -54,14 +54,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import { listDeadLetters } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
+import { useOrgsStore } from "../stores/orgs";
 import type { JsonRecord } from "../types/models";
 import { formatDate, pretty } from "../utils/format";
 
 const app = useAppStore();
+const orgs = useOrgsStore();
 const loading = ref(false);
 const rows = ref<JsonRecord[]>([]);
 const channel = ref("");
@@ -73,6 +75,8 @@ function toggle(id: string) {
 
 async function refresh() {
   loading.value = true;
+  rows.value = [];
+  expanded.value = null;
   try {
     await app.runOperation("Loading dead letters", async () => {
       rows.value = await listDeadLetters(channel.value || undefined, 200);
@@ -83,6 +87,7 @@ async function refresh() {
 }
 
 onMounted(refresh);
+watch(() => orgs.activeOrgId, refresh);
 </script>
 
 <style scoped>

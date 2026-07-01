@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useEventStream } from "../useEventStream";
+import { setHttpAuthToken } from "../../api/httpRuntime";
 import { useAppStore } from "../../stores/app";
+import { useAuthStore } from "../../stores/auth";
 import { useResourcesStore } from "../../stores/resources";
 
 class MockWebSocket {
@@ -32,6 +34,7 @@ describe("useEventStream", () => {
       setInterval,
       setTimeout
     });
+    setHttpAuthToken(null);
   });
 
   afterEach(() => {
@@ -75,6 +78,24 @@ describe("useEventStream", () => {
     first.onclose?.();
 
     expect(app.eventStreamState).toBe("connecting");
+    scope.stop();
+  });
+
+  it("reconnects with the current access token when auth changes", async () => {
+    const app = useAppStore();
+    const auth = useAuthStore();
+    app.setServiceUrl("http://127.0.0.1:8080/");
+
+    const scope = effectScope();
+    scope.run(() => useEventStream());
+    await nextTick();
+
+    await auth.applyAccessToken("org-token-2");
+    await nextTick();
+
+    expect(MockWebSocket.sockets).toHaveLength(2);
+    expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
+    expect(MockWebSocket.sockets[1].url).toBe("ws://127.0.0.1:8080/ws/events?token=org-token-2");
     scope.stop();
   });
 

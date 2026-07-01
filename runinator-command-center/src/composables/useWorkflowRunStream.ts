@@ -1,5 +1,6 @@
 import { onBeforeUnmount, watch } from "vue";
 import { useAppStore } from "../stores/app";
+import { useAuthStore } from "../stores/auth";
 import { useWorkflowsStore } from "../stores/workflows";
 import type { WorkflowRunDetail } from "../types/models";
 import { isTerminalWorkflowRunStatus } from "../utils/status";
@@ -18,6 +19,7 @@ interface RunStreamHandle {
 export function useWorkflowRunStream() {
   const workflows = useWorkflowsStore();
   const app = useAppStore();
+  const auth = useAuthStore();
   const sockets = new Map<string, RunStreamHandle>();
 
   function disposeHandle(runId: string) {
@@ -108,6 +110,14 @@ export function useWorkflowRunStream() {
 
   watch(
     () => app.serviceUrl,
+    () => {
+      for (const id of [...sockets.keys()]) disposeHandle(id);
+      syncSockets([...workflows.openRunIds]);
+    }
+  );
+
+  watch(
+    () => auth.accessTokenRevision,
     () => {
       for (const id of [...sockets.keys()]) disposeHandle(id);
       syncSockets([...workflows.openRunIds]);

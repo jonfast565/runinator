@@ -11,6 +11,8 @@ LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"
 API_BASE_URL="${RUNINATOR_API_BASE_URL:-http://127.0.0.1:8080/}"
 LOCAL_SERVICE_API_KEY_DEFAULT="${RUNINATOR_LOCAL_SERVICE_API_KEY:-localdev.runinator-local-dev-service-key}"
+OBSERVABILITY_COMPOSE_FILE="${RUNINATOR_OBSERVABILITY_COMPOSE_FILE:-$ROOT_DIR/deploy/local-observability/compose.yaml}"
+LOCAL_OTLP_ENDPOINT="${RUNINATOR_LOCAL_OTLP_ENDPOINT:-http://127.0.0.1:4318}"
 DEV_ARGS=()
 
 if [[ $# -gt 0 ]]; then
@@ -46,13 +48,80 @@ while [[ $# -gt 0 ]]; do
         continue
       fi
       echo "unknown option: $1" >&2
-      echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+      echo "usage: bash scripts/run-local.sh [start|foreground|observe|observe-foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart|observability-start|observability-stop|observability-status|observability-logs] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
       exit 2
       ;;
   esac
 done
 
 cd "$ROOT_DIR"
+
+compose_command=()
+
+resolve_compose_command() {
+  if [[ ${#compose_command[@]} -gt 0 ]]; then
+    return
+  fi
+
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    compose_command=(docker compose)
+    return
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    compose_command=(docker-compose)
+    return
+  fi
+
+  echo "docker compose or docker-compose is required for the local observability helper" >&2
+  exit 1
+}
+
+observability_compose() {
+  resolve_compose_command
+  "${compose_command[@]}" -f "$OBSERVABILITY_COMPOSE_FILE" "$@"
+}
+
+enable_local_observability_env() {
+  export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$LOCAL_OTLP_ENDPOINT}"
+  export OTEL_RESOURCE_ATTRIBUTES="${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=runinator}"
+}
+
+print_observability_urls() {
+  cat <<MSG
+
+Observability:
+  OTLP HTTP endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-$LOCAL_OTLP_ENDPOINT}
+  Jaeger traces:      http://127.0.0.1:16686/
+  Prometheus metrics: http://127.0.0.1:9090/
+  Collector metrics:  http://127.0.0.1:8888/metrics
+  OTLP metrics:       http://127.0.0.1:8889/metrics
+
+Useful commands:
+  bash scripts/run-local.sh smoke-sync
+  bash scripts/run-local.sh observability-logs
+  bash scripts/run-local.sh observability-stop
+MSG
+}
+
+start_observability() {
+  observability_compose up -d
+  enable_local_observability_env
+  print_observability_urls
+}
+
+start_supervisor_stack() {
+  ensure_workflow_dir
+  cargo build --workspace
+  cargo run "${SUPERVISOR_ARGS[@]}" start
+  cargo run "${SUPERVISOR_ARGS[@]}" status
+}
+
+start_supervisor_foreground() {
+  ensure_workflow_dir
+  cargo build --workspace
+  cargo run "${SUPERVISOR_ARGS[@]}" start --foreground
+}
 
 ensure_workflow_dir() {
   mkdir -p "$(dirname "$WORKFLOWS_FILE")"
@@ -122,10 +191,7 @@ show_logs() {
 
 case "$COMMAND" in
   start)
-    ensure_workflow_dir
-    cargo build --workspace
-    cargo run "${SUPERVISOR_ARGS[@]}" start
-    cargo run "${SUPERVISOR_ARGS[@]}" status
+    start_supervisor_stack
     cat <<MSG
 
 Runinator local stack is starting.
@@ -151,9 +217,34 @@ Command-center:
 MSG
     ;;
   foreground)
-    ensure_workflow_dir
-    cargo build --workspace
-    cargo run "${SUPERVISOR_ARGS[@]}" start --foreground
+    start_supervisor_foreground
+    ;;
+  observe)
+    start_observability
+    start_supervisor_stack
+    cat <<MSG
+
+Runinator local stack is starting with OTLP export enabled.
+
+Web API:
+  http://127.0.0.1:8080/
+MSG
+    ;;
+  observe-foreground)
+    start_observability
+    start_supervisor_foreground
+    ;;
+  observability-start)
+    start_observability
+    ;;
+  observability-stop)
+    observability_compose down
+    ;;
+  observability-status)
+    observability_compose ps
+    ;;
+  observability-logs)
+    observability_compose logs --tail "$LOG_LINES"
     ;;
   status)
     cargo run "${SUPERVISOR_ARGS[@]}" status
@@ -197,7 +288,7 @@ MSG
     cargo run "${SUPERVISOR_ARGS[@]}" status
     ;;
   *)
-    echo "usage: bash scripts/run-local.sh [start|foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
+    echo "usage: bash scripts/run-local.sh [start|foreground|observe|observe-foreground|status|watch|logs|logs-watch|sync|dev|smoke-sync|ui|stop|restart|observability-start|observability-stop|observability-status|observability-logs] [--workflows-file PATH] [--smoke-workflows-file PATH] [--smoke-workflow NAME] [--process NAME] [--lines N]" >&2
     exit 2
     ;;
 esac

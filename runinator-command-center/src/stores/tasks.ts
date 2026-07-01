@@ -52,6 +52,20 @@ export const useTasksStore = defineStore("tasks", () => {
     if (selectedTaskId.value) await refreshRunsForSelectedTask();
   }
 
+  function clearTasks() {
+    tasks.value = [];
+    selectedTaskId.value = null;
+    selectedRunId.value = null;
+    runs.value = [];
+    chunks.value = [];
+    artifacts.value = [];
+    taskEditorOpen.value = false;
+    taskEditorCreating.value = false;
+    taskEditorError.value = "";
+    Object.assign(taskDraft, newTaskDraft());
+    taskJson.configuration = "{}";
+  }
+
   async function refreshRunsForSelectedTask() {
     if (!selectedTaskId.value) {
       runs.value = [];
@@ -170,6 +184,7 @@ export const useTasksStore = defineStore("tasks", () => {
     taskDraft,
     taskJson,
     refreshTasks,
+    clearTasks,
     refreshRunsForSelectedTask,
     selectRun,
     runSelectedTask,

@@ -56,18 +56,21 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
+import { useOrgsStore } from "../stores/orgs";
 import { useResourcesStore } from "../stores/resources";
 import type { JsonRecord } from "../types/models";
 import { pretty } from "../utils/format";
 
 const resourcesStore = useResourcesStore();
+const orgs = useOrgsStore();
 const endpoint = "automation_events";
 
 async function refresh() {
+  resourcesStore.clearResources();
   await resourcesStore.refreshResourcesFor(endpoint);
 }
 
@@ -80,4 +83,5 @@ function eventMessage(record: JsonRecord): string {
 }
 
 onMounted(refresh);
+watch(() => orgs.activeOrgId, refresh);
 </script>

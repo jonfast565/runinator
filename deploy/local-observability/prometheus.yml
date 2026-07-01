@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # the otlp metrics pushed by ws/worker/waker/broker, re-exposed by the collector.
+  - job_name: runinator-otlp
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # the collector's own pipeline telemetry.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]

@@ -149,6 +149,10 @@ function fmtCents(cents: number): string {
 
 async function refresh() {
   const orgId = orgs.activeOrgId;
+  groups.value = [];
+  projectedMonthlyCents.value = 0;
+  quota.value = null;
+  usage.value = null;
   if (!orgId) return;
   loading.value = true;
   try {
