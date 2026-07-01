@@ -375,6 +375,24 @@ to the web service continue the caller's trace, and the reducer stamps the activ
 context onto each `ActionCommand` so a worker's execution span links back to the
 dispatching trace. Prometheus `/metrics` remains available alongside OTLP metrics.
 
+Each service and the broker emit runtime metrics over OTLP (and, for the web
+service, also on Prometheus `/metrics`):
+
+- **Web service** (`runinator_ws_*`): `result_events_{applied,duplicate,retried,dead_lettered}_total`,
+  `result_receive_errors_total`, `handler_panics_total`, `background_loop_failures_total`,
+  `ingress_{applied,retried,dead_lettered}_total`, `triggers_fired_total`, and the
+  `reducer_drive_ms` histogram (reducer time per drive).
+- **Worker** (`runinator_worker_*`): `actions_received_total`, `actions_completed_total`
+  and the `action_duration_ms` histogram (both split by `outcome`),
+  `actions_duplicate_total`, `actions_in_flight` (gauge), `control_commands_total`
+  (by `kind`), and `secret_resolution_failures_total`.
+- **Waker** (`runinator_waker_*`): `wakes_{received,driven,requeued}_total`,
+  `drive_failures_total`, and the `wake_lead_ms` histogram (scheduling lead/lag at
+  receipt).
+- **Broker** (`runinator_broker_*`, emitted by every service): `operations_total` and
+  the `operation_duration_ms` histogram, tagged with `backend` (in-memory/http/tcp/
+  kafka/rabbitmq), `channel`, `op`, and (for the counter) `outcome`.
+
 ```bash
 # point all binaries at a local OpenTelemetry Collector (OTLP/HTTP on :4318)
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
@@ -391,7 +409,7 @@ on there (and remove it to turn otel back off). After deploying:
 ```bash
 # dashboards — open Grafana at http://localhost:3000 (anonymous admin; "Runinator
 # Overview" dashboard is provisioned, with Prometheus + Jaeger datasources wired up)
-kubectl -n runinator port-forward svc/runinator-grafana 3000:3000
+bash scripts/port-forward-grafana.sh   # or: kubectl -n runinator port-forward svc/runinator-grafana 3000:3000
 # traces — open the Jaeger UI at http://localhost:16686
 kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686
 # raw metrics — the Prometheus UI / API at http://localhost:9090

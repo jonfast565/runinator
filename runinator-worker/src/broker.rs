@@ -63,7 +63,11 @@ pub async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, Se
     )
     .map_err(|err| broker_error("workflow_results", err))?;
 
-    Ok(broker)
+    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
+    Ok(runinator_broker::instrument(
+        broker,
+        config.broker_backend.clone(),
+    ))
 }
 
 pub(crate) fn broker_error(context: &'static str, err: BrokerError) -> SendableError {

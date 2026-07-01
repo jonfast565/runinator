@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use opentelemetry::metrics::Counter;
+use opentelemetry::metrics::{Counter, Histogram};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -20,6 +20,11 @@ const METRIC_RESULT_DEAD_LETTERED: &str = "runinator_ws_result_events_dead_lette
 const METRIC_RESULT_RECEIVE_ERRORS: &str = "runinator_ws_result_receive_errors_total";
 const METRIC_HANDLER_PANICS: &str = "runinator_ws_handler_panics_total";
 const METRIC_BACKGROUND_LOOP_FAILURES: &str = "runinator_ws_background_loop_failures_total";
+const METRIC_INGRESS_APPLIED: &str = "runinator_ws_ingress_applied_total";
+const METRIC_INGRESS_RETRIED: &str = "runinator_ws_ingress_retried_total";
+const METRIC_INGRESS_DEAD_LETTERED: &str = "runinator_ws_ingress_dead_lettered_total";
+const METRIC_TRIGGERS_FIRED: &str = "runinator_ws_triggers_fired_total";
+const METRIC_REDUCER_DRIVE_MS: &str = "runinator_ws_reducer_drive_ms";
 
 static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -34,6 +39,11 @@ struct OtelCounters {
     result_receive_errors: Counter<u64>,
     handler_panics: Counter<u64>,
     background_loop_failures: Counter<u64>,
+    ingress_applied: Counter<u64>,
+    ingress_retried: Counter<u64>,
+    ingress_dead_lettered: Counter<u64>,
+    triggers_fired: Counter<u64>,
+    reducer_drive_ms: Histogram<f64>,
 }
 
 static OTEL_COUNTERS: OnceLock<OtelCounters> = OnceLock::new();
@@ -49,6 +59,14 @@ fn otel_counters() -> &'static OtelCounters {
             result_receive_errors: meter.u64_counter(METRIC_RESULT_RECEIVE_ERRORS).build(),
             handler_panics: meter.u64_counter(METRIC_HANDLER_PANICS).build(),
             background_loop_failures: meter.u64_counter(METRIC_BACKGROUND_LOOP_FAILURES).build(),
+            ingress_applied: meter.u64_counter(METRIC_INGRESS_APPLIED).build(),
+            ingress_retried: meter.u64_counter(METRIC_INGRESS_RETRIED).build(),
+            ingress_dead_lettered: meter.u64_counter(METRIC_INGRESS_DEAD_LETTERED).build(),
+            triggers_fired: meter.u64_counter(METRIC_TRIGGERS_FIRED).build(),
+            reducer_drive_ms: meter
+                .f64_histogram(METRIC_REDUCER_DRIVE_MS)
+                .with_unit("ms")
+                .build(),
         }
     })
 }
@@ -125,6 +143,41 @@ pub(crate) fn record_handler_panic() {
 pub(crate) fn record_background_loop_failure() {
     metrics::counter!(METRIC_BACKGROUND_LOOP_FAILURES).increment(1);
     otel_counters().background_loop_failures.add(1, &[]);
+}
+
+/// an ingress message (a waker drive or worker control request) was applied and acked.
+pub(crate) fn ingress_applied() {
+    metrics::counter!(METRIC_INGRESS_APPLIED).increment(1);
+    otel_counters().ingress_applied.add(1, &[]);
+}
+
+/// an ingress message failed and was returned to the broker for another attempt.
+pub(crate) fn ingress_retried() {
+    metrics::counter!(METRIC_INGRESS_RETRIED).increment(1);
+    otel_counters().ingress_retried.add(1, &[]);
+}
+
+/// an ingress message exhausted its attempts and was dead-lettered. a nonzero rate points at a
+/// persistently failing reducer drive or control request.
+pub(crate) fn ingress_dead_lettered() {
+    metrics::counter!(METRIC_INGRESS_DEAD_LETTERED).increment(1);
+    otel_counters().ingress_dead_lettered.add(1, &[]);
+}
+
+/// `count` due workflow triggers were claimed and turned into runs in one trigger-loop iteration.
+pub(crate) fn triggers_fired(count: u64) {
+    if count == 0 {
+        return;
+    }
+    metrics::counter!(METRIC_TRIGGERS_FIRED).increment(count);
+    otel_counters().triggers_fired.add(count, &[]);
+}
+
+/// record the wall-clock time the reducer spent advancing a run for one ingress drive, in
+/// milliseconds. surfaces reducer latency independent of broker/queue wait.
+pub(crate) fn record_reducer_drive_ms(millis: f64) {
+    metrics::histogram!(METRIC_REDUCER_DRIVE_MS).record(millis);
+    otel_counters().reducer_drive_ms.record(millis, &[]);
 }
 
 pub(crate) fn snapshot() -> StabilityCounters {

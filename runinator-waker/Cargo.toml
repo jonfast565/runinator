@@ -13,6 +13,7 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
+opentelemetry = "0.32"
 runinator-comm = { path = "../runinator-comm" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-api = { path = "../runinator-api" }

@@ -6,6 +6,7 @@ pub mod broker;
 pub mod config;
 pub mod errors;
 pub mod executor;
+pub mod metrics;
 pub mod output_sink;
 pub mod provider_repository;
 pub mod secrets;

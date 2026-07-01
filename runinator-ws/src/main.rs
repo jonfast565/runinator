@@ -206,7 +206,8 @@ async fn build_broker(
     runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref())
         .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
 
-    Ok(broker)
+    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
+    Ok(runinator_broker::instrument(broker, backend.to_string()))
 }
 
 #[cfg(test)]

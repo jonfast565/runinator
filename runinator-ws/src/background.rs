@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     events::{AppEvent, EventSender, emit, emit_workflow_run},
-    repository,
+    repository, stability,
 };
 
 const EVENT_CONSUMER_RETRY_BACKOFF: Duration = Duration::from_millis(250);
@@ -128,6 +128,7 @@ pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
         .await
         {
             Ok(runs) => {
+                stability::triggers_fired(runs.len() as u64);
                 for run in &runs {
                     emit_workflow_run(&events, run.id);
                 }
@@ -216,6 +217,7 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
         .await
         {
             Ok(()) => {
+                stability::ingress_applied();
                 attempts.remove(&key);
                 if let Err(err) = broker
                     .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
@@ -235,6 +237,7 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
                     count, err
                 );
                 if count >= MAX_INGRESS_ATTEMPTS {
+                    stability::ingress_dead_lettered();
                     attempts.remove(&key);
                     warn!("Dead-lettering ingress message after {} attempt(s)", count);
                     crate::audit::persist_dead_letter(
@@ -255,6 +258,7 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
                     }
                     continue;
                 }
+                stability::ingress_retried();
                 tokio::time::sleep(INGRESS_RETRY_BACKOFF).await;
                 if let Err(err) = broker
                     .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
@@ -276,9 +280,11 @@ async fn apply_ingress<T: DatabaseImpl>(
 ) -> Result<(), runinator_models::errors::SendableError> {
     match command {
         WsIngressCommand::Drive { ready_node_id, .. } => {
-            if let Some(run_id) =
-                repository::drive_ready_node(db, *ready_node_id, instance_id.to_string()).await?
-            {
+            let started = std::time::Instant::now();
+            let driven =
+                repository::drive_ready_node(db, *ready_node_id, instance_id.to_string()).await?;
+            stability::record_reducer_drive_ms(started.elapsed().as_secs_f64() * 1000.0);
+            if let Some(run_id) = driven {
                 signal_canceled_executing_node_runs(db, broker, run_id).await;
                 emit_workflow_run(events, run_id);
             }

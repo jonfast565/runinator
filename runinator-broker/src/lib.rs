@@ -4,6 +4,7 @@ mod errors;
 mod factory;
 pub mod http;
 pub mod in_memory;
+mod instrumented;
 pub mod tcp;
 mod types;
 
@@ -12,6 +13,7 @@ pub use capabilities::{
 };
 pub use errors::BrokerError;
 pub use factory::{build_kafka_broker, build_rabbitmq_broker};
+pub use instrumented::instrument;
 pub use runinator_comm::{
     ActionTarget, ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
 };

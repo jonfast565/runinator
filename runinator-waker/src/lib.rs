@@ -1,5 +1,6 @@
 pub mod config;
 pub mod errors;
+pub mod metrics;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +49,9 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
             }
         };
 
-        let remaining = (delivery.command.ready_at - Utc::now())
+        let now = Utc::now();
+        metrics::wake_received((delivery.command.ready_at - now).num_milliseconds() as f64);
+        let remaining = (delivery.command.ready_at - now)
             .to_std()
             .unwrap_or_default();
 
@@ -69,9 +72,12 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
 
         if Utc::now() >= delivery.command.ready_at {
             drive(broker.as_ref(), group, &delivery, config).await;
-        } else if let Err(err) = broker.nack_wake(group, delivery.delivery_id).await {
-            // returning it failed; the broker lease will redeliver it eventually.
-            error!("Failed to requeue not-yet-due wake: {}", err);
+        } else {
+            metrics::wake_requeued();
+            if let Err(err) = broker.nack_wake(group, delivery.delivery_id).await {
+                // returning it failed; the broker lease will redeliver it eventually.
+                error!("Failed to requeue not-yet-due wake: {}", err);
+            }
         }
     }
 }
@@ -95,11 +101,13 @@ async fn drive(
     // a duplicate means the drive is already in flight; treat it as success and ack the wake.
     match broker.publish_ingress(message).await {
         Ok(()) | Err(runinator_broker::BrokerError::Duplicate(_)) => {
+            metrics::wake_driven();
             if let Err(err) = broker.ack_wake(group, delivery.delivery_id).await {
                 error!("Failed to ack driven wake: {}", err);
             }
         }
         Err(err) => {
+            metrics::drive_failed();
             error!(
                 "Failed to publish drive for ready node {}: {}",
                 delivery.command.ready_node_id, err

@@ -101,17 +101,17 @@ fn advertise_host(value: &str) -> Option<String> {
 }
 
 async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
-    match config.broker_backend.as_str() {
+    let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
         "http" => {
             let url = Url::parse(&config.broker_endpoint)
                 .map_err(|err| runinator_waker::errors::BROKER_INVALID_ENDPOINT.error(err))?;
             let client = reqwest::Client::builder()
                 .build()
                 .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
-            Ok(Arc::new(HttpBroker::new(url, client)))
+            Ok(Arc::new(HttpBroker::new(url, client)) as Arc<dyn Broker>)
         }
-        "in-memory" => Ok(Arc::new(InMemoryBroker::new())),
-        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone()))),
+        "in-memory" => Ok(Arc::new(InMemoryBroker::new()) as Arc<dyn Broker>),
+        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone())) as Arc<dyn Broker>),
         "kafka" => runinator_broker::build_kafka_broker(
             KafkaBrokerConfig::new(config.broker_endpoint.clone())
                 .with_topics(
@@ -142,5 +142,11 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
         .await
         .map_err(|err| runinator_waker::errors::BROKER_RABBITMQ.error(err)),
         other => Err(runinator_waker::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'"))),
-    }
+    }?;
+
+    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
+    Ok(runinator_broker::instrument(
+        broker,
+        config.broker_backend.clone(),
+    ))
 }

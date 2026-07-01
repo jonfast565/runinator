@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::broker::broker_error;
 use crate::executor;
+use crate::metrics;
 use crate::output_sink::RunOutputSink;
 use crate::provider_repository::ProviderFactory;
 use crate::secrets::resolve_secret_refs;
@@ -226,6 +227,11 @@ async fn handle_control_delivery(
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
     let control_kind = delivery.command.kind;
+    metrics::control_command(match control_kind {
+        ControlKind::Cancel => "cancel",
+        ControlKind::Pause => "pause",
+        ControlKind::Resume => "resume",
+    });
     match control_kind {
         ControlKind::Cancel => {
             // a node-run-targeted cancel reaches exactly one losing race branch; a run-wide cancel
@@ -308,6 +314,7 @@ async fn process_delivery(
         &tracing::Span::current(),
         &delivery.command.trace_context,
     );
+    metrics::action_received();
     let command = delivery.command.clone();
     let action = command.action.clone();
     let token = CancellationToken::new();
@@ -344,6 +351,7 @@ async fn process_delivery(
                     "Skipping duplicate delivery for node run {}: executor lease held elsewhere",
                     command.workflow_node_run_id
                 );
+                metrics::action_duplicate();
                 in_flight.lock().await.remove(&command.workflow_node_run_id);
                 broker
                     .ack(consumer_id, delivery.delivery_id)
@@ -375,6 +383,7 @@ async fn process_delivery(
         Err(err) => {
             let message = format!("Failed to resolve action secrets: {err}");
             error!("{}", message);
+            metrics::secret_resolution_failure();
             let output_json = TaskStatusOutput {
                 success: false,
                 duration_ms: None,
@@ -414,17 +423,29 @@ async fn process_delivery(
             return Ok(());
         }
     };
-    let result = executor::execute_task(
-        &providers,
-        libraries,
-        action.clone(),
-        command.workflow_node_run_id,
-        parameters,
-        Some(Arc::new(sink.clone())),
-        token,
-    )
-    .await;
+    let result = {
+        // raise the in-flight gauge only around actual execution, so it reflects running providers
+        // rather than deliveries parked on lease/secret checks.
+        let _in_flight = metrics::in_flight_guard();
+        executor::execute_task(
+            &providers,
+            libraries,
+            action.clone(),
+            command.workflow_node_run_id,
+            parameters,
+            Some(Arc::new(sink.clone())),
+            token,
+        )
+        .await
+    };
     in_flight.lock().await.remove(&command.workflow_node_run_id);
+    let outcome = match result.status {
+        runinator_models::runs::RunStatus::TimedOut => "timed_out",
+        runinator_models::runs::RunStatus::Canceled => "canceled",
+        _ if result.task_result.success => "succeeded",
+        _ => "failed",
+    };
+    metrics::action_completed(outcome, result.task_result.duration_ms() as f64);
     if let Some(execution_result) = &result.execution_result
         && let Err(err) = sink.persist_result(execution_result).await
     {

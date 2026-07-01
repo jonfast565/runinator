@@ -19,6 +19,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
+opentelemetry = "0.32"
 runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
