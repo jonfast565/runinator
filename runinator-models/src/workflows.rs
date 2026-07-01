@@ -882,6 +882,10 @@ pub struct WorkflowNodeRun {
     pub output_json: Option<Value>,
     pub state: Value,
     pub transition_reason: Option<String>,
+    /// the node run created immediately before this one in the same workflow run, forming a flat,
+    /// guid-linked execution chain that is easier to debug than the nested `steps` output tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_node_run_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,

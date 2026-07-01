@@ -98,6 +98,50 @@
       </template>
     </RunTimeline>
 
+    <details v-if="flatSteps.length" class="flat-steps-group">
+      <summary>Flat step log (debug) · {{ flatSteps.length }} step(s)</summary>
+      <p class="flat-steps-hint">
+        Each executed step as a flat row in creation order, with its own id and a link to the step that ran before it —
+        easier to trace than the nested output tree.
+      </p>
+      <table class="flat-steps-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Step ID</th>
+            <th>Node</th>
+            <th>Status</th>
+            <th>Prev step</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="(node, index) in flatSteps"
+            :key="node.id"
+            :class="{ selected: node.node_id === workflows.selectedWorkflowRunNodeId }"
+            @click="workflows.selectWorkflowRunNode(node.node_id)"
+          >
+            <td>{{ index + 1 }}</td>
+            <td class="mono" :title="node.id">{{ shortId(node.id) }}</td>
+            <td>{{ node.node_id }}</td>
+            <td><StatusBadge :status="node.status" /></td>
+            <td class="mono">
+              <button
+                v-if="node.prev_node_run_id"
+                type="button"
+                class="prev-link"
+                :title="node.prev_node_run_id"
+                @click.stop="selectByRunId(node.prev_node_run_id)"
+              >
+                {{ shortId(node.prev_node_run_id) }}
+              </button>
+              <span v-else>—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </details>
+
     <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
       <h3 class="run-detail-section-title">Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
@@ -295,6 +339,28 @@ function formatResultValue(value: any): string {
   if (value === undefined || value === null) return "(none)";
   if (typeof value === "object") return pretty(value);
   return String(value);
+}
+
+// a flat, creation-ordered view of the run's node runs for debugging. each row carries its own guid
+// and a pointer to the previously created step, forming a linked chain that is easier to follow than
+// the nested `steps.<node>` output tree.
+const flatSteps = computed<WorkflowNodeRun[]>(() => {
+  const nodes = [...(workflows.workflowRunDetail?.nodes ?? [])];
+  return nodes.sort((a, b) => {
+    const at = a.created_at ? Date.parse(a.created_at) : 0;
+    const bt = b.created_at ? Date.parse(b.created_at) : 0;
+    if (at !== bt) return at - bt;
+    return a.id.localeCompare(b.id);
+  });
+});
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+function selectByRunId(runId: string) {
+  const node = workflows.workflowRunDetail?.nodes.find((item) => item.id === runId);
+  if (node) workflows.selectWorkflowRunNode(node.node_id);
 }
 </script>
 
@@ -525,6 +591,58 @@ function formatResultValue(value: any): string {
 }
 .result-extra summary:hover {
   color: var(--text-subtle);
+}
+
+.flat-steps-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 6px 0 12px;
+  padding: 6px 8px;
+}
+.flat-steps-group summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  user-select: none;
+}
+.flat-steps-hint {
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.flat-steps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.flat-steps-table th,
+.flat-steps-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.flat-steps-table tbody tr {
+  cursor: pointer;
+}
+.flat-steps-table tbody tr:hover {
+  background: var(--surface-subtle);
+}
+.flat-steps-table tbody tr.selected {
+  background: var(--accent-soft);
+}
+.flat-steps-table .mono {
+  font-family: var(--font-mono);
+}
+.prev-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  text-decoration: underline;
 }
 
 @media (max-width: 920px) {

@@ -8,6 +8,7 @@ use runinator_models::{
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::SettingKind,
+    telemetry::ReplicaSampleSeries,
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -105,6 +106,7 @@ pub enum ApiResponse {
     ProviderBundle(ProviderBundle),
     Replica(ReplicaRecord),
     ReplicaList(ReplicaListResponse),
+    ReplicaSamples(ReplicaSampleSeries),
     ReplicaProviderRegistration(ReplicaProviderRegistration),
     ReplicaProviderRegistrationList(Vec<ReplicaProviderRegistration>),
     NodeBackends(NodeBackendsResponse),
@@ -359,6 +361,19 @@ pub struct CredentialQuery {
 pub struct ReplicaQuery {
     pub replica_type: Option<runinator_models::replicas::ReplicaKind>,
     pub status: Option<ReplicaStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowOwnerRequest {
+    /// the org to own the workflow, or `null`/absent to make it platform-global.
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplicaSampleQuery {
+    /// look-back window in seconds; defaults to the last hour when absent.
+    pub since_seconds: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

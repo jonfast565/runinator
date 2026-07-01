@@ -1,7 +1,6 @@
 <template>
   <section class="pane replicas-pane">
     <LocalWorkerPanel />
-    <NodePoolsPanel />
     <div class="replicas-layout">
       <aside class="panel replicas-list-panel">
         <div class="panel-toolbar">
@@ -104,6 +103,23 @@
           </div>
 
           <div class="replicas-section">
+            <div class="replicas-section-head">
+              <h3>Telemetry</h3>
+              <span class="replicas-section-hint">
+                {{ samplesLoading ? "loading…" : `${samples.length} sample(s), last hour` }}
+              </span>
+            </div>
+            <div class="sparkline-grid">
+              <Sparkline label="CPU" :values="cpuSeries" :max="100" unit="%" color="var(--accent)" />
+              <Sparkline label="Memory" :values="memSeries" :max="100" unit="%" color="#7c5cff" />
+              <Sparkline label="Process CPU" :values="procCpuSeries" :max="null" unit="%" color="#0ea5a5" />
+              <Sparkline label="Load (1m)" :values="loadSeries" :max="null" color="#f59e0b" />
+              <Sparkline label="Net In" :values="rxSeries" :max="null" color="#22c55e" :format="formatRate" />
+              <Sparkline label="Net Out" :values="txSeries" :max="null" color="#ef4444" :format="formatRate" />
+            </div>
+          </div>
+
+          <div class="replicas-section">
             <h3>Attributes</h3>
             <pre class="replicas-pre">{{ pretty(selectedReplica.attributes ?? {}) }}</pre>
           </div>
@@ -112,6 +128,7 @@
         <div v-else class="empty-state">Select a replica to inspect its health, address, and runtime details.</div>
       </section>
     </div>
+    <NodePoolsPanel />
   </section>
 </template>
 
@@ -120,6 +137,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
+import Sparkline from "../components/shared/Sparkline.vue";
+import { fetchReplicaSamples, type ReplicaSample } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
 import type { ReplicaKind } from "../types/models";
 import { formatDate, pretty } from "../utils/format";
@@ -127,6 +146,43 @@ import { formatDate, pretty } from "../utils/format";
 const app = useAppStore();
 const loading = ref(false);
 const selectedReplicaId = ref<string | null>(null);
+const samples = ref<ReplicaSample[]>([]);
+const samplesLoading = ref(false);
+
+const cpuSeries = computed(() => samples.value.map((sample) => sample.cpu_percent));
+const memSeries = computed(() => samples.value.map((sample) => sample.mem_percent));
+const loadSeries = computed(() => samples.value.map((sample) => sample.load_one ?? 0));
+const rxSeries = computed(() => samples.value.map((sample) => sample.net_rx_bytes_per_sec));
+const txSeries = computed(() => samples.value.map((sample) => sample.net_tx_bytes_per_sec));
+const procCpuSeries = computed(() => samples.value.map((sample) => sample.process_cpu_percent));
+
+function formatRate(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "0 B/s";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let value = bytesPerSec;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+async function loadSamples(replicaId: string | null) {
+  if (!replicaId) {
+    samples.value = [];
+    return;
+  }
+  samplesLoading.value = true;
+  try {
+    const series = await fetchReplicaSamples(replicaId);
+    samples.value = series.samples ?? [];
+  } catch {
+    samples.value = [];
+  } finally {
+    samplesLoading.value = false;
+  }
+}
 
 const filteredReplicas = computed(() => {
   const query = app.normalizedSearch;
@@ -190,6 +246,15 @@ watch(filteredReplicas, (replicas) => {
     selectedReplicaId.value = replicas[0].replica_id;
   }
 });
+
+// reload the telemetry time-series whenever the inspected replica changes.
+watch(
+  () => selectedReplica.value?.replica_id ?? null,
+  (replicaId) => {
+    void loadSamples(replicaId);
+  },
+  { immediate: true }
+);
 
 onMounted(async () => {
   if (!app.replicas.length) await refresh();
@@ -360,6 +425,25 @@ onMounted(async () => {
 
 .replicas-section h3 {
   margin: 0 0 8px;
+}
+
+.replicas-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.replicas-section-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sparkline-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .replicas-pre {

@@ -67,6 +67,11 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
             Ok(_) => {}
             Err(err) => error!("Replica purge iteration failed: {}", err),
         }
+        match repository::prune_replica_samples(db.as_ref()).await {
+            Ok(count) if count > 0 => info!("Pruned {} expired replica sample(s)", count),
+            Ok(_) => {}
+            Err(err) => error!("Replica sample prune iteration failed: {}", err),
+        }
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("Replica reaper shutting down");

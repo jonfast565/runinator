@@ -36,61 +36,65 @@
         </div>
       </div>
 
-      <div class="panel">
-        <div class="panel-toolbar"><h2>Dedicated allocations</h2></div>
-        <div v-if="!groups.length" class="empty-state">No dedicated node pools. Scale one below.</div>
-        <table v-else class="res-table">
-          <thead>
-            <tr><th>Backend</th><th>Kind</th><th>Desired</th><th>Rate</th><th>Monthly</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="g in groups" :key="g.backend + g.kind">
-              <td>{{ g.backend }}</td>
-              <td>{{ g.kind }}</td>
-              <td>{{ g.desired }}</td>
-              <td>{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
-              <td>{{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <div class="panel res-detail-panel">
+        <div class="res-grid">
+          <section class="res-card res-card-wide">
+            <h3 class="res-card-title">Dedicated allocations</h3>
+            <div v-if="!groups.length" class="empty-state">No dedicated node pools. Scale one below.</div>
+            <table v-else class="res-table">
+              <thead>
+                <tr><th>Backend</th><th>Kind</th><th>Desired</th><th>Rate</th><th>Monthly</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="g in groups" :key="g.backend + g.kind">
+                  <td>{{ g.backend }}</td>
+                  <td>{{ g.kind }}</td>
+                  <td>{{ g.desired }}</td>
+                  <td>{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
+                  <td>{{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
 
-      <div v-if="orgs.isActiveOrgAdmin" class="panel">
-        <div class="panel-toolbar"><h2>Scale a pool</h2></div>
-        <form class="res-scale" @submit.prevent="scale">
-          <select v-model="scaleBackend">
-            <option value="supervisor">supervisor</option>
-            <option value="kubernetes">kubernetes</option>
-          </select>
-          <select v-model="scaleKind">
-            <option value="worker">worker</option>
-            <option value="waker">waker</option>
-            <option value="webservice">webservice</option>
-          </select>
-          <input v-model.number="scaleDesired" type="number" min="0" />
-          <button class="btn primary" type="submit" :disabled="scaling">Set desired</button>
-          <span class="res-preview">
-            ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
-          </span>
-        </form>
-        <p class="res-note">
-          A worker pool with a positive count makes this org's workflows route to its dedicated,
-          <span class="mono">org={{ orgs.activeOrg.slug }}</span>-labeled workers.
-        </p>
-      </div>
+          <section class="res-card">
+            <h3 class="res-card-title">Node-hours (30d)</h3>
+            <div v-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
+            <table v-else class="res-table">
+              <thead><tr><th>Kind</th><th>Node-hours</th></tr></thead>
+              <tbody>
+                <tr v-for="[kind, hours] in usageKinds" :key="kind">
+                  <td>{{ kind }}</td>
+                  <td>{{ hours.toFixed(2) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
 
-      <div class="panel">
-        <div class="panel-toolbar"><h2>Node-hours (30d)</h2></div>
-        <div v-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
-        <table v-else class="res-table">
-          <thead><tr><th>Kind</th><th>Node-hours</th></tr></thead>
-          <tbody>
-            <tr v-for="[kind, hours] in usageKinds" :key="kind">
-              <td>{{ kind }}</td>
-              <td>{{ hours.toFixed(2) }}</td>
-            </tr>
-          </tbody>
-        </table>
+          <section v-if="orgs.isActiveOrgAdmin" class="res-card res-card-wide">
+            <h3 class="res-card-title">Scale a pool</h3>
+            <form class="res-scale" @submit.prevent="scale">
+              <select v-model="scaleBackend">
+                <option value="supervisor">supervisor</option>
+                <option value="kubernetes">kubernetes</option>
+              </select>
+              <select v-model="scaleKind">
+                <option value="worker">worker</option>
+                <option value="waker">waker</option>
+                <option value="webservice">webservice</option>
+              </select>
+              <input v-model.number="scaleDesired" type="number" min="0" />
+              <button class="btn btn-primary" type="submit" :disabled="scaling">Set desired</button>
+              <span class="res-preview">
+                ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
+              </span>
+            </form>
+            <p class="res-note">
+              A worker pool with a positive count makes this org's workflows route to its dedicated,
+              <span class="mono">org={{ orgs.activeOrg.slug }}</span>-labeled workers.
+            </p>
+          </section>
+        </div>
       </div>
     </template>
   </section>
@@ -228,6 +232,28 @@ onMounted(refresh);
   background: var(--danger-fg);
 }
 
+.res-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.res-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 12px 14px;
+}
+
+.res-card-wide {
+  grid-column: 1 / -1;
+}
+
+.res-card-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
 .res-table {
   width: 100%;
   border-collapse: collapse;
@@ -264,5 +290,15 @@ onMounted(refresh);
 
 .mono {
   font-family: var(--font-mono);
+}
+
+@media (max-width: 820px) {
+  .res-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .res-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

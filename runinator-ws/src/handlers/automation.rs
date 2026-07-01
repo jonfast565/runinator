@@ -189,6 +189,23 @@ pub(crate) async fn close_gate<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn delete_gate<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(gate_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        crate::authz::require_gate_workflow(db.as_ref(), &ctx, gate_id, Permission::Edit).await
+    {
+        return reply;
+    }
+    match repository::delete_gate(db.as_ref(), gate_id).await {
+        Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
+        Ok(false) => not_found("Gate not found"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn get_automation_events<T: DatabaseImpl>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -203,6 +220,29 @@ pub(crate) async fn create_automation_event<T: DatabaseImpl>(
     json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, &ctx, "automation_events", json).await
+}
+
+pub(crate) async fn delete_automation_event<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(event_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_automation_record_workflow(
+        db.as_ref(),
+        &ctx,
+        "automation_events",
+        event_id,
+        Permission::Edit,
+    )
+    .await
+    {
+        return reply;
+    }
+    match repository::delete_automation_record(db.as_ref(), "automation_events", event_id).await {
+        Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
+        Ok(false) => not_found("Automation event not found"),
+        Err(err) => api_error(err.to_string()),
+    }
 }
 
 pub(crate) async fn get_approvals<T: DatabaseImpl>(
@@ -227,30 +267,7 @@ pub(crate) async fn approve_request<T: DatabaseImpl>(
     Path(approval_id): Path<Uuid>,
     Json(request): Json<ApprovalResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = crate::authz::require_automation_record_workflow(
-        db.as_ref(),
-        &ctx,
-        "approval_requests",
-        approval_id,
-        Permission::Run,
-    )
-    .await
-    {
-        return reply;
-    }
-    match repository::resolve_approval(
-        db.as_ref(),
-        approval_id,
-        true,
-        request.resolved_by,
-        request.message,
-        request.output_json,
-    )
-    .await
-    {
-        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
-        Err(err) => api_error(err.to_string()),
-    }
+    resolve_approval_audited(db.as_ref(), &ctx, approval_id, true, request).await
 }
 
 pub(crate) async fn reject_request<T: DatabaseImpl>(
@@ -259,9 +276,21 @@ pub(crate) async fn reject_request<T: DatabaseImpl>(
     Path(approval_id): Path<Uuid>,
     Json(request): Json<ApprovalResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    resolve_approval_audited(db.as_ref(), &ctx, approval_id, false, request).await
+}
+
+/// shared approve/reject path: gate on the parent workflow, resolve with the authenticated identity
+/// as `resolved_by`, then write an audit-log entry naming who resolved what.
+async fn resolve_approval_audited<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    approval_id: Uuid,
+    approved: bool,
+    request: ApprovalResolutionRequest,
+) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = crate::authz::require_automation_record_workflow(
-        db.as_ref(),
-        &ctx,
+        db,
+        ctx,
         "approval_requests",
         approval_id,
         Permission::Run,
@@ -270,17 +299,47 @@ pub(crate) async fn reject_request<T: DatabaseImpl>(
     {
         return reply;
     }
+    // prefer the authenticated principal as the resolver of record; fall back to any caller-supplied
+    // value for back-compat with service callers that pass an explicit name.
+    let resolved_by = ctx
+        .principal_id
+        .map(|id| id.to_string())
+        .or(request.resolved_by);
     match repository::resolve_approval(
-        db.as_ref(),
+        db,
         approval_id,
-        false,
-        request.resolved_by,
+        approved,
+        resolved_by,
         request.message,
         request.output_json,
     )
     .await
     {
-        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Ok(record) => {
+            let actor_kind = match ctx.kind {
+                PrincipalKind::User => "user",
+                PrincipalKind::Service => "service",
+            };
+            let workflow_run_id = crate::authz::record_workflow_run_id(&record);
+            crate::audit::record_audit(
+                db,
+                ctx.principal_id,
+                actor_kind,
+                if approved {
+                    "approval.approved"
+                } else {
+                    "approval.rejected"
+                },
+                crate::audit::AuditOutcome::Success,
+                Some("approval_request"),
+                Some(approval_id),
+                workflow_run_id
+                    .map(|id| format!("workflow_run={id}"))
+                    .as_deref(),
+            )
+            .await;
+            (StatusCode::OK, Json(ApiResponse::JsonValue(record)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }

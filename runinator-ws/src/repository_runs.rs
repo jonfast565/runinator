@@ -67,6 +67,24 @@ pub async fn fetch_all_artifacts<T: DatabaseImpl>(
     db.fetch_all_artifacts().await
 }
 
+/// delete an artifact: unlink its on-disk file (best-effort) then remove the db row. returns false
+/// when no such artifact exists.
+pub async fn delete_artifact<T: DatabaseImpl>(
+    db: &T,
+    artifact_id: Uuid,
+) -> Result<bool, SendableError> {
+    let Some(artifact) = db.fetch_artifact(artifact_id).await? else {
+        return Ok(false);
+    };
+    // remove the backing file first; a missing file should not block the row delete.
+    if let Err(err) = tokio::fs::remove_file(&artifact.uri).await {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("failed to unlink artifact file {}: {err}", artifact.uri);
+        }
+    }
+    db.delete_artifact(artifact_id).await
+}
+
 pub async fn persist_artifact_file<T: DatabaseImpl>(
     db: &T,
     run_id: Uuid,

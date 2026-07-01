@@ -335,6 +335,8 @@ export interface WorkflowDefinition {
   enabled: boolean;
   input_type: RuninatorType;
   definition: JsonRecord;
+  // owning organization (tenant); null means platform-global / unassigned.
+  org_id?: string | null;
 }
 
 export interface WorkflowBundle {
@@ -437,6 +439,7 @@ export interface WorkflowNodeRun {
   output_json?: any;
   state?: JsonRecord;
   transition_reason?: string | null;
+  prev_node_run_id?: string | null;
   created_at?: string;
   started_at?: string | null;
   finished_at?: string | null;

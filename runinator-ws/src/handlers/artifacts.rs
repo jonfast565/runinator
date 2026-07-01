@@ -170,6 +170,29 @@ pub(crate) async fn upload_artifact<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn delete_artifact<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(artifact_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
+    match repository::delete_artifact(db.as_ref(), artifact_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(
+                runinator_models::web::TaskResponse {
+                    success: true,
+                    message: "Artifact deleted".to_string(),
+                },
+            )),
+        ),
+        Ok(false) => crate::responses::not_found(format!("Artifact {artifact_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn download_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,

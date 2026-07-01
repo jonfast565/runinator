@@ -167,6 +167,14 @@ pub async fn visible_workflow_ids<T: DatabaseImpl>(
         return None;
     }
     let mut ids = HashSet::new();
+    // every workflow owned by the caller's active org is visible to its members, so org membership
+    // grants run visibility without needing an explicit per-workflow grant. this is what isolates
+    // runs by org: a caller only ever sees runs whose workflow is org-owned or explicitly granted.
+    if let Some(org_id) = ctx.org_id {
+        if let Ok(org_ids) = db.fetch_workflow_ids_for_org(org_id).await {
+            ids.extend(org_ids);
+        }
+    }
     let Some(user_id) = ctx.principal_id else {
         return Some(ids);
     };

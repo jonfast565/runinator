@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { approveApproval, fetchResourceRecords, rejectApproval } from "../api/commandCenterApi";
+import {
+  approveApproval,
+  deleteAutomationEvent,
+  fetchResourceRecords,
+  rejectApproval
+} from "../api/commandCenterApi";
 import type { ResourceEndpoint } from "../types/app";
 import type { JsonRecord, WorkflowNodeRun } from "../types/models";
 import { approvalIdFromNodeRun, type ApprovalAction, nonEmptyString, selectWorkflowApprovalRecord } from "../utils/approvals";
@@ -17,13 +22,33 @@ export const useResourcesStore = defineStore("resources", () => {
   const selectedResourceEndpoint = ref("external_items");
   const resourceRecords = ref<JsonRecord[]>([]);
   const selectedResourceRecord = ref<JsonRecord | null>(null);
+  // when true, resolved approvals are hidden from the list entirely.
+  const hideResolved = ref(false);
   const app = useAppStore();
 
-  const canResolveApproval = computed(() => selectedResourceEndpoint.value === "approvals" && Boolean(nonEmptyString(selectedResourceRecord.value?.id)));
+  // an approval (or gate-like record) is resolved once it has a resolution timestamp or a terminal
+  // status; resolved rows are greyed out and can no longer be approved/rejected.
+  function isResolved(record: JsonRecord | null | undefined): boolean {
+    if (!record) return false;
+    if (nonEmptyString(record.resolved_at)) return true;
+    const status = String(record.status ?? "").toLowerCase();
+    return ["approved", "rejected", "resolved", "cancelled", "canceled", "expired"].includes(status);
+  }
+
+  const canResolveApproval = computed(
+    () =>
+      selectedResourceEndpoint.value === "approvals" &&
+      Boolean(nonEmptyString(selectedResourceRecord.value?.id)) &&
+      !isResolved(selectedResourceRecord.value)
+  );
   const filteredResourceRecords = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return resourceRecords.value;
-    return resourceRecords.value.filter((record) =>
+    let records = resourceRecords.value;
+    if (hideResolved.value && selectedResourceEndpoint.value === "approvals") {
+      records = records.filter((record) => !isResolved(record));
+    }
+    if (!query) return records;
+    return records.filter((record) =>
       [record.id, record.provider, recordType(record), record.status, recordSummary(record), record.external_id, record.key, record.url]
         .filter((value) => value !== undefined && value !== null)
         .some((value) => String(value).toLowerCase().includes(query))
@@ -82,6 +107,25 @@ export const useResourcesStore = defineStore("resources", () => {
     return null;
   }
 
+  const canDeleteSelected = computed(
+    () =>
+      selectedResourceEndpoint.value === "automation_events" &&
+      Boolean(nonEmptyString(selectedResourceRecord.value?.id))
+  );
+
+  async function deleteSelected() {
+    const id = nonEmptyString(selectedResourceRecord.value?.id);
+    if (!id) return app.setError("No record selected");
+    if (selectedResourceEndpoint.value !== "automation_events") return;
+    if (!window.confirm("Delete this event record?")) return;
+    await app.runOperation("Deleting event", () => deleteAutomationEvent(id)).catch((error) => {
+      app.setError(String(error));
+    });
+    resourceRecords.value = resourceRecords.value.filter((record) => record.id !== id);
+    selectedResourceRecord.value = resourceRecords.value[0] ?? null;
+    await refreshResources();
+  }
+
   function recordType(record: JsonRecord) {
     return genericRecordType(record, selectedResourceEndpoint.value);
   }
@@ -102,7 +146,10 @@ export const useResourcesStore = defineStore("resources", () => {
     selectedResourceEndpoint,
     resourceRecords,
     selectedResourceRecord,
+    hideResolved,
     canResolveApproval,
+    canDeleteSelected,
+    isResolved,
     filteredResourceRecords,
     refreshResources,
     refreshResourcesFor,
@@ -110,6 +157,7 @@ export const useResourcesStore = defineStore("resources", () => {
     handleApprovalAction,
     resolveApproval,
     resolveWorkflowApproval,
+    deleteSelected,
     recordType,
     recordSummary,
     moveResourceSelection

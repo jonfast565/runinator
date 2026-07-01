@@ -15,7 +15,7 @@ use runinator_models::{
     },
 };
 
-use crate::models::{ApiResponse, ReplicaQuery};
+use crate::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -94,6 +94,19 @@ pub(crate) async fn get_replicas<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_replicas(db.as_ref(), query.replica_type, query.status).await {
         Ok(replicas) => (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// fetch a replica's recent telemetry samples for charting.
+pub(crate) async fn get_replica_samples<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(_ctx): Extension<AuthContext>,
+    Path(replica_id): Path<Uuid>,
+    Query(query): Query<ReplicaSampleQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_replica_samples(db.as_ref(), replica_id, query.since_seconds).await {
+        Ok(series) => (StatusCode::OK, Json(ApiResponse::ReplicaSamples(series))),
         Err(err) => api_error(err.to_string()),
     }
 }

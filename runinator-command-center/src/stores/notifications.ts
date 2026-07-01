@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {
+  deleteNotification,
   fetchNotifications,
   markAllNotificationsRead,
   markNotificationRead
@@ -39,6 +40,28 @@ export const useNotificationsStore = defineStore("notifications", () => {
     await refreshNotifications();
   }
 
+  async function remove(id: string) {
+    await app.runOperation("Deleting notification", () => deleteNotification(id)).catch((error) => {
+      app.setError(String(error));
+    });
+    // drop locally for immediate feedback, then reconcile with the server.
+    notifications.value = notifications.value.filter((notification) => notification.id !== id);
+    await refreshNotifications();
+  }
+
+  async function removeAllRead() {
+    const readIds = notifications.value.filter((notification) => notification.read_at).map((n) => n.id);
+    if (!readIds.length) return;
+    await app
+      .runOperation("Deleting read notifications", async () => {
+        for (const id of readIds) await deleteNotification(id);
+      })
+      .catch((error) => {
+        app.setError(String(error));
+      });
+    await refreshNotifications();
+  }
+
   return {
     notifications,
     unreadOnly,
@@ -46,6 +69,8 @@ export const useNotificationsStore = defineStore("notifications", () => {
     refreshNotifications,
     clearNotifications,
     markRead,
-    markAllRead
+    markAllRead,
+    remove,
+    removeAllRead
   };
 });

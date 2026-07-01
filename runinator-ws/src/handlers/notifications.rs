@@ -77,6 +77,27 @@ pub(crate) async fn mark_notification_read<T: DatabaseImpl>(
     }
 }
 
+pub(crate) async fn delete_notification<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Path(notification_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match db.delete_notification(notification_id).await {
+        Ok(true) => {
+            emit(&events, AppEvent::NotificationsChanged);
+            (
+                StatusCode::OK,
+                Json(ApiResponse::TaskResponse(TaskResponse {
+                    success: true,
+                    message: "Notification deleted".to_string(),
+                })),
+            )
+        }
+        Ok(false) => not_found(format!("Notification {notification_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn mark_all_notifications_read<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

@@ -20,8 +20,8 @@ use runinator_models::{
 
 use crate::handlers::providers::provider_metadata_from_items;
 pub use crate::repository_runs::{
-    add_run_artifact, append_run_chunk, fetch_all_artifacts, fetch_run_artifacts, fetch_run_chunks,
-    fetch_runs_by_status, persist_artifact_file, update_run_status,
+    add_run_artifact, append_run_chunk, delete_artifact, fetch_all_artifacts, fetch_run_artifacts,
+    fetch_run_chunks, fetch_runs_by_status, persist_artifact_file, update_run_status,
 };
 use crate::repository_state::latest_node_run_for;
 

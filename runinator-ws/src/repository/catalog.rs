@@ -180,6 +180,19 @@ pub async fn fetch_gate<T: DatabaseImpl>(
     db.fetch_gate(gate_id).await
 }
 
+pub async fn delete_gate<T: DatabaseImpl>(db: &T, gate_id: Uuid) -> Result<bool, SendableError> {
+    db.delete_gate(gate_id).await
+}
+
+pub async fn delete_automation_record<T: DatabaseImpl>(
+    db: &T,
+    record_type: &str,
+    record_id: Uuid,
+) -> Result<bool, SendableError> {
+    db.delete_automation_record(record_type.to_string(), record_id)
+        .await
+}
+
 pub async fn create_gate<T: DatabaseImpl>(db: &T, record: Value) -> Result<Value, SendableError> {
     db.create_gate(record).await
 }

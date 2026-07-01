@@ -19,6 +19,7 @@ use runinator_models::{
     },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
+    telemetry::ReplicaSample,
     workflows::{
         NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
@@ -154,6 +155,20 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         workflow_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowDefinition>, SendableError>> + Send;
+
+    /// Fetch the ids of every workflow owned by an organization. lightweight lookup used to compose
+    /// org-scoped visibility without loading full definitions.
+    fn fetch_workflow_ids_for_org(
+        &self,
+        org_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<Uuid>, SendableError>> + Send;
+
+    /// Reassign a workflow's owning organization (`None` makes it platform-global).
+    fn set_workflow_org(
+        &self,
+        workflow_id: Uuid,
+        org_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch a workflow definition by its unique display name.
     fn fetch_workflow_by_name(
@@ -543,6 +558,26 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
     ) -> impl Future<Output = Result<Vec<(Uuid, i64)>, SendableError>> + Send;
 
+    /// Append a telemetry sample to the replica time-series.
+    fn insert_replica_sample(
+        &self,
+        sample: ReplicaSample,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch a replica's telemetry samples taken at or after `since`, oldest first.
+    fn fetch_replica_samples(
+        &self,
+        replica_id: Uuid,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ReplicaSample>, SendableError>> + Send;
+
+    /// Delete telemetry samples older than `cutoff`. returns the count purged.
+    fn prune_replica_samples(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Upsert a provider registration for a worker replica.
     fn upsert_replica_provider_registration(
         &self,
@@ -712,6 +747,31 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn mark_all_notifications_read(
         &self,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Delete a notification; returns true when a row was removed.
+    fn delete_notification(
+        &self,
+        notification_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Delete a run artifact row; returns true when a row was removed.
+    fn delete_artifact(
+        &self,
+        artifact_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Delete an orchestration record of a given type; returns true when a row was removed.
+    fn delete_automation_record(
+        &self,
+        record_type: String,
+        record_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Delete a gate row; returns true when a row was removed.
+    fn delete_gate(
+        &self,
+        gate_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Insert or replace a setting's stored value (encrypted at rest) and modification time.
     fn upsert_setting(

@@ -11,7 +11,7 @@
     <p class="node-pools-hint">
       Spin up or scale down runtime nodes on demand across the configured provisioning backends.
       Desired/Ready are what the orchestrator reports for the workload; they can differ from the
-      Replicas list below, which only counts nodes that have registered and are heartbeating.
+      Replicas list above, which only counts nodes that have registered and are heartbeating.
     </p>
 
     <div v-if="!backends.length" class="empty-state">

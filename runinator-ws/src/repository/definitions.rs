@@ -94,6 +94,14 @@ pub async fn fetch_workflow<T: DatabaseImpl>(
     Ok(Some(normalize_persisted_workflow(db, workflow).await?))
 }
 
+pub async fn set_workflow_org<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    org_id: Option<Uuid>,
+) -> Result<(), SendableError> {
+    db.set_workflow_org(workflow_id, org_id).await
+}
+
 pub async fn fetch_workflow_by_name<T: DatabaseImpl>(
     db: &T,
     name: String,

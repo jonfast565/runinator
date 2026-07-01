@@ -32,7 +32,8 @@ use crate::handlers::{
         mark_action_dispatch_published, pending_action_dispatches,
     },
     artifacts::{
-        add_run_artifact, download_artifact, get_run_artifacts, list_artifacts, upload_artifact,
+        add_run_artifact, delete_artifact, download_artifact, get_run_artifacts, list_artifacts,
+        upload_artifact,
     },
     auth::{
         add_team_member, auth_config, create_api_key, create_team, create_user,
@@ -43,9 +44,9 @@ use crate::handlers::{
     },
     automation::{
         approve_request, close_gate, create_approval, create_automation_event,
-        create_external_item, create_gate, get_approvals, get_automation_events,
-        get_external_items, get_gate, get_gates, get_idempotency_key, open_gate,
-        put_idempotency_key, reject_request,
+        create_external_item, create_gate, delete_automation_event, delete_gate, get_approvals,
+        get_automation_events, get_external_items, get_gate, get_gates, get_idempotency_key,
+        open_gate, put_idempotency_key, reject_request,
     },
     billing::{
         get_org_nodes, get_org_quota, get_org_usage, get_rate_card, put_org_quota, scale_org_nodes,
@@ -67,7 +68,7 @@ use crate::handlers::{
         release_workflow_node_run_executor, resolve_workflow_input, update_workflow_node_run,
     },
     notifications::{
-        create_notification, list_notifications, mark_all_notifications_read,
+        create_notification, delete_notification, list_notifications, mark_all_notifications_read,
         mark_notification_read,
     },
     observability::{get_audit_log, get_dead_letters},
@@ -79,8 +80,8 @@ use crate::handlers::{
     providers::{get_providers, import_provider_bundle, upsert_provider},
     provisioning::{get_node_backends, get_nodes, scale_nodes, stop_node},
     replicas::{
-        get_replica_providers, get_replicas, heartbeat_replica, mark_replica_offline,
-        register_replica, upsert_replica_provider,
+        get_replica_providers, get_replica_samples, get_replicas, heartbeat_replica,
+        mark_replica_offline, register_replica, upsert_replica_provider,
     },
     runs::{
         append_run_chunk, cancel_workflow_run, claim_ready_nodes,
@@ -103,7 +104,8 @@ use crate::handlers::{
     webhook::{webhook_signal, webhook_wake},
     workflows::{
         delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
-        get_workflow, get_workflows, import_workflow_bundle, upsert_workflow, validate_workflow,
+        get_workflow, get_workflows, import_workflow_bundle, set_workflow_owner, upsert_workflow,
+        validate_workflow,
     },
 };
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
@@ -193,6 +195,10 @@ pub fn build_router<T: DatabaseImpl>(
             post(duplicate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflows/{id}/owner",
+            axum::routing::patch(set_workflow_owner::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflows/{id}/triggers",
             get(get_workflow_triggers::<T>)
                 .post(upsert_workflow_trigger::<T>)
@@ -243,6 +249,10 @@ pub fn build_router<T: DatabaseImpl>(
                 .post(upsert_replica_provider::<T>)
                 .layer(Extension(pool.clone())),
         )
+        .route(
+            "/replicas/{replica_id}/samples",
+            get(get_replica_samples::<T>).layer(Extension(pool.clone())),
+        )
         .route("/nodes/backends", get(get_node_backends))
         .route("/nodes", get(get_nodes))
         .route("/nodes/scale", post(scale_nodes))
@@ -285,10 +295,18 @@ pub fn build_router<T: DatabaseImpl>(
             get(download_artifact::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/artifacts/{id}",
+            axum::routing::delete(delete_artifact::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/notifications",
             get(list_notifications::<T>)
                 .post(create_notification::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/{id}",
+            axum::routing::delete(delete_notification::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/notifications/{id}/mark_read",
@@ -449,7 +467,9 @@ pub fn build_router<T: DatabaseImpl>(
         )
         .route(
             "/gates/{id}",
-            get(get_gate::<T>).layer(Extension(pool.clone())),
+            get(get_gate::<T>)
+                .delete(delete_gate::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/gates/{id}/open",
@@ -472,6 +492,10 @@ pub fn build_router<T: DatabaseImpl>(
             get(get_automation_events::<T>)
                 .post(create_automation_event::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/automation_events/{id}",
+            axum::routing::delete(delete_automation_event::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/approvals",

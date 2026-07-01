@@ -557,6 +557,46 @@ export async function markAllNotificationsRead() {
   return command<TaskResponse>("mark_all_notifications_read");
 }
 
+export async function deleteNotification(notificationId: string) {
+  return command<any>("delete_notification", { notificationId });
+}
+
+export async function deleteArtifact(artifactId: string) {
+  return command<any>("delete_artifact", { artifactId });
+}
+
+export async function deleteGate(gateId: string) {
+  return command<any>("delete_gate", { gateId });
+}
+
+export async function deleteAutomationEvent(eventId: string) {
+  return command<any>("delete_automation_event", { eventId });
+}
+
+export type ReplicaSample = {
+  replica_id: string;
+  sampled_at: string;
+  cpu_percent: number;
+  mem_percent: number;
+  mem_used_bytes: number;
+  mem_total_bytes: number;
+  load_one?: number | null;
+  process_cpu_percent: number;
+  process_mem_bytes: number;
+  net_rx_bytes_per_sec: number;
+  net_tx_bytes_per_sec: number;
+};
+
+export type ReplicaSampleSeries = { replica_id: string; samples: ReplicaSample[] };
+
+export async function fetchReplicaSamples(replicaId: string, sinceSeconds?: number) {
+  return command<ReplicaSampleSeries>("fetch_replica_samples", { replicaId, sinceSeconds });
+}
+
+export async function setWorkflowOwner(workflowId: string, orgId: string | null) {
+  return command<WorkflowDefinition>("set_workflow_owner", { workflowId, orgId });
+}
+
 export type SupervisorProcessSnapshot = {
   name: string;
   status: string;

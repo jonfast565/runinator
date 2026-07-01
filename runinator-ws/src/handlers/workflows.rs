@@ -56,6 +56,38 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
     }
 }
 
+/// reassign a workflow's owning organization. requires `Own` on the workflow (owner or platform
+/// admin); moving it into an org additionally requires org-admin on the target org.
+pub(crate) async fn set_workflow_owner<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(workflow_id): Path<Uuid>,
+    Json(request): Json<crate::models::WorkflowOwnerRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Own).await
+    {
+        return reply;
+    }
+    if let Some(org_id) = request.org_id {
+        if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+            return reply;
+        }
+    }
+    match repository::set_workflow_org(db.as_ref(), workflow_id, request.org_id).await {
+        Ok(()) => {
+            emit(&events, AppEvent::WorkflowsChanged);
+            match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+                Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
+                Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
+                Err(err) => api_error(err.to_string()),
+            }
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn validate_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Json(workflow): Json<WorkflowDefinition>,

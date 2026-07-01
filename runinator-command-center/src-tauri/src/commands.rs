@@ -161,6 +161,82 @@ pub async fn revoke_workflow_grant(
 }
 
 #[tauri::command]
+pub async fn delete_notification(
+    state: State<'_, CommandCenterState>,
+    notification_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("notifications/{notification_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_artifact(
+    state: State<'_, CommandCenterState>,
+    artifact_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("artifacts/{artifact_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_gate(
+    state: State<'_, CommandCenterState>,
+    gate_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("gates/{gate_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_automation_event(
+    state: State<'_, CommandCenterState>,
+    event_id: Uuid,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("automation_events/{event_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn fetch_replica_samples(
+    state: State<'_, CommandCenterState>,
+    replica_id: Uuid,
+    since_seconds: Option<i64>,
+) -> CommandResult<Value> {
+    let path = match since_seconds {
+        Some(seconds) => format!("replicas/{replica_id}/samples?since_seconds={seconds}"),
+        None => format!("replicas/{replica_id}/samples"),
+    };
+    get_json(&state, &path).await
+}
+
+#[tauri::command]
+pub async fn set_workflow_owner(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    org_id: Option<Uuid>,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("workflows/{workflow_id}/owner")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&json!({ "org_id": org_id }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
 pub async fn list_users(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Value>> {
     get_json(&state, "users").await
 }

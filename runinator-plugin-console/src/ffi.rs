@@ -1,22 +1,12 @@
-use ctor::ctor;
 use log::error;
 use runinator_models::providers::{ActionMetadata, ProviderMetadata};
-use runinator_utilities::{ffiutils, logger};
+use runinator_utilities::ffiutils;
 use std::ffi::{c_char, c_int};
 
 use crate::runner::execute_request;
 
 const NAME: &str = "Console\0";
 const METADATA: &str = "{\"name\":\"Console\",\"actions\":[{\"function_name\":\"run\",\"description\":\"Run a shell command\",\"parameters\":[{\"name\":\"command\",\"ty\":{\"type\":\"string\"},\"required\":true}],\"results\":[{\"name\":\"success\",\"ty\":{\"type\":\"boolean\"}},{\"name\":\"exit_code\",\"ty\":{\"type\":\"integer\"}},{\"name\":\"command\",\"ty\":{\"type\":\"string\"}}]}],\"metadata\":{}}\0";
-
-#[ctor(unsafe)]
-fn constructor() {
-    // loaded into the worker process, which has usually already installed logging; this call is a
-    // no-op there. the returned guard is dropped immediately since the host owns telemetry shutdown.
-    if let Err(err) = logger::setup_logger("Console Plugin") {
-        eprintln!("logger not set up: {err}");
-    }
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn runinator_marker() -> c_int {

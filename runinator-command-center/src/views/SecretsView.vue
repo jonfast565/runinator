@@ -1,5 +1,7 @@
 <template>
   <section class="pane settings-pane">
+    <SplitPane class="split" :storage-key="`command-center.settings.${settingKind}.split`" :initial-first-pct="60" :min-first="420" :min-second="320" collapsible-second>
+      <template #first>
     <div class="settings-shell panel">
       <header class="settings-header">
         <div>
@@ -42,12 +44,41 @@
             :is-config="isConfig"
             :config-values="secrets.configValues"
             :selected-key="secrets.selectedSecretKey"
-            @select="openEditSetting"
+            @select="selectOverview"
           />
         </ul>
         <div v-else class="settings-tree-empty">{{ isConfig ? "No configs match." : "No secrets match." }}</div>
       </div>
     </div>
+      </template>
+      <template #second>
+        <div class="panel overview-panel">
+          <div class="overview-head">
+            <h2>{{ isConfig ? "Config" : "Secret" }} Overview</h2>
+            <div v-if="selected" class="btn-row">
+              <button class="btn btn-sm" @click="openEditSetting(selected)">
+                <Icon name="edit" :size="14" />
+                <span>Edit</span>
+              </button>
+            </div>
+          </div>
+          <div v-if="!selected" class="empty-state">Select an entry to preview its value. Editing happens in a modal.</div>
+          <template v-else>
+            <div class="overview-grid">
+              <div class="overview-field"><label>Scope</label><div>{{ selected.scope }}</div></div>
+              <div class="overview-field"><label>Name</label><div>{{ selected.name }}</div></div>
+              <div class="overview-field"><label>Reference</label><code>{{ settingRef(selected.kind, selected.scope, selected.name) }}</code></div>
+              <div class="overview-field"><label>Kind</label><div>{{ selected.kind }}</div></div>
+            </div>
+            <div class="overview-value">
+              <label>Value</label>
+              <pre v-if="isConfig" class="overview-pre">{{ overviewValue }}</pre>
+              <div v-else class="overview-hidden">Secret values are write-only and never displayed. Use Edit to replace it.</div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </SplitPane>
 
     <div v-if="editorOpen" ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="closeEditor">
       <form class="modal setting-modal" @submit.prevent="saveEditor">
@@ -111,6 +142,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import { useAppStore } from "../stores/app";
 import { useProvidersStore } from "../stores/providers";
 import { useSecretsStore } from "../stores/secrets";
@@ -175,6 +207,20 @@ function openNewSetting() {
   secrets.selectedSecretKey = "";
   secrets.clearDraft(props.settingKind);
   editorOpen.value = true;
+}
+
+// the currently previewed entry (right-hand overview pane).
+const selected = computed<CredentialSummary | null>(() => secrets.selectedSecret);
+const overviewValue = computed(() => {
+  const setting = selected.value;
+  if (!setting) return "";
+  return secrets.configValues[secretKey(setting)] ?? "(no value loaded)";
+});
+
+// select an entry for the read-only overview pane without opening the editor modal.
+async function selectOverview(setting: CredentialSummary) {
+  secrets.selectSecret(setting);
+  if (isConfig.value) await secrets.loadConfigValue(setting);
 }
 
 async function openEditSetting(setting: CredentialSummary) {
@@ -353,13 +399,91 @@ onMounted(() => {
   white-space: pre-wrap;
 }
 
+.overview-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 12px;
+}
+
+.overview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overview-head h2 {
+  margin: 0;
+}
+
+.overview-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-field label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.overview-field code {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.overview-value {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.overview-value label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.overview-pre {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.overview-hidden {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 @media (max-width: 920px) {
   .settings-shell {
     overflow: auto;
   }
 
   .settings-summary,
-  .setting-form-grid {
+  .setting-form-grid,
+  .overview-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

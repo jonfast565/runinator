@@ -15,6 +15,28 @@
         </div>
       </section>
 
+      <section class="form-section ownership-section">
+        <div class="section-toolbar">
+          <h3>Ownership</h3>
+        </div>
+        <p v-if="!workflows.workflowDraft.id" class="hint">Save the workflow before assigning an owner.</p>
+        <template v-else>
+          <div class="form-grid">
+            <label>
+              Owning organization
+              <select v-model="ownerOrgId" :disabled="ownerSaving" @change="saveOwner">
+                <option value="">Platform-global (none)</option>
+                <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">{{ m.org.name }}</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint">
+            Scoping a workflow to an org limits its runs and visibility to that org's members. Share with individual
+            users or teams from the Share dialog. Only org admins can move a workflow into an org.
+          </p>
+        </template>
+      </section>
+
       <section class="form-section trigger-section">
         <div class="section-toolbar">
           <h3>Triggers</h3>
@@ -100,10 +122,46 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import { useWorkflowsStore } from "../../stores/workflows";
+import { useOrgsStore } from "../../stores/orgs";
+import { useAppStore } from "../../stores/app";
+import { setWorkflowOwner } from "../../api/commandCenterApi";
 import JsonEditor from "../shared/JsonEditor.vue";
 
 const workflows = useWorkflowsStore();
+const orgs = useOrgsStore();
+const app = useAppStore();
+
+const ownerOrgId = ref<string>(workflows.workflowDraft.org_id ?? "");
+const ownerSaving = ref(false);
+
+// keep the owner select in sync when the edited workflow changes.
+watch(
+  () => workflows.workflowDraft.id,
+  () => {
+    ownerOrgId.value = workflows.workflowDraft.org_id ?? "";
+  }
+);
+
+async function saveOwner() {
+  const id = workflows.workflowDraft.id;
+  if (!id) return;
+  ownerSaving.value = true;
+  try {
+    const updated = await setWorkflowOwner(id, ownerOrgId.value || null);
+    workflows.workflowDraft.org_id = updated.org_id ?? null;
+    app.setStatus("Workflow ownership updated");
+  } catch (error) {
+    app.setError(String(error));
+    // revert the select to the stored value on failure.
+    ownerOrgId.value = workflows.workflowDraft.org_id ?? "";
+  } finally {
+    ownerSaving.value = false;
+  }
+}
+
+if (!orgs.memberships.length) void orgs.refresh();
 </script>
 
 <style scoped>

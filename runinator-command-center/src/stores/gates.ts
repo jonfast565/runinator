@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { closeGate, fetchGates, openGate } from "../api/commandCenterApi";
+import { closeGate, deleteGate, fetchGates, openGate } from "../api/commandCenterApi";
 import type { GateRecord } from "../types/models";
 import { useAppStore } from "./app";
 
@@ -52,6 +52,18 @@ export const useGatesStore = defineStore("gates", () => {
     await refreshGates();
   }
 
+  async function removeSelected() {
+    const gateId = String(selectedGate.value?.id ?? "");
+    if (!gateId) return app.setError("No gate selected");
+    if (!window.confirm("Delete this gate record?")) return;
+    await app.runOperation("Deleting gate", () => deleteGate(gateId)).catch((error) => {
+      app.setError(String(error));
+    });
+    gates.value = gates.value.filter((gate) => gate.id !== gateId);
+    selectedGate.value = gates.value[0] ?? null;
+    await refreshGates();
+  }
+
   return {
     gates,
     selectedGate,
@@ -59,6 +71,7 @@ export const useGatesStore = defineStore("gates", () => {
     canResolveSelected,
     refreshGates,
     clearGates,
-    resolveSelected
+    resolveSelected,
+    removeSelected
   };
 });

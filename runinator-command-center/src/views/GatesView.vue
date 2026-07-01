@@ -18,6 +18,10 @@
                 <Icon name="reject" />
                 <span>Close</span>
               </button>
+              <button class="btn" :disabled="!gates.selectedGate" @click="gates.removeSelected()">
+                <Icon name="trash" />
+                <span>Delete</span>
+              </button>
             </div>
           </div>
           <p class="gates-hint">

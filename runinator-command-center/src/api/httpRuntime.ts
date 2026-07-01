@@ -420,6 +420,35 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "notifications/mark_all_read",
     body: () => ({})
   },
+  delete_notification: {
+    method: "DELETE",
+    path: (args) => `notifications/${escape(arg<string>(args, "notificationId"))}`
+  },
+  delete_artifact: {
+    method: "DELETE",
+    path: (args) => `artifacts/${escape(arg<string>(args, "artifactId"))}`
+  },
+  delete_gate: {
+    method: "DELETE",
+    path: (args) => `gates/${escape(arg<string>(args, "gateId"))}`
+  },
+  delete_automation_event: {
+    method: "DELETE",
+    path: (args) => `automation_events/${escape(arg<string>(args, "eventId"))}`
+  },
+  fetch_replica_samples: {
+    method: "GET",
+    path: (args) => {
+      const base = `replicas/${escape(arg<string>(args, "replicaId"))}/samples`;
+      const since = argOpt<number>(args, "sinceSeconds");
+      return since ? `${base}?since_seconds=${escape(since)}` : base;
+    }
+  },
+  set_workflow_owner: {
+    method: "PATCH",
+    path: (args) => `workflows/${escape(arg<string>(args, "workflowId"))}/owner`,
+    body: (args) => ({ org_id: argOpt(args, "orgId") ?? null })
+  },
   // --- organizations (tenants), membership, resource allocation, and billing ---
   list_my_orgs: { method: "GET", path: () => "orgs/me" },
   list_orgs: { method: "GET", path: () => "orgs" },

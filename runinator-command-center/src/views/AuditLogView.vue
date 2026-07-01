@@ -97,6 +97,7 @@ onMounted(refresh);
 }
 
 .audit-table-wrap {
+  flex: 1;
   overflow: auto;
   min-height: 0;
 }

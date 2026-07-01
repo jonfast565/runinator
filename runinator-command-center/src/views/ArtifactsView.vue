@@ -46,6 +46,9 @@
                 <button class="btn btn-icon btn-ghost" title="Download" @click.stop="onDownload(artifact)">
                   <Icon name="download" />
                 </button>
+                <button class="btn btn-icon btn-ghost" title="Delete" @click.stop="onDelete(artifact)">
+                  <Icon name="trash" />
+                </button>
               </td>
             </tr>
           </tbody>
@@ -81,6 +84,10 @@ async function onUpload() {
 
 async function onDownload(artifact: RunArtifact) {
   await store.promptDownloadArtifact(artifact);
+}
+
+async function onDelete(artifact: RunArtifact) {
+  await store.removeArtifact(artifact);
 }
 
 function formatBytes(size: number): string {

@@ -11,6 +11,10 @@
               <span>Refresh</span>
             </button>
             <template v-if="endpoint === 'approvals'">
+              <label class="filter-toggle">
+                <input type="checkbox" v-model="resourcesStore.hideResolved" />
+                <span>Hide resolved</span>
+              </label>
               <button class="btn btn-primary" :disabled="!resourcesStore.canResolveApproval" @click="resourcesStore.resolveApproval('approve')">
                 <Icon name="approve" />
                 <span>Approve</span>
@@ -20,6 +24,15 @@
                 <span>Reject</span>
               </button>
             </template>
+            <button
+              v-if="endpoint === 'automation_events'"
+              class="btn"
+              :disabled="!resourcesStore.canDeleteSelected"
+              @click="resourcesStore.deleteSelected()"
+            >
+              <Icon name="trash" />
+              <span>Delete</span>
+            </button>
           </div>
         </div>
         <DataTable>
@@ -31,6 +44,7 @@
                 <th>Type</th>
                 <th>Status</th>
                 <th>Summary</th>
+                <th v-if="endpoint === 'approvals'">Resolved by</th>
                 <th>External ID</th>
               </tr>
             </thead>
@@ -38,7 +52,7 @@
               <tr
                 v-for="record in resourcesStore.filteredResourceRecords"
                 :key="String(record.id ?? JSON.stringify(record))"
-                :class="{ selected: resourcesStore.selectedResourceRecord === record, danger: isBadStatus(record.status), success: isGoodStatus(record.status) }"
+                :class="{ selected: resourcesStore.selectedResourceRecord === record, danger: isBadStatus(record.status), success: isGoodStatus(record.status), resolved: endpoint === 'approvals' && resourcesStore.isResolved(record) }"
                 @click="resourcesStore.selectedResourceRecord = record"
               >
                 <td>{{ record.id ?? "" }}</td>
@@ -46,6 +60,12 @@
                 <td>{{ resourcesStore.recordType(record) }}</td>
                 <td><StatusBadge :status="record.status" /></td>
                 <td>{{ resourcesStore.recordSummary(record) }}</td>
+                <td v-if="endpoint === 'approvals'" class="resolver-cell">
+                  <template v-if="resourcesStore.isResolved(record)">
+                    {{ record.resolved_by ?? "—" }}
+                    <span class="resolver-time" v-if="record.resolved_at">{{ formatDate(record.resolved_at) }}</span>
+                  </template>
+                </td>
                 <td>{{ record.external_id ?? record.key ?? record.url ?? "" }}</td>
               </tr>
             </tbody>
@@ -70,7 +90,7 @@ import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";
-import { pretty } from "../utils/format";
+import { formatDate, pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
 const props = withDefaults(
@@ -93,3 +113,31 @@ async function refresh() {
 onMounted(refresh);
 watch(() => props.endpoint, refresh);
 </script>
+
+<style scoped>
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.filter-toggle input {
+  width: auto;
+}
+
+tr.resolved td {
+  opacity: 0.55;
+}
+
+.resolver-cell {
+  white-space: nowrap;
+}
+
+.resolver-time {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+</style>

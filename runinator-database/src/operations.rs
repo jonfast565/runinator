@@ -23,6 +23,7 @@ use runinator_models::{
     },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
+    telemetry::ReplicaSample,
     workflows::{
         NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
@@ -45,7 +46,7 @@ use crate::{
 };
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
-const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
+const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 
@@ -936,6 +937,31 @@ where
         Ok(row.map(|row| mappers::row_to_workflow(&row)))
     }
 
+    async fn fetch_workflow_ids_for_org(&self, org_id: Uuid) -> Result<Vec<Uuid>, SendableError> {
+        let rows = sqlx::query(&self.render("SELECT id FROM workflows WHERE org_id = ?"))
+            .bind(org_id)
+            .fetch_all(self.pool())
+            .await?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            ids.push(row.try_get("id")?);
+        }
+        Ok(ids)
+    }
+
+    async fn set_workflow_org(
+        &self,
+        workflow_id: Uuid,
+        org_id: Option<Uuid>,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE workflows SET org_id = ? WHERE id = ?"))
+            .bind(org_id)
+            .bind(workflow_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
     async fn fetch_workflow_by_name(
         &self,
         name: String,
@@ -1574,10 +1600,18 @@ where
         let empty_state = Value::Object(Default::default()).to_string();
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
+        // the previous step is the most recently created node run in the same run. node run ids are
+        // uuidv7 (time-ordered), so ordering by id descending yields the immediate predecessor.
+        let prev_node_run_id: Option<Uuid> = sqlx::query_scalar(&self.render(
+            "SELECT id FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY id DESC LIMIT 1",
+        ))
+        .bind(workflow_run_id)
+        .fetch_optional(self.pool())
+        .await?;
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, prev_node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(workflow_run_id)
@@ -1586,6 +1620,7 @@ where
             .bind(0i64)
             .bind(parameters.to_string())
             .bind(empty_state)
+            .bind(prev_node_run_id)
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
@@ -1598,8 +1633,8 @@ where
             return Ok(mappers::row_to_workflow_node_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, prev_node_run_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {WORKFLOW_NODE_RUN_COLUMNS}",
         )))
         .bind(id)
@@ -1609,6 +1644,7 @@ where
         .bind(0i64)
         .bind(parameters.to_string())
         .bind(empty_state)
+        .bind(prev_node_run_id)
         .bind(created_at)
         .fetch_one(self.pool())
         .await?;
@@ -2756,6 +2792,52 @@ where
         Ok(counts)
     }
 
+    async fn insert_replica_sample(&self, sample: ReplicaSample) -> Result<(), SendableError> {
+        let data = serde_json::to_string(&sample)?;
+        sqlx::query(&self.render(
+            "INSERT INTO replica_samples (id, replica_id, sampled_at, data) VALUES (?, ?, ?, ?)",
+        ))
+        .bind(Uuid::now_v7())
+        .bind(sample.replica_id)
+        .bind(sample.sampled_at.timestamp())
+        .bind(data)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn fetch_replica_samples(
+        &self,
+        replica_id: Uuid,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ReplicaSample>, SendableError> {
+        // newest first with a bound, then reverse to oldest-first so charts read left-to-right.
+        let rows = sqlx::query(&self.render(
+            "SELECT replica_id, sampled_at, data FROM replica_samples
+             WHERE replica_id = ? AND sampled_at >= ? ORDER BY sampled_at DESC, id DESC LIMIT ?",
+        ))
+        .bind(replica_id)
+        .bind(since.timestamp())
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+        let mut samples = rows
+            .iter()
+            .map(mappers::row_to_replica_sample)
+            .collect::<Vec<_>>();
+        samples.reverse();
+        Ok(samples)
+    }
+
+    async fn prune_replica_samples(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM replica_samples WHERE sampled_at < ?"))
+            .bind(cutoff.timestamp())
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected())
+    }
+
     async fn upsert_replica_provider_registration(
         &self,
         replica_id: Uuid,
@@ -3604,6 +3686,45 @@ where
                 .execute(self.pool())
                 .await?;
         Ok(result.affected())
+    }
+
+    async fn delete_notification(&self, notification_id: Uuid) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM notifications WHERE id = ?"))
+            .bind(notification_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn delete_artifact(&self, artifact_id: Uuid) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM run_artifacts WHERE id = ?"))
+            .bind(artifact_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn delete_automation_record(
+        &self,
+        record_type: String,
+        record_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(
+            &self.render("DELETE FROM automation_records WHERE id = ? AND record_type = ?"),
+        )
+        .bind(record_id)
+        .bind(record_type)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn delete_gate(&self, gate_id: Uuid) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM gates WHERE id = ?"))
+            .bind(gate_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
     }
 
     async fn upsert_setting(

@@ -13,10 +13,18 @@
               <span>New</span>
             </button>
           </div>
+          <div class="workflow-scope-filter">
+            <label>Scope</label>
+            <select v-model="scopeFilter">
+              <option value="all">All</option>
+              <option value="org">This org</option>
+              <option value="global">Global</option>
+            </select>
+          </div>
           <div class="workflow-list-summary">
             <div>
               <span>Visible</span>
-              <strong>{{ workflows.filteredWorkflows.length }}</strong>
+              <strong>{{ scopedWorkflows.length }}</strong>
             </div>
             <div>
               <span>Disabled</span>
@@ -27,7 +35,7 @@
               <strong>{{ selectedWorkflowLabel }}</strong>
             </div>
           </div>
-          <div v-if="!workflows.filteredWorkflows.length" class="workflow-empty">No workflows match the current view.</div>
+          <div v-if="!scopedWorkflows.length" class="workflow-empty">No workflows match the current view.</div>
           <DataTable v-else>
             <table>
               <thead>
@@ -39,7 +47,7 @@
               </thead>
               <tbody>
                 <tr
-                  v-for="workflow in workflows.filteredWorkflows"
+                  v-for="workflow in scopedWorkflows"
                   :key="workflow.id ?? workflow.name"
                   :class="{ selected: workflows.selectedWorkflowId === workflow.id, muted: !workflow.enabled }"
                   @click="workflows.selectWorkflow(workflow)"
@@ -71,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
@@ -81,9 +89,25 @@ import Icon from "../components/shared/Icon.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../stores/workflows";
+import { useOrgsStore } from "../stores/orgs";
 
 const workflows = useWorkflowsStore();
-const disabledWorkflowCount = computed(() => workflows.filteredWorkflows.filter((workflow) => !workflow.enabled).length);
+const orgs = useOrgsStore();
+const scopeFilter = ref<"all" | "org" | "global">("all");
+
+// client-side scope filter on top of the server's already org-scoped list: "org" keeps only
+// workflows owned by the active org, "global" keeps only unassigned (platform-global) ones.
+const scopedWorkflows = computed(() => {
+  const list = workflows.filteredWorkflows;
+  if (scopeFilter.value === "global") return list.filter((workflow) => !workflow.org_id);
+  if (scopeFilter.value === "org") {
+    const orgId = orgs.activeOrgId;
+    return orgId ? list.filter((workflow) => workflow.org_id === orgId) : list;
+  }
+  return list;
+});
+
+const disabledWorkflowCount = computed(() => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length);
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
 </script>
 
@@ -105,6 +129,24 @@ const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ??
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.workflow-scope-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.workflow-scope-filter label {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.workflow-scope-filter select {
+  flex: 1;
 }
 
 .workflow-list-summary {

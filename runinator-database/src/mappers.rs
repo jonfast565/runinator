@@ -18,6 +18,7 @@ use runinator_models::{
     },
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     settings::{SettingKind, SettingRecord},
+    telemetry::ReplicaSample,
     types::RuninatorType,
     workflows::{
         WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -408,6 +409,7 @@ macro_rules! workflow_node_run_from_row {
                 .and_then(|raw| serde_json::from_str(&raw).ok()),
             state: parse_json($row.get::<String, _>("state")),
             transition_reason: $row.get("transition_reason"),
+            prev_node_run_id: $row.try_get("prev_node_run_id").ok().flatten(),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             started_at: $row
@@ -754,6 +756,27 @@ macro_rules! replica_from_row {
 
 row_mapper!(row_to_replica(row) -> Result<ReplicaRecord, SendableError> {
     replica_from_row!(row)
+});
+
+row_mapper!(row_to_replica_sample(row) -> ReplicaSample {
+    // the sample's numeric fields ride in a json `data` column (avoiding typed float columns), with
+    // replica_id/sampled_at duplicated as typed columns for indexing and pruning.
+    serde_json::from_str::<ReplicaSample>(&row.get::<String, _>("data")).unwrap_or_else(|_| {
+        ReplicaSample {
+            replica_id: row.get("replica_id"),
+            sampled_at: DateTime::<Utc>::from_timestamp(row.get("sampled_at"), 0)
+                .unwrap_or_else(Utc::now),
+            cpu_percent: 0.0,
+            mem_percent: 0.0,
+            mem_used_bytes: 0,
+            mem_total_bytes: 0,
+            load_one: None,
+            process_cpu_percent: 0.0,
+            process_mem_bytes: 0,
+            net_rx_bytes_per_sec: 0.0,
+            net_tx_bytes_per_sec: 0.0,
+        }
+    })
 });
 
 macro_rules! replica_provider_registration_from_row {

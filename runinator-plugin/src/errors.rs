@@ -24,6 +24,8 @@ pub const MARKER_INVALID: ErrorDescriptor = ErrorDescriptor::new(
     "plugin.marker.invalid",
     "Plugin marker function returned an unexpected value",
 );
+pub const LOAD_FAILED: ErrorDescriptor =
+    ErrorDescriptor::new("RUNI406", "plugin.load.failed", "Plugin load failed");
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ABI_UNSUPPORTED,
@@ -31,6 +33,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     METADATA_INVALID,
     PATH_INVALID,
     MARKER_INVALID,
+    LOAD_FAILED,
 ];
 
 /// plugin loader engine error dictionary.

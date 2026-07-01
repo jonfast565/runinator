@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {
+  deleteArtifact,
   downloadArtifactInBrowser,
   downloadArtifactToPath,
   fetchAllArtifacts,
@@ -73,6 +74,18 @@ export const useArtifactsStore = defineStore("artifacts", () => {
     });
   }
 
+  async function removeArtifact(artifact: RunArtifact) {
+    if (!window.confirm(`Delete artifact "${artifact.name}"? This also removes the stored file.`)) {
+      return;
+    }
+    await app.runOperation(`Deleting ${artifact.name}`, () => deleteArtifact(artifact.id)).catch((error) => {
+      app.setError(String(error));
+    });
+    artifacts.value = artifacts.value.filter((entry) => entry.id !== artifact.id);
+    if (selectedArtifactId.value === artifact.id) selectedArtifactId.value = null;
+    await refreshArtifacts();
+  }
+
   return {
     artifacts,
     selectedArtifactId,
@@ -81,6 +94,7 @@ export const useArtifactsStore = defineStore("artifacts", () => {
     refreshArtifacts,
     clearArtifacts,
     promptUploadArtifact,
-    promptDownloadArtifact
+    promptDownloadArtifact,
+    removeArtifact
   };
 });

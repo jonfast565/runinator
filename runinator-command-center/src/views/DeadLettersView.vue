@@ -99,6 +99,7 @@ onMounted(refresh);
 }
 
 .dlq-table-wrap {
+  flex: 1;
   overflow: auto;
   min-height: 0;
 }

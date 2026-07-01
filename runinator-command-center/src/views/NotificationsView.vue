@@ -16,6 +16,10 @@
             <Icon name="check" />
             <span>Mark all read</span>
           </button>
+          <button class="btn" :disabled="loading || !hasRead" @click="deleteRead">
+            <Icon name="trash" />
+            <span>Delete read</span>
+          </button>
         </div>
       </div>
       <DataTable>
@@ -49,6 +53,9 @@
                 <button v-if="!notification.read_at" class="btn btn-icon btn-ghost" title="Mark read" @click="markRead(notification.id)">
                   <Icon name="check" />
                 </button>
+                <button class="btn btn-icon btn-ghost" title="Delete" @click="remove(notification.id)">
+                  <Icon name="trash" />
+                </button>
               </td>
             </tr>
           </tbody>
@@ -59,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import { useNotificationsStore } from "../stores/notifications";
@@ -67,6 +74,8 @@ import { formatDate } from "../utils/format";
 
 const store = useNotificationsStore();
 const loading = ref(false);
+
+const hasRead = computed(() => store.notifications.some((notification) => notification.read_at));
 
 async function refresh() {
   loading.value = true;
@@ -83,6 +92,14 @@ async function markRead(id: string) {
 
 async function markAllRead() {
   await store.markAllRead();
+}
+
+async function remove(id: string) {
+  await store.remove(id);
+}
+
+async function deleteRead() {
+  await store.removeAllRead();
 }
 
 onMounted(refresh);
