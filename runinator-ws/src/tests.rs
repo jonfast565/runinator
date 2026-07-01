@@ -22,6 +22,9 @@ use runinator_models::{
         AuthContext, CreateApiKeyRequest, Grant, Permission, PrincipalKind, PrincipalType,
         ResourceType, UpdateApiKeyRequest, UpdateUserRequest,
     },
+    orgs::{
+        AddOrgMemberRequest, CreateOrgRequest, OrgRole, UpdateOrgMemberRequest, UpdateOrgRequest,
+    },
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
         NewWorkflowRunArtifact, WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph,
@@ -243,6 +246,222 @@ async fn seed_bootstrap_service_api_key_is_idempotent_for_existing_prefix() {
 }
 
 #[tokio::test]
+async fn org_scale_enforces_node_and_budget_quotas() {
+    use runinator_models::billing::{OrgQuota, ScaleOrgNodesRequest};
+    use runinator_models::provisioning::ProvisionBackend;
+    use runinator_models::replicas::ReplicaKind;
+    use runinator_provisioner::ProvisionerRegistry;
+
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let registry = Arc::new(ProvisionerRegistry::default());
+    let org_id = db
+        .create_org("Acme".into(), "acme".into())
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+
+    // cap workers at 2 and set a monthly budget of 20000¢.
+    db.upsert_org_quota(OrgQuota {
+        org_id,
+        max_nodes_per_kind: [("worker".to_string(), 2u32)].into_iter().collect(),
+        max_monthly_cents: 20_000,
+    })
+    .await
+    .unwrap();
+
+    let admin = AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(org_id),
+        org_role: Some(OrgRole::Admin),
+    };
+    let scale = |desired: u32| ScaleOrgNodesRequest {
+        backend: ProvisionBackend::Supervisor,
+        kind: ReplicaKind::Worker,
+        desired,
+    };
+
+    // exceeding the node cap is rejected.
+    let (status, _) = crate::handlers::billing::scale_org_nodes::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(registry.clone()),
+        Extension(admin.clone()),
+        Path(org_id),
+        Json(scale(5)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // 2 workers = 2 * 25¢ * 730h = 36500¢ > 20000¢ budget, so it is rejected on cost too.
+    let (status, _) = crate::handlers::billing::scale_org_nodes::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(registry.clone()),
+        Extension(admin.clone()),
+        Path(org_id),
+        Json(scale(2)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // 1 worker = 18250¢ fits under both caps and records the allocation.
+    let (status, _) = crate::handlers::billing::scale_org_nodes::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(registry.clone()),
+        Extension(admin),
+        Path(org_id),
+        Json(scale(1)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let groups = db.list_org_resource_groups(org_id).await.unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].desired, 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn usage_integration_accrues_node_hours_and_cost() {
+    use chrono::{Duration as ChronoDuration, Utc};
+    use runinator_models::billing::{RateCard, UsageSample};
+    use runinator_models::provisioning::ProvisionBackend;
+    use runinator_models::replicas::ReplicaKind;
+
+    let org_id = Uuid::now_v7();
+    let start = Utc::now();
+    // 2 workers held for exactly one hour, then observed again (the trailing sample closes the window).
+    let samples = vec![
+        UsageSample {
+            org_id,
+            backend: ProvisionBackend::Supervisor,
+            kind: ReplicaKind::Worker,
+            node_count: 2,
+            sampled_at: start,
+        },
+        UsageSample {
+            org_id,
+            backend: ProvisionBackend::Supervisor,
+            kind: ReplicaKind::Worker,
+            node_count: 2,
+            sampled_at: start + ChronoDuration::hours(1),
+        },
+    ];
+    let usage =
+        crate::handlers::billing::integrate_usage(org_id, samples, &RateCard::default_card());
+    // 2 nodes * 1 hour = 2 node-hours; 2 * 25¢/h = 50¢.
+    assert_eq!(usage.node_hours.get("worker").copied(), Some(2.0));
+    assert_eq!(usage.accrued_cents, 50);
+}
+
+#[tokio::test]
+async fn org_handlers_enforce_membership_roles_and_last_owner() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+
+    // a non-admin user self-serves an org and becomes its owner.
+    let alice = db
+        .create_user("alice".into(), None, false, None)
+        .await
+        .unwrap();
+    let alice_id = alice.id.unwrap();
+    let alice_ctx = AuthContext {
+        principal_id: Some(alice_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
+    };
+    let (status, _) = crate::handlers::orgs::create_org::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(alice_ctx.clone()),
+        Json(CreateOrgRequest {
+            name: "Acme Corp".into(),
+            slug: None,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let orgs = db.list_user_orgs(alice_id).await.unwrap();
+    assert_eq!(orgs.len(), 1);
+    assert_eq!(orgs[0].1, OrgRole::Owner);
+    assert_eq!(orgs[0].0.slug, "acme-corp");
+    let org_id = orgs[0].0.id.unwrap();
+
+    // a switched-in owner context can rename the org.
+    let owner_ctx = AuthContext {
+        principal_id: Some(alice_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(org_id),
+        org_role: Some(OrgRole::Owner),
+    };
+    let (status, _) = crate::handlers::orgs::update_org::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(owner_ctx.clone()),
+        Path(org_id),
+        Json(UpdateOrgRequest {
+            name: Some("Acme Inc".into()),
+            disabled: None,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // a non-member (no org context) is forbidden from reading the org.
+    let bob = db
+        .create_user("bob".into(), None, false, None)
+        .await
+        .unwrap();
+    let bob_id = bob.id.unwrap();
+    let bob_ctx = AuthContext {
+        principal_id: Some(bob_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
+    };
+    let (status, _) = crate::handlers::orgs::get_org::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(bob_ctx),
+        Path(org_id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // the owner adds bob as a member.
+    let (status, _) = crate::handlers::orgs::add_org_member::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(owner_ctx.clone()),
+        Path(org_id),
+        Json(AddOrgMemberRequest {
+            user_id: bob_id,
+            role: OrgRole::Member,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(db.list_org_members(org_id).await.unwrap().len(), 2);
+
+    // demoting the sole owner is rejected so the org always keeps an owner.
+    let (status, _) = crate::handlers::orgs::update_org_member::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(owner_ctx),
+        Path((org_id, alice_id)),
+        Json(UpdateOrgMemberRequest {
+            role: OrgRole::Member,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn user_admin_handlers_preserve_last_enabled_admin() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
@@ -255,6 +474,8 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         principal_id: Some(admin_id),
         is_admin: true,
         kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
     };
 
     let (status, _) = crate::handlers::auth::update_user::<SqliteDb>(
@@ -303,6 +524,8 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
             principal_id: second.id,
             is_admin: true,
             kind: PrincipalKind::User,
+            org_id: None,
+            org_role: None,
         }),
         Path(admin_id),
         Json(UpdateUserRequest {
@@ -334,6 +557,8 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
         principal_id: admin.id,
         is_admin: true,
         kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
     };
     let user_id = user.id.expect("user id");
 
@@ -408,6 +633,8 @@ async fn non_admin_api_key_creation_stays_owned_by_caller() {
             principal_id: Some(caller_id),
             is_admin: false,
             kind: PrincipalKind::User,
+            org_id: None,
+            org_role: None,
         }),
         Json(CreateApiKeyRequest {
             name: "attempted service key".into(),
@@ -522,6 +749,8 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
             principal_id: Some(user_id),
             is_admin: false,
             kind: PrincipalKind::User,
+            org_id: None,
+            org_role: None,
         },
     )
     .await
@@ -532,6 +761,112 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
     assert!(visible.contains(&team.id.unwrap()));
 
     let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn workflow_listing_is_isolated_by_org() {
+    use axum::extract::Query;
+
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+
+    // one workflow owned by org A, one platform-global (no org).
+    let org_a = Uuid::now_v7();
+    let org_b = Uuid::now_v7();
+    let mut wf_a = workflow(None, "alpha");
+    wf_a.org_id = Some(org_a);
+    let wf_a = crate::repository::upsert_workflow(db.as_ref(), &wf_a)
+        .await
+        .unwrap();
+    let wf_a_id = wf_a.id.unwrap();
+    let shared = crate::repository::upsert_workflow(db.as_ref(), &workflow(None, "shared"))
+        .await
+        .unwrap();
+    let shared_id = shared.id.unwrap();
+
+    // the org-B user is granted view on BOTH workflows, so only org scoping (not missing grants)
+    // can hide org A's workflow from them.
+    let user_id = db
+        .create_user("orgb-user".into(), None, false, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    db.create_grant(grant(
+        wf_a_id,
+        PrincipalType::User,
+        user_id,
+        Permission::View,
+    ))
+    .await
+    .unwrap();
+    db.create_grant(grant(
+        shared_id,
+        PrincipalType::User,
+        user_id,
+        Permission::View,
+    ))
+    .await
+    .unwrap();
+
+    // a member of org B sees the shared workflow but not org A's.
+    let ctx_b = AuthContext {
+        principal_id: Some(user_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(org_b),
+        org_role: Some(OrgRole::Member),
+    };
+    let (status, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(ctx_b.clone()),
+        Query(crate::handlers::workflows::WorkflowQuery { name: None }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let names = workflow_list_names(&body);
+    assert!(names.contains(&"shared".to_string()));
+    assert!(!names.contains(&"alpha".to_string()));
+
+    // and fetching org A's workflow directly is a not-found for the org-B caller.
+    let (status, _) = crate::handlers::workflows::get_workflow::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(ctx_b),
+        Path(wf_a_id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // the platform admin sees every workflow regardless of org.
+    let admin_ctx = AuthContext {
+        principal_id: None,
+        is_admin: true,
+        kind: PrincipalKind::Service,
+        org_id: None,
+        org_role: None,
+    };
+    let (_, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin_ctx),
+        Query(crate::handlers::workflows::WorkflowQuery { name: None }),
+    )
+    .await;
+    let names = workflow_list_names(&body);
+    assert!(names.contains(&"alpha".to_string()));
+    assert!(names.contains(&"shared".to_string()));
+    let _ = shared_id;
+
+    let _ = std::fs::remove_file(path);
+}
+
+// pull workflow names out of a WorkflowList api response for assertions.
+fn workflow_list_names(body: &Json<crate::models::ApiResponse>) -> Vec<String> {
+    match &body.0 {
+        crate::models::ApiResponse::WorkflowList(list) => {
+            list.iter().map(|w| w.name.clone()).collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
 #[tokio::test]
@@ -636,6 +971,8 @@ async fn workflow_permission_admin_owns_everything_without_grants() {
         principal_id: None,
         is_admin: true,
         kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
     };
     assert_eq!(
         crate::authz::workflow_permission(&db, &admin, workflow_id).await,
@@ -2161,6 +2498,7 @@ fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
         id,
         name: name.into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::from_json_schema(
@@ -2184,6 +2522,8 @@ fn user_ctx(user_id: Uuid) -> AuthContext {
         principal_id: Some(user_id),
         is_admin: false,
         kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
     }
 }
 
@@ -2210,6 +2550,7 @@ fn ancestors_in_snapshot_returns_topological_path() {
         id: Some(Uuid::now_v7()),
         name: "ancestors".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
@@ -2246,6 +2587,7 @@ fn ancestors_in_snapshot_refuses_control_flow_ancestor() {
         id: Some(Uuid::now_v7()),
         name: "loop_ancestor".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,
@@ -2280,6 +2622,7 @@ fn ancestors_in_snapshot_rejects_missing_step() {
         id: Some(Uuid::now_v7()),
         name: "missing".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: runinator_models::types::RuninatorType::Any,

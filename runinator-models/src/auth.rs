@@ -203,6 +203,13 @@ pub struct Claims {
     /// user access tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rid: Option<String>,
+    /// active organization for this token, when the user has switched into one. absent on tokens
+    /// minted before an org was selected, and on service/replica tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org: Option<String>,
+    /// the user's role in the active org (`org`), carried so the middleware needn't re-read the db.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orl: Option<String>,
 }
 
 /// how a request was authenticated.
@@ -218,6 +225,11 @@ pub struct AuthContext {
     pub principal_id: Option<Uuid>,
     pub is_admin: bool,
     pub kind: PrincipalKind,
+    /// active organization for this request, resolved from the token's `org` claim (or an
+    /// `X-Org-Id` header for service keys). `None` means platform-global / no org selected.
+    pub org_id: Option<Uuid>,
+    /// the caller's role in `org_id`, when in an org context.
+    pub org_role: Option<crate::orgs::OrgRole>,
 }
 
 impl AuthContext {
@@ -227,6 +239,8 @@ impl AuthContext {
             principal_id: None,
             is_admin: true,
             kind: PrincipalKind::Service,
+            org_id: None,
+            org_role: None,
         }
     }
 }

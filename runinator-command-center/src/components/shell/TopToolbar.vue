@@ -8,6 +8,18 @@
       <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" placeholder="Search" />
     </div>
     <div class="actions">
+      <select
+        v-if="orgs.hasOrgs"
+        class="org-select"
+        :value="orgs.activeOrgId ?? ''"
+        title="Active organization"
+        @change="onSwitchOrg"
+      >
+        <option value="" disabled>Org…</option>
+        <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">
+          {{ m.org.name }}
+        </option>
+      </select>
       <ConnectionStrip />
       <button
         v-if="!app.isRealtime"
@@ -40,6 +52,7 @@ import UserMenu from "./UserMenu.vue";
 import { navItemForTab, useAppStore } from "../../stores/app";
 import { useAuthStore } from "../../stores/auth";
 import { useResourcesStore } from "../../stores/resources";
+import { useOrgsStore } from "../../stores/orgs";
 import { useSecretsStore } from "../../stores/secrets";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { AppTab } from "../../types/app";
@@ -50,7 +63,13 @@ const app = useAppStore();
 const auth = useAuthStore();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
+const orgs = useOrgsStore();
 const secrets = useSecretsStore();
+
+function onSwitchOrg(event: Event) {
+  const orgId = (event.target as HTMLSelectElement).value;
+  if (orgId) void orgs.setActive(orgId);
+}
 
 function headingFor(tab: AppTab): string {
   return navItemForTab(tab)?.label ?? String(tab);

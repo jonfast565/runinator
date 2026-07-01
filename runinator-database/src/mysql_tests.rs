@@ -60,6 +60,7 @@ fn sample_workflow(name: &str) -> WorkflowDefinition {
         id: None,
         name: name.to_string(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,

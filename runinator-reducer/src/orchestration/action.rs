@@ -167,7 +167,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     };
     // resolve routing before any observable dispatch: a session-bound action whose desktop worker is
     // not connected parks (and re-checks) instead of being published to a queue no one drains.
-    let target = match resolve_action_target(db, workflow_run, action).await? {
+    let target = match resolve_action_target(db, workflow_run, workflow, action).await? {
         TargetResolution::Ready(target) => target,
         TargetResolution::Park => {
             return park_for_target(db, workflow_run, node, &node_run).await;
@@ -304,13 +304,23 @@ fn build_action_command(
 async fn resolve_action_target<T: DatabaseImpl>(
     db: &T,
     workflow_run: &WorkflowRun,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
     action: &WorkflowAction,
 ) -> Result<TargetResolution, SendableError> {
+    // build the effective label selector: the action's explicit labels, plus an `org=<slug>` affinity
+    // label when the owning org has opted into dedicated workers (hybrid: shared pool by default,
+    // dedicated opt-in). org-less or non-dedicated workflows keep running on the shared pool.
+    let mut required_labels = action.required_labels.clone();
+    if let Some(org_id) = workflow.org_id {
+        if let Some(slug) = org_dedicated_worker_slug(db, org_id).await? {
+            required_labels.entry("org".to_string()).or_insert(slug);
+        }
+    }
     // an explicit label requirement takes precedence over provider-based routing: dispatch to a live
     // worker that carries the labels, otherwise park until one connects (the node timeout fails it).
-    if !action.required_labels.is_empty() {
-        let worker_available = live_worker_matches_labels(db, &action.required_labels).await?;
-        return Ok(target_for_labels(&action.required_labels, worker_available));
+    if !required_labels.is_empty() {
+        let worker_available = live_worker_matches_labels(db, &required_labels).await?;
+        return Ok(target_for_labels(&required_labels, worker_available));
     }
     // only consult the registry when a local action actually has a launching replica to check.
     let replica_live = match (
@@ -325,6 +335,28 @@ async fn resolve_action_target<T: DatabaseImpl>(
         workflow_run.trigger_actor_replica_id,
         replica_live,
     ))
+}
+
+/// the org's slug when it has a dedicated worker allocation (`desired > 0`), else `None`. used to
+/// add an `org=<slug>` routing label so a dedicated tenant's work lands on its own labeled workers.
+async fn org_dedicated_worker_slug<T: DatabaseImpl>(
+    db: &T,
+    org_id: Uuid,
+) -> Result<Option<String>, SendableError> {
+    let groups = db.list_org_resource_groups(org_id).await?;
+    if !has_dedicated_workers(&groups) {
+        return Ok(None);
+    }
+    Ok(db.fetch_org(org_id).await?.map(|org| org.slug))
+}
+
+/// whether an org has a live dedicated worker allocation (`worker` kind with `desired > 0`).
+pub(crate) fn has_dedicated_workers(
+    groups: &[runinator_models::billing::OrgResourceGroup],
+) -> bool {
+    groups
+        .iter()
+        .any(|group| group.kind == ReplicaKind::Worker && group.desired > 0)
 }
 
 /// whether any live worker replica advertises labels that satisfy the action's required selector.

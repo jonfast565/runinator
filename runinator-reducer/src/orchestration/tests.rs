@@ -1,6 +1,6 @@
 use super::action::{
     TargetResolution, default_foreign_language_runtime, foreign_language_runtime,
-    replica_labels_match, target_for, target_for_labels,
+    has_dedicated_workers, replica_labels_match, target_for, target_for_labels,
 };
 use super::assert::evaluate_assertions;
 use super::await_run::parse_await_mode;
@@ -98,6 +98,37 @@ fn label_targeted_actions_route_to_a_matching_worker_else_park() {
     );
     // no matching worker connected: park (the node timeout later fails the run).
     assert_eq!(target_for_labels(&selector, false), TargetResolution::Park);
+}
+
+#[test]
+fn org_is_dedicated_only_when_it_has_a_worker_allocation() {
+    use runinator_models::billing::OrgResourceGroup;
+    use runinator_models::provisioning::ProvisionBackend;
+    use runinator_models::replicas::ReplicaKind;
+    use uuid::Uuid;
+
+    let org_id = Uuid::now_v7();
+    let worker = |desired| OrgResourceGroup {
+        org_id,
+        backend: ProvisionBackend::Supervisor,
+        kind: ReplicaKind::Worker,
+        desired,
+        dedicated: true,
+    };
+
+    // no allocation, or a zeroed one, leaves the org on the shared pool (no org label injected).
+    assert!(!has_dedicated_workers(&[]));
+    assert!(!has_dedicated_workers(&[worker(0)]));
+    // a live worker allocation opts the org into dedicated routing.
+    assert!(has_dedicated_workers(&[worker(2)]));
+    // a waker-only allocation does not make workers dedicated.
+    assert!(!has_dedicated_workers(&[OrgResourceGroup {
+        org_id,
+        backend: ProvisionBackend::Supervisor,
+        kind: ReplicaKind::Waker,
+        desired: 3,
+        dedicated: true,
+    }]));
 }
 
 #[test]

@@ -75,7 +75,7 @@ mod tests {
             refresh_ttl_secs: 60,
         };
         let (token, _) =
-            runinator_auth::issue_access_token(&config, Uuid::now_v7(), false).unwrap();
+            runinator_auth::issue_access_token(&config, Uuid::now_v7(), false, None, None).unwrap();
         assert!(auth.verify(&token).is_some());
     }
 
@@ -106,6 +106,8 @@ mod tests {
             exp: 0,
             jti: String::new(),
             rid: Some(replica.to_string()),
+            org: None,
+            orl: None,
         };
 
         // a scoped token may only receive for its own replica.

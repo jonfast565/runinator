@@ -58,6 +58,12 @@ export const useAuthStore = defineStore("auth", () => {
     user.value = null;
   }
 
+  // swap the active access token in place (e.g. after switching org) while keeping the refresh token.
+  async function applyAccessToken(access: string) {
+    persist(access, refreshToken);
+    await setAccessToken(access);
+  }
+
   async function tryRefresh(token: string): Promise<boolean> {
     try {
       await apply(await refreshSession(token));
@@ -117,5 +123,5 @@ export const useAuthStore = defineStore("auth", () => {
     await clear();
   }
 
-  return { required, authenticated, ready, user, error, init, signIn, signOut };
+  return { required, authenticated, ready, user, error, init, signIn, signOut, applyAccessToken };
 });

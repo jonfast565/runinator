@@ -15,7 +15,9 @@ export type AppTab =
   | "AdminSettings"
   | "Permissions"
   | "DeadLetters"
-  | "AuditLog";
+  | "AuditLog"
+  | "Organization"
+  | "OrgResources";
 
 export interface ResourceEndpoint {
   label: string;

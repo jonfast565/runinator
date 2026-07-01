@@ -24,7 +24,7 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
-    Json(workflow): Json<WorkflowDefinition>,
+    Json(mut workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // updating an existing workflow requires edit; creating one stamps the creator as owner.
     let is_update = workflow.id.is_some();
@@ -32,6 +32,15 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
         if let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Edit).await {
             return reply;
         }
+        // preserve the stored org on update so a client cannot re-tenant a workflow by editing it.
+        workflow.org_id = match repository::fetch_workflow(db.as_ref(), id).await {
+            Ok(Some(existing)) => existing.org_id,
+            Ok(None) => workflow.org_id,
+            Err(err) => return api_error(err.to_string()),
+        };
+    } else {
+        // a new workflow is owned by the creator's active org (None = platform-global).
+        workflow.org_id = ctx.org_id;
     }
     match repository::upsert_workflow(db.as_ref(), &workflow).await {
         Ok(workflow) => {
@@ -76,6 +85,10 @@ pub(crate) async fn get_workflows<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(name) = query.name {
         return match repository::fetch_workflow_by_name(db.as_ref(), name).await {
+            // hide cross-tenant workflows behind a not-found before consulting grants.
+            Ok(Some(workflow)) if !authz::org_visible(&ctx, workflow.org_id) => {
+                not_found("Workflow not found")
+            }
             Ok(Some(workflow)) => match workflow.id {
                 Some(id)
                     if authz::require_workflow(db.as_ref(), &ctx, id, Permission::View)
@@ -93,7 +106,12 @@ pub(crate) async fn get_workflows<T: DatabaseImpl>(
 
     match repository::fetch_workflows(db.as_ref()).await {
         Ok(workflows) => {
-            // scope the list to workflows the caller can see (None = admin/auth-disabled = all).
+            // scope to the caller's org first (cross-tenant workflows are never listed), then to the
+            // grant-based visibility set (None = admin/auth-disabled = all grant-visible).
+            let workflows: Vec<_> = workflows
+                .into_iter()
+                .filter(|workflow| authz::org_visible(&ctx, workflow.org_id))
+                .collect();
             let visible = authz::visible_workflow_ids(db.as_ref(), &ctx).await;
             let workflows = match visible {
                 Some(ids) => workflows
@@ -232,6 +250,10 @@ pub(crate) async fn get_workflow<T: DatabaseImpl>(
         return reply;
     }
     match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+        // a cross-tenant workflow is not-found even if a stray grant would otherwise reveal it.
+        Ok(Some(workflow)) if !authz::org_visible(&ctx, workflow.org_id) => {
+            not_found(format!("Workflow {workflow_id} not found"))
+        }
         Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
         Err(err) => api_error(err.to_string()),

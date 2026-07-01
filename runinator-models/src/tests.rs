@@ -1,4 +1,5 @@
 use crate::{
+    orgs::{OrgRole, slugify},
     providers::{
         ActionMetadata, ParameterMetadata, ProviderMetadata, ResultMetadata,
         validate_provider_metadata,
@@ -9,6 +10,29 @@ use crate::{
     workflows::*,
 };
 use serde_json::json;
+
+// the org-role ladder must subsume weaker roles so a single `allows` check gates access.
+#[test]
+fn org_role_ladder_subsumes_weaker_roles() {
+    assert!(OrgRole::Owner.allows(OrgRole::Admin));
+    assert!(OrgRole::Owner.allows(OrgRole::Member));
+    assert!(OrgRole::Admin.allows(OrgRole::Member));
+    assert!(!OrgRole::Member.allows(OrgRole::Admin));
+    assert!(!OrgRole::Admin.allows(OrgRole::Owner));
+    assert_eq!(
+        OrgRole::from_str_lossy(OrgRole::Owner.as_str()),
+        Some(OrgRole::Owner)
+    );
+}
+
+// slugs must be lowercase, label-safe, and free of leading/trailing/repeated hyphens.
+#[test]
+fn slugify_produces_label_safe_slugs() {
+    assert_eq!(slugify("Acme Corp"), "acme-corp");
+    assert_eq!(slugify("  Foo__Bar!! "), "foo-bar");
+    assert_eq!(slugify("already-fine"), "already-fine");
+    assert_eq!(slugify("***"), "");
+}
 
 // the split DebugFrame must round-trip through a single flat `debug` object so persisted state
 // and the frontend keep seeing the same wire shape.

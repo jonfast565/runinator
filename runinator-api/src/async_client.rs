@@ -24,6 +24,7 @@ use runinator_models::{
         API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
+    billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::ReadyNodeRecord,
     providers::ProviderMetadata,
@@ -276,6 +277,69 @@ where
     pub async fn stop_node(&self, request: &StopNodeRequest) -> Result<Value> {
         let url = self.build_url("/nodes/stop").await?;
         let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// create an organization; the caller becomes its owner.
+    pub async fn create_org(&self, name: &str) -> Result<Value> {
+        let url = self.build_url("/orgs").await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "name": name }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// list the caller's org memberships (org + role).
+    pub async fn list_my_orgs(&self) -> Result<Value> {
+        let url = self.build_url("/orgs/me").await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// an org's dedicated node allocations and projected monthly cost.
+    pub async fn fetch_org_nodes(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/nodes")).await?;
+        let response = self
+            .http_get(url.clone())
+            .header("x-org-id", org_id.to_string())
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// set an org's dedicated node allocation for a (backend, kind); enforced against its quota.
+    pub async fn scale_org_nodes(
+        &self,
+        org_id: Uuid,
+        request: &ScaleOrgNodesRequest,
+    ) -> Result<Value> {
+        let url = self
+            .build_url(&format!("/orgs/{org_id}/nodes/scale"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .header("x-org-id", org_id.to_string())
+            .json(request)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// an org's accrued usage and cost over the trailing 30 days.
+    pub async fn fetch_org_usage(&self, org_id: Uuid) -> Result<Value> {
+        let url = self.build_url(&format!("/orgs/{org_id}/usage")).await?;
+        let response = self
+            .http_get(url.clone())
+            .header("x-org-id", org_id.to_string())
+            .send()
+            .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }

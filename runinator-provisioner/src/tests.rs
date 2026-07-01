@@ -143,3 +143,115 @@ async fn add_process_carries_generated_worker_id_and_labels() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn org_group_scales_an_independent_labeled_pool() {
+    let dir = temp_dir("group");
+    // an existing default-pool worker must not be counted against the org's own group.
+    write_snapshot(
+        &dir.join("state.json"),
+        &worker_snapshot(&[("prov-worker-a", "running")]),
+    )
+    .unwrap();
+
+    let prov = provisioner(&dir);
+    let mut spec = NodeSpec::default();
+    spec.group = Some("org-acme-worker".into());
+    spec.labels.insert("org".into(), "acme".into());
+    let group = prov.scale(ReplicaKind::Worker, 2, &spec).await.unwrap();
+    assert_eq!(group.name, "org-acme-worker");
+    assert_eq!(group.desired, 2);
+
+    let commands = drain(&dir.join("control"));
+    let adds: Vec<&str> = commands
+        .iter()
+        .filter_map(|c| match c {
+            ControlCommand::AddProcess { process } => Some(process.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    // two fresh org-pool processes are added (the default-pool worker is untouched).
+    assert_eq!(adds.len(), 2);
+    assert!(adds
+        .iter()
+        .all(|name| name.starts_with("prov-org-acme-worker-")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(feature = "kubernetes")]
+#[test]
+fn clone_group_deployment_renames_labels_and_injects_worker_labels() {
+    use crate::kubernetes::clone_group_deployment;
+    use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
+    use k8s_openapi::api::core::v1::{Container, PodSpec, PodTemplateSpec};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
+
+    let base = Deployment {
+        metadata: ObjectMeta {
+            name: Some("worker".into()),
+            resource_version: Some("123".into()),
+            uid: Some("abc".into()),
+            ..Default::default()
+        },
+        spec: Some(DeploymentSpec {
+            replicas: Some(1),
+            selector: LabelSelector {
+                match_labels: Some([("app".to_string(), "worker".to_string())].into()),
+                ..Default::default()
+            },
+            template: PodTemplateSpec {
+                metadata: Some(ObjectMeta {
+                    labels: Some([("app".to_string(), "worker".to_string())].into()),
+                    ..Default::default()
+                }),
+                spec: Some(PodSpec {
+                    containers: vec![Container {
+                        name: "worker".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            },
+            ..Default::default()
+        }),
+        status: Some(Default::default()),
+    };
+
+    let mut spec = NodeSpec::default();
+    spec.labels.insert("org".into(), "acme".into());
+    let cloned = clone_group_deployment(base, "org-acme-worker", 3, &spec);
+
+    // renamed, server-identity cleared, replicas set.
+    assert_eq!(cloned.metadata.name.as_deref(), Some("org-acme-worker"));
+    assert!(cloned.metadata.resource_version.is_none());
+    assert!(cloned.metadata.uid.is_none());
+    assert!(cloned.status.is_none());
+    let dspec = cloned.spec.unwrap();
+    assert_eq!(dspec.replicas, Some(3));
+    // the org label lands on metadata, selector, and pod template so the deployment selects its pods.
+    assert_eq!(
+        cloned
+            .metadata
+            .labels
+            .unwrap()
+            .get("org")
+            .map(String::as_str),
+        Some("acme")
+    );
+    assert_eq!(
+        dspec
+            .selector
+            .match_labels
+            .unwrap()
+            .get("org")
+            .map(String::as_str),
+        Some("acme")
+    );
+    let container = &dspec.template.spec.unwrap().containers[0];
+    let env = container.env.as_ref().unwrap();
+    let labels_env = env
+        .iter()
+        .find(|e| e.name == "RUNINATOR_WORKER_LABELS")
+        .unwrap();
+    assert_eq!(labels_env.value.as_deref(), Some("org=acme"));
+}

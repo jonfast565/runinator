@@ -10,6 +10,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType,
 };
+use runinator_models::orgs::OrgRole;
 use runinator_models::value::Value;
 use uuid::Uuid;
 
@@ -50,6 +51,41 @@ pub fn require_service_or_admin(ctx: &AuthContext) -> Result<(), Reply> {
         Ok(())
     } else {
         Err(forbidden())
+    }
+}
+
+/// gate an org-scoped action: platform admins transcend org roles; otherwise the caller's active org
+/// must match `org_id` and their role must be at least `min`.
+pub fn require_org_role(ctx: &AuthContext, org_id: Uuid, min: OrgRole) -> Result<(), Reply> {
+    if ctx.is_admin {
+        return Ok(());
+    }
+    match (ctx.org_id, ctx.org_role) {
+        (Some(active), Some(role)) if active == org_id && role.allows(min) => Ok(()),
+        _ => Err(forbidden()),
+    }
+}
+
+/// require org-admin (or platform admin) for `org_id`.
+pub fn require_org_admin(ctx: &AuthContext, org_id: Uuid) -> Result<(), Reply> {
+    require_org_role(ctx, org_id, OrgRole::Admin)
+}
+
+/// require any membership (or platform admin) in `org_id`.
+pub fn require_org_member(ctx: &AuthContext, org_id: Uuid) -> Result<(), Reply> {
+    require_org_role(ctx, org_id, OrgRole::Member)
+}
+
+/// whether the caller may see a resource owned by `resource_org`. platform admins see everything;
+/// `None` (platform-global / unassigned) is a shared library visible to all; otherwise the caller's
+/// active org must match. this composes with, and is orthogonal to, per-resource grants.
+pub fn org_visible(ctx: &AuthContext, resource_org: Option<Uuid>) -> bool {
+    if ctx.is_admin {
+        return true;
+    }
+    match resource_org {
+        None => true,
+        Some(org) => ctx.org_id == Some(org),
     }
 }
 

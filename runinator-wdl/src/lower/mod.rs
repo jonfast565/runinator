@@ -247,6 +247,8 @@ fn lower_workflow(
         id: None,
         name: workflow.name.clone(),
         namespace: workflow.namespace.clone(),
+        // org is assigned by the web service at import time, not during compilation.
+        org_id: None,
         version: workflow.version.unwrap_or(options.default_version),
         enabled: options.enabled,
         input_type,

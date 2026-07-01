@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::Pod;
-use kube::api::{DeleteParams, Patch, PatchParams};
+use k8s_openapi::api::core::v1::{EnvVar, Pod};
+use kube::api::{DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Api, Client};
 use runinator_models::errors::SendableError;
 use runinator_models::provisioning::{NodeSpec, ProvisionBackend, ProvisionedGroup};
@@ -68,6 +68,78 @@ impl KubernetesProvisioner {
     }
 }
 
+// build a per-group Deployment by cloning a base one: rename it, reset server-managed identity, set
+// the desired replica count, merge the group's routing labels into metadata/selector/pod labels, and
+// export them as `RUNINATOR_WORKER_LABELS` so spawned workers advertise the group's affinity labels.
+pub(crate) fn clone_group_deployment(
+    mut base: Deployment,
+    name: &str,
+    desired: u32,
+    spec: &NodeSpec,
+) -> Deployment {
+    base.status = None;
+    let meta = &mut base.metadata;
+    meta.name = Some(name.to_string());
+    // drop server-assigned identity so the object is accepted as a fresh create.
+    meta.resource_version = None;
+    meta.uid = None;
+    meta.creation_timestamp = None;
+    meta.generation = None;
+    meta.managed_fields = None;
+    meta.self_link = None;
+    merge_labels(meta.labels.get_or_insert_with(BTreeMap::new), &spec.labels);
+
+    if let Some(dspec) = base.spec.as_mut() {
+        dspec.replicas = Some(desired as i32);
+        // the selector must match the pod template labels, so merge the group labels into both.
+        merge_labels(
+            dspec
+                .selector
+                .match_labels
+                .get_or_insert_with(BTreeMap::new),
+            &spec.labels,
+        );
+        let template_meta = dspec.template.metadata.get_or_insert_with(Default::default);
+        merge_labels(
+            template_meta.labels.get_or_insert_with(BTreeMap::new),
+            &spec.labels,
+        );
+        if let Some(pod_spec) = dspec.template.spec.as_mut() {
+            let labels_env = spec
+                .labels
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            for container in &mut pod_spec.containers {
+                set_env(
+                    container.env.get_or_insert_with(Vec::new),
+                    "RUNINATOR_WORKER_LABELS",
+                    &labels_env,
+                );
+            }
+        }
+    }
+    base
+}
+
+// merge `src` label pairs into `dst`, overwriting on key collision.
+fn merge_labels(dst: &mut BTreeMap<String, String>, src: &BTreeMap<String, String>) {
+    for (key, value) in src {
+        dst.insert(key.clone(), value.clone());
+    }
+}
+
+// set (replace) an environment variable by name in a container env list.
+fn set_env(env: &mut Vec<EnvVar>, name: &str, value: &str) {
+    env.retain(|var| var.name != name);
+    env.push(EnvVar {
+        name: name.to_string(),
+        value: Some(value.to_string()),
+        value_from: None,
+    });
+}
+
 #[async_trait]
 impl Provisioner for KubernetesProvisioner {
     fn backend(&self) -> ProvisionBackend {
@@ -118,10 +190,37 @@ impl Provisioner for KubernetesProvisioner {
         &self,
         kind: ReplicaKind,
         desired: u32,
-        _spec: &NodeSpec,
+        spec: &NodeSpec,
     ) -> Result<ProvisionedGroup, SendableError> {
-        let name = self.deployment_name(kind)?.to_string();
+        // a per-group scale (e.g. a per-org pool) targets a deployment named by the group; otherwise
+        // the kind's default deployment.
+        let name = match &spec.group {
+            Some(group) => group.clone(),
+            None => self.deployment_name(kind)?.to_string(),
+        };
         let api = self.deployments_api().await?;
+
+        // a per-group deployment that does not exist yet is created by cloning the kind's base
+        // deployment, renamed and labeled for the group, so per-org pools are self-provisioning.
+        if spec.group.is_some()
+            && api
+                .get_opt(&name)
+                .await
+                .map_err(|err| KUBERNETES_API.error(err))?
+                .is_none()
+        {
+            let base_name = self.deployment_name(kind)?.to_string();
+            let base = api
+                .get(&base_name)
+                .await
+                .map_err(|err| KUBERNETES_API.error(err))?;
+            let deployment = clone_group_deployment(base, &name, desired, spec);
+            api.create(&PostParams::default(), &deployment)
+                .await
+                .map_err(|err| KUBERNETES_API.error(err))?;
+            return Ok(self.group(kind, &name, desired, 0));
+        }
+
         let patch = serde_json::json!({ "spec": { "replicas": desired } });
         api.patch_scale(&name, &PatchParams::default(), &Patch::Merge(&patch))
             .await

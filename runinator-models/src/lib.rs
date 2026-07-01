@@ -1,11 +1,13 @@
 pub mod api_routes;
 pub mod auth;
+pub mod billing;
 pub mod bundles;
 pub mod core;
 pub mod debug;
 pub mod errors;
 pub mod notifications;
 pub mod orchestration;
+pub mod orgs;
 pub mod providers;
 pub mod provisioning;
 pub mod replicas;

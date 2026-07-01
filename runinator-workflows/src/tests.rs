@@ -17,6 +17,7 @@ fn workflow(definition: runinator_models::value::Value) -> WorkflowDefinition {
         id: Some(Uuid::now_v7()),
         name: "test".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,
@@ -274,6 +275,7 @@ fn accepts_structurally_valid_refs_without_schema_path_validation() {
         id: Some(Uuid::now_v7()),
         name: "schema-boundary".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::from_json_schema(&runinator_models::json!({
@@ -739,6 +741,7 @@ fn test_workflow_state_machine_logic_integration() {
         id: Some(Uuid::now_v7()),
         name: "integration-test".into(),
         namespace: None,
+        org_id: None,
         version: runinator_models::semver::SemVer::new(1, 0, 0),
         enabled: true,
         input_type: RuninatorType::Any,

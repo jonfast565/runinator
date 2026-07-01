@@ -56,9 +56,8 @@ impl SupervisorProvisioner {
             .ok_or_else(|| UNSUPPORTED_KIND.error(kind.as_str()))
     }
 
-    // names of provisioned processes for a kind, paired with whether each is currently up.
-    fn current_nodes(&self, kind: ReplicaKind) -> Result<Vec<(String, bool)>, SendableError> {
-        let prefix = node_prefix(kind);
+    // names of provisioned processes under a group prefix, paired with whether each is currently up.
+    fn current_nodes(&self, prefix: &str) -> Result<Vec<(String, bool)>, SendableError> {
         if !self.state_file.exists() {
             return Ok(Vec::new());
         }
@@ -113,16 +112,35 @@ impl SupervisorProvisioner {
         enqueue(&self.control_dir, command).map_err(|err| ENQUEUE_FAILED.error(err))
     }
 
-    fn group(&self, kind: ReplicaKind, desired: u32, available: u32) -> ProvisionedGroup {
+    fn group(
+        &self,
+        kind: ReplicaKind,
+        group: &str,
+        desired: u32,
+        available: u32,
+    ) -> ProvisionedGroup {
         ProvisionedGroup {
             backend: ProvisionBackend::Supervisor,
             kind,
-            name: node_prefix(kind).trim_end_matches('-').to_string(),
+            name: group.to_string(),
             desired,
             available,
             manageable: self.templates.contains_key(kind.as_str()),
         }
     }
+}
+
+// the effective group for a scale request: an explicit `spec.group` (e.g. a per-org pool) or the
+// kind's default group. the kind default keeps pre-group behavior byte-compatible.
+fn effective_group(kind: ReplicaKind, spec: &NodeSpec) -> String {
+    spec.group
+        .clone()
+        .unwrap_or_else(|| kind.as_str().to_string())
+}
+
+// the process-name prefix that marks processes as provisioner-managed for a group.
+fn prefix_for(group: &str) -> String {
+    format!("prov-{group}-")
 }
 
 #[async_trait]
@@ -147,11 +165,14 @@ impl Provisioner for SupervisorProvisioner {
     }
 
     async fn list(&self) -> Result<Vec<ProvisionedGroup>, SendableError> {
+        // list reports each kind's default group; per-group (e.g. per-org) pools are tracked by the
+        // caller (the web service records org allocations) and addressed via `spec.group` on scale.
         let mut groups = Vec::new();
         for kind in self.supported_kinds() {
-            let nodes = self.current_nodes(kind)?;
+            let group = kind.as_str().to_string();
+            let nodes = self.current_nodes(&prefix_for(&group))?;
             let available = nodes.iter().filter(|(_, up)| *up).count() as u32;
-            groups.push(self.group(kind, nodes.len() as u32, available));
+            groups.push(self.group(kind, &group, nodes.len() as u32, available));
         }
         Ok(groups)
     }
@@ -163,12 +184,14 @@ impl Provisioner for SupervisorProvisioner {
         spec: &NodeSpec,
     ) -> Result<ProvisionedGroup, SendableError> {
         self.template(kind)?;
-        let mut current = self.current_nodes(kind)?;
+        let group = effective_group(kind, spec);
+        let prefix = prefix_for(&group);
+        let mut current = self.current_nodes(&prefix)?;
         let current_count = current.len() as u32;
 
         if desired > current_count {
             for _ in 0..(desired - current_count) {
-                let node_id = format!("{}{}", node_prefix(kind), Uuid::new_v4());
+                let node_id = format!("{prefix}{}", Uuid::new_v4());
                 let process = self.build_process(kind, &node_id, spec)?;
                 self.enqueue(&ControlCommand::AddProcess { process })?;
             }
@@ -182,22 +205,13 @@ impl Provisioner for SupervisorProvisioner {
         }
 
         let available = current.iter().filter(|(_, up)| *up).count() as u32;
-        Ok(self.group(kind, desired, available.min(desired)))
+        Ok(self.group(kind, &group, desired, available.min(desired)))
     }
 
     async fn stop(&self, node_id: &str) -> Result<(), SendableError> {
         self.enqueue(&ControlCommand::RemoveProcess {
             name: node_id.to_string(),
         })
-    }
-}
-
-// process-name prefix that marks a process as provisioner-managed for a kind.
-fn node_prefix(kind: ReplicaKind) -> &'static str {
-    match kind {
-        ReplicaKind::Worker => "prov-worker-",
-        ReplicaKind::Waker => "prov-waker-",
-        ReplicaKind::Webservice => "prov-webservice-",
     }
 }
 
