@@ -23,6 +23,12 @@ use runinator_utilities::{app_data, startup};
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
+    // this binary links rustls with both ring (jsonwebtoken) and aws-lc-rs (aws sdk) crypto backends,
+    // leaving no unambiguous process-default CryptoProvider. install one before any rustls default-path
+    // config is built (e.g. the kubernetes node provisioner's kube client), otherwise that path panics.
+    // an Err means a provider is already installed, which is fine.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // held for the process lifetime so otel signals flush on shutdown.
     let _telemetry = startup::startup("Runinator Web Service")?;
 

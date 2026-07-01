@@ -6317,6 +6317,7 @@ dependencies = [
  "runinator-utilities",
  "runinator-wdl",
  "runinator-workflows",
+ "rustls 0.23.40",
  "serde",
  "serde_json",
  "tokio",

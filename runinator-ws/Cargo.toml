@@ -19,6 +19,8 @@ uuid = { version = "1.18", features = ["v4"] }
 log-panics = "2.1"
 mime_guess = "2"
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+# used only to install a process-default rustls CryptoProvider at startup (see main.rs).
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 tracing = "0.1"
 metrics = "0.24"
