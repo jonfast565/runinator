@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::apps::v1::{Deployment, StatefulSet};
 use k8s_openapi::api::core::v1::{EnvVar, Pod};
 use kube::api::{DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Api, Client};
@@ -17,6 +17,9 @@ pub struct KubernetesProvisioner {
     namespace: String,
     // node kind -> deployment name.
     deployments: BTreeMap<&'static str, String>,
+    // node kind -> statefulset name.
+    stateful_sets: BTreeMap<&'static str, String>,
+    postgres_scale_out_enabled: bool,
 }
 
 impl KubernetesProvisioner {
@@ -24,6 +27,8 @@ impl KubernetesProvisioner {
         Self {
             namespace,
             deployments: BTreeMap::new(),
+            stateful_sets: BTreeMap::new(),
+            postgres_scale_out_enabled: false,
         }
     }
 
@@ -33,8 +38,28 @@ impl KubernetesProvisioner {
         self
     }
 
+    /// register the StatefulSet that backs a node kind. only mapped kinds are manageable.
+    pub fn with_stateful_set(mut self, kind: ReplicaKind, name: impl Into<String>) -> Self {
+        self.stateful_sets.insert(kind.as_str(), name.into());
+        self
+    }
+
+    /// allow postgres stateful set scaling above one replica. this must only be enabled for a
+    /// replication-aware postgres deployment with safe connection routing.
+    pub fn with_postgres_scale_out_enabled(mut self) -> Self {
+        self.postgres_scale_out_enabled = true;
+        self
+    }
+
     fn deployment_name(&self, kind: ReplicaKind) -> Result<&str, SendableError> {
         self.deployments
+            .get(kind.as_str())
+            .map(String::as_str)
+            .ok_or_else(|| UNSUPPORTED_KIND.error(kind.as_str()))
+    }
+
+    fn stateful_set_name(&self, kind: ReplicaKind) -> Result<&str, SendableError> {
+        self.stateful_sets
             .get(kind.as_str())
             .map(String::as_str)
             .ok_or_else(|| UNSUPPORTED_KIND.error(kind.as_str()))
@@ -47,6 +72,10 @@ impl KubernetesProvisioner {
     }
 
     async fn deployments_api(&self) -> Result<Api<Deployment>, SendableError> {
+        Ok(Api::namespaced(self.client().await?, &self.namespace))
+    }
+
+    async fn stateful_sets_api(&self) -> Result<Api<StatefulSet>, SendableError> {
         Ok(Api::namespaced(self.client().await?, &self.namespace))
     }
 
@@ -148,8 +177,15 @@ impl Provisioner for KubernetesProvisioner {
 
     fn supported_kinds(&self) -> Vec<ReplicaKind> {
         let mut kinds = Vec::new();
-        for kind in [ReplicaKind::Worker, ReplicaKind::Waker] {
-            if self.deployments.contains_key(kind.as_str()) {
+        for kind in [
+            ReplicaKind::Worker,
+            ReplicaKind::Waker,
+            ReplicaKind::Webservice,
+            ReplicaKind::Postgres,
+        ] {
+            if self.deployments.contains_key(kind.as_str())
+                || self.stateful_sets.contains_key(kind.as_str())
+            {
                 kinds.push(kind);
             }
         }
@@ -161,24 +197,47 @@ impl Provisioner for KubernetesProvisioner {
     }
 
     async fn list(&self) -> Result<Vec<ProvisionedGroup>, SendableError> {
-        let api = self.deployments_api().await?;
         let mut groups = Vec::new();
         for kind in self.supported_kinds() {
-            let name = self.deployment_name(kind)?.to_string();
-            let deployment = api
+            if self.deployments.contains_key(kind.as_str()) {
+                let api = self.deployments_api().await?;
+                let name = self.deployment_name(kind)?.to_string();
+                let deployment = api
+                    .get(&name)
+                    .await
+                    .map_err(|err| KUBERNETES_API.error(err))?;
+                let desired = deployment
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.replicas)
+                    .unwrap_or(0)
+                    .max(0) as u32;
+                let available = deployment
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.available_replicas)
+                    .unwrap_or(0)
+                    .max(0) as u32;
+                groups.push(self.group(kind, &name, desired, available));
+                continue;
+            }
+
+            let api = self.stateful_sets_api().await?;
+            let name = self.stateful_set_name(kind)?.to_string();
+            let stateful_set = api
                 .get(&name)
                 .await
                 .map_err(|err| KUBERNETES_API.error(err))?;
-            let desired = deployment
+            let desired = stateful_set
                 .spec
                 .as_ref()
                 .and_then(|s| s.replicas)
                 .unwrap_or(0)
                 .max(0) as u32;
-            let available = deployment
+            let available = stateful_set
                 .status
                 .as_ref()
-                .and_then(|s| s.available_replicas)
+                .and_then(|s| s.ready_replicas)
                 .unwrap_or(0)
                 .max(0) as u32;
             groups.push(self.group(kind, &name, desired, available));
@@ -192,6 +251,38 @@ impl Provisioner for KubernetesProvisioner {
         desired: u32,
         spec: &NodeSpec,
     ) -> Result<ProvisionedGroup, SendableError> {
+        if self.stateful_sets.contains_key(kind.as_str()) {
+            if spec.group.is_some() {
+                return Err(UNSUPPORTED_KIND.error(format!(
+                    "{} stateful set groups are not supported",
+                    kind.as_str()
+                )));
+            }
+            if kind == ReplicaKind::Postgres && desired > 1 && !self.postgres_scale_out_enabled {
+                return Err(UNSUPPORTED_KIND.error(
+                    "postgres scale-out requires RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED=true and a replication-aware postgres cluster",
+                ));
+            }
+            let name = self.stateful_set_name(kind)?.to_string();
+            let api = self.stateful_sets_api().await?;
+            let patch = serde_json::json!({ "spec": { "replicas": desired } });
+            api.patch_scale(&name, &PatchParams::default(), &Patch::Merge(&patch))
+                .await
+                .map_err(|err| KUBERNETES_API.error(err))?;
+
+            let stateful_set = api
+                .get(&name)
+                .await
+                .map_err(|err| KUBERNETES_API.error(err))?;
+            let available = stateful_set
+                .status
+                .as_ref()
+                .and_then(|s| s.ready_replicas)
+                .unwrap_or(0)
+                .max(0) as u32;
+            return Ok(self.group(kind, &name, desired, available));
+        }
+
         // a per-group scale (e.g. a per-org pool) targets a deployment named by the group; otherwise
         // the kind's default deployment.
         let name = match &spec.group {

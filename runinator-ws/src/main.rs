@@ -64,6 +64,7 @@ async fn main() -> Result<(), SendableError> {
         broker_result_topic,
         broker_client_id,
         advertise_host,
+        instance_id,
         auth_enabled,
         auth_access_ttl_seconds,
         auth_refresh_ttl_seconds,
@@ -94,6 +95,10 @@ async fn main() -> Result<(), SendableError> {
     };
     let advertisement = ReplicaAdvertisement {
         host: advertise_host,
+        instance_id: instance_id.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }),
         attributes: runinator_models::json!({
             "broker_backend": broker_backend.clone(),
             "broker_client_id": broker_client_id.clone(),

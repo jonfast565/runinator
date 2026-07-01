@@ -1,6 +1,7 @@
 # RBAC for the on-demand node provisioner (kubernetes backend). The web service scales the
-# worker/waker Deployments and can delete a single pod to drain it. Only granted when the ws image
-# is built with the `kubernetes` feature and RUNINATOR_PROVISIONER_K8S_ENABLED=true.
+# ws/worker/waker Deployments, can create per-group worker Deployments, can optionally scale a
+# Postgres StatefulSet, and can delete a single pod to drain it. Only granted when the ws image is
+# built with the `kubernetes` feature and RUNINATOR_PROVISIONER_K8S_ENABLED=true.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -15,9 +16,15 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "patch"]
+    verbs: ["get", "list", "create", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
     verbs: ["get", "patch"]
   - apiGroups: [""]
     resources: ["pods"]

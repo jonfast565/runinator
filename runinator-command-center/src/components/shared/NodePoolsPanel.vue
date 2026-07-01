@@ -17,56 +17,58 @@
       No provisioning backends are configured on the web service.
     </div>
 
-    <table v-else class="node-pools-table">
-      <thead>
-        <tr>
-          <th>Backend</th>
-          <th>Kind</th>
-          <th>Desired</th>
-          <th>Live</th>
-          <th class="node-pools-actions-col">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="group in groups" :key="`${group.backend}-${group.kind}`">
-          <td>{{ group.backend }}</td>
-          <td>{{ group.kind }}</td>
-          <td>{{ group.desired }}</td>
-          <td>{{ group.available }}</td>
-          <td class="node-pools-actions">
-            <button
-              class="btn"
-              :disabled="busy || !group.manageable"
-              title="Spin up one node"
-              @click="scaleBy(group, 1)"
-            >
-              <Icon name="play" />
-              <span>Spin up</span>
-            </button>
-            <button
-              class="btn"
-              :disabled="busy || !group.manageable || group.desired === 0"
-              title="Scale down one node"
-              @click="scaleBy(group, -1)"
-            >
-              <Icon name="stop" />
-              <span>−1</span>
-            </button>
-            <button
-              class="btn"
-              :disabled="busy || !group.manageable || group.desired === 0"
-              title="Scale to zero"
-              @click="scaleTo(group, 0)"
-            >
-              <span>Stop all</span>
-            </button>
-          </td>
-        </tr>
-        <tr v-if="!groups.length">
-          <td colspan="5" class="empty-state">No manageable node groups reported.</td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else class="node-pools-table-wrap">
+      <table class="node-pools-table">
+        <thead>
+          <tr>
+            <th>Backend</th>
+            <th>Kind</th>
+            <th>Desired</th>
+            <th>Live</th>
+            <th class="node-pools-actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="group in groups" :key="`${group.backend}-${group.kind}`">
+            <td>{{ group.backend }}</td>
+            <td>{{ group.kind }}</td>
+            <td>{{ group.desired }}</td>
+            <td>{{ group.available }}</td>
+            <td class="node-pools-actions">
+              <button
+                class="btn"
+                :disabled="busy || !group.manageable"
+                title="Spin up one node"
+                @click="scaleBy(group, 1)"
+              >
+                <Icon name="play" />
+                <span>Spin up</span>
+              </button>
+              <button
+                class="btn"
+                :disabled="busy || !group.manageable || group.desired === 0"
+                title="Scale down one node"
+                @click="scaleBy(group, -1)"
+              >
+                <Icon name="stop" />
+                <span>-1</span>
+              </button>
+              <button
+                class="btn"
+                :disabled="busy || !group.manageable || group.desired === 0"
+                title="Scale to zero"
+                @click="scaleTo(group, 0)"
+              >
+                <span>Stop all</span>
+              </button>
+            </td>
+          </tr>
+          <tr v-if="!groups.length">
+            <td colspan="5" class="empty-state">No manageable node groups reported.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <div v-if="error" class="empty-state">{{ error }}</div>
   </div>
@@ -137,16 +139,27 @@ onMounted(refresh);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  flex: 0 1 auto;
+  max-height: min(360px, 42vh);
+  min-height: 0;
   padding: 1rem;
 }
 .node-pools-hint {
   margin: 0;
+  flex: 0 0 auto;
   opacity: 0.75;
   font-size: 0.85rem;
 }
+.node-pools-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius);
+}
 .node-pools-table {
-  width: 100%;
+  width: max(100%, 640px);
   border-collapse: collapse;
+  table-layout: auto;
   font-size: 0.85rem;
 }
 .node-pools-table th,
@@ -154,6 +167,8 @@ onMounted(refresh);
   text-align: left;
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  overflow: visible;
+  text-overflow: clip;
 }
 .node-pools-actions-col {
   width: 1%;

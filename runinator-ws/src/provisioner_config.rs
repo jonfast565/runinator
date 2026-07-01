@@ -42,6 +42,7 @@ fn supervisor_backend_from_env() -> Option<SupervisorBackendConfig> {
         state_file,
         worker_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WORKER"),
         waker_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WAKER"),
+        webservice_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WS"),
     })
 }
 
@@ -70,6 +71,16 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
         waker_deployment: Some(
             std::env::var("RUNINATOR_PROVISIONER_K8S_WAKER_DEPLOYMENT")
                 .unwrap_or_else(|_| "runinator-waker".to_string()),
+        ),
+        webservice_deployment: Some(
+            std::env::var("RUNINATOR_PROVISIONER_K8S_WS_DEPLOYMENT")
+                .unwrap_or_else(|_| "runinator-ws".to_string()),
+        ),
+        postgres_stateful_set: std::env::var("RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET")
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+        postgres_scale_out_enabled: env_enabled(
+            "RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED",
         ),
     })
 }

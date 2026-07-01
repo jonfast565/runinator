@@ -10,6 +10,7 @@ pub enum ReplicaKind {
     Worker,
     Waker,
     Webservice,
+    Postgres,
 }
 
 impl ReplicaKind {
@@ -18,6 +19,7 @@ impl ReplicaKind {
             Self::Worker => "worker",
             Self::Waker => "waker",
             Self::Webservice => "webservice",
+            Self::Postgres => "postgres",
         }
     }
 }
@@ -30,6 +32,7 @@ impl TryFrom<&str> for ReplicaKind {
             "worker" => Ok(Self::Worker),
             "waker" => Ok(Self::Waker),
             "webservice" => Ok(Self::Webservice),
+            "postgres" => Ok(Self::Postgres),
             other => Err(format!("Unknown replica kind '{other}'")),
         }
     }

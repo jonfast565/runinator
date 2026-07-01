@@ -58,6 +58,8 @@ spec:
             - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - "--port"
             - "8080"
+            - "--instance-id"
+            - "$(POD_NAME)"
             - "--advertise-host"
             - "runinator-ws.runinator.svc.cluster.local"
             - "--disable-gossip"
@@ -80,6 +82,18 @@ spec:
               value: "runinator-worker"
             - name: RUNINATOR_PROVISIONER_K8S_WAKER_DEPLOYMENT
               value: "runinator-waker"
+            - name: RUNINATOR_PROVISIONER_K8S_WS_DEPLOYMENT
+              value: "runinator-ws"
+            # Optional only for replication-aware Postgres clusters with safe connection routing
+            # such as an operator-managed primary/replica setup fronted by PgBouncer.
+            # - name: RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET
+            #   value: "runinator-postgres"
+            # - name: RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED
+            #   value: "true"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           envFrom:
             - configMapRef:
                 name: runinator-common

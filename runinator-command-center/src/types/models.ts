@@ -475,7 +475,7 @@ export interface ServiceStatus {
   service_url: string | null;
 }
 
-export type ReplicaKind = "worker" | "waker" | "webservice";
+export type ReplicaKind = "worker" | "waker" | "webservice" | "postgres";
 
 export type ReplicaStatus = "live" | "stale" | "offline";
 

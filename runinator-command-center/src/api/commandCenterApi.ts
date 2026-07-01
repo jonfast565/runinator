@@ -624,6 +624,7 @@ export interface NodeSpec {
   labels?: Record<string, string>;
   image?: string | null;
   extra_args?: string[];
+  group?: string | null;
 }
 
 export interface ScaleNodesRequest {

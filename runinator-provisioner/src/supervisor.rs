@@ -151,7 +151,11 @@ impl Provisioner for SupervisorProvisioner {
 
     fn supported_kinds(&self) -> Vec<ReplicaKind> {
         let mut kinds = Vec::new();
-        for kind in [ReplicaKind::Worker, ReplicaKind::Waker] {
+        for kind in [
+            ReplicaKind::Worker,
+            ReplicaKind::Waker,
+            ReplicaKind::Webservice,
+        ] {
             if self.templates.contains_key(kind.as_str()) {
                 kinds.push(kind);
             }
@@ -220,6 +224,6 @@ fn id_flag(kind: ReplicaKind) -> &'static str {
     match kind {
         ReplicaKind::Worker => "--worker-id",
         ReplicaKind::Waker => "--waker-id",
-        ReplicaKind::Webservice => "--instance-id",
+        ReplicaKind::Webservice | ReplicaKind::Postgres => "--instance-id",
     }
 }

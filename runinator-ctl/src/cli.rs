@@ -82,6 +82,8 @@ impl From<CliProvisionBackend> for ProvisionBackend {
 pub enum CliNodeKind {
     Worker,
     Waker,
+    Webservice,
+    Postgres,
 }
 
 impl From<CliNodeKind> for ReplicaKind {
@@ -89,6 +91,8 @@ impl From<CliNodeKind> for ReplicaKind {
         match kind {
             CliNodeKind::Worker => ReplicaKind::Worker,
             CliNodeKind::Waker => ReplicaKind::Waker,
+            CliNodeKind::Webservice => ReplicaKind::Webservice,
+            CliNodeKind::Postgres => ReplicaKind::Postgres,
         }
     }
 }

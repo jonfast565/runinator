@@ -174,6 +174,8 @@ function replicaKindLabel(kind: ReplicaKind): string {
       return "Worker";
     case "waker":
       return "Waker";
+    case "postgres":
+      return "Postgres";
   }
 }
 
@@ -197,12 +199,15 @@ onMounted(async () => {
 
 <style scoped>
 .replicas-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   overflow: hidden;
 }
 
 .replicas-layout {
   display: grid;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   gap: 10px;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
@@ -231,6 +236,7 @@ onMounted(async () => {
 }
 
 .replica-list {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -265,6 +271,10 @@ onMounted(async () => {
 }
 
 .replica-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 
@@ -363,8 +373,17 @@ onMounted(async () => {
 }
 
 @media (max-width: 900px) {
+  .replicas-pane {
+    overflow: auto;
+  }
+
   .replicas-layout {
+    flex: 0 0 auto;
     grid-template-columns: 1fr;
+  }
+
+  .replica-list {
+    max-height: 340px;
   }
 
   .replicas-grid {

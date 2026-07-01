@@ -41,6 +41,7 @@ impl RateCard {
             ReplicaKind::Worker,
             ReplicaKind::Waker,
             ReplicaKind::Webservice,
+            ReplicaKind::Postgres,
         ];
         let mut entries = Vec::new();
         for backend in [ProvisionBackend::Supervisor, ProvisionBackend::Kubernetes] {
@@ -50,6 +51,7 @@ impl RateCard {
                     ReplicaKind::Worker => 25,
                     ReplicaKind::Waker => 5,
                     ReplicaKind::Webservice => 10,
+                    ReplicaKind::Postgres => 20,
                 };
                 entries.push(RateEntry {
                     backend,

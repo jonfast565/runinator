@@ -61,6 +61,15 @@ fn provisioner(dir: &PathBuf) -> SupervisorProvisioner {
     )
 }
 
+fn webservice_template() -> SupervisorNodeTemplate {
+    SupervisorNodeTemplate {
+        command: "./ws".into(),
+        args: vec!["--port".into(), "8081".into()],
+        env: BTreeMap::new(),
+        cwd: None,
+    }
+}
+
 #[tokio::test]
 async fn scale_up_enqueues_add_for_each_missing_node() {
     let dir = temp_dir("up");
@@ -178,6 +187,29 @@ async fn org_group_scales_an_independent_labeled_pool() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn supervisor_backend_supports_webservice_when_template_is_configured() {
+    let dir = temp_dir("ws");
+    write_snapshot(&dir.join("state.json"), &worker_snapshot(&[])).unwrap();
+
+    let prov = SupervisorProvisioner::new(dir.join("control"), dir.join("state.json"))
+        .with_template(ReplicaKind::Webservice, webservice_template());
+
+    let group = prov
+        .scale(ReplicaKind::Webservice, 1, &NodeSpec::default())
+        .await
+        .unwrap();
+    assert_eq!(group.kind, ReplicaKind::Webservice);
+
+    let commands = drain(&dir.join("control"));
+    let ControlCommand::AddProcess { process } = &commands[0] else {
+        panic!("expected an add-process command");
+    };
+    assert!(process.name.starts_with("prov-webservice-"));
+    assert!(process.args.contains(&"--instance-id".to_string()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[cfg(feature = "kubernetes")]
 #[test]
 fn clone_group_deployment_renames_labels_and_injects_worker_labels() {
@@ -254,4 +286,35 @@ fn clone_group_deployment_renames_labels_and_injects_worker_labels() {
         .find(|e| e.name == "RUNINATOR_WORKER_LABELS")
         .unwrap();
     assert_eq!(labels_env.value.as_deref(), Some("org=acme"));
+}
+
+#[cfg(feature = "kubernetes")]
+#[tokio::test]
+async fn kubernetes_supported_kinds_include_webservice_and_postgres_when_configured() {
+    use crate::kubernetes::KubernetesProvisioner;
+
+    let prov = KubernetesProvisioner::new("runinator".into())
+        .with_deployment(ReplicaKind::Worker, "runinator-worker")
+        .with_deployment(ReplicaKind::Webservice, "runinator-ws")
+        .with_stateful_set(ReplicaKind::Postgres, "runinator-postgres");
+
+    let kinds = prov.supported_kinds();
+    assert!(kinds.contains(&ReplicaKind::Worker));
+    assert!(kinds.contains(&ReplicaKind::Webservice));
+    assert!(kinds.contains(&ReplicaKind::Postgres));
+}
+
+#[cfg(feature = "kubernetes")]
+#[tokio::test]
+async fn kubernetes_postgres_scale_out_requires_explicit_opt_in() {
+    use crate::kubernetes::KubernetesProvisioner;
+
+    let prov = KubernetesProvisioner::new("runinator".into())
+        .with_stateful_set(ReplicaKind::Postgres, "runinator-postgres");
+
+    let err = prov
+        .scale(ReplicaKind::Postgres, 2, &NodeSpec::default())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("postgres scale-out requires"));
 }

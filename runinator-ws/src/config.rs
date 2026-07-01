@@ -84,6 +84,10 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "")]
     pub advertise_host: String,
 
+    /// Stable instance id advertised to the replica list. In k8s this should be the pod name.
+    #[arg(long, env = "RUNINATOR_INSTANCE_ID")]
+    pub instance_id: Option<String>,
+
     /// Require authentication on the HTTP API. Off by default so the local/dev stack runs unchanged.
     #[arg(long, env = "RUNINATOR_AUTH_ENABLED", default_value_t = false)]
     pub auth_enabled: bool,

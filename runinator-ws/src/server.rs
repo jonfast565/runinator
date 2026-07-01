@@ -30,6 +30,7 @@ use crate::router::build_router;
 /// heartbeat. host is its stable dns name; attributes carry the broker/database backend it runs on.
 #[derive(Debug, Clone, Default)]
 pub struct ReplicaAdvertisement {
+    pub instance_id: Option<String>,
     pub host: Option<String>,
     pub attributes: runinator_models::value::Value,
 }
@@ -63,7 +64,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
         refresh_ttl_secs: auth.refresh_ttl_secs,
     };
     let (events_tx, _) = broadcast::channel::<AppEvent>(1024);
-    let instance = instance_id();
+    let instance = advertisement
+        .instance_id
+        .clone()
+        .unwrap_or_else(instance_id);
     let runtime_id = Uuid::new_v4().to_string();
     let web_replica = crate::repository::register_replica(
         pool.as_ref(),

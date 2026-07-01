@@ -13,14 +13,18 @@ pub struct SupervisorBackendConfig {
     pub state_file: PathBuf,
     pub worker_template: Option<SupervisorNodeTemplate>,
     pub waker_template: Option<SupervisorNodeTemplate>,
+    pub webservice_template: Option<SupervisorNodeTemplate>,
 }
 
-/// kubernetes-backend configuration: namespace and the Deployment backing each node kind.
+/// kubernetes-backend configuration: namespace and the workload backing each node kind.
 #[derive(Debug, Clone)]
 pub struct KubernetesBackendConfig {
     pub namespace: String,
     pub worker_deployment: Option<String>,
     pub waker_deployment: Option<String>,
+    pub webservice_deployment: Option<String>,
+    pub postgres_stateful_set: Option<String>,
+    pub postgres_scale_out_enabled: bool,
 }
 
 /// the set of backends to construct; either may be absent.
@@ -43,6 +47,9 @@ pub fn build_registry(config: ProvisionerConfig) -> ProvisionerRegistry {
         if let Some(template) = supervisor.waker_template {
             backend = backend.with_template(ReplicaKind::Waker, template);
         }
+        if let Some(template) = supervisor.webservice_template {
+            backend = backend.with_template(ReplicaKind::Webservice, template);
+        }
         provisioners.push(Arc::new(backend));
     }
 
@@ -63,6 +70,15 @@ fn build_kubernetes(provisioners: &mut Vec<Arc<dyn Provisioner>>, config: Kubern
     }
     if let Some(name) = config.waker_deployment {
         backend = backend.with_deployment(ReplicaKind::Waker, name);
+    }
+    if let Some(name) = config.webservice_deployment {
+        backend = backend.with_deployment(ReplicaKind::Webservice, name);
+    }
+    if let Some(name) = config.postgres_stateful_set {
+        backend = backend.with_stateful_set(ReplicaKind::Postgres, name);
+    }
+    if config.postgres_scale_out_enabled {
+        backend = backend.with_postgres_scale_out_enabled();
     }
     provisioners.push(Arc::new(backend));
 }

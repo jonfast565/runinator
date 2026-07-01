@@ -162,8 +162,18 @@ Drive it from the CLI or the command center's Node Pools panel (Replicas view):
 runinatorctl nodes list
 runinatorctl nodes spin-up --backend supervisor --kind worker --count 2
 runinatorctl nodes scale --backend kubernetes --kind worker --desired 5
+runinatorctl nodes scale --backend kubernetes --kind webservice --desired 3
 runinatorctl nodes stop --backend supervisor --node prov-worker-<id>
 ```
+
+The Kubernetes provisioner can also observe and scale `postgres` when
+`RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET` is set, but scale-out above
+one replica is intentionally blocked unless
+`RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED=true` is also set. Only
+enable that for a replication-aware Postgres topology with safe connection
+routing, such as an operator-managed primary/replica cluster fronted by
+PgBouncer. The checked-in `runinator-postgres` manifest is a single-primary
+development StatefulSet and should not be scaled out as-is.
 
 The web service owns the reducer and drives workflows over the broker: it
 publishes scheduled work on the `wake` channel, and the `runinator-waker` (a

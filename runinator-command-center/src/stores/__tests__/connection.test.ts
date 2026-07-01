@@ -49,6 +49,60 @@ describe("service connection state", () => {
     expect(app.replicaCounts).toEqual({ workers: 0, wakers: 0, webservices: 0 });
   });
 
+  it("counts only live worker replicas when backend counts are absent", () => {
+    const app = useAppStore();
+
+    app.setReplicaState([
+      {
+        replica_id: "00000000-0000-0000-0000-000000000001",
+        replica_type: "worker",
+        instance_id: "worker-live-a",
+        runtime_id: "runtime-a",
+        status: "live",
+        attributes: {},
+        first_seen_at: "",
+        last_heartbeat_at: "",
+        last_seen_at: ""
+      },
+      {
+        replica_id: "00000000-0000-0000-0000-000000000002",
+        replica_type: "worker",
+        instance_id: "worker-stale",
+        runtime_id: "runtime-b",
+        status: "stale",
+        attributes: {},
+        first_seen_at: "",
+        last_heartbeat_at: "",
+        last_seen_at: ""
+      },
+      {
+        replica_id: "00000000-0000-0000-0000-000000000003",
+        replica_type: "worker",
+        instance_id: "worker-live-b",
+        runtime_id: "runtime-c",
+        status: "live",
+        attributes: {},
+        first_seen_at: "",
+        last_heartbeat_at: "",
+        last_seen_at: ""
+      },
+      {
+        replica_id: "00000000-0000-0000-0000-000000000004",
+        replica_type: "webservice",
+        instance_id: "ws-live",
+        runtime_id: "runtime-d",
+        status: "live",
+        attributes: {},
+        first_seen_at: "",
+        last_heartbeat_at: "",
+        last_seen_at: ""
+      }
+    ]);
+
+    expect(app.replicaCounts).toEqual({ workers: 2, wakers: 0, webservices: 1 });
+    expect(app.liveReplicaCount).toBe(3);
+  });
+
   it("clears stale backend-backed store state on disconnect", () => {
     const providers = useProvidersStore();
     const resources = useResourcesStore();
