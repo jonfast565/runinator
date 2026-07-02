@@ -847,6 +847,22 @@ function fileMeta(file: DevPackFile) {
   grid-row: 1 / span 2;
 }
 
+/* narrow window: drop the fixed two-column layout and stack the dev panels. */
+@media (max-width: 760px) {
+  .dev-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+
+  .dev-panel {
+    grid-row: auto;
+  }
+
+  .dev-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .dev-editor-panel,
 .dev-run-panel,
 .dev-panel {

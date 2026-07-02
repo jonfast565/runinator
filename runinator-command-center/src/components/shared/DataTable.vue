@@ -9,6 +9,8 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
   width?: string;
   // custom value accessor for sorting/display; defaults to row[key].
   value?: (row: Row) => unknown;
+  // 'low' columns are hidden on mobile in scroll mode to reduce horizontal overflow.
+  priority?: "high" | "low";
 }
 </script>
 
@@ -16,6 +18,7 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
 import { computed, ref, watch } from "vue";
 import Icon, { type IconName } from "./Icon.vue";
 import EmptyState from "./EmptyState.vue";
+import { useBreakpoint } from "../../composables/useBreakpoint";
 import { displayValue } from "../../utils/values";
 
 // dual-mode table. with `columns` it renders a sortable/paginated/selectable table; without
@@ -37,6 +40,8 @@ const props = withDefaults(
     emptyIcon?: IconName;
     initialSortKey?: string;
     initialSortDir?: "asc" | "desc";
+    // 'cards' renders label:value cards on mobile; 'scroll' keeps the table and hides low-priority columns.
+    responsive?: "scroll" | "cards";
   }>(),
   {
     rows: () => [],
@@ -51,8 +56,13 @@ const props = withDefaults(
     emptyIcon: undefined,
     initialSortKey: undefined,
     initialSortDir: undefined,
+    responsive: "scroll",
   },
 );
+
+const { isMobile } = useBreakpoint();
+// switch to a stacked card layout on phones when the caller opts in via responsive="cards".
+const cardMode = computed(() => props.responsive === "cards" && isMobile.value);
 
 const emit = defineEmits<{ select: [row: Row] }>();
 
@@ -148,9 +158,7 @@ function displayCell(value: unknown): string {
   return displayValue(value);
 }
 
-const pageLabel = computed(
-  () => `Page ${String(page.value + 1)} of ${String(pageCount.value)}`,
-);
+const pageLabel = computed(() => `Page ${String(page.value + 1)} of ${String(pageCount.value)}`);
 
 // natural-ish comparison: numbers numerically, everything else as case-insensitive strings.
 function compareValues(left: unknown, right: unknown): number {
@@ -179,14 +187,45 @@ function compareValues(left: unknown, right: unknown): number {
     <slot />
   </div>
   <div v-else class="data-table">
-    <div class="table-scroll">
+    <!-- mobile card layout: each row becomes a stack of label:value pairs. -->
+    <div v-if="cardMode" class="data-table-cards">
+      <EmptyState
+        v-if="!pagedRows.length && emptyTitle"
+        compact
+        :icon="emptyIcon"
+        :title="emptyTitle"
+        :description="emptyDescription"
+      />
+      <span v-else-if="!pagedRows.length" class="data-table-empty-text">No records.</span>
+      <div
+        v-for="(row, index) in pagedRows"
+        :key="keyForRow(row, index)"
+        class="data-card"
+        :class="rowClasses(row, index)"
+        @click="emit('select', row)"
+      >
+        <div v-for="column in columns" :key="column.key" class="data-card-row">
+          <span class="data-card-label">{{ column.label }}</span>
+          <span class="data-card-value" :class="column.align ? `align-${column.align}` : ''">
+            <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
+              {{ displayCell(cellValue(row, column)) }}
+            </slot>
+          </span>
+        </div>
+      </div>
+    </div>
+    <div v-else class="table-scroll">
       <table :class="{ compact }">
         <thead>
           <tr>
             <th
               v-for="column in columns"
               :key="column.key"
-              :class="[column.align ? `align-${column.align}` : '', { sortable: column.sortable }]"
+              :class="[
+                column.align ? `align-${column.align}` : '',
+                column.priority === 'low' ? 'col-low' : '',
+                { sortable: column.sortable },
+              ]"
               :style="column.width ? { width: column.width } : undefined"
               @click="column.sortable ? toggleSort(column.key) : undefined"
             >
@@ -223,7 +262,10 @@ function compareValues(left: unknown, right: unknown): number {
             <td
               v-for="column in columns"
               :key="column.key"
-              :class="column.align ? `align-${column.align}` : ''"
+              :class="[
+                column.align ? `align-${column.align}` : '',
+                column.priority === 'low' ? 'col-low' : '',
+              ]"
             >
               <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
                 {{ displayCell(cellValue(row, column)) }}
@@ -309,5 +351,62 @@ th.sortable:hover {
 .data-table-page-label {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.data-table-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.data-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.data-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.data-card.danger {
+  color: var(--danger-fg);
+}
+
+.data-card.success {
+  color: var(--success-fg);
+}
+
+.data-card.muted {
+  color: var(--text-muted);
+}
+
+.data-card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.data-card-label {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.data-card-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 </style>

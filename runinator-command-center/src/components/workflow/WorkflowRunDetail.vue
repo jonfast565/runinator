@@ -783,4 +783,11 @@ function selectByRunId(runId: string) {
     grid-template-columns: 1fr;
   }
 }
+
+/* stack the 160px label column and let wide artifact tables scroll on phones. */
+@media (max-width: 760px) {
+  .result-field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>

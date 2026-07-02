@@ -35,6 +35,7 @@ import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi"
 import { pingBackendHealth, wsBaseUrl } from "./api/httpRuntime";
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
+import { useBreakpoint } from "./composables/useBreakpoint";
 import { useEventStream } from "./composables/useEventStream";
 import { useUrlSync } from "./composables/useUrlSync";
 import { endpointForTab, isResourceTab, useAppStore } from "./stores/app";
@@ -85,6 +86,8 @@ const adminSettings = useAdminSettingsStore();
 const gates = useGatesStore();
 // initialize early so the theme data-theme attribute is set before first render.
 useDisplayPreferencesStore();
+// track viewport size and publish it as document[data-viewport] for css + layout logic.
+useBreakpoint();
 useEventStream();
 // keep the URL hash in sync with the active tab + selected workflow/run (deep links, back/forward).
 useUrlSync();

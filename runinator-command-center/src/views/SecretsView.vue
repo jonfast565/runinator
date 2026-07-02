@@ -7,6 +7,8 @@
       :min-first="420"
       :min-second="320"
       collapsible-second
+      mobile-mode="toggle"
+      :mobile-detail-active="!!secrets.selectedSecret"
     >
       <template #first>
         <div class="settings-shell panel">
@@ -62,6 +64,7 @@
       </template>
       <template #second>
         <div class="panel overview-panel">
+          <MobileBackBar @back="secrets.selectedSecretKey = ''" />
           <div class="overview-head">
             <h2>{{ isConfig ? "Config" : "Secret" }} Overview</h2>
             <div v-if="selected" class="btn-row">
@@ -178,6 +181,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useAppStore } from "../stores/app";
 import { useProvidersStore } from "../stores/providers";

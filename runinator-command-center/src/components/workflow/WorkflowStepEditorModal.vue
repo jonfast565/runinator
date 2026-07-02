@@ -1586,6 +1586,14 @@ function onSubflowNameChange(event: Event) {
   align-items: end;
 }
 
+/* collapse the multi-column transition/branch rows to a single column on phones. */
+@media (max-width: 760px) {
+  .transition-grid,
+  .condition-branch-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .assertion-row {
   display: flex;
   flex-direction: column;

@@ -27,6 +27,7 @@
         :rows="filteredNotifications"
         row-key="id"
         :page-size="25"
+        responsive="cards"
         :row-class="rowClass"
         initial-sort-key="created_at"
         initial-sort-dir="desc"
@@ -115,9 +116,7 @@ const filteredNotifications = computed(() => {
       notification.channel,
       notification.severity,
       notification.workflow_run_id ?? "",
-    ].some((value) =>
-      (value ?? "").toLowerCase().includes(query),
-    ),
+    ].some((value) => (value ?? "").toLowerCase().includes(query)),
   );
 });
 

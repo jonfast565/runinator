@@ -66,3 +66,11 @@ tr.success td {
   padding: 5px 6px;
   font-size: 12px;
 }
+
+/* low-priority columns drop out on phones to curb horizontal overflow in scroll-mode tables. */
+@media (max-width: 760px) {
+  th.col-low,
+  td.col-low {
+    display: none;
+  }
+}

@@ -22,6 +22,7 @@
         :rows="rows"
         row-key="id"
         :page-size="50"
+        responsive="cards"
         initial-sort-key="created_at"
         initial-sort-dir="desc"
         empty-icon="list"

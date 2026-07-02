@@ -29,22 +29,22 @@
           <thead>
             <tr>
               <th>Time</th>
-              <th>Channel</th>
-              <th>Attempts</th>
+              <th class="col-low">Channel</th>
+              <th class="col-low">Attempts</th>
               <th>Error</th>
-              <th>Event</th>
+              <th class="col-low">Event</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="row in rows" :key="String(row.id)">
               <tr class="dlq-row" @click="toggle(String(row.id))">
                 <td>{{ formatDate(row.created_at as string) }}</td>
-                <td>
+                <td class="col-low">
                   <span class="badge">{{ row.channel }}</span>
                 </td>
-                <td>{{ row.attempts }}</td>
+                <td class="col-low">{{ row.attempts }}</td>
                 <td class="dlq-error">{{ row.error }}</td>
-                <td class="mono">{{ row.event_id || row.dedupe_key || "-" }}</td>
+                <td class="col-low mono">{{ row.event_id || row.dedupe_key || "-" }}</td>
               </tr>
               <tr v-if="expanded === String(row.id)" class="dlq-detail-row">
                 <td colspan="5">

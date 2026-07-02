@@ -300,6 +300,23 @@ function shortJson(value: unknown): string {
   gap: 10px;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
 }
+
+/* stack the provider list above its detail on phones; the whole pane scrolls. */
+@media (max-width: 760px) {
+  .providers-pane {
+    overflow: auto;
+  }
+
+  .providers-layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 100%;
+  }
+
+  .providers-list-panel {
+    max-height: 50vh;
+  }
+}
 .providers-list-panel,
 .providers-detail-panel {
   display: flex;

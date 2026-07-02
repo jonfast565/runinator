@@ -14,62 +14,36 @@
           </button>
         </div>
       </div>
-      <DataTable>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Run</th>
-              <th>Name</th>
-              <th>MIME</th>
-              <th>Size</th>
-              <th>URI</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!filteredArtifacts.length">
-              <td colspan="8" class="empty-cell">
-                {{
-                  store.artifacts.length
-                    ? `No artifacts match "${app.searchQuery}".`
-                    : "No artifacts yet."
-                }}
-              </td>
-            </tr>
-            <tr
-              v-for="artifact in filteredArtifacts"
-              :key="artifact.id"
-              :class="{ selected: store.selectedArtifactId === artifact.id }"
-              @click="store.selectedArtifactId = artifact.id"
-            >
-              <td>{{ artifact.id }}</td>
-              <td>{{ artifact.run_id }}</td>
-              <td>{{ artifact.name }}</td>
-              <td>{{ artifact.mime_type }}</td>
-              <td>{{ formatBytes(artifact.size_bytes) }}</td>
-              <td class="uri-cell">{{ artifact.uri }}</td>
-              <td>{{ formatDate(artifact.created_at) }}</td>
-              <td class="row-actions">
-                <button
-                  class="btn btn-icon btn-ghost"
-                  title="Download"
-                  @click.stop="onDownload(artifact)"
-                >
-                  <Icon name="download" />
-                </button>
-                <button
-                  class="btn btn-icon btn-ghost"
-                  title="Delete"
-                  @click.stop="onDelete(artifact)"
-                >
-                  <Icon name="trash" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <DataTable
+        :columns="columns"
+        :rows="filteredArtifacts"
+        row-key="id"
+        :selected-key="store.selectedArtifactId"
+        responsive="cards"
+        :empty-title="store.artifacts.length ? 'No matches' : 'No artifacts yet'"
+        :empty-description="
+          store.artifacts.length
+            ? `No artifacts match “${app.searchQuery}”.`
+            : 'Uploaded and run-generated artifacts appear here.'
+        "
+        empty-icon="box"
+        @select="store.selectedArtifactId = $event.id"
+      >
+        <template #cell-size_bytes="{ row }">{{ formatBytes(row.size_bytes) }}</template>
+        <template #cell-uri="{ value }">
+          <span class="uri-cell">{{ value }}</span>
+        </template>
+        <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
+        <template #cell-actions="{ row }">
+          <span class="row-actions">
+            <button class="btn btn-icon btn-ghost" title="Download" @click.stop="onDownload(row)">
+              <Icon name="download" />
+            </button>
+            <button class="btn btn-icon btn-ghost" title="Delete" @click.stop="onDelete(row)">
+              <Icon name="trash" />
+            </button>
+          </span>
+        </template>
       </DataTable>
     </div>
   </section>
@@ -77,12 +51,24 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import DataTable from "../components/shared/DataTable.vue";
+import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import { useArtifactsStore } from "../stores/artifacts";
 import { useAppStore } from "../stores/app";
 import type { RunArtifact } from "../types/models";
 import { formatDate } from "../utils/format";
+
+// low-priority columns collapse on mobile scroll mode; on phones the table becomes cards instead.
+const columns: DataTableColumn<RunArtifact>[] = [
+  { key: "id", label: "ID", priority: "low" },
+  { key: "run_id", label: "Run" },
+  { key: "name", label: "Name" },
+  { key: "mime_type", label: "MIME", priority: "low" },
+  { key: "size_bytes", label: "Size" },
+  { key: "uri", label: "URI", priority: "low" },
+  { key: "created_at", label: "Created", priority: "low" },
+  { key: "actions", label: "Actions", align: "right" },
+];
 
 const store = useArtifactsStore();
 const app = useAppStore();

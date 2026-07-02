@@ -7,6 +7,8 @@
       :min-first="460"
       :min-second="320"
       collapsible-second
+      mobile-mode="toggle"
+      :mobile-detail-active="!!resourcesStore.selectedResourceRecord"
     >
       <template #first>
         <div class="panel">
@@ -23,12 +25,12 @@
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th class="col-low">ID</th>
                   <th>Event Type</th>
                   <th>Message</th>
-                  <th>Provider</th>
-                  <th>Workflow Run</th>
-                  <th>Node</th>
+                  <th class="col-low">Provider</th>
+                  <th class="col-low">Workflow Run</th>
+                  <th class="col-low">Node</th>
                   <th>Created At</th>
                 </tr>
               </thead>
@@ -39,12 +41,14 @@
                   :class="{ selected: resourcesStore.selectedResourceRecord === record }"
                   @click="resourcesStore.selectedResourceRecord = record"
                 >
-                  <td>{{ record.id ?? "" }}</td>
+                  <td class="col-low">{{ record.id ?? "" }}</td>
                   <td>{{ eventType(record) }}</td>
                   <td>{{ eventMessage(record) }}</td>
-                  <td>{{ String(record.provider ?? "") }}</td>
-                  <td>{{ String(record.workflow_run_id ?? "") }}</td>
-                  <td>{{ String(record.node_id ?? record.workflow_node_run_id ?? "") }}</td>
+                  <td class="col-low">{{ String(record.provider ?? "") }}</td>
+                  <td class="col-low">{{ String(record.workflow_run_id ?? "") }}</td>
+                  <td class="col-low">
+                    {{ String(record.node_id ?? record.workflow_node_run_id ?? "") }}
+                  </td>
                   <td>{{ String(record.created_at ?? "") }}</td>
                 </tr>
               </tbody>
@@ -54,6 +58,7 @@
       </template>
       <template #second>
         <div class="panel details">
+          <MobileBackBar @back="resourcesStore.selectedResourceRecord = null" />
           <h2>Event Detail</h2>
           <pre class="output">{{
             resourcesStore.selectedResourceRecord
@@ -70,6 +75,7 @@
 import { onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useOrgsStore } from "../stores/orgs";
 import { useResourcesStore } from "../stores/resources";

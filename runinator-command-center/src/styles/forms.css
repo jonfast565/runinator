@@ -46,3 +46,11 @@
 .json-section h3 {
   grid-column: 1 / -1;
 }
+
+/* single-column forms on phones so fields get full width instead of cramped halves/thirds. */
+@media (max-width: 760px) {
+  .form-grid,
+  .json-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

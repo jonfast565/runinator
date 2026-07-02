@@ -7,6 +7,8 @@
       :min-first="340"
       :min-second="720"
       collapsible-first
+      mobile-mode="toggle"
+      :mobile-detail-active="!!workflows.selectedWorkflowRunId"
     >
       <template #first>
         <div class="panel runs-list-panel">
@@ -57,6 +59,7 @@
       </template>
       <template #second>
         <div class="runs-detail-shell">
+          <MobileBackBar label="Back to runs" @back="workflows.selectedWorkflowRunId = null" />
           <RunTabsBar />
           <SplitPane
             class="runs-detail-split"
@@ -201,6 +204,7 @@ import {
 import { isTauriRuntime } from "../api/tauriRuntime";
 import EmptyState from "../components/shared/EmptyState.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";

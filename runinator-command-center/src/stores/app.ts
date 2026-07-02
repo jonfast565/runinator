@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { fetchReplicas as fetchReplicasApi } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
 import { useAuthStore } from "./auth";
@@ -187,9 +187,7 @@ export function isNetworkError(error: unknown): boolean {
     return true;
   }
 
-  const message = String(
-    (error as { message?: unknown }).message ?? error,
-  ).toLowerCase();
+  const message = String((error as { message?: unknown }).message ?? error).toLowerCase();
   return (
     message.includes("failed to fetch") ||
     message.includes("load failed") ||
@@ -215,6 +213,8 @@ function readStoredDefaultTab(): AppTab {
 export const useAppStore = defineStore("app", () => {
   const activeTab = ref<AppTab>(readStoredDefaultTab());
   const sidebarCollapsed = ref(readSidebarCollapsed());
+  // off-canvas nav drawer visibility on mobile; desktop/tablet keep the static sidebar.
+  const mobileNavOpen = ref(false);
   const serviceUrl = ref<string | null>(null);
   const backendReachable = ref(false);
   // set when the user dismisses the outage banner; reset once reachability returns.
@@ -287,6 +287,23 @@ export const useAppStore = defineStore("app", () => {
     () => replicas.value.filter((replica) => replica.status === "live").length,
   );
   const hasReplicaState = computed(() => replicas.value.length > 0);
+
+  function openMobileNav() {
+    mobileNavOpen.value = true;
+  }
+
+  function closeMobileNav() {
+    mobileNavOpen.value = false;
+  }
+
+  function toggleMobileNav() {
+    mobileNavOpen.value = !mobileNavOpen.value;
+  }
+
+  // navigating always dismisses the drawer so the chosen view is visible immediately.
+  watch(activeTab, () => {
+    mobileNavOpen.value = false;
+  });
 
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value;
@@ -461,6 +478,10 @@ export const useAppStore = defineStore("app", () => {
   return {
     activeTab,
     sidebarCollapsed,
+    mobileNavOpen,
+    openMobileNav,
+    closeMobileNav,
+    toggleMobileNav,
     toggleSidebar,
     serviceUrl,
     backendReachable,

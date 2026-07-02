@@ -1,5 +1,14 @@
 <template>
   <header class="topbar">
+    <button
+      class="btn nav-hamburger"
+      aria-label="Open navigation"
+      title="Open navigation"
+      :disabled="app.interactionsDisabled"
+      @click="app.toggleMobileNav()"
+    >
+      <Icon name="list" :size="18" />
+    </button>
     <div class="view-title">
       <h1>{{ headingFor(app.activeTab) }}</h1>
       <span>{{ activeSubtitle }}</span>

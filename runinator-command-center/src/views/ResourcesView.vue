@@ -7,6 +7,8 @@
       :min-first="420"
       :min-second="340"
       collapsible-second
+      mobile-mode="toggle"
+      :mobile-detail-active="!!resourcesStore.selectedResourceRecord"
     >
       <template #first>
         <div class="panel">
@@ -55,12 +57,12 @@
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Provider</th>
-                  <th>Type</th>
+                  <th class="col-low">Provider</th>
+                  <th class="col-low">Type</th>
                   <th>Status</th>
                   <th>Summary</th>
-                  <th v-if="endpoint === 'approvals'">Resolved by</th>
-                  <th>External ID</th>
+                  <th v-if="endpoint === 'approvals'" class="col-low">Resolved by</th>
+                  <th class="col-low">External ID</th>
                 </tr>
               </thead>
               <tbody>
@@ -85,11 +87,11 @@
                   @click="resourcesStore.selectedResourceRecord = record"
                 >
                   <td>{{ record.id ?? "" }}</td>
-                  <td>{{ record.provider ?? "" }}</td>
-                  <td>{{ resourcesStore.recordType(record) }}</td>
+                  <td class="col-low">{{ record.provider ?? "" }}</td>
+                  <td class="col-low">{{ resourcesStore.recordType(record) }}</td>
                   <td><StatusBadge :status="record.status as string" /></td>
                   <td>{{ resourcesStore.recordSummary(record) }}</td>
-                  <td v-if="endpoint === 'approvals'" class="resolver-cell">
+                  <td v-if="endpoint === 'approvals'" class="resolver-cell col-low">
                     <template v-if="resourcesStore.isResolved(record)">
                       {{ record.resolved_by ?? "—" }}
                       <span v-if="record.resolved_at" class="resolver-time">{{
@@ -97,7 +99,9 @@
                       }}</span>
                     </template>
                   </td>
-                  <td>{{ record.external_id ?? record.key ?? record.url ?? "" }}</td>
+                  <td class="col-low">
+                    {{ record.external_id ?? record.key ?? record.url ?? "" }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -106,6 +110,7 @@
       </template>
       <template #second>
         <div class="panel details">
+          <MobileBackBar @back="resourcesStore.selectedResourceRecord = null" />
           <h2>Record Detail</h2>
           <pre class="output">{{
             resourcesStore.selectedResourceRecord
@@ -122,6 +127,7 @@
 import { computed, onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";

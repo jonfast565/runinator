@@ -2,13 +2,21 @@
   <div
     ref="container"
     class="split-pane"
-    :class="[orientationClass, { 'split-pane-collapsed': collapsedSide }]"
+    :class="[
+      orientationClass,
+      {
+        'split-pane-collapsed': collapsedSide,
+        'split-pane-stacked': isStacked,
+        'split-pane-toggle': isToggle,
+      },
+    ]"
     :style="splitStyle"
   >
-    <div class="split-section split-section-first">
+    <div v-if="showFirst" class="split-section split-section-first">
       <slot name="first" />
     </div>
     <div
+      v-if="showHandle"
       class="split-handle"
       role="separator"
       :aria-orientation="separatorOrientation"
@@ -39,7 +47,7 @@
         <Icon :name="secondToggleIcon" :size="14" />
       </button>
     </div>
-    <div class="split-section split-section-second">
+    <div v-if="showSecond" class="split-section split-section-second">
       <slot name="second" />
     </div>
   </div>
@@ -48,6 +56,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
+import { useBreakpoint } from "../../composables/useBreakpoint";
 
 type CollapsedSide = "first" | "second" | "";
 
@@ -60,6 +69,10 @@ const props = withDefaults(
     storageKey?: string;
     collapsibleFirst?: boolean;
     collapsibleSecond?: boolean;
+    // 'stack' keeps both panes stacked on mobile; 'toggle' shows one pane at a time (master-detail).
+    mobileMode?: "stack" | "toggle";
+    // in 'toggle' mode, true means the detail (second) pane is active; false shows the list (first).
+    mobileDetailActive?: boolean;
   }>(),
   {
     orientation: "horizontal",
@@ -69,8 +82,21 @@ const props = withDefaults(
     storageKey: "",
     collapsibleFirst: false,
     collapsibleSecond: false,
+    mobileMode: "stack",
+    mobileDetailActive: false,
   },
 );
+
+const { isTablet, isMobile } = useBreakpoint();
+
+// on tablet and below we stop enforcing pixel mins / drag handles and let panes flow vertically.
+const isStacked = computed(() => isTablet.value && !isToggle.value);
+// master-detail: on mobile, show only the list or only the detail pane, never both.
+const isToggle = computed(() => isMobile.value && props.mobileMode === "toggle");
+const showFirst = computed(() => !isToggle.value || !props.mobileDetailActive);
+const showSecond = computed(() => !isToggle.value || props.mobileDetailActive);
+// the drag handle only exists in the desktop grid layout.
+const showHandle = computed(() => !isStacked.value && !isToggle.value);
 
 const container = ref<HTMLElement | null>(null);
 const firstSize = ref(0);
@@ -98,6 +124,11 @@ const secondToggleIcon = computed(() => {
 });
 const collapsedKey = computed(() => (props.storageKey ? `${props.storageKey}::collapsed` : ""));
 const splitStyle = computed(() => {
+  // stacked/toggle layouts are driven by css (flex/single-pane); ignore persisted pixel sizes.
+  if (isStacked.value || isToggle.value) {
+    return {};
+  }
+
   const dimension = props.orientation === "vertical" ? "gridTemplateRows" : "gridTemplateColumns";
   let tracks: string;
 

@@ -5,9 +5,9 @@
         <th>Run</th>
         <th v-if="showWorkflow">Workflow</th>
         <th>Status</th>
-        <th v-if="!compact">Trigger</th>
-        <th>Created</th>
-        <th>Started</th>
+        <th v-if="!compact" class="col-low">Trigger</th>
+        <th class="col-low">Created</th>
+        <th class="col-low">Started</th>
         <th>Finished</th>
       </tr>
     </thead>
@@ -25,9 +25,9 @@
         <td>{{ runLabel(run) }}</td>
         <td v-if="showWorkflow">{{ workflowLabel(run) }}</td>
         <td><StatusBadge :status="run.status" /></td>
-        <td v-if="!compact">{{ run.trigger ?? "" }}</td>
-        <td>{{ formatDate(run.created_at) }}</td>
-        <td>{{ formatDate(run.started_at) }}</td>
+        <td v-if="!compact" class="col-low">{{ run.trigger ?? "" }}</td>
+        <td class="col-low">{{ formatDate(run.created_at) }}</td>
+        <td class="col-low">{{ formatDate(run.started_at) }}</td>
         <td>{{ formatDate(run.finished_at) }}</td>
       </tr>
     </tbody>

@@ -546,3 +546,42 @@
   color: var(--text);
   font-size: 13px;
 }
+
+/* mobile: relax desktop min-widths so the canvas + toolbar fit a phone, and give the
+   stacked graph a usable touch height. */
+@media (max-width: 760px) {
+  .workflow-canvas-panel {
+    min-width: 0;
+  }
+
+  .workflow-toolbar {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .workflow-title {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .workflow-toolbar label,
+  .workflow-toolbar label:first-child {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .workflow-graph-pane {
+    min-height: 58vh;
+  }
+
+  .workflow-command-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* larger tap targets for canvas action buttons. */
+  .workflow-command-bar button,
+  .workflow-palette button {
+    padding: 8px 10px;
+  }
+}

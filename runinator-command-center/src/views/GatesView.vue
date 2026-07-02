@@ -7,6 +7,8 @@
       :min-first="420"
       :min-second="340"
       collapsible-second
+      mobile-mode="toggle"
+      :mobile-detail-active="!!gates.selectedGate"
     >
       <template #first>
         <div class="panel">
@@ -88,6 +90,7 @@
       </template>
       <template #second>
         <div class="panel details">
+          <MobileBackBar @back="gates.selectedGate = null" />
           <h2>Gate Detail</h2>
           <label class="gate-reason">
             Reason (optional)
@@ -104,6 +107,7 @@
 import { onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useGatesStore } from "../stores/gates";

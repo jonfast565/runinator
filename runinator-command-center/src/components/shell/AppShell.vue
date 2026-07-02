@@ -4,11 +4,18 @@
     :class="{
       'sidebar-collapsed': app.sidebarCollapsed,
       'interactions-disabled': app.interactionsDisabled,
+      'mobile-nav-open': app.mobileNavOpen,
     }"
     tabindex="0"
     @keydown="onShellKeydown"
   >
     <SidebarNav />
+    <div
+      v-if="app.mobileNavOpen"
+      class="mobile-nav-backdrop"
+      aria-hidden="true"
+      @click="app.closeMobileNav()"
+    ></div>
     <section class="workspace">
       <TopToolbar @refresh="refreshActive" />
       <OutageBanner />
@@ -39,6 +46,11 @@ const { handleKeydown, refreshActive } = useKeyboardShortcuts();
 
 function onShellKeydown(event: KeyboardEvent) {
   if (app.interactionsDisabled) {
+    return;
+  }
+
+  if (event.key === "Escape" && app.mobileNavOpen) {
+    app.closeMobileNav();
     return;
   }
 

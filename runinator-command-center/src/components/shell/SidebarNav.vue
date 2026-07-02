@@ -152,4 +152,27 @@ function resourceEndpointFor(tab: AppTab): string | undefined {
 .sidebar.collapsed .nav-row {
   gap: 0;
 }
+
+/* in the mobile drawer the sidebar is full-width regardless of the persisted collapsed flag:
+   always show labels, counts, and section headers so nav is usable. */
+@media (max-width: 760px) {
+  .sidebar.collapsed .brand-text,
+  .sidebar.collapsed .nav-section-label,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-count {
+    display: revert;
+  }
+
+  .sidebar.collapsed .brand {
+    flex-direction: row;
+  }
+
+  .sidebar.collapsed :deep(.nav-list button) {
+    justify-content: space-between;
+  }
+
+  .sidebar.collapsed .nav-row {
+    gap: 9px;
+  }
+}
 </style>

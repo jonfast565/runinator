@@ -1,6 +1,17 @@
 <template>
-  <div class="connection-cluster">
-    <div class="connection-summary">
+  <div ref="root" class="connection-cluster">
+    <!-- on mobile the full summary collapses to one tappable status chip that reveals a popover. -->
+    <button
+      class="connection-chip"
+      :class="connectionPillClass"
+      aria-label="Connection status"
+      :aria-expanded="popoverOpen"
+      @click="popoverOpen = !popoverOpen"
+    >
+      <span class="connection-chip-dot"></span>
+      <span class="connection-chip-label">{{ connectionPillLabel }}</span>
+    </button>
+    <div class="connection-summary" :class="{ 'popover-open': popoverOpen }">
       <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
       <span class="connection-pill" :class="connectionPillClass">
         {{ connectionPillLabel }}
@@ -33,13 +44,30 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAppStore } from "../../stores/app";
 import { useSupervisorStatus } from "../../composables/useSupervisorStatus";
 import type { SupervisorProcessSnapshot } from "../../api/commandCenterApi";
 
 const app = useAppStore();
 const supervisor = useSupervisorStatus();
+
+const root = ref<HTMLElement | null>(null);
+// popover is only visually active on mobile (css-gated); track open state here for the chip toggle.
+const popoverOpen = ref(false);
+
+function onDocumentClick(event: MouseEvent) {
+  if (popoverOpen.value && root.value && !root.value.contains(event.target as Node)) {
+    popoverOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", onDocumentClick);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("click", onDocumentClick);
+});
 
 // three-way tag: reachable (green), known-but-unreachable (red), or not yet discovered (amber).
 const connectionPillClass = computed(() => {
@@ -144,6 +172,7 @@ function formatUptime(seconds: number): string {
 
 <style scoped>
 .connection-cluster {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -151,6 +180,35 @@ function formatUptime(seconds: number): string {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+
+/* the chip is a mobile-only summary control; desktop shows the inline summary instead. */
+.connection-chip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+}
+
+.connection-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.connection-chip.connected {
+  color: var(--success-fg);
+}
+
+.connection-chip.down {
+  color: var(--danger-fg);
+}
+
+.connection-chip.waiting {
+  color: var(--warning-fg);
 }
 .connection-summary {
   display: flex;
@@ -243,19 +301,40 @@ function formatUptime(seconds: number): string {
 }
 
 @media (max-width: 760px) {
-  .connection-cluster {
-    align-items: flex-start;
+  .connection-chip {
+    display: inline-flex;
   }
 
+  /* the inline summary becomes a popover, hidden until the chip toggles it open. */
   .connection-summary {
-    justify-content: flex-start;
-    flex-wrap: nowrap;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 45;
+    display: none;
+    flex-direction: column;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    width: max-content;
+    max-width: 78vw;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-modal);
+    overflow: visible;
   }
 
-  .connection-cluster .service-url,
-  .stream-state,
-  .replica-summary,
-  .supervisor-pills {
+  .connection-summary.popover-open {
+    display: flex;
+  }
+
+  .connection-cluster .service-url {
+    max-width: 100%;
+  }
+
+  /* the plain status pill duplicates the chip; keep the stream-state pill in the popover. */
+  .connection-summary .connection-pill:not(.stream-state) {
     display: none;
   }
 }

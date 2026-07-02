@@ -7,6 +7,8 @@
       :min-first="240"
       :min-second="720"
       collapsible-first
+      mobile-mode="toggle"
+      :mobile-detail-active="mobileView === 'editor'"
     >
       <template #first>
         <div class="panel workflow-list">
@@ -95,21 +97,29 @@
       </template>
 
       <template #second>
-        <SplitPane
-          class="workflow-main-split"
-          storage-key="command-center.workflows.inspector-split"
-          :initial-first-pct="64"
-          :min-first="360"
-          :min-second="320"
-          collapsible-second
-        >
-          <template #first>
-            <WorkflowCanvas />
-          </template>
-          <template #second>
-            <WorkflowInspector />
-          </template>
-        </SplitPane>
+        <div class="workflow-main">
+          <MobileBackBar label="Back to workflows" @back="mobileView = 'list'" />
+          <SplitPane
+            class="workflow-main-split"
+            storage-key="command-center.workflows.inspector-split"
+            :initial-first-pct="64"
+            :min-first="360"
+            :min-second="320"
+            collapsible-second
+            mobile-mode="toggle"
+            :mobile-detail-active="!!workflows.selectedStepId"
+          >
+            <template #first>
+              <WorkflowCanvas />
+            </template>
+            <template #second>
+              <div class="workflow-inspector-wrap">
+                <MobileBackBar label="Back to canvas" @back="workflows.selectedStepId = ''" />
+                <WorkflowInspector class="workflow-inspector-fill" />
+              </div>
+            </template>
+          </SplitPane>
+        </div>
       </template>
     </SplitPane>
     <WorkflowStepEditorModal v-if="workflows.stepEditorOpen" />
@@ -126,6 +136,7 @@ import WorkflowRunInputModal from "../components/workflow/WorkflowRunInputModal.
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../stores/workflows";
@@ -136,6 +147,8 @@ const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
 const scopeFilter = ref<"all" | "org" | "global">("all");
+// mobile master-detail: 'list' shows the workflow list, 'editor' shows the canvas/inspector.
+const mobileView = ref<"list" | "editor">("list");
 
 // client-side scope filter on top of the server's already org-scoped list: "org" keeps only
 // workflows owned by the active org, "global" keeps only unassigned (platform-global) ones.
@@ -177,6 +190,8 @@ function chooseWorkflow(workflow: (typeof scopedWorkflows.value)[number]) {
     return;
   }
 
+  // on mobile, selecting a workflow reveals the editor pane (canvas).
+  mobileView.value = "editor";
   void workflows.selectWorkflow(workflow);
 }
 
@@ -185,6 +200,7 @@ function newWorkflow() {
     return;
   }
 
+  mobileView.value = "editor";
   workflows.addWorkflow();
 }
 </script>
@@ -258,6 +274,23 @@ function newWorkflow() {
 .workflow-empty {
   color: var(--text-muted);
   padding: 6px 2px;
+}
+
+/* wrappers added for the mobile back bars must still fill the pane on desktop. */
+.workflow-main,
+.workflow-inspector-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.workflow-main > .split-pane,
+.workflow-inspector-fill {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 @media (max-width: 980px) {

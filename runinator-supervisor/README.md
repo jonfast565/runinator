@@ -77,9 +77,11 @@ When `state_dir` is omitted, supervisor state defaults to
 - `<state_dir>/control/` — dynamic add/start/stop/remove command queue
 
 The repository's local supervisor config runs `runinatorctl workflows apply`
-once on startup to import the workflow pack. The checked-in supervisor config
-uses `packs/sdlc/sdlc.wdlp`, which compiles the referenced `.wdl` files during
-import. It also passes `--advertise-host 127.0.0.1` to the web service,
+once per pack on startup to import the workflow packs. The checked-in supervisor
+config imports all three packs under `packs/` — `packs/sdlc/sdlc.wdlp`,
+`packs/hello-world/hello-world.wdlp`, and the `packs/creds-sync` directory —
+compiling the referenced `.wdl` files during import. The `creds-sync` runs park
+then fail locally without a `runner=creds-sync` worker. It also passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a
 restart. The local web-service command runs `runinator-bootstrap` first, then
