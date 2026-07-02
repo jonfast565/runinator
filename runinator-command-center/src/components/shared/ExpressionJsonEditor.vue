@@ -42,7 +42,10 @@ import { EditorView, basicSetup } from "codemirror";
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
 import { workflowExpressionCompletionSource } from "../../utils/workflow-expression-completion";
 import { workflowReferenceGroups } from "../../utils/workflow-references";
-import { clearExpressionInsertTarget, setExpressionInsertTarget } from "../../utils/expression-insert-target";
+import {
+  clearExpressionInsertTarget,
+  setExpressionInsertTarget,
+} from "../../utils/expression-insert-target";
 import { wdl } from "../../utils/codemirror-lang-wdl";
 import { osCodeMirrorTheme } from "../../utils/codemirror-theme";
 import { pretty } from "../../utils/format";
@@ -86,42 +89,62 @@ const hasSample = computed(() => Boolean(props.context?.sampleContext));
 // on every keystroke. a resolver error (e.g. a config/secret ref absent in the preview) is shown in
 // place rather than thrown.
 function schedulePreview() {
-  if (previewTimer) clearTimeout(previewTimer);
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+  }
+
   if (!hasSample.value) {
     previewResult.value = "";
     previewError.value = "";
     previewUnresolved.value = "";
     return;
   }
+
   previewTimer = setTimeout(runPreview, 250);
 }
 
 async function runPreview() {
   const sample = props.context?.sampleContext;
-  if (!sample) return;
+
+  if (!sample) {
+    return;
+  }
+
   let expression: unknown;
+
   try {
     expression = JSON.parse(props.modelValue || "null");
   } catch {
     return; // mid-edit invalid json; keep the last good preview.
   }
+
   const token = ++previewToken;
+
   try {
     const resolved = await evaluateExpression(expression, sample);
-    if (token !== previewToken) return; // a newer edit superseded this request.
+
+    if (token !== previewToken) {
+      return;
+    } // a newer edit superseded this request.
+
     previewError.value = "";
     previewUnresolved.value = "";
     previewResult.value = pretty(resolved);
   } catch (err) {
-    if (token !== previewToken) return;
+    if (token !== previewToken) {
+      return;
+    }
+
     const message = err instanceof Error ? err.message : String(err);
     previewResult.value = "";
+
     // an unresolved reference (WORKFLOW017) is expected for refs not captured in the sample run.
     if (isUnresolvedReferenceError(message)) {
       previewError.value = "";
       previewUnresolved.value = "Not available in this preview (resolves at runtime).";
       return;
     }
+
     previewError.value = message;
     previewUnresolved.value = "";
   }
@@ -129,14 +152,20 @@ async function runPreview() {
 
 // splice a reference at the cursor, replacing any selection, then return focus to the editor.
 function insertReference(text: string) {
-  if (!view) return;
+  if (!view) {
+    return;
+  }
+
   view.dispatch(view.state.replaceSelection(text));
   view.focus();
 }
 
 // wrap the current selection in a transform, leaving the cursor after the inserted text.
 function applyTransform(kind: "string" | "json" | "coalesce" | "concat") {
-  if (!view) return;
+  if (!view) {
+    return;
+  }
+
   const { from, to } = view.state.selection.main;
   const selected = view.state.sliceDoc(from, to);
   const insert =
@@ -152,7 +181,10 @@ function applyTransform(kind: "string" | "json" | "coalesce" | "concat") {
 }
 
 onMounted(() => {
-  if (!editorContainer.value) return;
+  if (!editorContainer.value) {
+    return;
+  }
+
   const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
@@ -161,75 +193,108 @@ onMounted(() => {
       basicSetup,
       editorTheme.extension,
       wdl(workflowExpressionCompletionSource(() => props.context)),
-      Prec.high(keymap.of([
-        ...completionKeymap,
-        {
-          key: "Tab",
-          run(editor) {
-            if (props.readonly) return false;
-            editor.dispatch(editor.state.replaceSelection("    "));
-            return true;
-          }
-        }
-      ])),
+      Prec.high(
+        keymap.of([
+          ...completionKeymap,
+          {
+            key: "Tab",
+            run(editor) {
+              if (props.readonly) {
+                return false;
+              }
+
+              editor.dispatch(editor.state.replaceSelection("    "));
+              return true;
+            },
+          },
+        ]),
+      ),
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) updateLoweredJson(update.state.doc.toString());
-        if (!props.readonly && shouldStartCompletion(update)) startCompletion(update.view);
+        if (update.docChanged) {
+          updateLoweredJson(update.state.doc.toString());
+        }
+
+        if (!props.readonly && shouldStartCompletion(update)) {
+          startCompletion(update.view);
+        }
+
         // claim/release the dialog-level insert slot so the reference chips target this field.
         if (update.focusChanged && !props.readonly) {
-          if (update.view.hasFocus) setExpressionInsertTarget(insertReference);
-          else clearExpressionInsertTarget(insertReference);
+          if (update.view.hasFocus) {
+            setExpressionInsertTarget(insertReference);
+          } else {
+            clearExpressionInsertTarget(insertReference);
+          }
         }
       }),
       EditorView.theme({
         "&": { height: "100%" },
-        ".cm-scroller": { overflow: "auto" }
-      })
-    ]
+        ".cm-scroller": { overflow: "auto" },
+      }),
+    ],
   });
 
   view = new EditorView({
     state: startState,
-    parent: editorContainer.value
+    parent: editorContainer.value,
   });
   disposeEditorTheme = editorTheme.install(view);
 
   schedulePreview();
 });
 
-watch(() => props.modelValue, (newValue) => {
-  // ignore the parent echoing back exactly what we just emitted; re-deriving the wdl text would
-  // reformat the doc and jump the cursor mid-edit.
-  if (newValue === lastEmitted) {
-    lastEmitted = null;
+watch(
+  () => props.modelValue,
+  (newValue) => {
+    // ignore the parent echoing back exactly what we just emitted; re-deriving the wdl text would
+    // reformat the doc and jump the cursor mid-edit.
+    if (newValue === lastEmitted) {
+      lastEmitted = null;
+      schedulePreview();
+      return;
+    }
+
+    const nextWdl = wdlFromLoweredJson(newValue);
+
+    if (view && nextWdl !== view.state.doc.toString()) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: nextWdl },
+      });
+    }
+
     schedulePreview();
-    return;
-  }
-  const nextWdl = wdlFromLoweredJson(newValue);
-  if (view && nextWdl !== view.state.doc.toString()) {
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: nextWdl }
-    });
-  }
-  schedulePreview();
-});
+  },
+);
 
 // re-resolve when a run's data becomes available or changes while the editor is open.
 watch(() => props.context?.sampleContext, schedulePreview);
 
 onBeforeUnmount(() => {
-  if (previewTimer) clearTimeout(previewTimer);
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+  }
+
   disposeEditorTheme?.();
   clearExpressionInsertTarget(insertReference);
   view?.destroy();
 });
 
 function shouldStartCompletion(update: ViewUpdate): boolean {
-  if (!update.docChanged) return false;
-  if (!update.transactions.some((transaction) => transaction.isUserEvent("input"))) return false;
+  if (!update.docChanged) {
+    return false;
+  }
+
+  if (!update.transactions.some((transaction) => transaction.isUserEvent("input"))) {
+    return false;
+  }
+
   const head = update.state.selection.main.head;
-  if (head <= 0) return false;
+
+  if (head <= 0) {
+    return false;
+  }
+
   const previous = update.state.sliceDoc(head - 1, head);
   return /[\w.]/.test(previous);
 }

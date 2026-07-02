@@ -1,6 +1,10 @@
 import { defineStore } from "pinia";
 import { reactive, ref } from "vue";
-import { fetchCredentials, fetchForeignLanguageRuntime, saveForeignLanguageRuntime } from "../api/commandCenterApi";
+import {
+  fetchCredentials,
+  fetchForeignLanguageRuntime,
+  saveForeignLanguageRuntime,
+} from "../api/commandCenterApi";
 import { useAppStore } from "./app";
 
 const LANGUAGE_SCOPE = "foreign_languages";
@@ -20,7 +24,7 @@ const LANGUAGE_DEFINITIONS = [
   { language: "bash", label: "Bash", aliases: ["sh"], defaultImage: "bash:5.2" },
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },
-  { language: "php", label: "PHP", aliases: [], defaultImage: "php:8.3-cli" }
+  { language: "php", label: "PHP", aliases: [], defaultImage: "php:8.3-cli" },
 ] as const;
 
 function createLanguageSettings(): ForeignLanguageSetting[] {
@@ -28,7 +32,7 @@ function createLanguageSettings(): ForeignLanguageSetting[] {
     ...definition,
     aliases: [...definition.aliases],
     image: definition.defaultImage,
-    setup_script: ""
+    setup_script: "",
   }));
 }
 
@@ -41,42 +45,57 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
     const settings = await app.runOperation("Loading admin settings", () => fetchCredentials());
     const existing = new Set(
       settings
-        .filter((setting) => (setting.kind ?? "secret") === "config" && setting.scope === LANGUAGE_SCOPE)
-        .map((setting) => setting.name)
+        .filter(
+          (setting) => (setting.kind ?? "secret") === "config" && setting.scope === LANGUAGE_SCOPE,
+        )
+        .map((setting) => setting.name),
     );
 
     for (const runtime of languages) {
       runtime.image = runtime.defaultImage;
       runtime.setup_script = "";
-      if (!existing.has(runtime.language)) continue;
+
+      if (!existing.has(runtime.language)) {
+        continue;
+      }
+
       const detail = await app.runOperation(`Loading ${runtime.label} runtime`, () =>
-        fetchForeignLanguageRuntime(runtime.language)
+        fetchForeignLanguageRuntime(runtime.language),
       );
       const value = detail.value;
+
       if (value && typeof value === "object") {
-        runtime.image = typeof value.image === "string" && value.image.trim() ? value.image : runtime.defaultImage;
+        runtime.image =
+          typeof value.image === "string" && value.image.trim()
+            ? value.image
+            : runtime.defaultImage;
         runtime.setup_script = typeof value.setup_script === "string" ? value.setup_script : "";
       }
     }
+
     loaded.value = true;
   }
 
   async function saveLanguage(language: string) {
     const runtime = languages.find((entry) => entry.language === language);
+
     if (!runtime) {
       app.setError(`Unknown foreign language: ${language}`);
       return;
     }
+
     const image = runtime.image.trim();
+
     if (!image) {
       app.setError(`${runtime.label} Docker image is required`);
       return;
     }
+
     await app.runOperation(`Saving ${runtime.label} runtime`, () =>
       saveForeignLanguageRuntime(runtime.language, {
         image,
-        setup_script: runtime.setup_script
-      })
+        setup_script: runtime.setup_script,
+      }),
     );
     runtime.image = image;
     app.setStatus(`${runtime.label} foreign language runtime saved`);
@@ -94,6 +113,6 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
     languages,
     refresh,
     saveLanguage,
-    clear
+    clear,
   };
 });

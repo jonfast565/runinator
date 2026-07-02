@@ -11,7 +11,7 @@ describe("service connection state", () => {
     setActivePinia(createPinia());
     vi.stubGlobal("window", {
       clearTimeout: () => undefined,
-      setTimeout: () => 0
+      setTimeout: () => 0,
     });
   });
 
@@ -31,10 +31,10 @@ describe("service connection state", () => {
           attributes: {},
           first_seen_at: "",
           last_heartbeat_at: "",
-          last_seen_at: ""
-        }
+          last_seen_at: "",
+        },
       ],
-      { workers: 1, wakers: 0, webservices: 0 }
+      { workers: 1, wakers: 0, webservices: 0 },
     );
     expect(app.serviceBlocked).toBe(false);
 
@@ -44,9 +44,41 @@ describe("service connection state", () => {
     expect(app.backendReachable).toBe(false);
     expect(app.serviceConnected).toBe(false);
     expect(app.serviceBlocked).toBe(true);
+    expect(app.interactionsDisabled).toBe(true);
     expect(app.loadingMessage).toBe("Waiting for Runinator service...");
     expect(app.replicas).toEqual([]);
     expect(app.replicaCounts).toEqual({ workers: 0, wakers: 0, webservices: 0 });
+  });
+
+  it("surfaces a dismissible outage and disables interactions when a known backend becomes unreachable", () => {
+    const app = useAppStore();
+
+    app.initialLoading = false;
+    app.setServiceUrl("http://127.0.0.1:3000");
+    expect(app.serviceConnected).toBe(true);
+    expect(app.showOutageBanner).toBe(false);
+
+    // a network-level failure flips reachability: tag goes red, banner shows, page interactions stop.
+    app.markBackendUnreachable();
+    expect(app.serviceConnected).toBe(false);
+    expect(app.serviceKnown).toBe(true);
+    expect(app.serviceBlocked).toBe(false);
+    expect(app.interactionsDisabled).toBe(true);
+    expect(app.showOutageBanner).toBe(true);
+
+    // dismissing hides the banner but leaves the tag red and the page disabled until recovery.
+    app.dismissOutageBanner();
+    expect(app.showOutageBanner).toBe(false);
+    expect(app.serviceConnected).toBe(false);
+    expect(app.interactionsDisabled).toBe(true);
+
+    // recovery restores the tag and re-arms the banner for the next outage.
+    app.markBackendReachable();
+    expect(app.serviceConnected).toBe(true);
+    expect(app.interactionsDisabled).toBe(false);
+    expect(app.showOutageBanner).toBe(false);
+    app.markBackendUnreachable();
+    expect(app.showOutageBanner).toBe(true);
   });
 
   it("counts only live worker replicas when backend counts are absent", () => {
@@ -62,7 +94,7 @@ describe("service connection state", () => {
         attributes: {},
         first_seen_at: "",
         last_heartbeat_at: "",
-        last_seen_at: ""
+        last_seen_at: "",
       },
       {
         replica_id: "00000000-0000-0000-0000-000000000002",
@@ -73,7 +105,7 @@ describe("service connection state", () => {
         attributes: {},
         first_seen_at: "",
         last_heartbeat_at: "",
-        last_seen_at: ""
+        last_seen_at: "",
       },
       {
         replica_id: "00000000-0000-0000-0000-000000000003",
@@ -84,7 +116,7 @@ describe("service connection state", () => {
         attributes: {},
         first_seen_at: "",
         last_heartbeat_at: "",
-        last_seen_at: ""
+        last_seen_at: "",
       },
       {
         replica_id: "00000000-0000-0000-0000-000000000004",
@@ -95,8 +127,8 @@ describe("service connection state", () => {
         attributes: {},
         first_seen_at: "",
         last_heartbeat_at: "",
-        last_seen_at: ""
-      }
+        last_seen_at: "",
+      },
     ]);
 
     expect(app.replicaCounts).toEqual({ workers: 2, wakers: 0, webservices: 1 });
@@ -109,13 +141,29 @@ describe("service connection state", () => {
     const secrets = useSecretsStore();
     const workflows = useWorkflowsStore();
 
-    providers.providers = [{ name: "console", actions: [], metadata: { credential_scopes: [], contract: null } }];
+    providers.providers = [
+      { name: "console", actions: [], metadata: { credential_scopes: [], contract: null } },
+    ];
     resources.resourceRecords = [{ id: 1, provider: "jira" }];
     resources.selectedResourceRecord = resources.resourceRecords[0];
     secrets.secrets = [{ scope: "github", name: "default" }];
     secrets.selectSecret(secrets.secrets[0]);
-    workflows.workflows = [{ ...workflows.workflowDraft, id: "00000000-0000-0000-0000-000000000007", name: "Stale Workflow" }];
-    workflows.workflowRuns = [{ id: "00000000-0000-0000-0000-000000000009", status: "running", created_at: "", started_at: null, finished_at: null }];
+    workflows.workflows = [
+      {
+        ...workflows.workflowDraft,
+        id: "00000000-0000-0000-0000-000000000007",
+        name: "Stale Workflow",
+      },
+    ];
+    workflows.workflowRuns = [
+      {
+        id: "00000000-0000-0000-0000-000000000009",
+        status: "running",
+        created_at: "",
+        started_at: null,
+        finished_at: null,
+      },
+    ];
     workflows.selectedWorkflowRunId = "00000000-0000-0000-0000-000000000009";
 
     providers.clearProviders();

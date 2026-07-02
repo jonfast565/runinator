@@ -1,3 +1,5 @@
+import type { IconName } from "../types/icons";
+
 export type AppTab =
   | "Dev"
   | "Workflows"
@@ -27,7 +29,7 @@ export interface ResourceEndpoint {
 export interface NavItem {
   tab: AppTab;
   label: string;
-  icon: string;
+  icon: IconName;
   endpoint?: string;
   // only available in the tauri desktop client; hidden in the hosted web app.
   desktopOnly?: boolean;

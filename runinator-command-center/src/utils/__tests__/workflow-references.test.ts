@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { JsonRecord, ProviderMetadata, RuninatorType, WorkflowRunDetail } from "../../types/models";
+import type {
+  JsonRecord,
+  ProviderMetadata,
+  RuninatorType,
+  WorkflowRunDetail,
+} from "../../types/models";
 import { buildSampleContext, workflowReferenceGroups } from "../workflow-references";
 
 const inputType: RuninatorType = {
@@ -7,10 +12,10 @@ const inputType: RuninatorType = {
   fields: {
     cart: {
       required: true,
-      ty: { type: "struct", fields: { total: { required: true, ty: { type: "number" } } } }
+      ty: { type: "struct", fields: { total: { required: true, ty: { type: "number" } } } },
     },
-    name: { required: true, ty: { type: "string" } }
-  }
+    name: { required: true, ty: { type: "string" } },
+  },
 };
 
 const providers: ProviderMetadata[] = [
@@ -34,25 +39,25 @@ const providers: ProviderMetadata[] = [
                     ty: {
                       type: "struct",
                       fields: {
-                        summary: { required: true, ty: { type: "string" } }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+                        summary: { required: true, ty: { type: "string" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
-          { name: "total", ty: { type: "integer" } }
-        ]
-      }
+          { name: "total", ty: { type: "integer" } },
+        ],
+      },
     ],
-    metadata: { credential_scopes: [] }
-  }
+    metadata: { credential_scopes: [] },
+  },
 ];
 
 const nodes: JsonRecord[] = [
   { id: "make_ticket", kind: "action", action: { provider: "jira", function: "search" } },
-  { id: "current", kind: "action", action: { provider: "jira", function: "search" } }
+  { id: "current", kind: "action", action: { provider: "jira", function: "search" } },
 ];
 
 describe("workflowReferenceGroups", () => {
@@ -60,7 +65,7 @@ describe("workflowReferenceGroups", () => {
     workflowInputType: inputType,
     nodes,
     currentNodeId: "current",
-    providers
+    providers,
   });
 
   it("flattens workflow parameter fields by dotted path with types", () => {
@@ -74,21 +79,27 @@ describe("workflowReferenceGroups", () => {
   });
 
   it("groups prior node outputs and excludes the current node", () => {
-    const references = groups.find((group) => group.title === "Output of make_ticket")?.references ?? [];
+    const references =
+      groups.find((group) => group.title === "Output of make_ticket")?.references ?? [];
     expect(references.map((reference) => reference.insert)).toEqual([
       "make_ticket.issues",
       "make_ticket.issues.0",
       "make_ticket.issues.0.key",
       "make_ticket.issues.0.fields",
       "make_ticket.issues.0.fields.summary",
-      "make_ticket.total"
+      "make_ticket.total",
     ]);
     expect(groups.some((group) => group.title === "Output of current")).toBe(false);
   });
 
   it("always offers the run-state roots", () => {
     const roots = groups.find((group) => group.title === "Run state");
-    expect(roots?.references.map((reference) => reference.insert)).toEqual(["prev", "run", "config", "secret"]);
+    expect(roots?.references.map((reference) => reference.insert)).toEqual([
+      "prev",
+      "run",
+      "config",
+      "secret",
+    ]);
   });
 });
 
@@ -101,12 +112,30 @@ describe("buildSampleContext", () => {
       parameters: { x: 1 },
       created_at: "",
       started_at: null,
-      finished_at: null
+      finished_at: null,
     },
     nodes: [
-      { id: "1", workflow_run_id: "r1", node_id: "a", status: "succeeded", attempt: 1, parameters: {}, output_json: { k: "v" }, message: null },
-      { id: "2", workflow_run_id: "r1", node_id: "b", status: "succeeded", attempt: 1, parameters: {}, output_json: { n: 2 }, message: null }
-    ]
+      {
+        id: "1",
+        workflow_run_id: "r1",
+        node_id: "a",
+        status: "succeeded",
+        attempt: 1,
+        parameters: {},
+        output_json: { k: "v" },
+        message: null,
+      },
+      {
+        id: "2",
+        workflow_run_id: "r1",
+        node_id: "b",
+        status: "succeeded",
+        attempt: 1,
+        parameters: {},
+        output_json: { n: 2 },
+        message: null,
+      },
+    ],
   } as unknown as WorkflowRunDetail;
 
   it("mirrors the reducer context with params/steps/prev/workflow", () => {
@@ -114,7 +143,7 @@ describe("buildSampleContext", () => {
       params: { x: 1 },
       steps: { a: { output: { k: "v" } }, b: { output: { n: 2 } } },
       prev: { n: 2 },
-      workflow: { run_id: "r1", workflow_id: "w1", state: "succeeded" }
+      workflow: { run_id: "r1", workflow_id: "w1", state: "succeeded" },
     });
   });
 

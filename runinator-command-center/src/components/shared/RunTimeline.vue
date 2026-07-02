@@ -4,10 +4,18 @@
     <div v-if="failure" class="rt-failure">
       <div class="rt-failure-head">
         <span class="rt-failure-icon"><Icon name="alert" :size="14" /></span>
-        <span class="rt-failure-title">Failed at <code class="rt-failure-node">{{ failure.nodeId }}</code></span>
+        <span class="rt-failure-title"
+          >Failed at <code class="rt-failure-node">{{ failure.nodeId }}</code></span
+        >
         <StatusBadge :status="failure.status" />
         <span class="rt-spacer"></span>
-        <button v-if="failure.message" type="button" class="rt-failure-copy" :title="copied ? 'Copied' : 'Copy error'" @click="copyFailure">
+        <button
+          v-if="failure.message"
+          type="button"
+          class="rt-failure-copy"
+          :title="copied ? 'Copied' : 'Copy error'"
+          @click="copyFailure"
+        >
           <Icon v-if="copied" name="check" :size="13" />
           <span>{{ copied ? "Copied" : "Copy" }}</span>
         </button>
@@ -44,11 +52,23 @@
           <button type="button" class="rt-head" @click="onSelect(node)">
             <StatusBadge :status="node.status" />
             <span class="rt-node-id">{{ node.node_id }}</span>
-            <span v-if="executionOrdinal(node) > 1" class="rt-execution" :title="`Execution ${executionOrdinal(node)}`">{{ executionOrdinal(node) }}</span>
-            <span v-if="node.attempt > 1" class="rt-attempt" title="Attempts">↻ {{ node.attempt }}</span>
+            <span
+              v-if="executionOrdinal(node) > 1"
+              class="rt-execution"
+              :title="`Execution ${executionOrdinal(node)}`"
+              >{{ executionOrdinal(node) }}</span
+            >
+            <span v-if="node.attempt > 1" class="rt-attempt" title="Attempts"
+              >↻ {{ node.attempt }}</span
+            >
             <span v-if="isActive(node)" class="rt-active">active</span>
             <span class="rt-spacer"></span>
-            <span v-if="nodeTiming(node)" class="rt-duration" :class="{ live: isRunningNode(node) }">{{ nodeTiming(node) }}</span>
+            <span
+              v-if="nodeTiming(node)"
+              class="rt-duration"
+              :class="{ live: isRunningNode(node) }"
+              >{{ nodeTiming(node) }}</span
+            >
             <span class="rt-caret" :class="{ open: expandedId === node.id }">▸</span>
           </button>
           <div v-if="previewOf(node)" class="rt-preview">{{ previewOf(node) }}</div>
@@ -72,7 +92,9 @@
         </div>
       </li>
     </ol>
-    <div v-else class="rt-empty">{{ orderedNodes.length ? "No steps match this filter." : "No steps recorded yet." }}</div>
+    <div v-else class="rt-empty">
+      {{ orderedNodes.length ? "No steps match this filter." : "No steps recorded yet." }}
+    </div>
   </div>
 </template>
 
@@ -114,7 +136,9 @@ let clockTimer = 0;
 
 const runInFlight = computed(() => {
   const status = props.detail?.run.status;
-  return Boolean(status) && !["succeeded", "failed", "canceled", "timed_out"].includes(status ?? "");
+  return (
+    Boolean(status) && !["succeeded", "failed", "canceled", "timed_out"].includes(status ?? "")
+  );
 });
 
 const orderedNodes = computed(() => {
@@ -122,9 +146,15 @@ const orderedNodes = computed(() => {
   return [...nodes].sort((left, right) => {
     const leftCreated = Date.parse(left.created_at ?? "");
     const rightCreated = Date.parse(right.created_at ?? "");
-    if (Number.isFinite(leftCreated) && Number.isFinite(rightCreated) && leftCreated !== rightCreated) {
+
+    if (
+      Number.isFinite(leftCreated) &&
+      Number.isFinite(rightCreated) &&
+      leftCreated !== rightCreated
+    ) {
       return leftCreated - rightCreated;
     }
+
     // created_at has second precision, so same-second steps tie; the uuidv7 run id is
     // time-ordered at finer precision and string-sorts chronologically.
     return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
@@ -134,18 +164,27 @@ const orderedNodes = computed(() => {
 const executionOrdinals = computed(() => {
   const totals = new Map<string, number>();
   const ordinals = new Map<string, number>();
+
   for (const node of orderedNodes.value) {
     const executions = nodeExecutionCount(node);
-    if (executions <= 0) continue;
+
+    if (executions <= 0) {
+      continue;
+    }
+
     const next = (totals.get(node.node_id) ?? 0) + executions;
     totals.set(node.node_id, next);
     ordinals.set(node.id, next);
   }
+
   return ordinals;
 });
 
 function nodeExecutionCount(node: WorkflowNodeRun): number {
-  if (Number.isFinite(node.attempt) && node.attempt > 0) return Math.floor(node.attempt);
+  if (Number.isFinite(node.attempt) && node.attempt > 0) {
+    return Math.floor(node.attempt);
+  }
+
   return node.status === "queued" ? 0 : 1;
 }
 
@@ -154,47 +193,74 @@ function executionOrdinal(node: WorkflowNodeRun): number {
 }
 
 function matchesFilter(node: WorkflowNodeRun, active: TimelineFilter): boolean {
-  if (active === "all") return true;
-  if (active === "failed") return FAILED_STATUSES.has(node.status);
-  if (active === "succeeded") return node.status === "succeeded";
+  if (active === "all") {
+    return true;
+  }
+
+  if (active === "failed") {
+    return FAILED_STATUSES.has(node.status);
+  }
+
+  if (active === "succeeded") {
+    return node.status === "succeeded";
+  }
+
   return RUNNING_STATUSES.has(node.status) || isActive(node);
 }
 
-const visibleNodes = computed(() => orderedNodes.value.filter((node) => matchesFilter(node, filter.value)));
+const visibleNodes = computed(() =>
+  orderedNodes.value.filter((node) => matchesFilter(node, filter.value)),
+);
 
 const filterOptions = computed(() => {
-  const count = (id: TimelineFilter) => orderedNodes.value.filter((node) => matchesFilter(node, id)).length;
+  const count = (id: TimelineFilter) =>
+    orderedNodes.value.filter((node) => matchesFilter(node, id)).length;
   return [
     { id: "all" as const, label: "All", count: orderedNodes.value.length },
     { id: "running" as const, label: "Active", count: count("running") },
     { id: "failed" as const, label: "Failed", count: count("failed") },
-    { id: "succeeded" as const, label: "OK", count: count("succeeded") }
+    { id: "succeeded" as const, label: "OK", count: count("succeeded") },
   ];
 });
 
 const failure = computed(() => {
   const detail = props.detail;
-  if (!detail) return null;
+
+  if (!detail) {
+    return null;
+  }
+
   const runFailed = FAILED_STATUSES.has(detail.run.status);
-  const failedNode = [...orderedNodes.value].reverse().find((node) => FAILED_STATUSES.has(node.status));
-  if (!runFailed && !failedNode) return null;
+  const failedNode = [...orderedNodes.value]
+    .reverse()
+    .find((node) => FAILED_STATUSES.has(node.status));
+
+  if (!runFailed && !failedNode) {
+    return null;
+  }
+
   if (failedNode) {
     return {
       nodeId: failedNode.node_id,
       status: failedNode.status,
-      message: formatErrorMessage(failedNode.message || detail.run.message) || "Run failed."
+      message: formatErrorMessage(failedNode.message ?? detail.run.message) || "Run failed.",
     };
   }
+
   return {
     nodeId: detail.run.active_node_id ?? "run",
     status: detail.run.status,
-    message: formatErrorMessage(detail.run.message) || "Run failed."
+    message: formatErrorMessage(detail.run.message) || "Run failed.",
   };
 });
 
 const copied = ref(false);
+
 async function copyFailure() {
-  if (!failure.value?.message) return;
+  if (!failure.value?.message) {
+    return;
+  }
+
   try {
     await navigator.clipboard.writeText(failure.value.message);
     copied.value = true;
@@ -208,6 +274,7 @@ function isActive(node: WorkflowNodeRun): boolean {
   if (props.detail?.run.active_node_id && props.detail.run.active_node_id === node.node_id) {
     return !FAILED_STATUSES.has(node.status) && node.status !== "succeeded";
   }
+
   return RUNNING_STATUSES.has(node.status);
 }
 
@@ -217,27 +284,49 @@ function isFailedNode(node: WorkflowNodeRun): boolean {
 
 function previewOf(node: WorkflowNodeRun): string {
   const output = node.output_json;
-  if (output === undefined || output === null) return "";
+
+  if (output === undefined || output === null) {
+    return "";
+  }
+
   const text = typeof output === "string" ? output : JSON.stringify(output);
   const oneLine = text.replace(/\s+/g, " ").trim();
-  if (!oneLine || oneLine === "{}" || oneLine === '""') return "";
+
+  if (!oneLine || oneLine === "{}" || oneLine === '""') {
+    return "";
+  }
+
   return oneLine.length > 140 ? `${oneLine.slice(0, 140)}…` : oneLine;
 }
 
 function outputText(node: WorkflowNodeRun): string {
   const output = node.output_json;
-  if (output === undefined || output === null) return "";
-  if (typeof output === "object" && Object.keys(output).length === 0) return "";
+
+  if (output === undefined || output === null) {
+    return "";
+  }
+
+  if (typeof output === "object" && Object.keys(output).length === 0) {
+    return "";
+  }
+
   return JSON.stringify(output, null, 2);
 }
 
 function formatMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
+  if (ms < 1000) {
+    return `${String(ms)}ms`;
+  }
+
   const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  }
+
   const minutes = Math.floor(seconds / 60);
   const remSec = Math.round(seconds % 60);
-  return remSec === 0 ? `${minutes}m` : `${minutes}m ${remSec}s`;
+  return remSec === 0 ? `${String(minutes)}m` : `${String(minutes)}m ${String(remSec)}s`;
 }
 
 // a node is counting up live when it has started, is still active, and has not finished.
@@ -247,30 +336,54 @@ function isRunningNode(node: WorkflowNodeRun): boolean {
 
 // finished nodes show their wall-clock duration; running nodes count up against the ticking clock.
 function nodeTiming(node: WorkflowNodeRun): string {
-  if (!node.started_at) return "";
+  if (!node.started_at) {
+    return "";
+  }
+
   const start = Date.parse(node.started_at);
-  if (!Number.isFinite(start)) return "";
+
+  if (!Number.isFinite(start)) {
+    return "";
+  }
+
   if (node.finished_at) {
     const end = Date.parse(node.finished_at);
     return Number.isFinite(end) ? formatMs(Math.max(0, end - start)) : "";
   }
-  if (isActive(node)) return formatMs(Math.max(0, now.value - start));
+
+  if (isActive(node)) {
+    return formatMs(Math.max(0, now.value - start));
+  }
+
   return "";
 }
 
 function logState(node: WorkflowNodeRun): string {
-  if (logLoading.value.has(node.id)) return "Loading logs…";
+  if (logLoading.value.has(node.id)) {
+    return "Loading logs…";
+  }
+
+  if (!(node.id in logCache.value)) {
+    return "No logs for this step.";
+  }
+
   const cached = logCache.value[node.id];
-  if (cached === undefined) return "No logs for this step.";
   return cached || "No logs for this step.";
 }
 
 async function loadLogs(nodeRunId: string) {
-  if (logCache.value[nodeRunId] !== undefined || logLoading.value.has(nodeRunId)) return;
+  if (nodeRunId in logCache.value || logLoading.value.has(nodeRunId)) {
+    return;
+  }
+
   logLoading.value.add(nodeRunId);
+
   try {
     const chunks = await fetchWorkflowNodeRunChunks(nodeRunId);
-    logCache.value = { ...logCache.value, [nodeRunId]: chunks.map((chunk) => chunk.content).join("") };
+    logCache.value = {
+      ...logCache.value,
+      [nodeRunId]: chunks.map((chunk) => chunk.content).join(""),
+    };
   } catch {
     logCache.value = { ...logCache.value, [nodeRunId]: "" };
   } finally {
@@ -281,21 +394,28 @@ async function loadLogs(nodeRunId: string) {
 function onSelect(node: WorkflowNodeRun) {
   emit("select", node.node_id);
   expandedId.value = expandedId.value === node.id ? null : node.id;
-  if (expandedId.value === node.id) void loadLogs(node.id);
+
+  if (expandedId.value === node.id) {
+    void loadLogs(node.id);
+  }
 }
 
 // auto-expand the failing step so the debug loop opens on "what broke".
 watch(
   () => failure.value?.nodeId,
   (nodeId) => {
-    if (!props.autoExpandFailed || !nodeId) return;
+    if (!props.autoExpandFailed || !nodeId) {
+      return;
+    }
+
     const node = orderedNodes.value.find((item) => item.node_id === nodeId);
+
     if (node) {
       expandedId.value = node.id;
       void loadLogs(node.id);
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // a fresh run clears stale logs so a re-run does not show the previous attempt's output.
@@ -305,25 +425,36 @@ watch(
     logCache.value = {};
     logLoading.value = new Set();
     expandedId.value = null;
-  }
+  },
 );
 
 // keep the running step in view while a run is in flight, without yanking finished runs around.
-const activeNodeRunId = computed(() => visibleNodes.value.find((node) => isActive(node))?.id ?? null);
+const activeNodeRunId = computed(
+  () => visibleNodes.value.find((node) => isActive(node))?.id ?? null,
+);
 watch(activeNodeRunId, async (id) => {
-  if (!runInFlight.value || id == null) return;
+  if (!runInFlight.value || id == null) {
+    return;
+  }
+
   await nextTick();
-  rootEl.value?.querySelector(`[data-node-run-id="${id}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  rootEl.value
+    ?.querySelector(`[data-node-run-id="${id}"]`)
+    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 });
 
 onMounted(() => {
   clockTimer = window.setInterval(() => {
     // only re-render while in flight; a terminal run keeps its frozen final durations.
-    if (runInFlight.value) now.value = Date.now();
+    if (runInFlight.value) {
+      now.value = Date.now();
+    }
   }, 1000);
 });
 
-onBeforeUnmount(() => window.clearInterval(clockTimer));
+onBeforeUnmount(() => {
+  window.clearInterval(clockTimer);
+});
 </script>
 
 <style scoped>
@@ -390,7 +521,9 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   font-size: 11px;
   font-weight: 600;
   padding: 3px 9px;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .rt-failure-copy:hover {
   background: var(--surface-hover);
@@ -405,7 +538,12 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   background: var(--surface);
   padding: 8px 10px;
   color: var(--danger-fg);
-  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    11px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -505,8 +643,17 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   transform: rotate(90deg);
 }
 @keyframes rt-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent-ring); }
-  50% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 7px transparent; }
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 4px var(--accent-ring);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 7px transparent;
+  }
 }
 .rt-body {
   min-width: 0;
@@ -590,7 +737,12 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
 .rt-preview {
   margin: 2px 6px 0;
   color: var(--text-subtle);
-  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    11px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -644,7 +796,12 @@ onBeforeUnmount(() => window.clearInterval(clockTimer));
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 6px 8px;
-  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    11px/1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }

@@ -33,7 +33,7 @@ const props = withDefaults(
     closeOnBackdrop?: boolean;
     closeOnEsc?: boolean;
   }>(),
-  { closeOnBackdrop: true, closeOnEsc: true }
+  { closeOnBackdrop: true, closeOnEsc: true, title: undefined, width: undefined },
 );
 
 const emit = defineEmits<{ close: [] }>();
@@ -41,15 +41,23 @@ const emit = defineEmits<{ close: [] }>();
 const widthStyle = computed(() => (props.width ? { width: props.width } : undefined));
 
 function onBackdrop() {
-  if (props.closeOnBackdrop) emit("close");
+  if (props.closeOnBackdrop) {
+    emit("close");
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (props.closeOnEsc && event.key === "Escape") emit("close");
+  if (props.closeOnEsc && event.key === "Escape") {
+    emit("close");
+  }
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+});
 </script>
 
 <style scoped>

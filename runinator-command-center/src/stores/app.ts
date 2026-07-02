@@ -11,54 +11,97 @@ export const navSections: NavSection[] = [
     label: "Workspace",
     items: [
       { tab: "Dev", label: "Dev", icon: "debug", desktopOnly: true },
-      { tab: "Workflows", label: "Workflows", icon: "workflow", searchPlaceholder: "Search workflows" },
+      {
+        tab: "Workflows",
+        label: "Workflows",
+        icon: "workflow",
+        searchPlaceholder: "Search workflows",
+      },
       { tab: "Runs", label: "Runs", icon: "runs", searchPlaceholder: "Search runs" },
       { tab: "Providers", label: "Providers", icon: "box", searchPlaceholder: "Search providers" },
-      { tab: "Replicas", label: "Replicas", icon: "list", searchPlaceholder: "Search replicas" }
-    ]
+      { tab: "Replicas", label: "Replicas", icon: "list", searchPlaceholder: "Search replicas" },
+    ],
   },
   {
     label: "Inbox",
     items: [
-      { tab: "Approvals", label: "Approvals", icon: "approve", endpoint: "approvals", searchPlaceholder: "Search approvals" },
-      { tab: "Notifications", label: "Notifications", icon: "bell", endpoint: "notifications", searchPlaceholder: "Search notifications" }
-    ]
+      {
+        tab: "Approvals",
+        label: "Approvals",
+        icon: "approve",
+        endpoint: "approvals",
+        searchPlaceholder: "Search approvals",
+      },
+      {
+        tab: "Notifications",
+        label: "Notifications",
+        icon: "bell",
+        endpoint: "notifications",
+        searchPlaceholder: "Search notifications",
+      },
+    ],
   },
   {
     label: "Data",
     items: [
-      { tab: "Artifacts", label: "Artifacts", icon: "box", endpoint: "artifacts", searchPlaceholder: "Search artifacts" },
-      { tab: "ExternalItems", label: "External Items", icon: "tag", endpoint: "external_items", searchPlaceholder: "Search external items" },
-      { tab: "Events", label: "Events", icon: "flag", endpoint: "automation_events", searchPlaceholder: "Search events" }
-    ]
+      {
+        tab: "Artifacts",
+        label: "Artifacts",
+        icon: "box",
+        endpoint: "artifacts",
+        searchPlaceholder: "Search artifacts",
+      },
+      {
+        tab: "ExternalItems",
+        label: "External Items",
+        icon: "tag",
+        endpoint: "external_items",
+        searchPlaceholder: "Search external items",
+      },
+      {
+        tab: "Events",
+        label: "Events",
+        icon: "flag",
+        endpoint: "automation_events",
+        searchPlaceholder: "Search events",
+      },
+    ],
   },
   {
     label: "Other",
     items: [
       { tab: "Gates", label: "Gates", icon: "gate", searchPlaceholder: "Search gates" },
       { tab: "Configs", label: "Configs", icon: "settings", searchPlaceholder: "Search configs" },
-      { tab: "Secrets", label: "Secrets", icon: "key", searchPlaceholder: "Search secrets" }
-    ]
+      { tab: "Secrets", label: "Secrets", icon: "key", searchPlaceholder: "Search secrets" },
+    ],
   },
   {
     label: "Organization",
     items: [
       { tab: "Organization", label: "Organization", icon: "shield" },
-      { tab: "OrgResources", label: "Resources & Billing", icon: "box" }
-    ]
+      { tab: "OrgResources", label: "Resources & Billing", icon: "box" },
+    ],
   },
   {
     label: "Admin",
     items: [
       { tab: "AdminSettings", label: "Settings", icon: "settings", adminOnly: true },
-      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true, searchPlaceholder: "Search users & teams" },
+      {
+        tab: "Permissions",
+        label: "Permissions",
+        icon: "shield",
+        adminOnly: true,
+        searchPlaceholder: "Search users & teams",
+      },
       { tab: "DeadLetters", label: "Dead Letters", icon: "flag", adminOnly: true },
-      { tab: "AuditLog", label: "Audit Log", icon: "list", adminOnly: true }
-    ]
-  }
+      { tab: "AuditLog", label: "Audit Log", icon: "list", adminOnly: true },
+    ],
+  },
 ];
 
-export const tabs: AppTab[] = navSections.flatMap((section) => section.items.map((item) => item.tab));
+export const tabs: AppTab[] = navSections.flatMap((section) =>
+  section.items.map((item) => item.tab),
+);
 
 // nav sections with desktop-only items dropped when running in the hosted web app.
 export function visibleNavSections(): NavSection[] {
@@ -67,17 +110,21 @@ export function visibleNavSections(): NavSection[] {
   const sections = navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => !item.adminOnly || canSeeAdmin)
+      items: section.items.filter((item) => !item.adminOnly || canSeeAdmin),
     }))
     .filter((section) => section.items.length > 0);
-  if (isTauriRuntime()) return sections;
+
+  if (isTauriRuntime()) {
+    return sections;
+  }
+
   return sections
     .map((section) => ({ ...section, items: section.items.filter((item) => !item.desktopOnly) }))
     .filter((section) => section.items.length > 0);
 }
 
 const navItemByTab = new Map(
-  navSections.flatMap((section) => section.items.map((item) => [item.tab, item] as const))
+  navSections.flatMap((section) => section.items.map((item) => [item.tab, item] as const)),
 );
 
 export function navItemForTab(tab: AppTab) {
@@ -90,10 +137,15 @@ export function endpointForTab(tab: AppTab): string | undefined {
 
 export function isResourceTab(tab: AppTab): boolean {
   const endpoint = endpointForTab(tab);
-  if (!endpoint) return false;
+
+  if (!endpoint) {
+    return false;
+  }
+
   // Artifacts and Notifications have dedicated stores; treat them separately.
   return endpoint !== "artifacts" && endpoint !== "notifications";
 }
+
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 
 // transient feedback toasts. "loading"/"info" render neutral, never success-green.
@@ -110,7 +162,7 @@ const TOAST_TIMEOUTS: Record<ToastKind, number | null> = {
   info: 5000,
   loading: null,
   success: 5000,
-  error: 8000
+  error: 8000,
 };
 
 // cap the visible stack so a burst of operations can't bury the screen.
@@ -127,13 +179,36 @@ function readSidebarCollapsed(): boolean {
   }
 }
 
+// distinguish a fetch that never reached the backend (network/proxy down) from a backend response
+// that carried an error status. browsers report the former as a TypeError ("Failed to fetch",
+// "Load failed", "NetworkError ..."); our http runtime throws a plain Error for non-ok responses.
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+
+  const message = String(
+    (error as { message?: unknown }).message ?? error,
+  ).toLowerCase();
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("load failed") ||
+    message.includes("networkerror") ||
+    message.includes("network request failed")
+  );
+}
+
 function readStoredDefaultTab(): AppTab {
   try {
     const stored = localStorage.getItem(DEFAULT_TAB_KEY);
-    if (stored && (tabs as string[]).includes(stored)) return stored as AppTab;
+
+    if (stored && (tabs as string[]).includes(stored)) {
+      return stored as AppTab;
+    }
   } catch {
     // storage unavailable; use default.
   }
+
   return "Workflows";
 }
 
@@ -142,6 +217,8 @@ export const useAppStore = defineStore("app", () => {
   const sidebarCollapsed = ref(readSidebarCollapsed());
   const serviceUrl = ref<string | null>(null);
   const backendReachable = ref(false);
+  // set when the user dismisses the outage banner; reset once reachability returns.
+  const outageDismissed = ref(false);
   const initialLoading = ref(true);
   const loading = ref(false);
   const opLabel = ref("");
@@ -158,16 +235,41 @@ export const useAppStore = defineStore("app", () => {
   const toastTimers = new Map<number, number>();
 
   const normalizedSearch = computed(() => searchQuery.value.trim().toLowerCase());
-  const lastRefreshText = computed(() => (lastRefreshAt.value ? lastRefreshAt.value.toLocaleTimeString() : "-"));
+  const lastRefreshText = computed(() =>
+    lastRefreshAt.value ? lastRefreshAt.value.toLocaleTimeString() : "-",
+  );
   const statusLine = computed(() => {
-    if (errorText.value) return `Error: ${errorText.value}`;
-    if (loading.value || opLabel.value) return `${opLabel.value || "Working"}...`;
+    if (errorText.value) {
+      return `Error: ${errorText.value}`;
+    }
+
+    if (loading.value || opLabel.value) {
+      return `${opLabel.value || "Working"}...`;
+    }
+
     return statusText.value || "Ready.";
   });
-  const serviceLabel = computed(() => serviceUrl.value ?? (backendReachable.value ? "Service reachable" : "No service discovered"));
-  const serviceConnected = computed(() => Boolean(serviceUrl.value || backendReachable.value));
-  const serviceBlocked = computed(() => initialLoading.value || (!errorText.value && !serviceConnected.value));
-  const loadingMessage = computed(() => (serviceConnected.value ? "Loading Runinator..." : "Waiting for Runinator service..."));
+  const serviceLabel = computed(
+    () =>
+      serviceUrl.value ?? (backendReachable.value ? "Service reachable" : "No service discovered"),
+  );
+  // whether we know where the backend lives (discovery / web-mode origin), independent of live reachability.
+  const serviceKnown = computed(() => Boolean(serviceUrl.value));
+  // the connection tag reflects live reachability: it goes red as soon as a request fails at the network level.
+  const serviceConnected = computed(() => backendReachable.value);
+  // full-screen gate is for bootstrap only; a transient outage uses the slim banner plus disabled content.
+  const serviceBlocked = computed(
+    () => initialLoading.value || (!errorText.value && !serviceKnown.value),
+  );
+  const outageActive = computed(
+    () => serviceKnown.value && !backendReachable.value && !initialLoading.value,
+  );
+  const interactionsDisabled = computed(() => serviceBlocked.value || outageActive.value);
+  // banner shows once we know the service but can no longer reach it, until reachability returns or the user dismisses it.
+  const showOutageBanner = computed(() => outageActive.value && !outageDismissed.value);
+  const loadingMessage = computed(() =>
+    serviceConnected.value ? "Loading Runinator..." : "Waiting for Runinator service...",
+  );
   const isRealtime = computed(() => eventStreamState.value === "connected");
   const eventStreamLabel = computed(() => {
     switch (eventStreamState.value) {
@@ -181,11 +283,14 @@ export const useAppStore = defineStore("app", () => {
         return "Updates paused";
     }
   });
-  const liveReplicaCount = computed(() => replicas.value.filter((replica) => replica.status === "live").length);
+  const liveReplicaCount = computed(
+    () => replicas.value.filter((replica) => replica.status === "live").length,
+  );
   const hasReplicaState = computed(() => replicas.value.length > 0);
 
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value;
+
     try {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
     } catch {
@@ -198,18 +303,23 @@ export const useAppStore = defineStore("app", () => {
     const id = ++toastSeq;
     toasts.value = [...toasts.value, { id, kind, text }].slice(-MAX_TOASTS);
     const timeout = TOAST_TIMEOUTS[kind];
+
     if (timeout !== null) {
       toastTimers.set(
         id,
-        window.setTimeout(() => dismissToast(id), timeout)
+        window.setTimeout(() => {
+          dismissToast(id);
+        }, timeout),
       );
     }
+
     return id;
   }
 
   function dismissToast(id: number) {
     toasts.value = toasts.value.filter((toast) => toast.id !== id);
     const timer = toastTimers.get(id);
+
     if (timer) {
       window.clearTimeout(timer);
       toastTimers.delete(id);
@@ -217,7 +327,10 @@ export const useAppStore = defineStore("app", () => {
   }
 
   function clearToasts() {
-    for (const timer of toastTimers.values()) window.clearTimeout(timer);
+    for (const timer of toastTimers.values()) {
+      window.clearTimeout(timer);
+    }
+
     toastTimers.clear();
     toasts.value = [];
   }
@@ -240,13 +353,30 @@ export const useAppStore = defineStore("app", () => {
 
   function markBackendReachable() {
     backendReachable.value = true;
+    // reachability returned; allow the banner to show again on the next outage.
+    outageDismissed.value = false;
+  }
+
+  function markBackendUnreachable() {
+    backendReachable.value = false;
+  }
+
+  function dismissOutageBanner() {
+    outageDismissed.value = true;
   }
 
   function setServiceUrl(url: string | null | undefined) {
-    if (url === undefined) return;
+    if (url === undefined) {
+      return;
+    }
+
     serviceUrl.value = url;
     backendReachable.value = Boolean(url);
-    if (url) errorText.value = "";
+
+    if (url) {
+      errorText.value = "";
+    }
+
     if (!url) {
       eventStreamState.value = "disconnected";
       clearReplicaState();
@@ -260,9 +390,15 @@ export const useAppStore = defineStore("app", () => {
   function setReplicaState(nextReplicas: ReplicaRecord[], nextCounts?: ReplicaCounts | null) {
     replicas.value = [...nextReplicas];
     replicaCounts.value = nextCounts ?? {
-      workers: nextReplicas.filter((replica) => replica.replica_type === "worker" && replica.status === "live").length,
-      wakers: nextReplicas.filter((replica) => replica.replica_type === "waker" && replica.status === "live").length,
-      webservices: nextReplicas.filter((replica) => replica.replica_type === "webservice" && replica.status === "live").length
+      workers: nextReplicas.filter(
+        (replica) => replica.replica_type === "worker" && replica.status === "live",
+      ).length,
+      wakers: nextReplicas.filter(
+        (replica) => replica.replica_type === "waker" && replica.status === "live",
+      ).length,
+      webservices: nextReplicas.filter(
+        (replica) => replica.replica_type === "webservice" && replica.status === "live",
+      ).length,
     };
   }
 
@@ -273,11 +409,19 @@ export const useAppStore = defineStore("app", () => {
 
   async function refreshReplicas() {
     const response = await fetchReplicasApi();
-    const nextReplicas = [...(response.replicas ?? [])].sort((left, right) => {
+    const nextReplicas = [...response.replicas].sort((left, right) => {
       const typeOrder = replicaKindOrder(left.replica_type) - replicaKindOrder(right.replica_type);
-      if (typeOrder !== 0) return typeOrder;
+
+      if (typeOrder !== 0) {
+        return typeOrder;
+      }
+
       const statusOrder = replicaStatusOrder(left.status) - replicaStatusOrder(right.status);
-      if (statusOrder !== 0) return statusOrder;
+
+      if (statusOrder !== 0) {
+        return statusOrder;
+      }
+
       return replicaLabel(left).localeCompare(replicaLabel(right));
     });
     setReplicaState(nextReplicas, response.counts);
@@ -288,11 +432,18 @@ export const useAppStore = defineStore("app", () => {
     opLabel.value = label;
     errorText.value = "";
     const toastId = pushToast("loading", `${label}...`);
+
     try {
       const result = await operation();
       markBackendReachable();
       return result;
     } catch (error) {
+      // a network-level failure (fetch rejected) means the backend/proxy is unreachable, not that
+      // it returned an error; flip the reachability signal so the tag + banner reflect the outage.
+      if (isNetworkError(error)) {
+        markBackendUnreachable();
+      }
+
       setError(String(error));
       throw error;
     } finally {
@@ -328,8 +479,11 @@ export const useAppStore = defineStore("app", () => {
     lastRefreshText,
     statusLine,
     serviceLabel,
+    serviceKnown,
     serviceConnected,
     serviceBlocked,
+    interactionsDisabled,
+    showOutageBanner,
     loadingMessage,
     isRealtime,
     eventStreamLabel,
@@ -341,13 +495,15 @@ export const useAppStore = defineStore("app", () => {
     dismissToast,
     clearToasts,
     markBackendReachable,
+    markBackendUnreachable,
+    dismissOutageBanner,
     setServiceUrl,
     setEventStreamState,
     setReplicaState,
     clearReplicaState,
     refreshReplicas,
     runOperation,
-    dispose
+    dispose,
   };
 });
 
@@ -377,6 +533,10 @@ function replicaStatusOrder(status: string) {
   }
 }
 
-function replicaLabel(replica: { display_name?: string | null; host?: string | null; instance_id: string }) {
-  return replica.display_name || replica.host || replica.instance_id;
+function replicaLabel(replica: {
+  display_name?: string | null;
+  host?: string | null;
+  instance_id: string;
+}) {
+  return replica.display_name ?? replica.host ?? replica.instance_id;
 }

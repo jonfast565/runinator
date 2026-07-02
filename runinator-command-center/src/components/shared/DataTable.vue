@@ -14,8 +14,9 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
 
 <script setup lang="ts" generic="Row">
 import { computed, ref, watch } from "vue";
-import Icon from "./Icon.vue";
+import Icon, { type IconName } from "./Icon.vue";
 import EmptyState from "./EmptyState.vue";
+import { displayValue } from "../../utils/values";
 
 // dual-mode table. with `columns` it renders a sortable/paginated/selectable table; without
 // columns it stays a plain scroll wrapper so existing hand-written <table> slots keep working.
@@ -33,11 +34,24 @@ const props = withDefaults(
     rowClass?: (row: Row) => string | Record<string, boolean>;
     emptyTitle?: string;
     emptyDescription?: string;
-    emptyIcon?: string;
+    emptyIcon?: IconName;
     initialSortKey?: string;
     initialSortDir?: "asc" | "desc";
   }>(),
-  { rows: () => [], pageSize: 0, compact: false, selectedKey: null }
+  {
+    rows: () => [],
+    pageSize: 0,
+    compact: false,
+    selectedKey: null,
+    columns: undefined,
+    rowKey: undefined,
+    rowClass: undefined,
+    emptyTitle: undefined,
+    emptyDescription: undefined,
+    emptyIcon: undefined,
+    initialSortKey: undefined,
+    initialSortDir: undefined,
+  },
 );
 
 const emit = defineEmits<{ select: [row: Row] }>();
@@ -55,33 +69,54 @@ function cellValue(row: Row, column: DataTableColumn<Row>): unknown {
 }
 
 function keyForRow(row: Row, index: number): string | number {
-  if (typeof props.rowKey === "function") return props.rowKey(row);
+  if (typeof props.rowKey === "function") {
+    return props.rowKey(row);
+  }
+
   const record = row as Record<string, unknown>;
-  if (typeof props.rowKey === "string") return String(record[props.rowKey] ?? index);
-  return (record.id as string | number) ?? index;
+
+  if (typeof props.rowKey === "string") {
+    return displayValue(record[props.rowKey] ?? index);
+  }
+
+  return record.id as string | number;
 }
 
 const sortedRows = computed(() => {
   const column = columnByKey(sortKey.value);
-  if (!column) return props.rows;
+
+  if (!column) {
+    return props.rows;
+  }
+
   const factor = sortDir.value === "asc" ? 1 : -1;
-  return [...props.rows].sort((left, right) => compareValues(cellValue(left, column), cellValue(right, column)) * factor);
+  return [...props.rows].sort(
+    (left, right) => compareValues(cellValue(left, column), cellValue(right, column)) * factor,
+  );
 });
 
 const pageCount = computed(() => {
-  if (!props.pageSize) return 1;
+  if (!props.pageSize) {
+    return 1;
+  }
+
   return Math.max(1, Math.ceil(sortedRows.value.length / props.pageSize));
 });
 
 const pagedRows = computed(() => {
-  if (!props.pageSize) return sortedRows.value;
+  if (!props.pageSize) {
+    return sortedRows.value;
+  }
+
   const start = page.value * props.pageSize;
   return sortedRows.value.slice(start, start + props.pageSize);
 });
 
 // keep the current page in range when the row set shrinks (filtering, refresh).
 watch([() => sortedRows.value.length, pageCount], () => {
-  if (page.value > pageCount.value - 1) page.value = pageCount.value - 1;
+  if (page.value > pageCount.value - 1) {
+    page.value = pageCount.value - 1;
+  }
 });
 
 function toggleSort(key: string) {
@@ -89,32 +124,53 @@ function toggleSort(key: string) {
     sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
     return;
   }
+
   sortKey.value = key;
   sortDir.value = "asc";
 }
 
 function rowClasses(row: Row, index: number): Record<string, boolean> {
-  const base: Record<string, boolean> = { selected: props.selectedKey != null && keyForRow(row, index) === props.selectedKey };
+  const base: Record<string, boolean> = {
+    selected: props.selectedKey != null && keyForRow(row, index) === props.selectedKey,
+  };
   const extra = props.rowClass?.(row);
-  if (typeof extra === "string") base[extra] = true;
-  else if (extra) Object.assign(base, extra);
+
+  if (typeof extra === "string") {
+    base[extra] = true;
+  } else if (extra) {
+    Object.assign(base, extra);
+  }
+
   return base;
 }
 
 function displayCell(value: unknown): string {
-  if (value == null) return "";
-  return String(value);
+  return displayValue(value);
 }
 
-const pageLabel = computed(() => `Page ${page.value + 1} of ${pageCount.value}`);
+const pageLabel = computed(
+  () => `Page ${String(page.value + 1)} of ${String(pageCount.value)}`,
+);
 
 // natural-ish comparison: numbers numerically, everything else as case-insensitive strings.
 function compareValues(left: unknown, right: unknown): number {
-  if (left == null && right == null) return 0;
-  if (left == null) return -1;
-  if (right == null) return 1;
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left).toLowerCase().localeCompare(String(right).toLowerCase());
+  if (left == null && right == null) {
+    return 0;
+  }
+
+  if (left == null) {
+    return -1;
+  }
+
+  if (right == null) {
+    return 1;
+  }
+
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+
+  return displayValue(left).toLowerCase().localeCompare(displayValue(right).toLowerCase());
 }
 </script>
 
@@ -164,7 +220,11 @@ function compareValues(left: unknown, right: unknown): number {
             :class="rowClasses(row, index)"
             @click="emit('select', row)"
           >
-            <td v-for="column in columns" :key="column.key" :class="column.align ? `align-${column.align}` : ''">
+            <td
+              v-for="column in columns"
+              :key="column.key"
+              :class="column.align ? `align-${column.align}` : ''"
+            >
               <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
                 {{ displayCell(cellValue(row, column)) }}
               </slot>
@@ -179,7 +239,11 @@ function compareValues(left: unknown, right: unknown): number {
         <span>Prev</span>
       </button>
       <span class="data-table-page-label">{{ pageLabel }}</span>
-      <button class="btn btn-sm" :disabled="page >= pageCount - 1" @click="page = Math.min(pageCount - 1, page + 1)">
+      <button
+        class="btn btn-sm"
+        :disabled="page >= pageCount - 1"
+        @click="page = Math.min(pageCount - 1, page + 1)"
+      >
         <span>Next</span>
         <Icon name="chevron-right" :size="13" />
       </button>

@@ -13,17 +13,21 @@ export const useGatesStore = defineStore("gates", () => {
 
   const filteredGates = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return gates.value;
+
+    if (!query) {
+      return gates.value;
+    }
+
     return gates.value.filter((gate) =>
       [gate.id, gate.kind, gate.status, gate.label, gate.node_id, gate.workflow_run_id]
         .filter((value) => value !== undefined && value !== null)
-        .some((value) => String(value).toLowerCase().includes(query))
+        .some((value) => value.toLowerCase().includes(query)),
     );
   });
 
   // a gate is resolvable from the ui only while it is still pending/closed.
   const canResolveSelected = computed(() => {
-    const status = String(selectedGate.value?.status ?? "");
+    const status = selectedGate.value?.status ?? "";
     return Boolean(selectedGate.value?.id) && ["pending", "closed"].includes(status);
   });
 
@@ -32,7 +36,7 @@ export const useGatesStore = defineStore("gates", () => {
     // keep the selection pinned to the same gate id across refreshes when possible.
     const selectedId = selectedGate.value?.id;
     selectedGate.value =
-      gates.value.find((gate) => gate.id === selectedId) ?? gates.value[0] ?? null;
+      gates.value.find((gate) => gate.id === selectedId) ?? gates.value.at(0) ?? null;
   }
 
   function clearGates() {
@@ -41,26 +45,41 @@ export const useGatesStore = defineStore("gates", () => {
   }
 
   async function resolveSelected(action: "open" | "close", reason?: string) {
-    const gateId = String(selectedGate.value?.id ?? "");
-    if (!gateId) return app.setError("No gate selected");
-    const trimmed = reason?.trim() || undefined;
+    const gateId = selectedGate.value?.id ?? "";
+
+    if (!gateId) {
+      app.setError("No gate selected");
+      return;
+    }
+
+    const trimmed = reason?.trim() ? reason.trim() : undefined;
     const response = await app.runOperation(
       action === "open" ? "Opening gate" : "Closing gate",
-      () => (action === "open" ? openGate(gateId, trimmed) : closeGate(gateId, trimmed))
+      () => (action === "open" ? openGate(gateId, trimmed) : closeGate(gateId, trimmed)),
     );
-    app.setStatus(response?.message || `Gate ${action === "open" ? "opened" : "closed"}`);
+    app.setStatus(response.message);
     await refreshGates();
   }
 
   async function removeSelected() {
-    const gateId = String(selectedGate.value?.id ?? "");
-    if (!gateId) return app.setError("No gate selected");
-    if (!window.confirm("Delete this gate record?")) return;
-    await app.runOperation("Deleting gate", () => deleteGate(gateId)).catch((error) => {
-      app.setError(String(error));
-    });
+    const gateId = selectedGate.value?.id ?? "";
+
+    if (!gateId) {
+      app.setError("No gate selected");
+      return;
+    }
+
+    if (!window.confirm("Delete this gate record?")) {
+      return;
+    }
+
+    await app
+      .runOperation("Deleting gate", () => deleteGate(gateId))
+      .catch((error: unknown) => {
+        app.setError(String(error));
+      });
     gates.value = gates.value.filter((gate) => gate.id !== gateId);
-    selectedGate.value = gates.value[0] ?? null;
+    selectedGate.value = gates.value.at(0) ?? null;
     await refreshGates();
   }
 
@@ -72,6 +91,6 @@ export const useGatesStore = defineStore("gates", () => {
     refreshGates,
     clearGates,
     resolveSelected,
-    removeSelected
+    removeSelected,
   };
 });

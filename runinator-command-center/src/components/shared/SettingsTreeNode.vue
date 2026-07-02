@@ -2,7 +2,12 @@
   <li class="settings-tree-node">
     <template v-if="node.type === 'folder'">
       <button type="button" class="settings-tree-folder" @click="expanded = !expanded">
-        <Icon name="chevron-right" :size="13" class="settings-tree-caret" :class="{ open: expanded }" />
+        <Icon
+          name="chevron-right"
+          :size="13"
+          class="settings-tree-caret"
+          :class="{ open: expanded }"
+        />
         <Icon name="folder" :size="14" />
         <span class="settings-tree-label">{{ node.label }}</span>
         <span class="settings-tree-count">{{ leafCount }}</span>
@@ -28,8 +33,12 @@
     >
       <Icon name="key" :size="13" class="settings-tree-leaf-icon" />
       <span class="settings-tree-label">{{ node.label }}</span>
-      <code class="settings-tree-ref">{{ settingRef(node.setting.kind, node.setting.scope, node.setting.name) }}</code>
-      <span v-if="isConfig" class="settings-tree-value">{{ configValues[secretKey(node.setting)] || "—" }}</span>
+      <code class="settings-tree-ref">{{
+        settingRef(node.setting.kind, node.setting.scope, node.setting.name)
+      }}</code>
+      <span v-if="isConfig" class="settings-tree-value">{{
+        configValues[secretKey(node.setting)] || "—"
+      }}</span>
     </button>
   </li>
 </template>
@@ -58,7 +67,10 @@ const expanded = ref(true);
 const leafCount = computed(() => countLeaves(props.node));
 
 function countLeaves(node: TreeNode): number {
-  if (node.type === "leaf") return 1;
+  if (node.type === "leaf") {
+    return 1;
+  }
+
   return node.children.reduce((total, child) => total + countLeaves(child), 0);
 }
 </script>

@@ -3,10 +3,18 @@
     <div class="workflow-title">
       <strong>
         {{ workflows.workflowDraft.name }}
-        <span v-if="workflows.isDirty" class="unsaved-dot" title="Unsaved changes" aria-hidden="true"></span>
+        <span
+          v-if="workflows.isDirty"
+          class="unsaved-dot"
+          title="Unsaved changes"
+          aria-hidden="true"
+        ></span>
       </strong>
       <span v-if="workflows.isDirty" class="unsaved-label">Unsaved changes</span>
-      <span v-else>v{{ workflows.workflowDraft.version }} · concurrency {{ workflows.workflowConcurrency }}</span>
+      <span v-else
+        >v{{ workflows.workflowDraft.version }} · concurrency
+        {{ workflows.workflowConcurrency }}</span
+      >
     </div>
     <div class="workflow-actions">
       <button class="btn" @click="workflows.openWorkflowSettings">
@@ -38,7 +46,11 @@
             :title="workflowNodeKindInfo[kind]?.description"
             @click="addNode(kind)"
           >
-            <Icon :name="workflowNodeKindInfo[kind]?.icon ?? 'box'" :size="14" class="node-menu-icon" />
+            <Icon
+              :name="workflowNodeKindInfo[kind]?.icon ?? 'box'"
+              :size="14"
+              class="node-menu-icon"
+            />
             <span class="node-menu-text">
               <span class="node-menu-label">{{ workflowNodeKindLabel(kind) }}</span>
               <span class="node-menu-desc">{{ workflowNodeKindInfo[kind]?.description }}</span>
@@ -58,15 +70,31 @@
           <span>Arrange</span>
         </button>
         <div v-if="openMenu === 'arrange'" class="toolbar-menu-panel" role="menu">
-          <button type="button" role="menuitem" class="btn btn-ghost" title="Arrange workflow nodes left to right" @click="arrangeNodes('horizontal')">
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            title="Arrange workflow nodes left to right"
+            @click="arrangeNodes('horizontal')"
+          >
             Left to right
           </button>
-          <button type="button" role="menuitem" class="btn btn-ghost" title="Arrange workflow nodes top to bottom" @click="arrangeNodes('vertical')">
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            title="Arrange workflow nodes top to bottom"
+            @click="arrangeNodes('vertical')"
+          >
             Top to bottom
           </button>
         </div>
       </div>
-      <button class="btn" :class="{ 'btn-primary': workflows.isDirty }" @click="workflows.saveSelectedWorkflow">
+      <button
+        class="btn"
+        :class="{ 'btn-primary': workflows.isDirty }"
+        @click="workflows.saveSelectedWorkflow"
+      >
         <Icon name="save" />
         <span>{{ workflows.isDirty ? "Save changes" : "Save" }}</span>
       </button>
@@ -82,15 +110,31 @@
           <span>Export</span>
         </button>
         <div v-if="openMenu === 'export'" class="toolbar-menu-panel" role="menu">
-          <button type="button" role="menuitem" class="btn btn-ghost" title="Export this workflow as a .wdl file" @click="exportWdl">
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            title="Export this workflow as a .wdl file"
+            @click="exportWdl"
+          >
             This workflow (.wdl)
           </button>
-          <button type="button" role="menuitem" class="btn btn-ghost" title="Export all workflows as a .wdlp pack zip" @click="exportPack">
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            title="Export all workflows as a .wdlp pack zip"
+            @click="exportPack"
+          >
             All workflows (.wdlp pack)
           </button>
         </div>
       </div>
-      <button class="btn btn-primary" :disabled="!workflows.canRunWorkflow" @click="workflows.runSelectedWorkflow()">
+      <button
+        class="btn btn-primary"
+        :disabled="!workflows.canRunWorkflow"
+        @click="workflows.runSelectedWorkflow()"
+      >
         <Icon name="play" />
         <span>Run</span>
       </button>
@@ -113,7 +157,11 @@
         <Icon name="stop" />
         <span>Stop Debug</span>
       </button>
-      <button class="btn" :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">
+      <button
+        class="btn"
+        :disabled="!workflows.canRemoveSelectedStep"
+        @click="workflows.removeWorkflowStep"
+      >
         <Icon name="trash" />
         <span>Remove</span>
       </button>
@@ -142,9 +190,16 @@ const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
 const shareOpen = ref(false);
 
 const isActiveDebugRun = computed(() => {
-  if (!workflows.isDebugRun) return false;
+  if (!workflows.isDebugRun) {
+    return false;
+  }
+
   const status = workflows.workflowRunDetail?.run.status;
-  if (!status) return false;
+
+  if (!status) {
+    return false;
+  }
+
   return !["succeeded", "failed", "canceled", "timed_out"].includes(status);
 });
 
@@ -154,12 +209,12 @@ function toggleMenu(menu: "nodes" | "arrange" | "export") {
 
 function exportWdl() {
   closeMenu();
-  workflows.exportWorkflowWdl();
+  void workflows.exportWorkflowWdl();
 }
 
 function exportPack() {
   closeMenu();
-  workflows.exportWorkflowPack();
+  void workflows.exportWorkflowPack();
 }
 
 function closeMenu() {
@@ -178,13 +233,22 @@ function arrangeNodes(direction: WorkflowLayoutDirection) {
 
 function onDocumentPointerDown(event: PointerEvent) {
   const target = event.target;
-  if (!(target instanceof Node)) return;
-  if (toolbarRef.value?.contains(target)) return;
+
+  if (!(target instanceof Node)) {
+    return;
+  }
+
+  if (toolbarRef.value?.contains(target)) {
+    return;
+  }
+
   closeMenu();
 }
 
 function onDocumentKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape") closeMenu();
+  if (event.key === "Escape") {
+    closeMenu();
+  }
 }
 
 // dropdown-dismissal listeners are attached only while a menu is open, not globally for the page.
@@ -291,5 +355,4 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   white-space: normal;
 }
-
 </style>

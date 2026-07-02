@@ -12,18 +12,18 @@
 </template>
 
 <script setup lang="ts">
-import Icon from "./Icon.vue";
+import Icon, { type IconName } from "./Icon.vue";
 
 // shared empty/first-run placeholder. keep messages actionable: say what is empty and what to do next.
 withDefaults(
   defineProps<{
     title: string;
     description?: string;
-    icon?: string;
+    icon?: IconName;
     // compact = inline within a narrow panel (smaller, less padding); default is a centered block.
     compact?: boolean;
   }>(),
-  { compact: false }
+  { compact: false, description: undefined, icon: undefined },
 );
 </script>
 

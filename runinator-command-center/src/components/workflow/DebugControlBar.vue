@@ -107,22 +107,26 @@ const debugMode = computed<"step_all" | "breakpoints">(() => {
 });
 
 const canRunToCursor = computed(() =>
-  Boolean(workflows.canContinueWorkflowRun && workflows.selectedWorkflowRunNodeId)
+  Boolean(workflows.canContinueWorkflowRun && workflows.selectedWorkflowRunNodeId),
 );
 
 const skipOpen = ref(false);
 const rerunOpen = ref(false);
-const skipInitial = ref<any>({});
-const rerunInitial = ref<any>({});
+const skipInitial = ref<unknown>({});
+const rerunInitial = ref<unknown>({});
 
 function onModeChange(mode: "step_all" | "breakpoints") {
-  workflows.patchSelectedWorkflowRunDebug({ mode });
+  void workflows.patchSelectedWorkflowRunDebug({ mode });
 }
 
 function onRunToCursor() {
   const nodeId = workflows.selectedWorkflowRunNodeId;
-  if (!nodeId) return;
-  workflows.runToCursor(nodeId);
+
+  if (!nodeId) {
+    return;
+  }
+
+  void workflows.runToCursor(nodeId);
 }
 
 function openSkip() {
@@ -135,13 +139,13 @@ function openRerun() {
   rerunOpen.value = true;
 }
 
-function onSubmitSkip(value: any) {
-  workflows.skipCurrentNode(value);
+function onSubmitSkip(value: unknown) {
+  void workflows.skipCurrentNode(value);
   skipOpen.value = false;
 }
 
-function onSubmitRerun(value: any) {
-  workflows.rerunCurrentNode(value);
+function onSubmitRerun(value: unknown) {
+  void workflows.rerunCurrentNode(value);
   rerunOpen.value = false;
 }
 </script>

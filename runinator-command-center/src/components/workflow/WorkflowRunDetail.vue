@@ -4,7 +4,12 @@
       <h2 class="run-detail-heading">
         <template v-if="!renaming">
           <span>{{ runHeadingLabel }}</span>
-          <button v-if="workflows.workflowRunDetail" class="btn btn-icon btn-ghost btn-sm" title="Rename run" @click="startRename">
+          <button
+            v-if="workflows.workflowRunDetail"
+            class="btn btn-icon btn-ghost btn-sm"
+            title="Rename run"
+            @click="startRename"
+          >
             <Icon name="edit" :size="14" />
           </button>
         </template>
@@ -25,7 +30,9 @@
 
     <div v-if="workflows.workflowRunDetail" class="workflow-run-meta">
       <div>Started: {{ formatDate(workflows.workflowRunDetail.run.started_at) }}</div>
-      <div v-if="workflows.workflowRunDetail.run.finished_at">Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}</div>
+      <div v-if="workflows.workflowRunDetail.run.finished_at">
+        Finished: {{ formatDate(workflows.workflowRunDetail.run.finished_at) }}
+      </div>
     </div>
 
     <div v-if="isTerminalRun && workflows.workflowRunDetail" class="run-summary-card">
@@ -41,8 +48,12 @@
         <span class="summary-label">Nodes</span>
         <span>
           <span class="summary-chip success">{{ nodeCounts.succeeded }} ok</span>
-          <span v-if="nodeCounts.failed" class="summary-chip danger">{{ nodeCounts.failed }} failed</span>
-          <span v-if="nodeCounts.canceled" class="summary-chip warning">{{ nodeCounts.canceled }} canceled</span>
+          <span v-if="nodeCounts.failed" class="summary-chip danger"
+            >{{ nodeCounts.failed }} failed</span
+          >
+          <span v-if="nodeCounts.canceled" class="summary-chip warning"
+            >{{ nodeCounts.canceled }} canceled</span
+          >
         </span>
       </div>
       <div class="summary-row">
@@ -59,7 +70,9 @@
       <div class="debug-panel-header">
         <div>
           <h3>Debugger</h3>
-          <span v-if="debugState.current_node_id">{{ debugState.current_node_id }} · {{ debugState.current_node_kind }}</span>
+          <span v-if="debugState.current_node_id"
+            >{{ debugState.current_node_id }} · {{ debugState.current_node_kind }}</span
+          >
         </div>
       </div>
       <DebugControlBar />
@@ -71,10 +84,19 @@
           <JsonEditor :title="'Last Output'" :model-value="lastOutputJsonText" readonly />
         </div>
       </details>
-      <JsonDiff title="Input/output diff" :before="debugState.input_json ?? null" :after="debugState.last_output_json ?? null" />
+      <JsonDiff
+        title="Input/output diff"
+        :before="debugState.input_json ?? null"
+        :after="debugState.last_output_json ?? null"
+      />
       <details class="debug-json-group">
         <summary>Context JSON</summary>
-        <JsonEditor class="debug-context-editor" :title="'Context'" :model-value="contextJsonText" readonly />
+        <JsonEditor
+          class="debug-context-editor"
+          :title="'Context'"
+          :model-value="contextJsonText"
+          readonly
+        />
       </details>
     </div>
 
@@ -101,8 +123,8 @@
     <details v-if="flatSteps.length" class="flat-steps-group">
       <summary>Flat step log (debug) · {{ flatSteps.length }} step(s)</summary>
       <p class="flat-steps-hint">
-        Each executed step as a flat row in creation order, with its own id and a link to the step that ran before it —
-        easier to trace than the nested output tree.
+        Each executed step as a flat row in creation order, with its own id and a link to the step
+        that ran before it — easier to trace than the nested output tree.
       </p>
       <table class="flat-steps-table">
         <thead>
@@ -150,18 +172,34 @@
             <span class="result-field-name">{{ field.label || field.name }}</span>
             <span class="result-field-type">{{ field.ty?.type ?? "any" }}</span>
           </div>
-          <div class="result-field-value" :class="{ empty: selectedNodeOutput[field.name] == null }">
+          <div
+            class="result-field-value"
+            :class="{ empty: selectedNodeOutput[field.name] == null }"
+          >
             {{ formatResultValue(selectedNodeOutput[field.name]) }}
           </div>
         </div>
         <details v-if="hasExtraFields" class="result-extra">
           <summary>Raw JSON</summary>
-          <JsonEditor class="workflow-detail-json" :model-value="selectedNodeResultText" readonly title="" />
+          <JsonEditor
+            class="workflow-detail-json"
+            :model-value="selectedNodeResultText"
+            readonly
+            title=""
+          />
         </details>
       </div>
-      <JsonEditor v-else class="workflow-detail-json" :model-value="selectedNodeResultText" readonly title="Output JSON" />
+      <JsonEditor
+        v-else
+        class="workflow-detail-json"
+        :model-value="selectedNodeResultText"
+        readonly
+        title="Output JSON"
+      />
       <h3 class="run-detail-section-title">Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
-      <pre class="output workflow-detail-logs">{{ workflows.workflowNodeDetailExtra || 'No logs for this step' }}</pre>
+      <pre class="output workflow-detail-logs">{{
+        workflows.workflowNodeDetailExtra || "No logs for this step"
+      }}</pre>
     </div>
   </div>
 </template>
@@ -180,9 +218,15 @@ import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";
+import { displayValue } from "../../utils/values";
 import { computed, nextTick, ref } from "vue";
 import type { ActionResultMetadata, WorkflowNodeRun } from "../../types/models";
-import { workflowNodeActionConfig, workflowNodeResultMetadata } from "../../utils/workflows";
+import {
+  asArray,
+  isRecord,
+  workflowNodeActionConfig,
+  workflowNodeResultMetadata,
+} from "../../utils/workflows";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -194,14 +238,22 @@ const renameInput = ref<HTMLInputElement | null>(null);
 
 const runHeadingLabel = computed(() => {
   const run = workflows.workflowRunDetail?.run;
-  if (!run) return "Workflow Run";
+
+  if (!run) {
+    return "Workflow Run";
+  }
+
   const trimmed = run.name?.trim();
   return trimmed ? `${trimmed} (#${run.id})` : `Workflow Run #${run.id}`;
 });
 
 async function startRename() {
   const run = workflows.workflowRunDetail?.run;
-  if (!run) return;
+
+  if (!run) {
+    return;
+  }
+
   renameDraft.value = run.name?.trim() ?? "";
   renaming.value = true;
   await nextTick();
@@ -215,23 +267,36 @@ function cancelRename() {
 }
 
 async function commitRename() {
-  if (!renaming.value) return;
+  if (!renaming.value) {
+    return;
+  }
+
   const run = workflows.workflowRunDetail?.run;
+
   if (!run) {
     renaming.value = false;
     return;
   }
+
   const next = renameDraft.value.trim();
   const previous = run.name?.trim() ?? "";
   renaming.value = false;
-  if (next === previous) return;
+
+  if (next === previous) {
+    return;
+  }
+
   await workflows.renameSelectedWorkflowRun(run.id, next.length === 0 ? null : next);
 }
 
 // quick actions emitted by RunNodeActions in the timeline (feature 7).
 async function onNodeAction(payload: { type: RunNodeActionType; node: WorkflowNodeRun }) {
   const run = workflows.workflowRunDetail?.run;
-  if (!run) return;
+
+  if (!run) {
+    return;
+  }
+
   if (payload.type === "replay-run") {
     await workflows.replaySelectedWorkflowRun(run.id);
   } else if (payload.type === "replay-from") {
@@ -245,15 +310,23 @@ async function onNodeAction(payload: { type: RunNodeActionType; node: WorkflowNo
 
 // look the run's node up in its workflow definition.
 function definitionNode(nodeId: string) {
-  const nodes = workflows.workflowRunWorkflow?.definition?.nodes;
-  return Array.isArray(nodes) ? nodes.find((node: any) => node.id === nodeId) ?? null : null;
+  return (
+    asArray(workflows.workflowRunWorkflow?.definition.nodes)
+      .filter(isRecord)
+      .find((node) => node.id === nodeId) ?? null
+  );
 }
 
 // open the step in the workflow editor, preferring the live workflow over the run snapshot.
 async function openStepInEditor(nodeId: string) {
   const workflowId = workflows.workflowRunWorkflow?.id;
-  const workflow = workflows.workflows.find((item) => item.id === workflowId) ?? workflows.workflowRunWorkflow;
-  if (!workflow) return;
+  const workflow =
+    workflows.workflows.find((item) => item.id === workflowId) ?? workflows.workflowRunWorkflow;
+
+  if (!workflow) {
+    return;
+  }
+
   await workflows.selectWorkflow(workflow);
   app.activeTab = "Workflows";
   workflows.openStepEditor(nodeId);
@@ -262,23 +335,41 @@ async function openStepInEditor(nodeId: string) {
 // focus this node's provider/action in the providers view.
 function openProviderForNode(nodeId: string) {
   const node = definitionNode(nodeId);
-  if (!node) return;
+
+  if (!node) {
+    return;
+  }
+
   const config = workflowNodeActionConfig(node);
-  if (!config.provider) return;
+
+  if (!config.provider) {
+    return;
+  }
+
   providersStore.focusProviderAction(config.provider, config.action);
   app.activeTab = "Providers";
 }
 
-const selectedNodeOutput = computed<Record<string, any> | null>(() => {
-  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
+const selectedNodeOutput = computed<Record<string, unknown> | null>(() => {
+  const node = workflows.workflowRunDetail?.nodes.find(
+    (item) => item.node_id === workflows.selectedWorkflowRunNodeId,
+  );
   const output = node?.output_json;
-  if (output && typeof output === "object" && !Array.isArray(output)) return output;
+
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    return output as Record<string, unknown>;
+  }
+
   return null;
 });
 
-const debugState = computed<Record<string, any> | null>(() => {
+const debugState = computed<Record<string, unknown> | null>(() => {
   const debug = workflows.workflowRunDetail?.run.state?.debug;
-  if (debug && typeof debug === "object" && !Array.isArray(debug)) return debug;
+
+  if (debug && typeof debug === "object" && !Array.isArray(debug)) {
+    return debug as Record<string, unknown>;
+  }
+
   return null;
 });
 
@@ -294,51 +385,91 @@ const isTerminalRun = computed(() => {
 
 const nodeCounts = computed(() => {
   const counts = { succeeded: 0, failed: 0, canceled: 0 };
+
   for (const node of workflows.workflowRunDetail?.nodes ?? []) {
-    if (node.status === "succeeded") counts.succeeded += 1;
-    else if (node.status === "failed" || node.status === "timed_out") counts.failed += 1;
-    else if (node.status === "canceled") counts.canceled += 1;
+    if (node.status === "succeeded") {
+      counts.succeeded += 1;
+    } else if (node.status === "failed" || node.status === "timed_out") {
+      counts.failed += 1;
+    } else if (node.status === "canceled") {
+      counts.canceled += 1;
+    }
   }
+
   return counts;
 });
 
 const runDurationText = computed(() => {
   const run = workflows.workflowRunDetail?.run;
-  if (!run?.started_at || !run.finished_at) return "";
+
+  if (!run?.started_at || !run.finished_at) {
+    return "";
+  }
+
   const start = Date.parse(run.started_at);
   const end = Date.parse(run.finished_at);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "";
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return "";
+  }
+
   const seconds = Math.max(0, Math.round((end - start) / 1000));
-  if (seconds < 60) return `${seconds}s`;
+
+  if (seconds < 60) {
+    return `${String(seconds)}s`;
+  }
+
   const minutes = Math.floor(seconds / 60);
   const remSec = seconds % 60;
-  return remSec === 0 ? `${minutes}m` : `${minutes}m ${remSec}s`;
+  return remSec === 0 ? `${String(minutes)}m` : `${String(minutes)}m ${String(remSec)}s`;
 });
 
 const selectedNodeResultText = computed(() => {
-  const node = workflows.workflowRunDetail?.nodes.find(item => item.node_id === workflows.selectedWorkflowRunNodeId);
+  const node = workflows.workflowRunDetail?.nodes.find(
+    (item) => item.node_id === workflows.selectedWorkflowRunNodeId,
+  );
   return pretty(node?.output_json ?? {});
 });
 
 const resultFields = computed<ActionResultMetadata[]>(() => {
   const nodeId = workflows.selectedWorkflowRunNodeId;
-  if (!nodeId) return [];
-  const definition = workflows.workflowRunWorkflow?.definition ?? workflows.workflowDraft.definition;
-  const defNode = (definition?.nodes ?? []).find((n: any) => n.id === nodeId);
-  if (!defNode) return [];
+
+  if (!nodeId) {
+    return [];
+  }
+
+  const definition =
+    workflows.workflowRunWorkflow?.definition ?? workflows.workflowDraft.definition;
+  const defNode = asArray(definition.nodes)
+    .filter(isRecord)
+    .find((n) => n.id === nodeId);
+
+  if (!defNode) {
+    return [];
+  }
+
   return workflowNodeResultMetadata(defNode, providersStore.providers);
 });
 
 const hasExtraFields = computed(() => {
-  if (!selectedNodeOutput.value) return false;
-  const knownNames = new Set(resultFields.value.map(f => f.name));
-  return Object.keys(selectedNodeOutput.value).some(k => !knownNames.has(k));
+  if (!selectedNodeOutput.value) {
+    return false;
+  }
+
+  const knownNames = new Set(resultFields.value.map((f) => f.name));
+  return Object.keys(selectedNodeOutput.value).some((k) => !knownNames.has(k));
 });
 
-function formatResultValue(value: any): string {
-  if (value === undefined || value === null) return "(none)";
-  if (typeof value === "object") return pretty(value);
-  return String(value);
+function formatResultValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "(none)";
+  }
+
+  if (typeof value === "object") {
+    return pretty(value);
+  }
+
+  return displayValue(value);
 }
 
 // a flat, creation-ordered view of the run's node runs for debugging. each row carries its own guid
@@ -349,7 +480,11 @@ const flatSteps = computed<WorkflowNodeRun[]>(() => {
   return nodes.sort((a, b) => {
     const at = a.created_at ? Date.parse(a.created_at) : 0;
     const bt = b.created_at ? Date.parse(b.created_at) : 0;
-    if (at !== bt) return at - bt;
+
+    if (at !== bt) {
+      return at - bt;
+    }
+
     return a.id.localeCompare(b.id);
   });
 });
@@ -360,7 +495,10 @@ function shortId(id: string): string {
 
 function selectByRunId(runId: string) {
   const node = workflows.workflowRunDetail?.nodes.find((item) => item.id === runId);
-  if (node) workflows.selectWorkflowRunNode(node.node_id);
+
+  if (node) {
+    workflows.selectWorkflowRunNode(node.node_id);
+  }
 }
 </script>
 

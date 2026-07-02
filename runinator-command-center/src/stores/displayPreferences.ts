@@ -9,10 +9,14 @@ const DEFAULT_TAB_KEY = "command-center.defaultTab";
 function readStored<T extends string>(key: string, allowed: T[], fallback: T): T {
   try {
     const stored = localStorage.getItem(key);
-    if (stored && (allowed as string[]).includes(stored)) return stored as T;
+
+    if (stored && (allowed as string[]).includes(stored)) {
+      return stored as T;
+    }
   } catch {
     // storage unavailable; use fallback.
   }
+
   return fallback;
 }
 
@@ -32,12 +36,20 @@ function applyTheme(theme: AppTheme) {
     mediaCleanup();
     mediaCleanup = null;
   }
+
   if (theme === "system") {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => document.documentElement.setAttribute("data-theme", media.matches ? "dark" : "light");
+
+    const update = () => {
+      document.documentElement.setAttribute("data-theme", media.matches ? "dark" : "light");
+    };
+
     update();
     media.addEventListener("change", update);
-    mediaCleanup = () => media.removeEventListener("change", update);
+
+    mediaCleanup = () => {
+      media.removeEventListener("change", update);
+    };
   } else {
     document.documentElement.setAttribute("data-theme", theme);
   }
@@ -49,7 +61,7 @@ export const DEFAULT_TAB_OPTIONS = [
   { value: "Providers", label: "Providers" },
   { value: "Replicas", label: "Replicas" },
   { value: "Approvals", label: "Approvals" },
-  { value: "Notifications", label: "Notifications" }
+  { value: "Notifications", label: "Notifications" },
 ] as const;
 
 const ALLOWED_THEMES: AppTheme[] = ["system", "light", "dark"];
@@ -57,7 +69,9 @@ const ALLOWED_TABS = DEFAULT_TAB_OPTIONS.map((opt) => opt.value);
 
 export const useDisplayPreferencesStore = defineStore("displayPreferences", () => {
   const theme = ref<AppTheme>(readStored(THEME_KEY, ALLOWED_THEMES, "system"));
-  const defaultTab = ref(readStored(DEFAULT_TAB_KEY, ALLOWED_TABS as unknown as string[], "Workflows"));
+  const defaultTab = ref(
+    readStored(DEFAULT_TAB_KEY, ALLOWED_TABS as unknown as string[], "Workflows"),
+  );
 
   // apply theme immediately on store init so the DOM is styled before first render.
   applyTheme(theme.value);

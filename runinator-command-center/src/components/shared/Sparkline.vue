@@ -7,7 +7,7 @@
     <svg
       v-if="points.length > 1"
       class="sparkline-svg"
-      :viewBox="`0 0 ${width} ${height}`"
+      :viewBox="`0 0 ${String(width)} ${String(height)}`"
       preserveAspectRatio="none"
     >
       <polyline :points="areaPath" class="sparkline-area" :style="{ fill: color, opacity: 0.12 }" />
@@ -30,7 +30,7 @@ const props = withDefaults(
     max?: number | null;
     format?: (value: number) => string;
   }>(),
-  { color: "var(--accent)", unit: "", max: null, format: undefined }
+  { color: "var(--accent)", unit: "", max: null, format: undefined },
 );
 
 const width = 200;
@@ -40,35 +40,55 @@ const points = computed(() => props.values.filter((value) => Number.isFinite(val
 
 // upper bound: an explicit max (e.g. 100 for percentages) or the observed peak with headroom.
 const upper = computed(() => {
-  if (props.max != null && props.max > 0) return props.max;
+  if (props.max != null && props.max > 0) {
+    return props.max;
+  }
+
   const peak = Math.max(...points.value, 0);
   return peak > 0 ? peak * 1.1 : 1;
 });
 
 const coords = computed(() => {
   const list = points.value;
-  if (list.length < 2) return [] as Array<{ x: number; y: number }>;
+
+  if (list.length < 2) {
+    return [] as { x: number; y: number }[];
+  }
+
   const stepX = width / (list.length - 1);
   return list.map((value, index) => ({
     x: index * stepX,
-    y: height - Math.min(1, Math.max(0, value / upper.value)) * height
+    y: height - Math.min(1, Math.max(0, value / upper.value)) * height,
   }));
 });
 
-const linePath = computed(() => coords.value.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "));
+const linePath = computed(() =>
+  coords.value.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
+);
 
 const areaPath = computed(() => {
-  if (!coords.value.length) return "";
+  if (!coords.value.length) {
+    return "";
+  }
+
   const first = coords.value[0];
   const last = coords.value[coords.value.length - 1];
-  return `${first.x},${height} ${linePath.value} ${last.x},${height}`;
+  return `${String(first.x)},${String(height)} ${linePath.value} ${String(last.x)},${String(height)}`;
 });
 
 const latestLabel = computed(() => {
   const list = points.value;
-  if (!list.length) return "—";
+
+  if (!list.length) {
+    return "—";
+  }
+
   const latest = list[list.length - 1];
-  if (props.format) return props.format(latest);
+
+  if (props.format) {
+    return props.format(latest);
+  }
+
   return `${latest.toFixed(1)}${props.unit}`;
 });
 </script>

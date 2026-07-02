@@ -1,6 +1,13 @@
 <template>
   <section class="pane runs-pane">
-    <SplitPane class="runs-layout" storage-key="command-center.runs.split" :initial-first-pct="28" :min-first="340" :min-second="720" collapsible-first>
+    <SplitPane
+      class="runs-layout"
+      storage-key="command-center.runs.split"
+      :initial-first-pct="28"
+      :min-first="340"
+      :min-second="720"
+      collapsible-first
+    >
       <template #first>
         <div class="panel runs-list-panel">
           <div class="panel-toolbar">
@@ -31,7 +38,11 @@
             compact
             :icon="app.searchQuery ? 'search' : 'runs'"
             :title="app.searchQuery ? 'No matches' : 'No runs yet'"
-            :description="app.searchQuery ? `No runs match “${app.searchQuery}”.` : 'Runs appear here once a workflow is executed. Run one from the Workflows tab.'"
+            :description="
+              app.searchQuery
+                ? `No runs match “${app.searchQuery}”.`
+                : 'Runs appear here once a workflow is executed. Run one from the Workflows tab.'
+            "
           />
           <div v-else class="table-scroll runs-table-scroll">
             <RunTable
@@ -48,103 +59,131 @@
         <div class="runs-detail-shell">
           <RunTabsBar />
           <SplitPane
-          class="runs-detail-split"
-          orientation="vertical"
-          storage-key="command-center.runs.detail-vertical-split"
-          :initial-first-pct="55"
-          :min-first="260"
-          :min-second="320"
-          collapsible-second
-        >
-          <template #first>
-            <WorkflowRunGraph />
-          </template>
-          <template #second>
-            <div class="panel details runs-detail-panel">
-              <WorkflowRunDetail />
-              <section class="runs-detail-section">
-                <div class="runs-section-header">
-                  <h2 class="runs-detail-heading">Structured Result</h2>
-                  <span>Workflow output JSON</span>
-                </div>
-                <JsonEditor class="runs-detail-output" :model-value="selectedOutput" readonly title="" />
-              </section>
-              <section class="runs-detail-section">
-                <div class="runs-section-header">
-                  <h2 class="runs-detail-heading">Run Output Chunks</h2>
-                  <span>Streamed log and output segments</span>
-                </div>
-                <LogPanel :chunks="logChunks" :last-chunk-at="lastLogChunkAt" :fallback-text="workflows.workflowRunDetailText" />
-              </section>
-              <section class="runs-detail-section">
-                <div class="runs-section-header">
-                  <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
-                  <span>{{ artifacts.length ? `${artifacts.length} attached` : "No artifacts on the selected node" }}</span>
-                </div>
-                <div class="table-scroll compact-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>MIME</th>
-                        <th>Size</th>
-                        <th>URI</th>
-                        <th>Created</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-if="!artifacts.length" class="muted">
-                        <td colspan="6">No artifacts available.</td>
-                      </tr>
-                      <tr v-for="artifact in artifacts" :key="artifact.id">
-                        <td>{{ artifact.name }}</td>
-                        <td>{{ artifact.mime_type }}</td>
-                        <td>{{ artifact.size_bytes }}</td>
-                        <td>{{ artifact.uri }}</td>
-                        <td>{{ formatDate(artifact.created_at) }}</td>
-                        <td><button class="btn" @click="download(artifact.id, artifact.name)">Download</button></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-              <section class="runs-detail-section">
-                <div class="runs-section-header">
-                  <h2 class="runs-detail-heading">Artifacts</h2>
-                  <span>{{ runArtifacts.length ? `${runArtifacts.length} for this run` : "No artifacts for this run" }}</span>
-                </div>
-                <div class="table-scroll compact-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>From node</th>
-                        <th>MIME</th>
-                        <th>Size</th>
-                        <th>Created</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-if="!runArtifacts.length" class="muted">
-                        <td colspan="6">No artifacts available.</td>
-                      </tr>
-                      <tr v-for="artifact in runArtifacts" :key="artifact.id">
-                        <td>{{ artifact.name }}</td>
-                        <td>{{ artifact.node_id }}</td>
-                        <td>{{ artifact.mime_type }}</td>
-                        <td>{{ artifact.size_bytes }}</td>
-                        <td>{{ formatDate(artifact.created_at) }}</td>
-                        <td><button class="btn" @click="download(artifact.artifact_id, artifact.name)">Download</button></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
-          </template>
-        </SplitPane>
+            class="runs-detail-split"
+            orientation="vertical"
+            storage-key="command-center.runs.detail-vertical-split"
+            :initial-first-pct="55"
+            :min-first="260"
+            :min-second="320"
+            collapsible-second
+          >
+            <template #first>
+              <WorkflowRunGraph />
+            </template>
+            <template #second>
+              <div class="panel details runs-detail-panel">
+                <WorkflowRunDetail />
+                <section class="runs-detail-section">
+                  <div class="runs-section-header">
+                    <h2 class="runs-detail-heading">Structured Result</h2>
+                    <span>Workflow output JSON</span>
+                  </div>
+                  <JsonEditor
+                    class="runs-detail-output"
+                    :model-value="selectedOutput"
+                    readonly
+                    title=""
+                  />
+                </section>
+                <section class="runs-detail-section">
+                  <div class="runs-section-header">
+                    <h2 class="runs-detail-heading">Run Output Chunks</h2>
+                    <span>Streamed log and output segments</span>
+                  </div>
+                  <LogPanel
+                    :chunks="logChunks"
+                    :last-chunk-at="lastLogChunkAt"
+                    :fallback-text="workflows.workflowRunDetailText"
+                  />
+                </section>
+                <section class="runs-detail-section">
+                  <div class="runs-section-header">
+                    <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
+                    <span>{{
+                      artifacts.length
+                        ? `${artifacts.length} attached`
+                        : "No artifacts on the selected node"
+                    }}</span>
+                  </div>
+                  <div class="table-scroll compact-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>MIME</th>
+                          <th>Size</th>
+                          <th>URI</th>
+                          <th>Created</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-if="!artifacts.length" class="muted">
+                          <td colspan="6">No artifacts available.</td>
+                        </tr>
+                        <tr v-for="artifact in artifacts" :key="artifact.id">
+                          <td>{{ artifact.name }}</td>
+                          <td>{{ artifact.mime_type }}</td>
+                          <td>{{ artifact.size_bytes }}</td>
+                          <td>{{ artifact.uri }}</td>
+                          <td>{{ formatDate(artifact.created_at) }}</td>
+                          <td>
+                            <button class="btn" @click="download(artifact.id, artifact.name)">
+                              Download
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="runs-detail-section">
+                  <div class="runs-section-header">
+                    <h2 class="runs-detail-heading">Artifacts</h2>
+                    <span>{{
+                      runArtifacts.length
+                        ? `${runArtifacts.length} for this run`
+                        : "No artifacts for this run"
+                    }}</span>
+                  </div>
+                  <div class="table-scroll compact-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>From node</th>
+                          <th>MIME</th>
+                          <th>Size</th>
+                          <th>Created</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-if="!runArtifacts.length" class="muted">
+                          <td colspan="6">No artifacts available.</td>
+                        </tr>
+                        <tr v-for="artifact in runArtifacts" :key="artifact.id">
+                          <td>{{ artifact.name }}</td>
+                          <td>{{ artifact.node_id }}</td>
+                          <td>{{ artifact.mime_type }}</td>
+                          <td>{{ artifact.size_bytes }}</td>
+                          <td>{{ formatDate(artifact.created_at) }}</td>
+                          <td>
+                            <button
+                              class="btn"
+                              @click="download(artifact.artifact_id, artifact.name)"
+                            >
+                              Download
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </template>
+          </SplitPane>
         </div>
       </template>
     </SplitPane>
@@ -157,7 +196,7 @@ import {
   downloadArtifactInBrowser,
   downloadArtifactToPath,
   fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowRunArtifacts
+  fetchWorkflowRunArtifacts,
 } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
 import EmptyState from "../components/shared/EmptyState.vue";
@@ -181,30 +220,71 @@ const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 
 async function download(artifactId: string, name: string) {
-  await app.runOperation(`Downloading ${name}`, async () => {
-    if (isTauriRuntime()) return downloadArtifactToPath(artifactId, name);
-    await downloadArtifactInBrowser(artifactId, name);
-    return null;
-  }).catch((error) => app.setError(String(error)));
+  await app
+    .runOperation(`Downloading ${name}`, async () => {
+      if (isTauriRuntime()) {
+        return downloadArtifactToPath(artifactId, name);
+      }
+
+      await downloadArtifactInBrowser(artifactId, name);
+      return null;
+    })
+    .catch((error: unknown) => {
+      app.setError(String(error));
+    });
 }
+
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
 const selectedNodeRunIdRef = ref(workflows.selectedWorkflowNodeRunId);
-const workflowNames = computed(() => Object.fromEntries(workflows.workflows.filter((workflow) => workflow.id).map((workflow) => [workflow.id!, workflow.name])));
+const workflowNames = computed(() =>
+  Object.fromEntries(
+    workflows.workflows.flatMap((workflow) =>
+      workflow.id ? ([[workflow.id, workflow.name]] as const) : [],
+    ),
+  ),
+);
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
-const activeRunCount = computed(() => workflows.recentWorkflowRuns.filter((run) => !TERMINAL_STATUSES.has(run.status)).length);
-const selectedRunLabel = computed(() => (workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None"));
+const activeRunCount = computed(
+  () => workflows.recentWorkflowRuns.filter((run) => !TERMINAL_STATUSES.has(run.status)).length,
+);
+const selectedRunLabel = computed(() =>
+  workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None",
+);
 
 useWorkflowRunStream();
 
-watch(() => workflows.selectedWorkflowNodeRunId, (id) => { selectedNodeRunIdRef.value = id; }, { immediate: true });
-watch(() => workflows.selectedWorkflowNodeRunId, async (id) => {
-  artifacts.value = id ? await app.runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id)).catch(() => []) : [];
-}, { immediate: true });
-watch(() => workflows.selectedWorkflowRunId, async (id) => {
-  runArtifacts.value = id ? await app.runOperation("Loading artifacts", () => fetchWorkflowRunArtifacts(id)).catch(() => []) : [];
-}, { immediate: true });
+watch(
+  () => workflows.selectedWorkflowNodeRunId,
+  (id) => {
+    selectedNodeRunIdRef.value = id;
+  },
+  { immediate: true },
+);
+watch(
+  () => workflows.selectedWorkflowNodeRunId,
+  async (id) => {
+    artifacts.value = id
+      ? await app
+          .runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id))
+          .catch(() => [])
+      : [];
+  },
+  { immediate: true },
+);
+watch(
+  () => workflows.selectedWorkflowRunId,
+  async (id) => {
+    runArtifacts.value = id
+      ? await app
+          .runOperation("Loading artifacts", () => fetchWorkflowRunArtifacts(id))
+          .catch(() => [])
+      : [];
+  },
+  { immediate: true },
+);
 
-const { chunks: logChunks, lastChunkAt: lastLogChunkAt } = useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
+const { chunks: logChunks, lastChunkAt: lastLogChunkAt } =
+  useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 </script>
 
 <style scoped>

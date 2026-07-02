@@ -2,7 +2,7 @@
   <div v-if="store.supported" class="panel local-worker-panel">
     <div class="panel-toolbar">
       <h2>Desktop Worker</h2>
-      <span class="replica-stat">{{ store.status.running ? 'running' : 'stopped' }}</span>
+      <span class="replica-stat">{{ store.status.running ? "running" : "stopped" }}</span>
     </div>
 
     <p class="local-worker-hint">
@@ -54,7 +54,7 @@ const sandboxRoot = ref("");
 const allowWrite = ref(false);
 
 onMounted(() => {
-  store.refresh();
+  void store.refresh();
 });
 
 async function onStart() {

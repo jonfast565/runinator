@@ -24,12 +24,20 @@
             {{ formatValue(evaluate(expr)) }}
           </td>
           <td class="watch-actions">
-            <button class="watch-remove" title="Remove" @click="workflows.removeWatchExpression(expr)">×</button>
+            <button
+              class="watch-remove"
+              title="Remove"
+              @click="workflows.removeWatchExpression(expr)"
+            >
+              ×
+            </button>
           </td>
         </tr>
       </tbody>
     </table>
-    <div v-else class="watch-empty">No expressions yet. Add one to track context values across steps.</div>
+    <div v-else class="watch-empty">
+      No expressions yet. Add one to track context values across steps.
+    </div>
   </details>
 </template>
 
@@ -37,6 +45,7 @@
 import { computed, ref } from "vue";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { evaluatePointer, type PointerResult } from "../../utils/json-pointer";
+import { displayValue } from "../../utils/values";
 
 const workflows = useWorkflowsStore();
 const draft = ref("");
@@ -49,15 +58,28 @@ function evaluate(expr: string): PointerResult {
 }
 
 function formatValue(result: PointerResult): string {
-  if (!result.exists) return "—";
-  if (result.value === null) return "null";
-  if (typeof result.value === "object") return JSON.stringify(result.value);
-  return String(result.value);
+  if (!result.exists) {
+    return "—";
+  }
+
+  if (result.value === null) {
+    return "null";
+  }
+
+  if (typeof result.value === "object") {
+    return JSON.stringify(result.value);
+  }
+
+  return displayValue(result.value);
 }
 
 function onAdd() {
   const expr = draft.value.trim();
-  if (!expr) return;
+
+  if (!expr) {
+    return;
+  }
+
   workflows.addWatchExpression(expr);
   draft.value = "";
 }

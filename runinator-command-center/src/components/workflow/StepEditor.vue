@@ -9,17 +9,30 @@
             <span v-if="displayName" class="step-detail-name">{{ displayName }}</span>
           </div>
           <div v-if="flags.length" class="flag-row">
-            <span v-for="flag in flags" :key="flag.label" class="step-flag" :class="`flag-${flag.tone}`">{{ flag.label }}</span>
+            <span
+              v-for="flag in flags"
+              :key="flag.label"
+              class="step-flag"
+              :class="`flag-${flag.tone}`"
+              >{{ flag.label }}</span
+            >
           </div>
           <p class="step-headline">{{ headline }}</p>
         </div>
-        <button class="step-edit-btn" @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
+        <button class="step-edit-btn" @click="workflows.openStepEditor(workflows.selectedStepId)">
+          Edit
+        </button>
       </header>
 
       <section v-if="workflows.selectedNodeIssues.length" class="detail-section validation-section">
         <h3>Validation</h3>
         <div class="detail-rows">
-          <div v-for="issue in workflows.selectedNodeIssues" :key="issue.message" class="detail-row" :class="`issue-${issue.severity}`">
+          <div
+            v-for="issue in workflows.selectedNodeIssues"
+            :key="issue.message"
+            class="detail-row"
+            :class="`issue-${issue.severity}`"
+          >
             <span>{{ issue.severity }}</span>
             <strong>{{ issue.message }}</strong>
           </div>
@@ -43,9 +56,16 @@
         </section>
 
         <section class="detail-section">
-          <h3>Parameters <span class="count-pill">{{ paramRows.length }}</span></h3>
+          <h3>
+            Parameters <span class="count-pill">{{ paramRows.length }}</span>
+          </h3>
           <div v-if="paramRows.length" class="param-list">
-            <div v-for="param in paramRows" :key="param.name" class="param-item" :class="{ unset: !param.configured }">
+            <div
+              v-for="param in paramRows"
+              :key="param.name"
+              class="param-item"
+              :class="{ unset: !param.configured }"
+            >
               <div class="param-head">
                 <code class="param-name">{{ param.name }}</code>
                 <span v-if="param.type" class="param-type">{{ param.type }}</span>
@@ -60,7 +80,9 @@
         </section>
 
         <section v-if="resultRows.length" class="detail-section">
-          <h3>Outputs <span class="count-pill">{{ resultRows.length }}</span></h3>
+          <h3>
+            Outputs <span class="count-pill">{{ resultRows.length }}</span>
+          </h3>
           <div class="param-list">
             <div v-for="result in resultRows" :key="result.name" class="param-item">
               <div class="param-head">
@@ -97,7 +119,11 @@
       <section class="detail-section">
         <h3>Transitions</h3>
         <div v-if="transitionRows.length" class="detail-rows">
-          <div v-for="row in transitionRows" :key="row.label + row.value" class="detail-row transition-row">
+          <div
+            v-for="row in transitionRows"
+            :key="row.label + row.value"
+            class="detail-row transition-row"
+          >
             <span>{{ row.label }}</span>
             <strong class="mono">{{ row.value }}</strong>
             <small v-if="row.note">{{ row.note }}</small>
@@ -107,9 +133,18 @@
       </section>
 
       <div class="step-summary-actions">
-        <button class="primary" @click="workflows.openStepEditor(workflows.selectedStepId)">Edit</button>
-        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.duplicateSelectedStep">Duplicate</button>
-        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">Remove</button>
+        <button class="primary" @click="workflows.openStepEditor(workflows.selectedStepId)">
+          Edit
+        </button>
+        <button
+          :disabled="!workflows.canRemoveSelectedStep"
+          @click="workflows.duplicateSelectedStep"
+        >
+          Duplicate
+        </button>
+        <button :disabled="!workflows.canRemoveSelectedStep" @click="workflows.removeWorkflowStep">
+          Remove
+        </button>
       </div>
     </template>
     <template v-else>
@@ -127,7 +162,15 @@ import { computed } from "vue";
 import { useProvidersStore } from "../../stores/providers";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { JsonRecord, RuninatorType } from "../../types/models";
-import { directTransitionKeys, nodeRefId, workflowNodeActionConfig, workflowNodeActionInputs } from "../../utils/workflows";
+import {
+  asArray,
+  asRecord,
+  directTransitionKeys,
+  nodeRefId,
+  workflowNodeActionConfig,
+  workflowNodeActionInputs,
+} from "../../utils/workflows";
+import { displayValue } from "../../utils/values";
 
 interface DetailItem {
   label: string;
@@ -170,24 +213,54 @@ interface ResultRow {
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
 
-const node = computed<JsonRecord | null>(() => workflows.selectedNode);
-const actionConfig = computed(() => (node.value ? workflowNodeActionConfig(node.value) : { provider: "", action: "" }));
-const provider = computed(() => providersStore.providers.find((item) => item.name === actionConfig.value.provider) ?? null);
-const action = computed(() => provider.value?.actions.find((item) => item.function_name === actionConfig.value.action) ?? null);
+// named slots let this read-only view narrow parameters/transitions/action
+// without a bare JsonRecord index collapsing every access to `unknown`.
+type StepEditorNode = JsonRecord & {
+  parameters?: JsonRecord;
+  transitions?: JsonRecord;
+  action?: JsonRecord;
+  retry?: JsonRecord;
+};
+const node = computed<StepEditorNode | null>(() => workflows.selectedNode);
+const actionConfig = computed(() =>
+  node.value ? workflowNodeActionConfig(node.value) : { provider: "", action: "" },
+);
+const provider = computed(
+  () => providersStore.providers.find((item) => item.name === actionConfig.value.provider) ?? null,
+);
+const action = computed(
+  () =>
+    provider.value?.actions.find((item) => item.function_name === actionConfig.value.action) ??
+    null,
+);
 
 // the human label shown on the node, only when it differs from the id.
 const displayName = computed(() => {
   const name = node.value?.name;
-  return typeof name === "string" && name && name !== node.value?.id ? name : "";
+  return typeof name === "string" && name && name !== node.value.id ? name : "";
 });
 
 const flags = computed<{ label: string; tone: string }[]>(() => {
   const current = node.value;
-  if (!current) return [];
+
+  if (!current) {
+    return [];
+  }
+
   const out: { label: string; tone: string }[] = [];
-  if (current.locked) out.push({ label: "locked", tone: "neutral" });
-  if (current.skipped) out.push({ label: "skipped", tone: "warn" });
-  if (current.kind === "action" && current.run_once) out.push({ label: "run once", tone: "neutral" });
+
+  if (current.locked) {
+    out.push({ label: "locked", tone: "neutral" });
+  }
+
+  if (current.skipped) {
+    out.push({ label: "skipped", tone: "warn" });
+  }
+
+  if (current.kind === "action" && current.run_once) {
+    out.push({ label: "run once", tone: "neutral" });
+  }
+
   return out;
 });
 
@@ -195,14 +268,20 @@ const actionDescription = computed(() => action.value?.description ?? "");
 
 const headline = computed(() => {
   const current = node.value;
-  if (!current) return "";
+
+  if (!current) {
+    return "";
+  }
+
   switch (current.kind) {
     case "action":
-      return actionConfig.value.provider ? `${actionConfig.value.provider} · ${actionConfig.value.action || "action"}` : "Unconfigured action";
+      return actionConfig.value.provider
+        ? `${actionConfig.value.provider} · ${actionConfig.value.action || "action"}`
+        : "Unconfigured action";
     case "approval":
-      return String(current.parameters?.prompt ?? "Approval required");
+      return displayValue(current.parameters?.prompt ?? "Approval required");
     case "condition":
-      return `${branchRows(current).length} conditional route${branchRows(current).length === 1 ? "" : "s"}`;
+      return `${String(branchRows(current).length)} conditional route${branchRows(current).length === 1 ? "" : "s"}`;
     case "wait":
       return waitSummary(current.wait);
     case "start":
@@ -212,28 +291,36 @@ const headline = computed(() => {
     case "fail":
       return "Terminal failure step";
     default:
-      return `${current.kind} control node`;
+      return `${displayValue(current.kind)} control node`;
   }
 });
 
 // action header band: provider, function, timeout, retries.
 const actionMeta = computed<MetaEntry[]>(() => {
   const current = node.value;
-  if (!current || current.kind !== "action") return [];
+
+  if (current?.kind !== "action") {
+    return [];
+  }
+
   const retries = current.retry?.max_attempts ?? current.max_attempts ?? 1;
   const timeout = current.timeout_seconds ?? current.action?.timeout_seconds;
   return [
     { label: "Provider", value: actionConfig.value.provider || "—", mono: true },
     { label: "Function", value: actionConfig.value.action || "—", mono: true },
-    { label: "Timeout", value: timeout != null ? `${timeout}s` : "default" },
-    { label: "Max Attempts", value: String(retries) }
+    { label: "Timeout", value: timeout != null ? `${displayValue(timeout)}s` : "default" },
+    { label: "Max Attempts", value: displayValue(retries) },
   ];
 });
 
 // one row per provider parameter, merged with the value configured on this node.
 const paramRows = computed<ParamRow[]>(() => {
   const current = node.value;
-  if (!current || current.kind !== "action") return [];
+
+  if (current?.kind !== "action") {
+    return [];
+  }
+
   const inputs = workflowNodeActionInputs(current);
   const inputRecord = isRecord(inputs) ? inputs : {};
   const schema = action.value?.parameters ?? [];
@@ -253,7 +340,7 @@ const paramRows = computed<ParamRow[]>(() => {
         secret: param.secret,
         value,
         description: param.description ?? "",
-        configured
+        configured,
       };
     });
   }
@@ -266,32 +353,40 @@ const paramRows = computed<ParamRow[]>(() => {
     secret: false,
     value: valueLabel(raw),
     description: "",
-    configured: true
+    configured: true,
   }));
 });
 
 const resultRows = computed<ResultRow[]>(() =>
   (action.value?.results ?? []).map((result) => ({
-    name: result.label || result.name,
+    name: result.label ?? result.name,
     type: renderType(result.ty),
-    description: result.description ?? ""
-  }))
+    description: result.description ?? "",
+  })),
 );
 
 const detailSections = computed<DetailSection[]>(() => {
   const current = node.value;
-  if (!current) return [];
-  return [kindSection(current)].filter((section) => section.items.length || section.chips.length || section.rows.length);
+
+  if (!current) {
+    return [];
+  }
+
+  return [kindSection(current)].filter(
+    (section) => section.items.length || section.chips.length || section.rows.length,
+  );
 });
 
-const transitionRows = computed<DetailRow[]>(() => (node.value ? transitionsSection(node.value).rows : []));
+const transitionRows = computed<DetailRow[]>(() =>
+  node.value ? transitionsSection(node.value).rows : [],
+);
 
-function kindSection(current: JsonRecord): DetailSection {
+function kindSection(current: StepEditorNode): DetailSection {
   switch (current.kind) {
     case "approval":
       return section("Approval", [
         item("Type", current.parameters?.approval_type ?? current.parameters?.type ?? "generic"),
-        item("Prompt", current.parameters?.prompt ?? "Approval required")
+        item("Prompt", current.parameters?.prompt ?? "Approval required"),
       ]);
     case "condition":
       return section("Conditions", [], [], branchRows(current));
@@ -301,57 +396,79 @@ function kindSection(current: JsonRecord): DetailSection {
       return section("Loop", [
         item("Items", valueLabel(current.parameters?.items)),
         item("Target", refLabel(current.parameters?.target)),
-        item("Max Iterations", current.max_iterations ?? 10)
+        item("Max Iterations", current.max_iterations ?? 10),
       ]);
     case "switch":
-      return section("Switch", [item("Value", valueLabel(current.parameters?.value))], [], switchRows(current));
+      return section(
+        "Switch",
+        [item("Value", valueLabel(current.parameters?.value))],
+        [],
+        switchRows(current),
+      );
     case "toggle":
       return section("Toggle", [
         item("Value", valueLabel(current.parameters?.value)),
         item("On", refLabel(current.parameters?.on)),
-        item("Off", refLabel(current.parameters?.off))
+        item("Off", refLabel(current.parameters?.off)),
       ]);
     case "percentage":
       return section(
         "Percentage",
-        [item("Key", valueLabel(current.parameters?.key)), item("Default", refLabel(current.parameters?.default))],
+        [
+          item("Key", valueLabel(current.parameters?.key)),
+          item("Default", refLabel(current.parameters?.default)),
+        ],
         [],
-        percentageRows(current)
+        percentageRows(current),
       );
     case "parallel":
-      return section("Parallel", [], nodeRefArray(current.parameters?.branches).map((target) => `branch -> ${target}`));
+      return section(
+        "Parallel",
+        [],
+        nodeRefArray(current.parameters?.branches).map((target) => `branch -> ${target}`),
+      );
     case "join":
-      return section("Join", [item("Mode", current.parameters?.mode ?? "all")], nodeRefArray(current.parameters?.wait_for).map((target) => `wait for ${target}`));
+      return section(
+        "Join",
+        [item("Mode", current.parameters?.mode ?? "all")],
+        nodeRefArray(current.parameters?.wait_for).map((target) => `wait for ${target}`),
+      );
     case "try":
       return section("Try", [
         item("Body", refLabel(current.parameters?.body)),
         item("Catch", refLabel(current.parameters?.catch)),
-        item("Finally", refLabel(current.parameters?.finally))
+        item("Finally", refLabel(current.parameters?.finally)),
       ]);
     case "map":
       return section("Map", [
         item("Items", valueLabel(current.parameters?.items)),
         item("Target", refLabel(current.parameters?.target)),
-        item("Concurrency", current.parameters?.concurrency ?? "-")
+        item("Concurrency", current.parameters?.concurrency ?? "-"),
       ]);
     case "race":
-      return section("Race", [item("Winner", current.parameters?.winner ?? "first_success")], nodeRefArray(current.parameters?.branches).map((target) => `race -> ${target}`));
+      return section(
+        "Race",
+        [item("Winner", current.parameters?.winner ?? "first_success")],
+        nodeRefArray(current.parameters?.branches).map((target) => `race -> ${target}`),
+      );
     case "output":
       return section("Output", [
         item("Event", current.parameters?.event_type ?? "workflow.output"),
-        item("Data", valueLabel(current.parameters?.data))
+        item("Data", valueLabel(current.parameters?.data)),
       ]);
     case "input":
-      return section("Input", [item("Prompt", valueLabel(current.parameters?.prompt ?? "Provide input"))]);
+      return section("Input", [
+        item("Prompt", valueLabel(current.parameters?.prompt ?? "Provide input")),
+      ]);
     case "config":
       return section("Config", [
         item("Name", valueLabel(current.parameters?.name)),
-        item("Metadata", valueLabel(current.parameters?.metadata))
+        item("Metadata", valueLabel(current.parameters?.metadata)),
       ]);
     case "subflow":
       return section("Subflow", [
         item("Workflow", subflowLabel(current.subflow_id)),
-        item("Parameters", valueLabel(current.parameters))
+        item("Parameters", valueLabel(current.parameters)),
       ]);
     case "start":
       return section("Start", [item("Starts At", refLabel(current.transitions?.next))]);
@@ -360,77 +477,114 @@ function kindSection(current: JsonRecord): DetailSection {
     case "fail":
       return section("Fail", [item("Terminal", "yes")]);
     default:
-      return section(String(current.kind ?? "Node"), [item("Parameters", valueLabel(current.parameters))]);
+      return section(displayValue(current.kind ?? "Node"), [
+        item("Parameters", valueLabel(current.parameters)),
+      ]);
   }
 }
 
-function transitionsSection(current: JsonRecord): DetailSection {
+function transitionsSection(current: StepEditorNode): DetailSection {
   const transitions = current.transitions ?? {};
   const rows: DetailRow[] = [];
+
   for (const key of directTransitionKeys) {
     const target = nodeRefId(transitions[key]);
-    if (target) rows.push({ label: key, value: target });
+
+    if (target) {
+      rows.push({ label: key, value: target });
+    }
   }
-  if (Array.isArray(transitions.branches)) {
-    transitions.branches.forEach((branch: JsonRecord, index: number) => {
-      const target = nodeRefId(branch.target);
-      if (target) rows.push({ label: branch.label ?? `branch ${index + 1}`, value: target, note: conditionLabel(branch.when) });
-    });
-  }
+
+  asArray(transitions.branches).forEach((entry, index) => {
+    const branch = asRecord(entry);
+    const target = nodeRefId(branch.target);
+
+    if (target) {
+      rows.push({
+        label: displayValue(branch.label ?? `branch ${String(index + 1)}`),
+        value: target,
+        note: conditionLabel(branch.when),
+      });
+    }
+  });
+
   return section("Transitions", [], [], rows);
 }
 
-function branchRows(current: JsonRecord): DetailRow[] {
-  const branches = Array.isArray(current.transitions?.branches) ? current.transitions.branches : [];
-  return branches.map((branch: JsonRecord, index: number) => ({
-    label: branch.label ?? `branch ${index + 1}`,
-    value: refLabel(branch.target),
-    note: conditionLabel(branch.when)
-  }));
+function branchRows(current: StepEditorNode): DetailRow[] {
+  return asArray(current.transitions?.branches).map((entry, index) => {
+    const branch = asRecord(entry);
+    return {
+      label: displayValue(branch.label ?? `branch ${String(index + 1)}`),
+      value: refLabel(branch.target),
+      note: conditionLabel(branch.when),
+    };
+  });
 }
 
-function switchRows(current: JsonRecord): DetailRow[] {
-  const cases = Array.isArray(current.parameters?.cases) ? current.parameters.cases : [];
-  const rows = cases.map((switchCase: JsonRecord, index: number) => ({
-    label: switchCase.label ?? `case ${index + 1}`,
-    value: refLabel(switchCase.target),
-    note: conditionLabel(switchCase.when ?? switchCase.condition)
-  }));
-  if (current.parameters?.default) rows.push({ label: "default", value: refLabel(current.parameters.default) });
+function switchRows(current: StepEditorNode): DetailRow[] {
+  const rows = asArray(current.parameters?.cases).map((entry, index) => {
+    const switchCase = asRecord(entry);
+    return {
+      label: displayValue(switchCase.label ?? `case ${String(index + 1)}`),
+      value: refLabel(switchCase.target),
+      note: conditionLabel(switchCase.when ?? switchCase.condition),
+    };
+  });
+
+  if (current.parameters?.default) {
+    rows.push({ label: "default", value: refLabel(current.parameters.default), note: "" });
+  }
+
   return rows;
 }
 
-function percentageRows(current: JsonRecord): DetailRow[] {
-  const buckets = Array.isArray(current.parameters?.buckets) ? current.parameters.buckets : [];
-  const total = buckets.reduce((sum: number, bucket: JsonRecord) => sum + (Number(bucket?.weight) || 0), 0);
-  return buckets.map((bucket: JsonRecord, index: number) => {
-    const weight = Number(bucket?.weight) || 0;
-    const share = total > 0 ? ` (${Math.round((weight / total) * 100)}%)` : "";
+function percentageRows(current: StepEditorNode): DetailRow[] {
+  const buckets = asArray(current.parameters?.buckets);
+  const total = buckets.reduce(
+    (sum: number, bucket) => sum + (Number(asRecord(bucket).weight) || 0),
+    0,
+  );
+  return buckets.map((entry, index) => {
+    const bucket = asRecord(entry);
+    const weight = Number(bucket.weight) || 0;
+    const share = total > 0 ? ` (${String(Math.round((weight / total) * 100))}%)` : "";
     return {
-      label: `bucket ${index + 1}`,
+      label: `bucket ${String(index + 1)}`,
       value: refLabel(bucket.target),
-      note: `weight ${weight}${share}`
+      note: `weight ${String(weight)}${share}`,
     };
   });
 }
 
 function waitItems(wait: unknown): DetailItem[] {
   const record = isRecord(wait) ? wait : {};
-  return [
-    item("Seconds", record.seconds ?? "-"),
-    item("Until", record.until ?? "-")
-  ];
+  return [item("Seconds", record.seconds ?? "-"), item("Until", record.until ?? "-")];
 }
 
 function nodeRefArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(nodeRefId).filter((target): target is string => Boolean(target)) : [];
+  return Array.isArray(value)
+    ? value.map(nodeRefId).filter((target): target is string => Boolean(target))
+    : [];
 }
 
 function conditionLabel(value: unknown): string {
-  if (!isRecord(value)) return valueLabel(value);
-  if ("equals" in value) return `${valueLabel(value.value)} equals ${valueLabel(value.equals)}`;
-  if ("not_equals" in value) return `${valueLabel(value.value)} not equals ${valueLabel(value.not_equals)}`;
-  if ("exists" in value) return `${valueLabel(value.exists)} exists`;
+  if (!isRecord(value)) {
+    return valueLabel(value);
+  }
+
+  if ("equals" in value) {
+    return `${valueLabel(value.value)} equals ${valueLabel(value.equals)}`;
+  }
+
+  if ("not_equals" in value) {
+    return `${valueLabel(value.value)} not equals ${valueLabel(value.not_equals)}`;
+  }
+
+  if ("exists" in value) {
+    return `${valueLabel(value.exists)} exists`;
+  }
+
   return valueLabel(value);
 }
 
@@ -440,15 +594,22 @@ function refLabel(value: unknown): string {
 
 // prefer the target workflow's name over its raw id, falling back to the id when unresolved.
 function subflowLabel(subflowId: unknown): string {
-  const id = subflowId != null ? String(subflowId) : "";
-  if (!id) return "-";
+  const id = displayValue(subflowId);
+
+  if (!id) {
+    return "-";
+  }
+
   const name = workflows.workflows.find((workflow) => workflow.id === id)?.name;
-  return name || `Workflow ${id}`;
+  return name ?? `Workflow ${id}`;
 }
 
 // render a runinator type into a short readable signature (e.g. array<string>, map<integer>).
 function renderType(ty: RuninatorType | null | undefined): string {
-  if (!ty) return "any";
+  if (!ty) {
+    return "any";
+  }
+
   switch (ty.type) {
     case "array":
       return `array<${renderType(ty.items)}>`;
@@ -461,38 +622,86 @@ function renderType(ty: RuninatorType | null | undefined): string {
     case "enum":
       return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
     case "range":
-      return `${renderType(ty.base)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
+      return `${renderType(ty.base)} range ${String(ty.min ?? "")}..${String(ty.max ?? "")}`;
     default:
       return ty.type;
   }
 }
 
 function valueLabel(value: unknown): string {
-  if (value == null) return "-";
-  if (typeof value === "string") return value || "-";
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.length ? value.map(valueLabel).join(", ") : "empty list";
-  if (!isRecord(value)) return String(value);
-  if (nodeRefId(value)) return `node ${nodeRefId(value)}`;
-  if (isRecord(value.$ref)) return refExpressionLabel(value.$ref);
-  if (Array.isArray(value.$concat)) return `concat ${value.$concat.length} part${value.$concat.length === 1 ? "" : "s"}`;
+  if (value == null) {
+    return "-";
+  }
+
+  if (typeof value === "string") {
+    return value || "-";
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.length ? value.map(valueLabel).join(", ") : "empty list";
+  }
+
+  if (!isRecord(value)) {
+    return displayValue(value);
+  }
+
+  const nodeRef = nodeRefId(value);
+
+  if (nodeRef) {
+    return `node ${nodeRef}`;
+  }
+
+  if (isRecord(value.$ref)) {
+    return refExpressionLabel(value.$ref);
+  }
+
+  if (Array.isArray(value.$concat)) {
+    return `concat ${String(value.$concat.length)} part${value.$concat.length === 1 ? "" : "s"}`;
+  }
+
   const entries = Object.entries(value);
-  if (entries.length === 0) return "none";
-  return entries.slice(0, 4).map(([key, nested]) => `${key}: ${valueLabel(nested)}`).join("; ") + (entries.length > 4 ? `; +${entries.length - 4} more` : "");
+
+  if (entries.length === 0) {
+    return "none";
+  }
+
+  return (
+    entries
+      .slice(0, 4)
+      .map(([key, nested]) => `${key}: ${valueLabel(nested)}`)
+      .join("; ") + (entries.length > 4 ? `; +${String(entries.length - 4)} more` : "")
+  );
 }
 
 function refExpressionLabel(ref: JsonRecord): string {
   for (const source of ["params", "prev", "workflow", "output"]) {
-    if (Array.isArray(ref[source])) return `${source}.${ref[source].join(".")}`;
+    if (Array.isArray(ref[source])) {
+      return `${source}.${ref[source].join(".")}`;
+    }
   }
-  if (typeof ref.node === "string" && Array.isArray(ref.output)) return `${ref.node}.output.${ref.output.join(".")}`;
+
+  if (typeof ref.node === "string" && Array.isArray(ref.output)) {
+    return `${ref.node}.output.${ref.output.join(".")}`;
+  }
+
   return "reference";
 }
 
 function waitSummary(wait: unknown): string {
   const record = isRecord(wait) ? wait : {};
-  if (record.seconds) return `Wait ${record.seconds}s`;
-  if (record.until) return `Wait until ${record.until}`;
+
+  if (record.seconds) {
+    return `Wait ${displayValue(record.seconds)}s`;
+  }
+
+  if (record.until) {
+    return `Wait until ${displayValue(record.until)}`;
+  }
+
   return "Wait for external timing";
 }
 
@@ -500,7 +709,12 @@ function item(label: string, raw: unknown): DetailItem {
   return { label, value: valueLabel(raw) };
 }
 
-function section(title: string, items: DetailItem[] = [], chips: string[] = [], rows: DetailRow[] = []): DetailSection {
+function section(
+  title: string,
+  items: DetailItem[] = [],
+  chips: string[] = [],
+  rows: DetailRow[] = [],
+): DetailSection {
   return { title, items: items.filter((entry) => entry.value !== "-"), chips, rows };
 }
 

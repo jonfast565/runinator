@@ -2,21 +2,27 @@ import { describe, expect, it } from "vitest";
 import { createSSRApp, h } from "vue";
 import { renderToString } from "vue/server-renderer";
 import KeyValueObjectEditor from "../KeyValueObjectEditor.vue";
-import { removeObjectKey, renameObjectKey, setObjectValue, uniqueObjectKey } from "../../../utils/key-value-object";
+import {
+  removeObjectKey,
+  renameObjectKey,
+  setObjectValue,
+  uniqueObjectKey,
+} from "../../../utils/key-value-object";
 
 describe("KeyValueObjectEditor", () => {
   it("renders scalar, object, and WDL expression values as editable rows", async () => {
     const app = createSSRApp({
-      render: () => h(KeyValueObjectEditor, {
-        modelValue: {
-          message: "hello",
-          retries: 3,
-          enabled: true,
-          payload: { nested: "value" },
-          from_params: { "$ref": { params: ["ticket_id"] } }
-        },
-        title: "Parameters"
-      })
+      render: () =>
+        h(KeyValueObjectEditor, {
+          modelValue: {
+            message: "hello",
+            retries: 3,
+            enabled: true,
+            payload: { nested: "value" },
+            from_params: { $ref: { params: ["ticket_id"] } },
+          },
+          title: "Parameters",
+        }),
     });
 
     const html = await renderToString(app);

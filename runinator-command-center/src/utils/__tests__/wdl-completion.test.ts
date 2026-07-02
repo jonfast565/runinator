@@ -6,7 +6,7 @@ import {
   buildWdlCompletionRequest,
   completionResponseToCodeMirror,
   utf16OffsetToUtf8ByteOffset,
-  utf8ByteOffsetToUtf16Offset
+  utf8ByteOffsetToUtf16Offset,
 } from "../wdl-completion";
 import type { ProviderMetadata, WdlCompletionResponse } from "../../types/models";
 
@@ -37,9 +37,9 @@ describe("wdl completion adapter", () => {
           detail: "shell",
           documentation: "Run a command",
           insert_text: "run",
-          is_snippet: false
-        }
-      ]
+          is_snippet: false,
+        },
+      ],
     };
 
     const result = completionResponseToCodeMirror(source, response);
@@ -50,7 +50,7 @@ describe("wdl completion adapter", () => {
       label: "run",
       type: "function",
       detail: "shell",
-      apply: "run"
+      apply: "run",
     });
   });
 
@@ -65,9 +65,9 @@ describe("wdl completion adapter", () => {
           detail: "required string",
           documentation: null,
           insert_text: "token: ${}",
-          is_snippet: true
-        }
-      ]
+          is_snippet: true,
+        },
+      ],
     };
 
     const result = completionResponseToCodeMirror("", response);
@@ -87,7 +87,7 @@ describe("wdl completion adapter", () => {
           detail: "success edge",
           documentation: null,
           insert_text: "ok -> ${target}",
-          is_snippet: true
+          is_snippet: true,
         },
         {
           label: "cleanup",
@@ -95,7 +95,7 @@ describe("wdl completion adapter", () => {
           detail: "node target",
           documentation: null,
           insert_text: "cleanup",
-          is_snippet: false
+          is_snippet: false,
         },
         {
           label: "console",
@@ -103,9 +103,9 @@ describe("wdl completion adapter", () => {
           detail: "provider",
           documentation: null,
           insert_text: "console",
-          is_snippet: false
-        }
-      ]
+          is_snippet: false,
+        },
+      ],
     };
 
     const result = completionResponseToCodeMirror("", response);
@@ -113,7 +113,7 @@ describe("wdl completion adapter", () => {
     expect(result.options.map((option) => [option.label, option.type])).toEqual([
       ["ok", "constant"],
       ["cleanup", "interface"],
-      ["console", "namespace"]
+      ["console", "namespace"],
     ]);
   });
 
@@ -129,60 +129,67 @@ describe("wdl completion adapter", () => {
 
 describe("wdl language completions", () => {
   it("includes recent workflow language surfaces in the static vocabulary", () => {
-    expect(wdlStaticCompletionLabels).toEqual(expect.arrayContaining([
-      "fn",
-      "import std",
-      "returns",
-      "watch",
-      "gate condition",
-      "signal",
-      "compensate",
-      "enum",
-      "range",
-      "lambda"
-    ]));
+    expect(wdlStaticCompletionLabels).toEqual(
+      expect.arrayContaining([
+        "fn",
+        "import std",
+        "returns",
+        "watch",
+        "gate condition",
+        "signal",
+        "compensate",
+        "enum",
+        "range",
+        "lambda",
+      ]),
+    );
   });
 
   it("completes std modules and module functions without provider metadata", async () => {
-    const modules = await completeLabels("workflow \"x\" { node compute { return std.<> }");
+    const modules = await completeLabels('workflow "x" { node compute { return std.<> }');
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
 
-    const functions = await completeLabels("workflow \"x\" { node compute { return std.strings.<> }");
+    const functions = await completeLabels('workflow "x" { node compute { return std.strings.<> }');
     expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
     expect(functions).toContain("upper");
     expect(functions).not.toContain("http_get");
   });
 
   it("completes fluent method names after a value dot", async () => {
-    const labels = await completeLabels("workflow \"x\" { node console.run(command: params.name.<> }");
+    const labels = await completeLabels(
+      'workflow "x" { node console.run(command: params.name.<> }',
+    );
 
     expect(labels).toEqual(expect.arrayContaining(["upper", "trim", "map", "http_get"]));
   });
 
   it("offers identifier completions during normal typing", async () => {
-    const labels = await completeLabels("workflow \"x\" { wo", false);
+    const labels = await completeLabels('workflow "x" { wo', false);
 
     expect(labels).toEqual(expect.arrayContaining(["workflow", "watch"]));
   });
 
   it("offers dot completions during normal typing", async () => {
-    const modules = await completeLabels("workflow \"x\" { node compute { return std.", false);
+    const modules = await completeLabels('workflow "x" { node compute { return std.', false);
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
 
-    const functions = await completeLabels("workflow \"x\" { node compute { return std.strings.", false);
+    const functions = await completeLabels(
+      'workflow "x" { node compute { return std.strings.',
+      false,
+    );
     expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
     expect(functions).not.toContain("http_get");
   });
 
   it("uses the rust-backed completion source when one is supplied", async () => {
-    const source = "workflow \"x\" { node compute { return std.";
+    const source = 'workflow "x" { node compute { return std.';
     const providerSource: CompletionSource = () => ({
       from: source.length,
-      options: [{ label: "provider-sentinel" }]
+      options: [{ label: "provider-sentinel" }],
     });
     const state = EditorState.create({
       doc: source,
-      extensions: [wdl(providerSource)]
+      extensions: [wdl(providerSource)],
     });
     const sources = state.languageDataAt("autocomplete", source.length) as CompletionSource[];
 
@@ -198,7 +205,9 @@ async function completeLabels(source: string, explicit = true): Promise<string[]
   const cursor = source.indexOf("<>");
   const doc = cursor >= 0 ? source.replace("<>", "") : source;
   const state = EditorState.create({ doc });
-  const result = await wdlCompletion(new CompletionContext(state, cursor >= 0 ? cursor : doc.length, explicit));
+  const result = await wdlCompletion(
+    new CompletionContext(state, cursor >= 0 ? cursor : doc.length, explicit),
+  );
   return result?.options.map((option) => option.label) ?? [];
 }
 
@@ -206,6 +215,6 @@ function provider(): ProviderMetadata {
   return {
     name: "console",
     actions: [],
-    metadata: { credential_scopes: [], contract: null }
+    metadata: { credential_scopes: [], contract: null },
   };
 }

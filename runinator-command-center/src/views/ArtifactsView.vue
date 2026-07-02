@@ -31,7 +31,11 @@
           <tbody>
             <tr v-if="!filteredArtifacts.length">
               <td colspan="8" class="empty-cell">
-                {{ store.artifacts.length ? `No artifacts match "${app.searchQuery}".` : "No artifacts yet." }}
+                {{
+                  store.artifacts.length
+                    ? `No artifacts match "${app.searchQuery}".`
+                    : "No artifacts yet."
+                }}
               </td>
             </tr>
             <tr
@@ -48,10 +52,18 @@
               <td class="uri-cell">{{ artifact.uri }}</td>
               <td>{{ formatDate(artifact.created_at) }}</td>
               <td class="row-actions">
-                <button class="btn btn-icon btn-ghost" title="Download" @click.stop="onDownload(artifact)">
+                <button
+                  class="btn btn-icon btn-ghost"
+                  title="Download"
+                  @click.stop="onDownload(artifact)"
+                >
                   <Icon name="download" />
                 </button>
-                <button class="btn btn-icon btn-ghost" title="Delete" @click.stop="onDelete(artifact)">
+                <button
+                  class="btn btn-icon btn-ghost"
+                  title="Delete"
+                  @click.stop="onDelete(artifact)"
+                >
                   <Icon name="trash" />
                 </button>
               </td>
@@ -79,15 +91,21 @@ const loading = ref(false);
 // filter artifacts by the global search box (matches name, run id, mime type, or uri).
 const filteredArtifacts = computed(() => {
   const query = app.normalizedSearch;
-  if (!query) return store.artifacts;
+
+  if (!query) {
+    return store.artifacts;
+  }
+
   return store.artifacts.filter((artifact) =>
-    [artifact.name, String(artifact.run_id ?? ""), artifact.mime_type, artifact.uri]
-      .some((value) => String(value ?? "").toLowerCase().includes(query))
+    [artifact.name, artifact.run_id, artifact.mime_type, artifact.uri].some((value) =>
+      value.toLowerCase().includes(query),
+    ),
   );
 });
 
 async function refresh() {
   loading.value = true;
+
   try {
     await store.refreshArtifacts();
   } finally {
@@ -108,14 +126,19 @@ async function onDelete(artifact: RunArtifact) {
 }
 
 function formatBytes(size: number): string {
-  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  if (!Number.isFinite(size) || size <= 0) {
+    return "0 B";
+  }
+
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = size;
   let unit = 0;
+
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit += 1;
   }
+
   const formatted = value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value).toString();
   return `${formatted} ${units[unit]}`;
 }

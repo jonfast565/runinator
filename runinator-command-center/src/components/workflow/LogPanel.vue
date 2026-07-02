@@ -1,11 +1,7 @@
 <template>
   <div class="log-panel">
     <div class="log-controls">
-      <input
-        v-model="filter"
-        class="log-filter-input"
-        placeholder="Filter logs (substring)"
-      />
+      <input v-model="filter" class="log-filter-input" placeholder="Filter logs (substring)" />
       <label class="log-toggle">
         <input v-model="showStdout" type="checkbox" />
         stdout
@@ -32,7 +28,8 @@
 </span>
     </pre>
     <p class="log-hint">
-      Severity is inferred client-side from stream (stderr → error) and substring match — best-effort.
+      Severity is inferred client-side from stream (stderr → error) and substring match —
+      best-effort.
     </p>
   </div>
 </template>
@@ -61,41 +58,74 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  if (timer !== undefined) window.clearInterval(timer);
+  if (timer !== undefined) {
+    window.clearInterval(timer);
+  }
 });
 
 const isLive = computed(() => {
-  if (!props.lastChunkAt) return false;
+  if (!props.lastChunkAt) {
+    return false;
+  }
+
   return now.value - props.lastChunkAt < 3000;
 });
 
-type Line = { text: string; stream: string };
+interface Line {
+  text: string;
+  stream: string;
+}
 
 const filteredLines = computed<Line[]>(() => {
   const query = filter.value.toLowerCase().trim();
   const lines: Line[] = [];
+
   if (props.chunks.length === 0 && props.fallbackText) {
     for (const text of props.fallbackText.split("\n")) {
       lines.push({ text, stream: "stdout" });
     }
   } else {
     for (const chunk of props.chunks) {
-      const stream = chunk.stream ?? "stdout";
-      if (stream === "stdout" && !showStdout.value) continue;
-      if (stream === "stderr" && !showStderr.value) continue;
+      const stream = chunk.stream;
+
+      if (stream === "stdout" && !showStdout.value) {
+        continue;
+      }
+
+      if (stream === "stderr" && !showStderr.value) {
+        continue;
+      }
+
       lines.push({ text: `[${stream}] ${chunk.content}`, stream });
     }
   }
-  if (!query) return lines;
+
+  if (!query) {
+    return lines;
+  }
+
   return lines.filter((line) => line.text.toLowerCase().includes(query));
 });
 
 function lineClass(line: Line): string {
-  if (line.stream === "stderr") return "log-error";
+  if (line.stream === "stderr") {
+    return "log-error";
+  }
+
   const upper = line.text.toUpperCase();
-  if (upper.includes("ERROR") || upper.includes("FATAL")) return "log-error";
-  if (upper.includes("WARN")) return "log-warn";
-  if (upper.includes("DEBUG")) return "log-debug";
+
+  if (upper.includes("ERROR") || upper.includes("FATAL")) {
+    return "log-error";
+  }
+
+  if (upper.includes("WARN")) {
+    return "log-warn";
+  }
+
+  if (upper.includes("DEBUG")) {
+    return "log-debug";
+  }
+
   return "";
 }
 </script>
@@ -151,8 +181,13 @@ function lineClass(line: Line): string {
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 .log-output {
   flex: 1;

@@ -23,33 +23,122 @@ import {
 // keyword groups mirror runinator-wdl/src/wdl.pest, split by role so each gets its own color.
 // structural declarations that open blocks or bind names.
 const DECL_KW = new Set([
-  "workflow", "params", "input", "node", "let", "type", "alias", "trigger", "start", "set", "secret", "config",
-  "fn", "namespace", "import",
+  "workflow",
+  "params",
+  "input",
+  "node",
+  "let",
+  "type",
+  "alias",
+  "trigger",
+  "start",
+  "set",
+  "secret",
+  "config",
+  "fn",
+  "namespace",
+  "import",
 ]);
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
-  "if", "else", "for", "while", "until", "match", "when", "toggle", "split", "on", "off",
-  "parallel", "race", "try", "catch",
-  "finally", "map", "branch", "join", "wait", "emit", "output", "yield", "approve", "fail",
-  "subflow", "compute", "return", "goto", "edges", "gate", "signal",
-  "watch", "compensate",
-  "assert", "transform", "audit", "checkpoint", "mutex", "throttle", "await", "debounce",
-  "collect", "barrier", "circuit_breaker", "event_source",
+  "if",
+  "else",
+  "for",
+  "while",
+  "until",
+  "match",
+  "when",
+  "toggle",
+  "split",
+  "on",
+  "off",
+  "parallel",
+  "race",
+  "try",
+  "catch",
+  "finally",
+  "map",
+  "branch",
+  "join",
+  "wait",
+  "emit",
+  "output",
+  "yield",
+  "approve",
+  "fail",
+  "subflow",
+  "compute",
+  "return",
+  "goto",
+  "edges",
+  "gate",
+  "signal",
+  "watch",
+  "compensate",
+  "assert",
+  "transform",
+  "audit",
+  "checkpoint",
+  "mutex",
+  "throttle",
+  "await",
+  "debounce",
+  "collect",
+  "barrier",
+  "circuit_breaker",
+  "event_source",
 ]);
 // clause/option words that modify a statement.
 const MODIFIER_KW = new Set([
-  "with", "as", "initial", "limit", "concurrency", "detached", "reuse", "disabled", "blackout",
-  "to", "cron", "winner", "name", "meta", "returns", "every", "timeout", "key", "priority",
+  "with",
+  "as",
+  "initial",
+  "limit",
+  "concurrency",
+  "detached",
+  "reuse",
+  "disabled",
+  "blackout",
+  "to",
+  "cron",
+  "winner",
+  "name",
+  "meta",
+  "returns",
+  "every",
+  "timeout",
+  "key",
+  "priority",
   "max_depth",
-  "rate", "per", "delay", "count", "threshold", "window", "cooldown", "mode", "action", "actor",
-  "target", "reason", "filter",
+  "rate",
+  "per",
+  "delay",
+  "count",
+  "threshold",
+  "window",
+  "cooldown",
+  "mode",
+  "action",
+  "actor",
+  "target",
+  "reason",
+  "filter",
 ]);
 // word-form comparison/membership operators.
 const OP_KW = new Set(["exists", "contains", "in", "starts_with", "ends_with"]);
 // outcome labels, only highlighted as such when they precede a `->` transition.
 const OUTCOMES = new Set(["ok", "next", "fail", "timeout", "reject"]);
 // constant-like policy/target atoms.
-const ATOMS = new Set(["all", "any", "first_success", "done", "none", "manual", "condition", "external"]);
+const ATOMS = new Set([
+  "all",
+  "any",
+  "first_success",
+  "done",
+  "none",
+  "manual",
+  "condition",
+  "external",
+]);
 // coercion and compile-time intrinsics, highlighted as functions only when called.
 const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);
 // reference roots that are never keywords.
@@ -59,7 +148,20 @@ const PURE_REFS = new Set(["run", "loop", "state", "item"]);
 const ROOT_KEYWORDS = new Set(["params", "config", "secret", "workflow", "std"]);
 // primitive type names. surfaced for completion, and colored inside type-position contexts
 // (after `type`/`:` in a type field, `node x:`/`let x:` annotations) where they are unambiguous.
-const TYPES = ["any", "boolean", "bool", "duration", "float", "int", "integer", "json", "map", "null", "number", "string"];
+const TYPES = [
+  "any",
+  "boolean",
+  "bool",
+  "duration",
+  "float",
+  "int",
+  "integer",
+  "json",
+  "map",
+  "null",
+  "number",
+  "string",
+];
 
 const STD_MODULES = [
   "math",
@@ -73,22 +175,99 @@ const STD_MODULES = [
   "exec",
 ] as const;
 
-const STD_INTRINSICS: { label: string; module: typeof STD_MODULES[number] }[] = [
-  ...["add", "sub", "mul", "div", "mod", "floor", "ceil", "round", "min", "max", "parse_int", "parse_float"].map((label) => ({ label, module: "math" as const })),
-  ...["lower", "upper", "trim", "split", "join", "replace", "substring", "starts_with", "ends_with"].map((label) => ({ label, module: "strings" as const })),
-  ...["len", "keys", "values", "contains", "at", "has", "sum", "sort", "reverse", "unique", "flatten", "slice", "first", "last", "append", "range", "map", "filter", "find", "any", "all", "reduce", "sort_by", "flat_map"].map((label) => ({ label, module: "collections" as const })),
-  ...["merge", "pick", "omit", "entries", "from_entries"].map((label) => ({ label, module: "objects" as const })),
-  ...["parse_json", "base64_encode", "base64_decode"].map((label) => ({ label, module: "encoding" as const })),
-  ...["eq", "ne", "gt", "lt", "gte", "lte", "not", "and", "or", "default"].map((label) => ({ label, module: "logic" as const })),
-  ...["format_date", "parse_date", "add_duration", "date_diff"].map((label) => ({ label, module: "dates" as const })),
-  ...["regex_match", "regex_replace", "regex_extract"].map((label) => ({ label, module: "regex" as const })),
-  ...["http_get", "http_post", "now", "uuid", "env"].map((label) => ({ label, module: "exec" as const })),
+const STD_INTRINSICS: { label: string; module: (typeof STD_MODULES)[number] }[] = [
+  ...[
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "mod",
+    "floor",
+    "ceil",
+    "round",
+    "min",
+    "max",
+    "parse_int",
+    "parse_float",
+  ].map((label) => ({ label, module: "math" as const })),
+  ...[
+    "lower",
+    "upper",
+    "trim",
+    "split",
+    "join",
+    "replace",
+    "substring",
+    "starts_with",
+    "ends_with",
+  ].map((label) => ({ label, module: "strings" as const })),
+  ...[
+    "len",
+    "keys",
+    "values",
+    "contains",
+    "at",
+    "has",
+    "sum",
+    "sort",
+    "reverse",
+    "unique",
+    "flatten",
+    "slice",
+    "first",
+    "last",
+    "append",
+    "range",
+    "map",
+    "filter",
+    "find",
+    "any",
+    "all",
+    "reduce",
+    "sort_by",
+    "flat_map",
+  ].map((label) => ({ label, module: "collections" as const })),
+  ...["merge", "pick", "omit", "entries", "from_entries"].map((label) => ({
+    label,
+    module: "objects" as const,
+  })),
+  ...["parse_json", "base64_encode", "base64_decode"].map((label) => ({
+    label,
+    module: "encoding" as const,
+  })),
+  ...["eq", "ne", "gt", "lt", "gte", "lte", "not", "and", "or", "default"].map((label) => ({
+    label,
+    module: "logic" as const,
+  })),
+  ...["format_date", "parse_date", "add_duration", "date_diff"].map((label) => ({
+    label,
+    module: "dates" as const,
+  })),
+  ...["regex_match", "regex_replace", "regex_extract"].map((label) => ({
+    label,
+    module: "regex" as const,
+  })),
+  ...["http_get", "http_post", "now", "uuid", "env"].map((label) => ({
+    label,
+    module: "exec" as const,
+  })),
 ];
 
 // completion vocabulary spans every group so suggestions stay broad.
 const KEYWORDS = new Set([
-  ...DECL_KW, ...CONTROL_KW, ...MODIFIER_KW, ...OP_KW, ...OUTCOMES, ...ATOMS,
-  ...BUILTINS, ...PURE_REFS, ...ROOT_KEYWORDS, ...TYPES, "true", "false", "null",
+  ...DECL_KW,
+  ...CONTROL_KW,
+  ...MODIFIER_KW,
+  ...OP_KW,
+  ...OUTCOMES,
+  ...ATOMS,
+  ...BUILTINS,
+  ...PURE_REFS,
+  ...ROOT_KEYWORDS,
+  ...TYPES,
+  "true",
+  "false",
+  "null",
 ]);
 
 interface WdlState {
@@ -117,39 +296,77 @@ interface WdlState {
 // true when the closing quote was found on this line.
 function consumeString(stream: StringStream): boolean {
   let escaped = false;
+
   while (!stream.eol()) {
     const ch = stream.next();
+
     if (escaped) {
       escaped = false;
       continue;
     }
+
     if (ch === "\\") {
       escaped = true;
       continue;
     }
+
     if (ch === '"') {
       return true;
     }
   }
+
   return false;
 }
 
 // resolve a bare word to its token class; member-access words are handled by the caller.
 function classifyWord(word: string, stream: StringStream): string {
   // reference roots: pure refs always, keyword-roots only before a dot.
-  if (PURE_REFS.has(word)) return "refRoot";
-  if (ROOT_KEYWORDS.has(word) && stream.match(/^\s*\./, false)) return "refRoot";
+  if (PURE_REFS.has(word)) {
+    return "refRoot";
+  }
+
+  if (ROOT_KEYWORDS.has(word) && stream.match(/^\s*\./, false)) {
+    return "refRoot";
+  }
+
   // outcome label immediately before a transition arrow.
-  if (OUTCOMES.has(word) && stream.match(/^\s*->/, false)) return "outcome";
+  if (OUTCOMES.has(word) && stream.match(/^\s*->/, false)) {
+    return "outcome";
+  }
+
   // coercion builtin in call position.
-  if (BUILTINS.has(word) && stream.match(/^\s*\(/, false)) return "builtin";
-  if (ATOMS.has(word)) return "atom";
-  if (word === "true" || word === "false") return "bool";
-  if (word === "null") return "null";
-  if (DECL_KW.has(word)) return "declKw";
-  if (CONTROL_KW.has(word)) return "controlKw";
-  if (MODIFIER_KW.has(word)) return "modifierKw";
-  if (OP_KW.has(word)) return "opKw";
+  if (BUILTINS.has(word) && stream.match(/^\s*\(/, false)) {
+    return "builtin";
+  }
+
+  if (ATOMS.has(word)) {
+    return "atom";
+  }
+
+  if (word === "true" || word === "false") {
+    return "bool";
+  }
+
+  if (word === "null") {
+    return "null";
+  }
+
+  if (DECL_KW.has(word)) {
+    return "declKw";
+  }
+
+  if (CONTROL_KW.has(word)) {
+    return "controlKw";
+  }
+
+  if (MODIFIER_KW.has(word)) {
+    return "modifierKw";
+  }
+
+  if (OP_KW.has(word)) {
+    return "opKw";
+  }
+
   return "variableName";
 }
 
@@ -175,6 +392,7 @@ const wdlParser = StreamLanguage.define<WdlState>({
       } else {
         stream.skipToEnd();
       }
+
       return "comment";
     }
 
@@ -199,6 +417,7 @@ const wdlParser = StreamLanguage.define<WdlState>({
       stream.skipToEnd();
       return "comment";
     }
+
     if (stream.match("/*")) {
       if (!stream.skipTo("*/")) {
         stream.skipToEnd();
@@ -206,13 +425,17 @@ const wdlParser = StreamLanguage.define<WdlState>({
       } else {
         stream.match("*/");
       }
+
       return "comment";
     }
 
     // action name immediately following a `provider .`.
     if (state.expectAction) {
       state.expectAction = false;
-      if (stream.match(/^[A-Za-z_][A-Za-z0-9_-]*/)) return "action";
+
+      if (stream.match(/^[A-Za-z_][A-Za-z0-9_-]*/)) {
+        return "action";
+      }
     }
 
     // strings (interpolation `${...}` is highlighted as part of the string for now).
@@ -241,16 +464,19 @@ const wdlParser = StreamLanguage.define<WdlState>({
     // identifiers, keywords, references.
     if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*/)) {
       const word = stream.current();
+
       // member access: a method call when followed by `(`, otherwise a property.
       if (afterDot) {
         return stream.match(/^\s*\(/, false) ? "method" : "property";
       }
+
       // the name being declared by `type` (a `{` or `=` body follows).
       if (state.expectTypeName) {
         state.expectTypeName = false;
         state.afterTypeName = true;
         return "typeName";
       }
+
       // the name being bound by `node` (workflow scope) or `let` (compute-local); a following `:`
       // would open a type annotation.
       if (state.expectBindingName) {
@@ -258,30 +484,55 @@ const wdlParser = StreamLanguage.define<WdlState>({
         state.pendingBindingType = true;
         return "variableName";
       }
+
       // any identifier inside a type expression is a type reference (named or builtin primitive).
       if (state.inType) {
         return "typeName";
       }
+
       const cls = classifyWord(word, stream);
-      if (cls === "declKw" && word === "type") state.expectTypeName = true;
-      if (cls === "declKw" && (word === "node" || word === "let")) state.expectBindingName = true;
+
+      if (cls === "declKw" && word === "type") {
+        state.expectTypeName = true;
+      }
+
+      if (cls === "declKw" && (word === "node" || word === "let")) {
+        state.expectBindingName = true;
+      }
+
       // the `params` block keyword opens a type body of input fields.
       if (word === "params" && stream.match(/^\s*\{/, false)) {
         state.afterTypeName = true;
         return "declKw";
       }
+
       return cls;
     }
 
     // transition arrow.
-    if (stream.match("->")) return "arrow";
+    if (stream.match("->")) {
+      return "arrow";
+    }
+
     // argument/object spread.
-    if (stream.match("...")) return "operator";
-    // multi-char operators.
-    if (stream.match("++") || stream.match("??") || stream.match("&&") || stream.match("||") ||
-        stream.match("!=") || stream.match("==") || stream.match(">=") || stream.match("<=")) {
+    if (stream.match("...")) {
       return "operator";
     }
+
+    // multi-char operators.
+    if (
+      stream.match("++") ||
+      stream.match("??") ||
+      stream.match("&&") ||
+      stream.match("||") ||
+      stream.match("!=") ||
+      stream.match("==") ||
+      stream.match(">=") ||
+      stream.match("<=")
+    ) {
+      return "operator";
+    }
+
     // member dot: routes the next token to action (after a provider) or property access.
     if (stream.match(".")) {
       if (state.afterProvider) {
@@ -290,8 +541,10 @@ const wdlParser = StreamLanguage.define<WdlState>({
       } else {
         state.afterDot = true;
       }
+
       return "operator";
     }
+
     // braces maintain a context stack so a `:` can tell a type field from an object-literal entry.
     if (stream.match("{")) {
       const kind = state.afterTypeName || state.inType ? "type" : "value";
@@ -300,17 +553,20 @@ const wdlParser = StreamLanguage.define<WdlState>({
       state.braceStack.push(kind);
       return "bracket";
     }
+
     if (stream.match("}")) {
       state.braceStack.pop();
       state.inType = false;
       return "bracket";
     }
+
     // `=` assignment (`==` is handled above): opens a `type X =` alias body, otherwise ends type
     // context. the lambda arrow `=>` keeps its operator role without touching type context.
     if (stream.match("=")) {
       if (stream.peek() === ">") {
         return "operator";
       }
+
       if (state.afterTypeName) {
         state.afterTypeName = false;
         state.inType = true;
@@ -318,26 +574,33 @@ const wdlParser = StreamLanguage.define<WdlState>({
         state.inType = false;
         state.pendingBindingType = false;
       }
+
       return "operator";
     }
+
     // `:` opens a type when inside a type body or a `let`/field annotation.
     if (stream.match(":")) {
       const top = state.braceStack[state.braceStack.length - 1];
+
       if (top === "type" || state.pendingBindingType) {
         state.inType = true;
         state.pendingBindingType = false;
       }
+
       return "operator";
     }
+
     // `,` separates type fields; the next field name leaves type context.
     if (stream.match(",")) {
       state.inType = false;
       return "operator";
     }
+
     // remaining single-char operators.
     if (stream.match(/^[<>!+?*/%|&-]/)) {
       return "operator";
     }
+
     // brackets and punctuation.
     if (stream.match(/^[()[\]]/)) {
       return "bracket";
@@ -390,7 +653,14 @@ const wdlHighlightStyle = HighlightStyle.define([
   { tag: t.namespace, color: "#c18401" },
   // type names (declared `type X`, primitive builtins, and type-position references) in cyan.
   { tag: t.typeName, color: "#0997b3" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.standard(t.function(t.variableName))], color: "#4078f2" },
+  {
+    tag: [
+      t.function(t.variableName),
+      t.function(t.propertyName),
+      t.standard(t.function(t.variableName)),
+    ],
+    color: "#4078f2",
+  },
   // reference roots (`params.*`, `run.*`) and their member path.
   { tag: t.special(t.variableName), color: "#e45649" },
   { tag: t.propertyName, color: "#383a42" },
@@ -431,12 +701,12 @@ const snippets = [
     type: "function",
     detail: "provider action node",
   }),
-  snippetCompletion('fn ${name}(${arg}: ${type}) -> ${return_type} = ${value}', {
+  snippetCompletion("fn ${name}(${arg}: ${type}) -> ${return_type} = ${value}", {
     label: "fn",
     type: "function",
     detail: "function definition",
   }),
-  snippetCompletion('import std.${module} as ${alias}', {
+  snippetCompletion("import std.${module} as ${alias}", {
     label: "import std",
     type: "keyword",
     detail: "standard-library import",
@@ -516,11 +786,14 @@ const snippets = [
     type: "keyword",
     detail: "multi-run rendezvous",
   }),
-  snippetCompletion('circuit_breaker "${name}" threshold ${n} window ${window} cooldown ${cooldown}', {
-    label: "circuit_breaker",
-    type: "keyword",
-    detail: "cross-run failure guard",
-  }),
+  snippetCompletion(
+    'circuit_breaker "${name}" threshold ${n} window ${window} cooldown ${cooldown}',
+    {
+      label: "circuit_breaker",
+      type: "keyword",
+      detail: "cross-run failure guard",
+    },
+  ),
   snippetCompletion('event_source type "${event_type}" max ${count} timeout ${deadline}', {
     label: "event_source",
     type: "keyword",
@@ -561,7 +834,9 @@ const intrinsicCompletions: Completion[] = STD_INTRINSICS.map(({ label, module }
 }));
 
 function intrinsicCompletionsFor(module: string): Completion[] {
-  return intrinsicCompletions.filter((completion) => completion.detail === `std.${module}.${completion.label}`);
+  return intrinsicCompletions.filter(
+    (completion) => completion.detail === `std.${module}.${completion.label}`,
+  );
 }
 
 export const wdlStaticCompletionLabels = [
@@ -573,14 +848,18 @@ export const wdlStaticCompletionLabels = [
   ]),
 ].sort();
 
-export const wdlCompletion: CompletionSource = (context: CompletionContext): CompletionResult | null => {
+export const wdlCompletion: CompletionSource = (
+  context: CompletionContext,
+): CompletionResult | null => {
   const word = context.matchBefore(/[A-Za-z_][A-Za-z0-9_-]*/);
   const tokenStart = word?.from ?? context.pos;
   const beforeToken = context.state.sliceDoc(0, tokenStart);
-  const stdModule = beforeToken.match(/\bstd\.([A-Za-z_][A-Za-z0-9_]*)\.$/);
-  const afterDot = /\.$/.test(beforeToken);
+  const stdModule = /\bstd\.([A-Za-z_][A-Za-z0-9_]*)\.$/.exec(beforeToken);
+  const afterDot = beforeToken.endsWith(".");
 
-  if (!context.explicit && !word && !afterDot) return null;
+  if (!context.explicit && !word && !afterDot) {
+    return null;
+  }
 
   if (stdModule) {
     return {
@@ -616,8 +895,5 @@ export const wdlCompletion: CompletionSource = (context: CompletionContext): Com
 // codemirror language support for wdl: highlighting + keyword/snippet completion.
 export function wdl(providerCompletion?: CompletionSource): LanguageSupport {
   const autocomplete = wdlParser.data.of({ autocomplete: providerCompletion ?? wdlCompletion });
-  return new LanguageSupport(wdlParser, [
-    syntaxHighlighting(wdlHighlightStyle),
-    autocomplete,
-  ]);
+  return new LanguageSupport(wdlParser, [syntaxHighlighting(wdlHighlightStyle), autocomplete]);
 }

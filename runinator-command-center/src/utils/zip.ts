@@ -8,28 +8,40 @@ export interface ZipEntry {
 
 const crcTable = (() => {
   const table = new Uint32Array(256);
+
   for (let n = 0; n < 256; n += 1) {
     let c = n;
+
     for (let k = 0; k < 8; k += 1) {
       c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     }
+
     table[n] = c >>> 0;
   }
+
   return table;
 })();
 
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i += 1) {
-    crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+
+  for (const byte of bytes) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   }
+
   return (crc ^ 0xffffffff) >>> 0;
 }
 
 // dos-format modification time/date, as the zip local/central headers expect.
 function dosDateTime(date: Date): { time: number; date: number } {
-  const time = ((date.getHours() & 0x1f) << 11) | ((date.getMinutes() & 0x3f) << 5) | ((date.getSeconds() >> 1) & 0x1f);
-  const day = (((date.getFullYear() - 1980) & 0x7f) << 9) | (((date.getMonth() + 1) & 0x0f) << 5) | (date.getDate() & 0x1f);
+  const time =
+    ((date.getHours() & 0x1f) << 11) |
+    ((date.getMinutes() & 0x3f) << 5) |
+    ((date.getSeconds() >> 1) & 0x1f);
+  const day =
+    (((date.getFullYear() - 1980) & 0x7f) << 9) |
+    (((date.getMonth() + 1) & 0x0f) << 5) |
+    (date.getDate() & 0x1f);
   return { time, date: day };
 }
 
@@ -106,9 +118,11 @@ export function createZip(entries: ZipEntry[]): Blob {
   const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const combined = new Uint8Array(total);
   let cursor = 0;
+
   for (const chunk of chunks) {
     combined.set(chunk, cursor);
     cursor += chunk.length;
   }
+
   return new Blob([combined], { type: "application/zip" });
 }

@@ -2,7 +2,12 @@
   <section class="json-editor-shell" @mousedown.stop @click.stop>
     <header v-if="title" class="json-editor-title">
       <span>{{ title }}</span>
-      <button type="button" class="json-editor-copy" :title="copied ? 'Copied' : 'Copy JSON'" @click="copy">
+      <button
+        type="button"
+        class="json-editor-copy"
+        :title="copied ? 'Copied' : 'Copy JSON'"
+        @click="copy"
+      >
         {{ copied ? "Copied" : "Copy" }}
       </button>
     </header>
@@ -15,26 +20,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue';
-import { autocompletion, completionKeymap, startCompletion } from '@codemirror/autocomplete';
-import { EditorView, basicSetup } from 'codemirror';
-import { json } from '@codemirror/lang-json';
-import { EditorState } from '@codemirror/state';
-import { keymap } from '@codemirror/view';
-import { shouldStartJsonCompletion, jsonCompletionSource } from '../../utils/json-completion';
-import { osCodeMirrorTheme } from '../../utils/codemirror-theme';
-import Icon from './Icon.vue';
+import { ref, onMounted, watch, onBeforeUnmount } from "vue";
+import { autocompletion, completionKeymap, startCompletion } from "@codemirror/autocomplete";
+import { EditorView, basicSetup } from "codemirror";
+import { json } from "@codemirror/lang-json";
+import { EditorState } from "@codemirror/state";
+import { keymap } from "@codemirror/view";
+import { shouldStartJsonCompletion, jsonCompletionSource } from "../../utils/json-completion";
+import { osCodeMirrorTheme } from "../../utils/codemirror-theme";
+import Icon from "./Icon.vue";
 
-const props = withDefaults(defineProps<{
-  modelValue: string;
-  readonly?: boolean;
-  keyHints?: string[];
-  // header label; pass an empty string to hide the title bar.
-  title?: string;
-}>(), { title: "JSON" });
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    readonly?: boolean;
+    keyHints?: string[];
+    // header label; pass an empty string to hide the title bar.
+    title?: string;
+  }>(),
+  { title: "JSON", keyHints: undefined },
+);
 
 const emit = defineEmits<{
-  "update:modelValue": [value: string]
+  "update:modelValue": [value: string];
 }>();
 
 const editorContainer = ref<HTMLElement | null>(null);
@@ -47,10 +55,12 @@ const parseError = ref("");
 // surface invalid JSON inline instead of silently emitting it (only caught later on save).
 function validate(text: string) {
   const trimmed = text.trim();
+
   if (!trimmed) {
     parseError.value = "";
     return;
   }
+
   try {
     JSON.parse(trimmed);
     parseError.value = "";
@@ -70,7 +80,10 @@ async function copy() {
 }
 
 onMounted(() => {
-  if (!editorContainer.value) return;
+  if (!editorContainer.value) {
+    return;
+  }
+
   const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
@@ -79,21 +92,29 @@ onMounted(() => {
       basicSetup,
       json(),
       editorTheme.extension,
-      autocompletion({ override: [jsonCompletionSource(() => ({ keyHints: props.keyHints ?? [] }))] }),
+      autocompletion({
+        override: [jsonCompletionSource(() => ({ keyHints: props.keyHints ?? [] }))],
+      }),
       keymap.of(completionKeymap),
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const text = update.state.doc.toString();
-          emit('update:modelValue', text);
-          if (!props.readonly) validate(text);
+          emit("update:modelValue", text);
+
+          if (!props.readonly) {
+            validate(text);
+          }
         }
-        if (!props.readonly && shouldStartJsonCompletion(update)) startCompletion(update.view);
+
+        if (!props.readonly && shouldStartJsonCompletion(update)) {
+          startCompletion(update.view);
+        }
       }),
       EditorView.theme({
         "&": { height: "100%" },
-        ".cm-scroller": { overflow: "auto" }
-      })
+        ".cm-scroller": { overflow: "auto" },
+      }),
     ],
   });
 
@@ -102,20 +123,30 @@ onMounted(() => {
     parent: editorContainer.value,
   });
   disposeEditorTheme = editorTheme.install(view);
-  if (!props.readonly) validate(props.modelValue);
+
+  if (!props.readonly) {
+    validate(props.modelValue);
+  }
 });
 
-watch(() => props.modelValue, (newValue) => {
-  if (view && newValue !== view.state.doc.toString()) {
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: newValue }
-    });
-  }
-  if (!props.readonly) validate(newValue);
-});
+watch(
+  () => props.modelValue,
+  (newValue) => {
+    if (view && newValue !== view.state.doc.toString()) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: newValue },
+      });
+    }
+
+    if (!props.readonly) {
+      validate(newValue);
+    }
+  },
+);
 
 onBeforeUnmount(() => {
   disposeEditorTheme?.();
+
   if (view) {
     view.destroy();
   }

@@ -2,17 +2,40 @@
   <div class="run-input-form">
     <div class="rif-toolbar">
       <div class="rif-modes">
-        <button type="button" :class="{ active: mode === 'form' }" @click="setMode('form')">Form</button>
-        <button type="button" :class="{ active: mode === 'json' }" @click="setMode('json')">Raw JSON</button>
+        <button type="button" :class="{ active: mode === 'form' }" @click="setMode('form')">
+          Form
+        </button>
+        <button type="button" :class="{ active: mode === 'json' }" @click="setMode('json')">
+          Raw JSON
+        </button>
       </div>
       <div class="rif-presets">
         <select v-model="selectedPreset" @change="applyPreset">
           <option value="">Presets…</option>
-          <option v-for="preset in presets" :key="preset.name" :value="preset.name">{{ preset.name }}</option>
+          <option v-for="preset in presets" :key="preset.name" :value="preset.name">
+            {{ preset.name }}
+          </option>
         </select>
-        <button type="button" :disabled="!hasLast" title="Load the input from the last run" @click="useLast">Last input</button>
-        <button type="button" title="Save the current input as a preset" @click="savePreset">Save</button>
-        <button v-if="selectedPreset" type="button" class="rif-danger" title="Delete the selected preset" @click="deletePreset">Delete</button>
+        <button
+          type="button"
+          :disabled="!hasLast"
+          title="Load the input from the last run"
+          @click="useLast"
+        >
+          Last input
+        </button>
+        <button type="button" title="Save the current input as a preset" @click="savePreset">
+          Save
+        </button>
+        <button
+          v-if="selectedPreset"
+          type="button"
+          class="rif-danger"
+          title="Delete the selected preset"
+          @click="deletePreset"
+        >
+          Delete
+        </button>
       </div>
     </div>
 
@@ -69,17 +92,26 @@ const hasLast = ref(false);
 // render required struct fields first so the form reads top-to-bottom by importance.
 const orderedInputType = computed<RuninatorType>(() => {
   const ty = props.inputType;
-  if (ty?.type !== "struct") return ty ?? { type: "any" };
+
+  if (ty.type !== "struct") {
+    return ty;
+  }
+
   const entries = Object.entries(ty.fields);
-  const ordered = [...entries].sort(([, left], [, right]) => Number(right.required) - Number(left.required));
+  const ordered = [...entries].sort(
+    ([, left], [, right]) => Number(right.required) - Number(left.required),
+  );
   return { ...ty, fields: Object.fromEntries(ordered) };
 });
 
-const jsonKeyHints = computed(() => (orderedInputType.value.type === "struct" ? Object.keys(orderedInputType.value.fields) : []));
+const jsonKeyHints = computed(() =>
+  orderedInputType.value.type === "struct" ? Object.keys(orderedInputType.value.fields) : [],
+);
 
 function presetsStorageKey() {
   return `runinator.runInput.presets.${props.storageKey}`;
 }
+
 function lastStorageKey() {
   return `runinator.runInput.last.${props.storageKey}`;
 }
@@ -91,27 +123,36 @@ function loadPresets() {
   } catch {
     presets.value = [];
   }
+
   hasLast.value = window.localStorage.getItem(lastStorageKey()) != null;
 }
 
 function emitValue(value: unknown) {
   emit("update:modelValue", value);
-  if (mode.value === "json") jsonDraft.value = pretty(value ?? {});
+
+  if (mode.value === "json") {
+    jsonDraft.value = pretty(value ?? {});
+  }
 }
 
 function setMode(next: "form" | "json") {
-  if (next === mode.value) return;
+  if (next === mode.value) {
+    return;
+  }
+
   if (next === "json") {
     jsonDraft.value = pretty(props.modelValue ?? {});
     jsonError.value = "";
   }
+
   mode.value = next;
 }
 
 function onJsonInput(value: string) {
   jsonDraft.value = value;
+
   try {
-    const parsed = JSON.parse(jsonDraft.value || "null");
+    const parsed: unknown = JSON.parse(jsonDraft.value || "null");
     jsonError.value = "";
     emit("update:modelValue", parsed);
   } catch (err) {
@@ -120,15 +161,26 @@ function onJsonInput(value: string) {
 }
 
 function applyPreset() {
-  if (!selectedPreset.value) return;
+  if (!selectedPreset.value) {
+    return;
+  }
+
   const preset = presets.value.find((item) => item.name === selectedPreset.value);
-  if (!preset) return;
+
+  if (!preset) {
+    return;
+  }
+
   emitValue(structuredClone(preset.value));
 }
 
 function savePreset() {
   const name = window.prompt("Preset name")?.trim();
-  if (!name) return;
+
+  if (!name) {
+    return;
+  }
+
   const next = presets.value.filter((item) => item.name !== name);
   next.push({ name, value: structuredClone(toRawValue(props.modelValue)) });
   next.sort((left, right) => left.name.localeCompare(right.name));
@@ -138,7 +190,10 @@ function savePreset() {
 }
 
 function deletePreset() {
-  if (!selectedPreset.value) return;
+  if (!selectedPreset.value) {
+    return;
+  }
+
   presets.value = presets.value.filter((item) => item.name !== selectedPreset.value);
   window.localStorage.setItem(presetsStorageKey(), JSON.stringify(presets.value));
   selectedPreset.value = "";
@@ -147,7 +202,11 @@ function deletePreset() {
 function useLast() {
   try {
     const raw = window.localStorage.getItem(lastStorageKey());
-    if (raw == null) return;
+
+    if (raw == null) {
+      return;
+    }
+
     emitValue(JSON.parse(raw));
     mode.value = "form";
   } catch {
@@ -181,7 +240,7 @@ watch(
     mode.value = "form";
     loadPresets();
   },
-  { immediate: true }
+  { immediate: true },
 );
 </script>
 

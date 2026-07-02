@@ -29,7 +29,10 @@ function newFolder(path: string): FolderBuilder {
 
 // the dotted path of a setting is its scope segments followed by its name segments.
 function settingSegments(setting: CredentialSummary): string[] {
-  return `${setting.scope}.${setting.name}`.split(".").map((segment) => segment.trim()).filter(Boolean);
+  return `${setting.scope}.${setting.name}`
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
 }
 
 function joinPath(prefix: string, segment: string): string {
@@ -41,7 +44,7 @@ function finalizeFolder(builder: FolderBuilder): SettingsTreeNode[] {
     type: "folder",
     label: child.path.slice(builder.path ? builder.path.length + 1 : 0),
     path: child.path,
-    children: finalizeFolder(child)
+    children: finalizeFolder(child),
   }));
   folders.sort((a, b) => a.label.localeCompare(b.label));
   const leaves = [...builder.leaves].sort((a, b) => a.label.localeCompare(b.label));
@@ -52,22 +55,32 @@ function finalizeFolder(builder: FolderBuilder): SettingsTreeNode[] {
 // group flat settings into a collapsible dotted-path tree (config.<scope>.<name> shape).
 export function buildSettingsTree(entries: CredentialSummary[]): SettingsTreeNode[] {
   const root = newFolder("");
+
   for (const setting of entries) {
     const segments = settingSegments(setting);
-    if (segments.length === 0) continue;
+
+    if (segments.length === 0) {
+      continue;
+    }
+
     let cursor = root;
+
     for (let index = 0; index < segments.length - 1; index += 1) {
       const segment = segments[index];
       const path = joinPath(cursor.path, segment);
       let next = cursor.folders.get(segment);
+
       if (!next) {
         next = newFolder(path);
         cursor.folders.set(segment, next);
       }
+
       cursor = next;
     }
+
     const label = segments[segments.length - 1];
     cursor.leaves.push({ type: "leaf", label, path: joinPath(cursor.path, label), setting });
   }
+
   return finalizeFolder(root);
 }

@@ -19,5 +19,7 @@ export function setExpressionInsertTarget(insert: ExpressionInsert) {
 
 // release the slot on blur, but only if this editor still owns it.
 export function clearExpressionInsertTarget(insert: ExpressionInsert) {
-  if (target.value === insert) target.value = null;
+  if (target.value === insert) {
+    target.value = null;
+  }
 }

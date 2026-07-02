@@ -19,12 +19,14 @@ export function useSupervisorStatus() {
   }
 
   onMounted(() => {
-    refresh();
+    void refresh();
     timer = window.setInterval(refresh, POLL_INTERVAL_MS);
   });
 
   onBeforeUnmount(() => {
-    if (timer !== undefined) window.clearInterval(timer);
+    if (timer !== undefined) {
+      window.clearInterval(timer);
+    }
   });
 
   return { status, error, refresh };

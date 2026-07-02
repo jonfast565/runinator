@@ -17,7 +17,9 @@
           <span class="replica-stat">{{ offlineCount }} offline</span>
         </div>
 
-        <div v-if="!filteredReplicas.length" class="empty-state">No replicas match the current filters.</div>
+        <div v-if="!filteredReplicas.length" class="empty-state">
+          No replicas match the current filters.
+        </div>
 
         <div v-else class="replica-list">
           <button
@@ -29,8 +31,12 @@
             @click="selectedReplicaId = replica.replica_id"
           >
             <div class="replica-row-top">
-              <span class="replica-row-name">{{ replica.display_name || replica.host || replica.instance_id }}</span>
-              <span class="replica-row-status" :class="`replica-row-status-${replica.status}`">{{ replica.status }}</span>
+              <span class="replica-row-name">{{
+                replica.display_name || replica.host || replica.instance_id
+              }}</span>
+              <span class="replica-row-status" :class="`replica-row-status-${replica.status}`">{{
+                replica.status
+              }}</span>
             </div>
             <div class="replica-row-meta">
               <span>{{ replicaKindLabel(replica.replica_type) }}</span>
@@ -45,12 +51,22 @@
         <template v-if="selectedReplica">
           <div class="replicas-detail-head">
             <div>
-              <h2>{{ selectedReplica.display_name || selectedReplica.host || selectedReplica.instance_id }}</h2>
+              <h2>
+                {{
+                  selectedReplica.display_name ||
+                  selectedReplica.host ||
+                  selectedReplica.instance_id
+                }}
+              </h2>
               <p class="replicas-detail-subtitle">
-                {{ replicaKindLabel(selectedReplica.replica_type) }} · runtime {{ selectedReplica.runtime_id }}
+                {{ replicaKindLabel(selectedReplica.replica_type) }} · runtime
+                {{ selectedReplica.runtime_id }}
               </p>
             </div>
-            <span class="replica-status-badge" :class="`replica-status-badge-${selectedReplica.status}`">
+            <span
+              class="replica-status-badge"
+              :class="`replica-status-badge-${selectedReplica.status}`"
+            >
               {{ selectedReplica.status }}
             </span>
           </div>
@@ -110,22 +126,53 @@
               </span>
             </div>
             <div class="sparkline-grid">
-              <Sparkline label="CPU" :values="cpuSeries" :max="100" unit="%" color="var(--accent)" />
+              <Sparkline
+                label="CPU"
+                :values="cpuSeries"
+                :max="100"
+                unit="%"
+                color="var(--accent)"
+              />
               <Sparkline label="Memory" :values="memSeries" :max="100" unit="%" color="#7c5cff" />
-              <Sparkline label="Process CPU" :values="procCpuSeries" :max="null" unit="%" color="#0ea5a5" />
+              <Sparkline
+                label="Process CPU"
+                :values="procCpuSeries"
+                :max="null"
+                unit="%"
+                color="#0ea5a5"
+              />
               <Sparkline label="Load (1m)" :values="loadSeries" :max="null" color="#f59e0b" />
-              <Sparkline label="Net In" :values="rxSeries" :max="null" color="#22c55e" :format="formatRate" />
-              <Sparkline label="Net Out" :values="txSeries" :max="null" color="#ef4444" :format="formatRate" />
+              <Sparkline
+                label="Net In"
+                :values="rxSeries"
+                :max="null"
+                color="#22c55e"
+                :format="formatRate"
+              />
+              <Sparkline
+                label="Net Out"
+                :values="txSeries"
+                :max="null"
+                color="#ef4444"
+                :format="formatRate"
+              />
             </div>
           </div>
 
           <div class="replicas-section">
             <h3>Attributes</h3>
-            <JsonEditor class="replicas-attributes" :model-value="pretty(selectedReplica.attributes ?? {})" readonly title="" />
+            <JsonEditor
+              class="replicas-attributes"
+              :model-value="pretty(selectedReplica.attributes ?? {})"
+              readonly
+              title=""
+            />
           </div>
         </template>
 
-        <div v-else class="empty-state">Select a replica to inspect its health, address, and runtime details.</div>
+        <div v-else class="empty-state">
+          Select a replica to inspect its health, address, and runtime details.
+        </div>
       </section>
     </div>
     <NodePoolsPanel />
@@ -158,15 +205,20 @@ const txSeries = computed(() => samples.value.map((sample) => sample.net_tx_byte
 const procCpuSeries = computed(() => samples.value.map((sample) => sample.process_cpu_percent));
 
 function formatRate(bytesPerSec: number): string {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "0 B/s";
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) {
+    return "0 B/s";
+  }
+
   const units = ["B/s", "KB/s", "MB/s", "GB/s"];
   let value = bytesPerSec;
   let unit = 0;
+
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit += 1;
   }
-  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : String(Math.round(value))} ${units[unit]}`;
 }
 
 async function loadSamples(replicaId: string | null) {
@@ -174,10 +226,12 @@ async function loadSamples(replicaId: string | null) {
     samples.value = [];
     return;
   }
+
   samplesLoading.value = true;
+
   try {
     const series = await fetchReplicaSamples(replicaId);
-    samples.value = series.samples ?? [];
+    samples.value = series.samples;
   } catch {
     samples.value = [];
   } finally {
@@ -187,7 +241,11 @@ async function loadSamples(replicaId: string | null) {
 
 const filteredReplicas = computed(() => {
   const query = app.normalizedSearch;
-  if (!query) return app.replicas;
+
+  if (!query) {
+    return app.replicas;
+  }
+
   return app.replicas.filter((replica) => {
     const haystack = [
       replica.display_name,
@@ -197,7 +255,7 @@ const filteredReplicas = computed(() => {
       replica.observed_ip,
       replica.replica_type,
       replica.status,
-      String(replica.replica_id)
+      replica.replica_id,
     ]
       .filter(Boolean)
       .join(" ")
@@ -207,15 +265,26 @@ const filteredReplicas = computed(() => {
 });
 
 const selectedReplica = computed(() => {
-  if (selectedReplicaId.value == null) return filteredReplicas.value[0] ?? null;
-  return filteredReplicas.value.find((replica) => replica.replica_id === selectedReplicaId.value) ?? filteredReplicas.value[0] ?? null;
+  if (selectedReplicaId.value == null) {
+    return filteredReplicas.value[0] ?? null;
+  }
+
+  return (
+    filteredReplicas.value.find((replica) => replica.replica_id === selectedReplicaId.value) ??
+    filteredReplicas.value[0]
+  );
 });
 
-const staleCount = computed(() => app.replicas.filter((replica) => replica.status === "stale").length);
-const offlineCount = computed(() => app.replicas.filter((replica) => replica.status === "offline").length);
+const staleCount = computed(
+  () => app.replicas.filter((replica) => replica.status === "stale").length,
+);
+const offlineCount = computed(
+  () => app.replicas.filter((replica) => replica.status === "offline").length,
+);
 
 async function refresh() {
   loading.value = true;
+
   try {
     await app.runOperation("Loading replicas", () => app.refreshReplicas());
   } finally {
@@ -243,6 +312,7 @@ watch(filteredReplicas, (replicas) => {
     selectedReplicaId.value = null;
     return;
   }
+
   if (!replicas.some((replica) => replica.replica_id === selectedReplicaId.value)) {
     selectedReplicaId.value = replicas[0].replica_id;
   }
@@ -250,15 +320,18 @@ watch(filteredReplicas, (replicas) => {
 
 // reload the telemetry time-series whenever the inspected replica changes.
 watch(
-  () => selectedReplica.value?.replica_id ?? null,
+  () => selectedReplica.value.replica_id,
   (replicaId) => {
     void loadSamples(replicaId);
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 onMounted(async () => {
-  if (!app.replicas.length) await refresh();
+  if (!app.replicas.length) {
+    await refresh();
+  }
+
   if (!selectedReplicaId.value && filteredReplicas.value.length) {
     selectedReplicaId.value = filteredReplicas.value[0].replica_id;
   }

@@ -24,9 +24,17 @@ import {
   type CreateApiKeyInput,
   type CreateUserInput,
   type UpdateApiKeyInput,
-  type UpdateUserInput
+  type UpdateUserInput,
 } from "../api/commandCenterApi";
-import type { ApiKey, CreateApiKeyResponse, Grant, PermissionLevel, PrincipalType, Team, User } from "../types/models";
+import type {
+  ApiKey,
+  CreateApiKeyResponse,
+  Grant,
+  PermissionLevel,
+  PrincipalType,
+  Team,
+  User,
+} from "../types/models";
 import { useAppStore } from "./app";
 
 export const permissionLevels: PermissionLevel[] = ["view", "run", "edit", "own"];
@@ -59,7 +67,7 @@ function blankUserDraft(): UserDraft {
     email: "",
     password: "",
     is_admin: false,
-    disabled: false
+    disabled: false,
   };
 }
 
@@ -69,7 +77,7 @@ function userDraftFrom(user: User): UserDraft {
     email: user.email ?? "",
     password: "",
     is_admin: user.is_admin,
-    disabled: user.disabled
+    disabled: user.disabled,
   };
 }
 
@@ -79,7 +87,7 @@ function blankApiKeyDraft(userId: string | null = null): ApiKeyDraft {
     user_id: userId ?? "",
     is_service: false,
     expires_at: "",
-    disabled: false
+    disabled: false,
   };
 }
 
@@ -89,7 +97,7 @@ function apiKeyDraftFrom(apiKey: ApiKey): ApiKeyDraft {
     user_id: apiKey.user_id ?? "",
     is_service: apiKey.is_service,
     expires_at: apiKey.expires_at ? toDateTimeInput(apiKey.expires_at) : "",
-    disabled: apiKey.disabled
+    disabled: apiKey.disabled,
   };
 }
 
@@ -112,48 +120,92 @@ export const usePermissionsStore = defineStore("permissions", () => {
   const grantDraft = reactive<GrantDraft>({
     principal_type: "user",
     principal_id: "",
-    permission: "view"
+    permission: "view",
   });
 
-  const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) ?? null);
-  const selectedTeam = computed(() => teams.value.find((team) => team.id === selectedTeamId.value) ?? null);
-  const selectedApiKey = computed(() => apiKeys.value.find((apiKey) => apiKey.id === selectedApiKeyId.value) ?? null);
+  const selectedUser = computed(
+    () => users.value.find((user) => user.id === selectedUserId.value) ?? null,
+  );
+  const selectedTeam = computed(
+    () => teams.value.find((team) => team.id === selectedTeamId.value) ?? null,
+  );
+  const selectedApiKey = computed(
+    () => apiKeys.value.find((apiKey) => apiKey.id === selectedApiKeyId.value) ?? null,
+  );
   const filteredUsers = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return users.value;
+
+    if (!query) {
+      return users.value;
+    }
+
     return users.value.filter((user) => userSearchText(user).includes(query));
   });
   const filteredTeams = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return teams.value;
+
+    if (!query) {
+      return teams.value;
+    }
+
     return teams.value.filter((team) => teamSearchText(team).includes(query));
   });
   const visibleApiKeys = computed(() => {
     const userId = selectedUserId.value;
-    const visible = userId ? apiKeys.value.filter((key) => key.is_service || key.user_id === userId) : apiKeys.value;
+    const visible = userId
+      ? apiKeys.value.filter((key) => key.is_service || key.user_id === userId)
+      : apiKeys.value;
     const query = app.normalizedSearch;
-    if (!query) return visible;
+
+    if (!query) {
+      return visible;
+    }
+
     return visible.filter((key) => apiKeySearchText(key, users.value).includes(query));
   });
-  const enabledAdminCount = computed(() => users.value.filter((user) => user.is_admin && !user.disabled).length);
+  const enabledAdminCount = computed(
+    () => users.value.filter((user) => user.is_admin && !user.disabled).length,
+  );
 
   async function refreshAll() {
     await app.runOperation("Loading permissions", async () => {
-      const [nextUsers, nextTeams, nextApiKeys] = await Promise.all([listUsers(), listTeams(), listApiKeys()]);
+      const [nextUsers, nextTeams, nextApiKeys] = await Promise.all([
+        listUsers(),
+        listTeams(),
+        listApiKeys(),
+      ]);
       users.value = nextUsers;
       teams.value = nextTeams;
       apiKeys.value = nextApiKeys;
     });
-    if (selectedUserId.value && !selectedUser.value) selectedUserId.value = null;
-    if (selectedTeamId.value && !selectedTeam.value) selectedTeamId.value = null;
-    if (selectedApiKeyId.value && !selectedApiKey.value) selectedApiKeyId.value = null;
-    if (selectedUser.value) await refreshSelectedUserTeams();
-    if (selectedTeam.value) await refreshSelectedTeamMembers();
+
+    if (selectedUserId.value && !selectedUser.value) {
+      selectedUserId.value = null;
+    }
+
+    if (selectedTeamId.value && !selectedTeam.value) {
+      selectedTeamId.value = null;
+    }
+
+    if (selectedApiKeyId.value && !selectedApiKey.value) {
+      selectedApiKeyId.value = null;
+    }
+
+    if (selectedUser.value) {
+      await refreshSelectedUserTeams();
+    }
+
+    if (selectedTeam.value) {
+      await refreshSelectedTeamMembers();
+    }
   }
 
   async function refreshApiKeys() {
     apiKeys.value = await app.runOperation("Loading API keys", () => listApiKeys());
-    if (selectedApiKeyId.value && !selectedApiKey.value) clearApiKeyDraft();
+
+    if (selectedApiKeyId.value && !selectedApiKey.value) {
+      clearApiKeyDraft();
+    }
   }
 
   function clearPermissions() {
@@ -180,22 +232,40 @@ export const usePermissionsStore = defineStore("permissions", () => {
     selectedUserId.value = user?.id ?? null;
     Object.assign(userDraft, user ? userDraftFrom(user) : blankUserDraft());
     userTeams.value = [];
-    if (!selectedApiKey.value) Object.assign(apiKeyDraft, blankApiKeyDraft(user?.id ?? null));
-    if (user?.id) void refreshSelectedUserTeams();
+
+    if (!selectedApiKey.value) {
+      Object.assign(apiKeyDraft, blankApiKeyDraft(user?.id ?? null));
+    }
+
+    if (user?.id) {
+      void refreshSelectedUserTeams();
+    }
   }
 
   function clearUserDraft() {
     selectedUserId.value = null;
     Object.assign(userDraft, blankUserDraft());
     userTeams.value = [];
-    if (!selectedApiKey.value) Object.assign(apiKeyDraft, blankApiKeyDraft());
+
+    if (!selectedApiKey.value) {
+      Object.assign(apiKeyDraft, blankApiKeyDraft());
+    }
   }
 
   async function saveUserDraft() {
     const username = userDraft.username.trim();
     const email = userDraft.email.trim();
-    if (!selectedUser.value && !username) return app.setError("Username is required.");
-    if (!selectedUser.value && !userDraft.password) return app.setError("Password is required for new users.");
+
+    if (!selectedUser.value && !username) {
+      app.setError("Username is required.");
+      return;
+    }
+
+    if (!selectedUser.value && !userDraft.password) {
+      app.setError("Password is required for new users.");
+      return;
+    }
+
     const editing = Boolean(selectedUser.value);
 
     const saved = await app.runOperation(editing ? "Updating user" : "Creating user", async () => {
@@ -203,16 +273,21 @@ export const usePermissionsStore = defineStore("permissions", () => {
         const request: UpdateUserInput = {
           email: email || null,
           is_admin: userDraft.is_admin,
-          disabled: userDraft.disabled
+          disabled: userDraft.disabled,
         };
-        if (userDraft.password) request.password = userDraft.password;
+
+        if (userDraft.password) {
+          request.password = userDraft.password;
+        }
+
         return updateUser(selectedUser.value.id, request);
       }
+
       const request: CreateUserInput = {
         username,
         password: userDraft.password,
         email: email || null,
-        is_admin: userDraft.is_admin
+        is_admin: userDraft.is_admin,
       };
       return createUser(request);
     });
@@ -222,7 +297,10 @@ export const usePermissionsStore = defineStore("permissions", () => {
   }
 
   async function deleteSelectedUser() {
-    if (!selectedUser.value?.id) return;
+    if (!selectedUser.value?.id) {
+      return;
+    }
+
     const id = selectedUser.value.id;
     await app.runOperation("Deleting user", () => deleteUser(id));
     clearUserDraft();
@@ -232,7 +310,10 @@ export const usePermissionsStore = defineStore("permissions", () => {
 
   function selectApiKey(apiKey: ApiKey | null) {
     selectedApiKeyId.value = apiKey?.id ?? null;
-    Object.assign(apiKeyDraft, apiKey ? apiKeyDraftFrom(apiKey) : blankApiKeyDraft(selectedUserId.value));
+    Object.assign(
+      apiKeyDraft,
+      apiKey ? apiKeyDraftFrom(apiKey) : blankApiKeyDraft(selectedUserId.value),
+    );
     revealedApiKey.value = null;
   }
 
@@ -248,76 +329,131 @@ export const usePermissionsStore = defineStore("permissions", () => {
 
   async function saveApiKeyDraft() {
     const name = apiKeyDraft.name.trim();
-    if (!name) return app.setError("API key name is required.");
+
+    if (!name) {
+      app.setError("API key name is required.");
+      return;
+    }
+
     const editing = Boolean(selectedApiKey.value?.id);
-    const saved = await app.runOperation(editing ? "Updating API key" : "Creating API key", async () => {
-      if (selectedApiKey.value?.id) {
-        const request: UpdateApiKeyInput = {
+    const saved = await app.runOperation(
+      editing ? "Updating API key" : "Creating API key",
+      async () => {
+        if (selectedApiKey.value?.id) {
+          const request: UpdateApiKeyInput = {
+            name,
+            expires_at: apiKeyDraft.expires_at
+              ? new Date(apiKeyDraft.expires_at).toISOString()
+              : null,
+            disabled: apiKeyDraft.disabled,
+          };
+          return updateApiKey(selectedApiKey.value.id, request);
+        }
+
+        const request: CreateApiKeyInput = {
           name,
-          expires_at: apiKeyDraft.expires_at ? new Date(apiKeyDraft.expires_at).toISOString() : null,
-          disabled: apiKeyDraft.disabled
+          is_service: apiKeyDraft.is_service,
+          user_id: apiKeyDraft.is_service ? null : apiKeyDraft.user_id || selectedUserId.value,
+          expires_at: apiKeyDraft.expires_at
+            ? new Date(apiKeyDraft.expires_at).toISOString()
+            : null,
         };
-        return updateApiKey(selectedApiKey.value.id, request);
-      }
-      const request: CreateApiKeyInput = {
-        name,
-        is_service: apiKeyDraft.is_service,
-        user_id: apiKeyDraft.is_service ? null : apiKeyDraft.user_id || selectedUserId.value,
-        expires_at: apiKeyDraft.expires_at ? new Date(apiKeyDraft.expires_at).toISOString() : null
-      };
-      const created = await createApiKey(request);
-      revealedApiKey.value = created;
-      return created.api_key;
-    });
+        const created = await createApiKey(request);
+        revealedApiKey.value = created;
+        return created.api_key;
+      },
+    );
     await refreshApiKeys();
     const reveal = revealedApiKey.value;
     selectApiKey(apiKeys.value.find((apiKey) => apiKey.id === saved.id) ?? saved);
-    if (reveal) revealedApiKey.value = reveal;
-    if (!editing && reveal) selectedApiKeyId.value = reveal.api_key.id;
+
+    if (reveal) {
+      revealedApiKey.value = reveal;
+    }
+
+    if (!editing && reveal) {
+      selectedApiKeyId.value = reveal.api_key.id;
+    }
+
     app.setStatus(editing ? "API key saved." : "API key created.");
   }
 
   async function revokeSelectedApiKey() {
-    if (!selectedApiKey.value?.id) return;
-    await app.runOperation("Revoking API key", () => revokeApiKey(selectedApiKey.value!.id!));
+    const apiKeyId = selectedApiKey.value?.id;
+
+    if (!apiKeyId) {
+      return;
+    }
+
+    await app.runOperation("Revoking API key", () => revokeApiKey(apiKeyId));
     await refreshApiKeys();
-    if (selectedApiKey.value) {
-      selectApiKey(selectedApiKey.value);
+
+    const refreshed = apiKeys.value.find((apiKey) => apiKey.id === apiKeyId);
+
+    if (refreshed) {
+      selectApiKey(refreshed);
     } else {
       clearApiKeyDraft();
     }
+
     app.setStatus("API key revoked.");
   }
 
   async function rotateSelectedApiKey() {
-    if (!selectedApiKey.value?.id) return;
-    const rotated = await app.runOperation("Rotating API key", () => rotateApiKey(selectedApiKey.value!.id!));
+    const apiKeyId = selectedApiKey.value?.id;
+
+    if (!apiKeyId) {
+      return;
+    }
+
+    const rotated = await app.runOperation("Rotating API key", () => rotateApiKey(apiKeyId));
     revealedApiKey.value = rotated;
     await refreshApiKeys();
-    selectApiKey(apiKeys.value.find((apiKey) => apiKey.id === rotated.api_key.id) ?? rotated.api_key);
+    selectApiKey(
+      apiKeys.value.find((apiKey) => apiKey.id === rotated.api_key.id) ?? rotated.api_key,
+    );
     revealedApiKey.value = rotated;
     app.setStatus("API key rotated.");
   }
 
   async function refreshSelectedUserTeams() {
-    if (!selectedUser.value?.id) {
+    const userId = selectedUser.value?.id;
+
+    if (!userId) {
       userTeams.value = [];
       return;
     }
-    userTeams.value = await app.runOperation("Loading user teams", () => listUserTeams(selectedUser.value!.id!));
+
+    userTeams.value = await app.runOperation("Loading user teams", () => listUserTeams(userId));
   }
 
   async function assignSelectedUserToTeam(teamId: string) {
-    if (!selectedUser.value?.id || !teamId) return;
-    await app.runOperation("Assigning team", () => addTeamMember(teamId, selectedUser.value!.id!));
-    await Promise.all([refreshSelectedUserTeams(), selectedTeam.value ? refreshSelectedTeamMembers() : Promise.resolve()]);
+    const userId = selectedUser.value?.id;
+
+    if (!userId || !teamId) {
+      return;
+    }
+
+    await app.runOperation("Assigning team", () => addTeamMember(teamId, userId));
+    await Promise.all([
+      refreshSelectedUserTeams(),
+      selectedTeam.value ? refreshSelectedTeamMembers() : Promise.resolve(),
+    ]);
     app.setStatus("Team assigned.");
   }
 
   async function removeSelectedUserFromTeam(teamId: string) {
-    if (!selectedUser.value?.id || !teamId) return;
-    await app.runOperation("Removing team", () => removeTeamMember(teamId, selectedUser.value!.id!));
-    await Promise.all([refreshSelectedUserTeams(), selectedTeam.value ? refreshSelectedTeamMembers() : Promise.resolve()]);
+    const userId = selectedUser.value?.id;
+
+    if (!userId || !teamId) {
+      return;
+    }
+
+    await app.runOperation("Removing team", () => removeTeamMember(teamId, userId));
+    await Promise.all([
+      refreshSelectedUserTeams(),
+      selectedTeam.value ? refreshSelectedTeamMembers() : Promise.resolve(),
+    ]);
     app.setStatus("Team removed.");
   }
 
@@ -325,7 +461,10 @@ export const usePermissionsStore = defineStore("permissions", () => {
     selectedTeamId.value = team?.id ?? null;
     teamDraftName.value = team?.name ?? "";
     teamMembers.value = [];
-    if (team?.id) void refreshSelectedTeamMembers();
+
+    if (team?.id) {
+      void refreshSelectedTeamMembers();
+    }
   }
 
   function clearTeamDraft() {
@@ -336,10 +475,15 @@ export const usePermissionsStore = defineStore("permissions", () => {
 
   async function saveTeamDraft() {
     const name = teamDraftName.value.trim();
-    if (!name) return app.setError("Team name is required.");
+
+    if (!name) {
+      app.setError("Team name is required.");
+      return;
+    }
+
     const editing = Boolean(selectedTeam.value);
     const saved = await app.runOperation(editing ? "Updating team" : "Creating team", () =>
-      selectedTeam.value?.id ? updateTeam(selectedTeam.value.id, name) : createTeam(name)
+      selectedTeam.value?.id ? updateTeam(selectedTeam.value.id, name) : createTeam(name),
     );
     await refreshAll();
     selectTeam(teams.value.find((team) => team.id === saved.id) ?? saved);
@@ -347,7 +491,10 @@ export const usePermissionsStore = defineStore("permissions", () => {
   }
 
   async function deleteSelectedTeam() {
-    if (!selectedTeam.value?.id) return;
+    if (!selectedTeam.value?.id) {
+      return;
+    }
+
     const id = selectedTeam.value.id;
     await app.runOperation("Deleting team", () => deleteTeam(id));
     clearTeamDraft();
@@ -356,24 +503,45 @@ export const usePermissionsStore = defineStore("permissions", () => {
   }
 
   async function refreshSelectedTeamMembers() {
-    if (!selectedTeam.value?.id) {
+    const teamId = selectedTeam.value?.id;
+
+    if (!teamId) {
       teamMembers.value = [];
       return;
     }
-    teamMembers.value = await app.runOperation("Loading team members", () => listTeamMembers(selectedTeam.value!.id!));
+
+    teamMembers.value = await app.runOperation("Loading team members", () =>
+      listTeamMembers(teamId),
+    );
   }
 
   async function addSelectedTeamMember(userId: string) {
-    if (!selectedTeam.value?.id || !userId) return;
-    await app.runOperation("Adding member", () => addTeamMember(selectedTeam.value!.id!, userId));
-    await Promise.all([refreshSelectedTeamMembers(), selectedUser.value ? refreshSelectedUserTeams() : Promise.resolve()]);
+    const teamId = selectedTeam.value?.id;
+
+    if (!teamId || !userId) {
+      return;
+    }
+
+    await app.runOperation("Adding member", () => addTeamMember(teamId, userId));
+    await Promise.all([
+      refreshSelectedTeamMembers(),
+      selectedUser.value ? refreshSelectedUserTeams() : Promise.resolve(),
+    ]);
     app.setStatus("Member added.");
   }
 
   async function removeSelectedTeamMember(userId: string) {
-    if (!selectedTeam.value?.id || !userId) return;
-    await app.runOperation("Removing member", () => removeTeamMember(selectedTeam.value!.id!, userId));
-    await Promise.all([refreshSelectedTeamMembers(), selectedUser.value ? refreshSelectedUserTeams() : Promise.resolve()]);
+    const teamId = selectedTeam.value?.id;
+
+    if (!teamId || !userId) {
+      return;
+    }
+
+    await app.runOperation("Removing member", () => removeTeamMember(teamId, userId));
+    await Promise.all([
+      refreshSelectedTeamMembers(),
+      selectedUser.value ? refreshSelectedUserTeams() : Promise.resolve(),
+    ]);
     app.setStatus("Member removed.");
   }
 
@@ -381,24 +549,45 @@ export const usePermissionsStore = defineStore("permissions", () => {
     selectedWorkflowId.value = workflowId;
     workflowGrants.value = [];
     grantDraft.principal_id = "";
-    if (workflowId) await refreshWorkflowGrants();
+
+    if (workflowId) {
+      await refreshWorkflowGrants();
+    }
   }
 
   async function refreshWorkflowGrants() {
-    if (!selectedWorkflowId.value) {
+    const workflowId = selectedWorkflowId.value;
+
+    if (!workflowId) {
       workflowGrants.value = [];
       return;
     }
-    workflowGrants.value = await app.runOperation("Loading workflow access", () =>
-      listWorkflowGrants(selectedWorkflowId.value!)
-    ) as Grant[];
+
+    workflowGrants.value = (await app.runOperation("Loading workflow access", () =>
+      listWorkflowGrants(workflowId),
+    )) as unknown as Grant[];
   }
 
   async function saveGrantDraft() {
-    if (!selectedWorkflowId.value) return app.setError("Select a workflow first.");
-    if (!grantDraft.principal_id) return app.setError("Select a user or team first.");
+    const workflowId = selectedWorkflowId.value;
+
+    if (!workflowId) {
+      app.setError("Select a workflow first.");
+      return;
+    }
+
+    if (!grantDraft.principal_id) {
+      app.setError("Select a user or team first.");
+      return;
+    }
+
     await app.runOperation("Saving access", () =>
-      grantWorkflowAccess(selectedWorkflowId.value!, grantDraft.principal_type, grantDraft.principal_id, grantDraft.permission)
+      grantWorkflowAccess(
+        workflowId,
+        grantDraft.principal_type,
+        grantDraft.principal_id,
+        grantDraft.permission,
+      ),
     );
     grantDraft.principal_id = "";
     await refreshWorkflowGrants();
@@ -406,8 +595,13 @@ export const usePermissionsStore = defineStore("permissions", () => {
   }
 
   async function revokeGrant(grantId: string | null) {
-    if (!selectedWorkflowId.value || !grantId) return;
-    await app.runOperation("Revoking access", () => revokeWorkflowGrant(selectedWorkflowId.value!, grantId));
+    const workflowId = selectedWorkflowId.value;
+
+    if (!workflowId || !grantId) {
+      return;
+    }
+
+    await app.runOperation("Revoking access", () => revokeWorkflowGrant(workflowId, grantId));
     await refreshWorkflowGrants();
     app.setStatus("Access revoked.");
   }
@@ -461,12 +655,18 @@ export const usePermissionsStore = defineStore("permissions", () => {
     selectWorkflow,
     refreshWorkflowGrants,
     saveGrantDraft,
-    revokeGrant
+    revokeGrant,
   };
 });
 
 function userSearchText(user: User): string {
-  return [user.id, user.username, user.email, user.is_admin ? "admin" : "user", user.disabled ? "disabled" : "enabled"]
+  return [
+    user.id,
+    user.username,
+    user.email,
+    user.is_admin ? "admin" : "user",
+    user.disabled ? "disabled" : "enabled",
+  ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -477,14 +677,16 @@ function teamSearchText(team: Team): string {
 }
 
 function apiKeySearchText(apiKey: ApiKey, users: User[]): string {
-  const owner = apiKey.user_id ? users.find((user) => user.id === apiKey.user_id)?.username : "service";
+  const owner = apiKey.user_id
+    ? users.find((user) => user.id === apiKey.user_id)?.username
+    : "service";
   return [
     apiKey.id,
     apiKey.name,
     apiKey.key_prefix,
     owner,
     apiKey.is_service ? "service" : "user",
-    apiKey.disabled ? "disabled" : "active"
+    apiKey.disabled ? "disabled" : "active",
   ]
     .filter(Boolean)
     .join(" ")
@@ -493,6 +695,10 @@ function apiKeySearchText(apiKey: ApiKey, users: User[]): string {
 
 function toDateTimeInput(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
   return date.toISOString().slice(0, 16);
 }

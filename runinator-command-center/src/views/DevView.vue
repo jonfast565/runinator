@@ -8,11 +8,21 @@
             <p>Inspect, edit, apply, and run a local pack without leaving the desktop client.</p>
           </div>
           <div class="actions">
-            <button class="btn" :disabled="busy || !packPath.trim()" :title="`Inspect (${modKeyLabel}I)`" @click="inspectPackNow">
+            <button
+              class="btn"
+              :disabled="busy || !packPath.trim()"
+              :title="`Inspect (${modKeyLabel}I)`"
+              @click="inspectPackNow"
+            >
               <Icon name="refresh" />
               <span>Inspect</span>
             </button>
-            <button class="btn btn-primary" :disabled="busy || !packPath.trim()" :title="`Apply (⇧${modKeyLabel}↵)`" @click="applyPack">
+            <button
+              class="btn btn-primary"
+              :disabled="busy || !packPath.trim()"
+              :title="`Apply (⇧${modKeyLabel}↵)`"
+              @click="applyPack"
+            >
               <Icon name="upload" />
               <span>Apply</span>
             </button>
@@ -36,7 +46,11 @@
             <span>Run after apply</span>
             <select v-model="runWorkflowRef">
               <option value="">None</option>
-              <option v-for="workflow in availableWorkflows" :key="workflow.id ?? workflow.name" :value="workflow.id ?? workflow.name">
+              <option
+                v-for="workflow in availableWorkflows"
+                :key="workflow.id ?? workflow.name"
+                :value="workflow.id ?? workflow.name"
+              >
                 {{ workflow.name }} v{{ workflow.version }}
               </option>
             </select>
@@ -78,7 +92,11 @@
           <StatusBadge :status="statusBadge" />
           <span>{{ statusText }}</span>
         </div>
-        <div class="dev-shortcuts">{{ modKeyLabel }}S save · {{ modKeyLabel }}I inspect · {{ modKeyLabel }}↵ run · ⇧{{ modKeyLabel }}↵ apply</div>
+        <div class="dev-shortcuts">
+          {{ modKeyLabel }}S save · {{ modKeyLabel }}I inspect · {{ modKeyLabel }}↵ run · ⇧{{
+            modKeyLabel
+          }}↵ apply
+        </div>
         <div v-if="errorText" class="dev-error">{{ errorText }}</div>
 
         <div class="dev-metrics">
@@ -133,7 +151,13 @@
         <div class="panel-toolbar">
           <div class="dev-toolbar-copy">
             <h2>{{ selectedFilePath ? relativePath(selectedFilePath) : "Source" }}</h2>
-            <p>{{ selectedFilePath ? "Live source editing for the selected pack file." : "Select a watched file to inspect its source." }}</p>
+            <p>
+              {{
+                selectedFilePath
+                  ? "Live source editing for the selected pack file."
+                  : "Select a watched file to inspect its source."
+              }}
+            </p>
           </div>
           <div class="actions">
             <button class="btn" :disabled="!canSaveSource || saving" @click="saveSelectedSource">
@@ -175,14 +199,30 @@
         <div class="panel-toolbar">
           <div class="dev-toolbar-copy">
             <h2>Latest Run</h2>
-            <p>{{ latestRunId ? "Track the active or most recent run created from this panel." : "Run a selected workflow and inspect its latest execution here." }}</p>
+            <p>
+              {{
+                latestRunId
+                  ? "Track the active or most recent run created from this panel."
+                  : "Run a selected workflow and inspect its latest execution here."
+              }}
+            </p>
           </div>
           <div class="actions">
-            <button class="btn btn-primary" :disabled="!canRun" :title="`Run (${modKeyLabel}↵)`" @click="runSelectedWorkflow">
+            <button
+              class="btn btn-primary"
+              :disabled="!canRun"
+              :title="`Run (${modKeyLabel}↵)`"
+              @click="runSelectedWorkflow"
+            >
               <Icon name="play" />
               <span>{{ latestRunId ? "Re-run" : "Run" }}</span>
             </button>
-            <button v-if="runInFlight" class="btn btn-danger" title="Cancel this run" @click="cancelRun">
+            <button
+              v-if="runInFlight"
+              class="btn btn-danger"
+              title="Cancel this run"
+              @click="cancelRun"
+            >
               <Icon name="stop" />
               <span>Cancel</span>
             </button>
@@ -200,7 +240,9 @@
             class="dev-run-pill"
             :class="{ active: id === latestRunId }"
             @click="viewRun(id)"
-          >#{{ id }}</button>
+          >
+            #{{ id }}
+          </button>
         </div>
         <template v-if="latestRunDetail">
           <div class="dev-run-summary">
@@ -221,7 +263,9 @@
               <strong class="dev-run-counts">
                 <span class="ok">{{ runNodeCounts.ok }}✓</span>
                 <span v-if="runNodeCounts.failed" class="failed">{{ runNodeCounts.failed }}✕</span>
-                <span v-if="runNodeCounts.running" class="running">{{ runNodeCounts.running }}⟳</span>
+                <span v-if="runNodeCounts.running" class="running"
+                  >{{ runNodeCounts.running }}⟳</span
+                >
               </strong>
             </div>
           </div>
@@ -259,7 +303,7 @@ import {
   inspectDevPack,
   readDevPackFile,
   replayWorkflowRun,
-  writeDevPackFile
+  writeDevPackFile,
 } from "../api/commandCenterApi";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
@@ -269,37 +313,44 @@ import RunNodeActions, { type RunNodeActionType } from "../components/shared/Run
 import RunTimeline from "../components/shared/RunTimeline.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import WdlEditor from "../components/shared/WdlEditor.vue";
-import { useAppStore } from "../stores/app";
 import { useProvidersStore } from "../stores/providers";
 import { useSecretsStore } from "../stores/secrets";
 import { useWorkflowsStore } from "../stores/workflows";
-import type { DevPackFile, DevPackInspectResult, RuninatorType, WorkflowNodeRun, WorkflowRunDetail } from "../types/models";
+import { displayValue } from "../utils/values";
+import type {
+  DevPackFile,
+  DevPackInspectResult,
+  RuninatorType,
+  WorkflowNodeRun,
+  WorkflowRunDetail,
+} from "../types/models";
 
 const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlp";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
 
-const app = useAppStore();
 const workflows = useWorkflowsStore();
 const providers = useProvidersStore();
 const secrets = useSecretsStore();
 
 const OPTIONS_STORAGE_KEY = "runinator.devPack.options";
 const savedOptions = loadDevOptions();
-const modKeyLabel = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
+const modKeyLabel = /mac/i.test(navigator.userAgent) ? "⌘" : "Ctrl+";
 
-const packPath = ref(window.localStorage.getItem("runinator.devPack.path") || DEFAULT_PACK_PATH);
+const packPath = ref(window.localStorage.getItem("runinator.devPack.path") ?? DEFAULT_PACK_PATH);
 const skipSettings = ref(Boolean(savedOptions.skipSettings));
-const autoInspect = ref(savedOptions.autoInspect ?? true);
+const autoInspect = ref(
+  typeof savedOptions.autoInspect === "boolean" ? savedOptions.autoInspect : true,
+);
 const autoApply = ref(Boolean(savedOptions.autoApply));
 const autoSave = ref(Boolean(savedOptions.autoSave));
 const debugRun = ref(Boolean(savedOptions.debugRun));
-const runWorkflowRef = ref(String(savedOptions.runWorkflowRef ?? ""));
+const runWorkflowRef = ref(displayValue(savedOptions.runWorkflowRef));
 const recentRunIds = ref<string[]>([]);
 const recentPacks = ref<string[]>(loadRecentPacks());
 const runInputValue = ref<unknown>({});
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 const inspectResult = ref<DevPackInspectResult | null>(null);
-const selectedFilePath = ref(window.localStorage.getItem("runinator.devPack.file") || "");
+const selectedFilePath = ref(window.localStorage.getItem("runinator.devPack.file") ?? "");
 const sourceText = ref("");
 const savedSourceText = ref("");
 const latestRunId = ref<string | null>(null);
@@ -319,33 +370,53 @@ const watchedFiles = computed(() => inspectResult.value?.files ?? []);
 const availableWorkflows = computed(() => inspectResult.value?.workflows ?? workflows.workflows);
 const selectedIsWdl = computed(() => selectedFilePath.value.endsWith(".wdl"));
 const selectedIsJson = computed(() => selectedFilePath.value.endsWith(".json"));
-const runWorkflowInputType = computed<RuninatorType>(() => resolveRunWorkflow()?.input_type ?? { type: "any" });
-const runWorkflowKey = computed(() => String(runWorkflowRef.value || "none"));
-const canSaveSource = computed(() => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value);
+const runWorkflowInputType = computed<RuninatorType>(
+  () => resolveRunWorkflow()?.input_type ?? { type: "any" },
+);
+const runWorkflowKey = computed(() => runWorkflowRef.value || "none");
+const canSaveSource = computed(
+  () => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
+);
 const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
 const runInFlight = computed(() => {
   const status = latestRunDetail.value?.run.status;
   return Boolean(status) && !TERMINAL_STATUSES.has(status ?? "");
 });
-const statusBadge = computed(() => (errorText.value ? "failed" : busy.value || saving.value ? "running" : "succeeded"));
-const lastInspectText = computed(() => (lastInspectAt.value ? `Last inspect ${lastInspectAt.value.toLocaleTimeString()}` : "Not inspected"));
+const statusBadge = computed(() =>
+  errorText.value ? "failed" : busy.value || saving.value ? "running" : "succeeded",
+);
+const lastInspectText = computed(() =>
+  lastInspectAt.value
+    ? `Last inspect ${lastInspectAt.value.toLocaleTimeString()}`
+    : "Not inspected",
+);
 const runNodeCounts = computed(() => {
   const counts = { ok: 0, failed: 0, running: 0 };
+
   for (const node of latestRunDetail.value?.nodes ?? []) {
-    if (node.status === "succeeded") counts.ok += 1;
-    else if (node.status === "failed" || node.status === "timed_out") counts.failed += 1;
-    else if (["running", "waiting", "queued", "retrying"].includes(node.status)) counts.running += 1;
+    if (node.status === "succeeded") {
+      counts.ok += 1;
+    } else if (node.status === "failed" || node.status === "timed_out") {
+      counts.failed += 1;
+    } else if (["running", "waiting", "queued", "retrying"].includes(node.status)) {
+      counts.running += 1;
+    }
   }
+
   return counts;
 });
 
 onMounted(async () => {
-  await providers.fetchProviders().catch(() => {});
-  if (secrets.secrets.length === 0) await secrets.refreshSecrets().catch(() => {});
-  await workflows.refreshWorkflows().catch(() => {});
+  await providers.fetchProviders().catch(() => undefined);
+
+  if (secrets.secrets.length === 0) {
+    await secrets.refreshSecrets().catch(() => undefined);
+  }
+
+  await workflows.refreshWorkflows().catch(() => undefined);
   await inspectPack();
   inspectTimer = window.setInterval(() => {
-    if (autoInspect.value && packPath.value.trim() && !busy.value) {
+    if (autoInspect.value && !busy.value) {
       void inspectPack({ quiet: true, applyOnChange: autoApply.value });
     }
   }, 1500);
@@ -374,8 +445,8 @@ watch([skipSettings, autoInspect, autoApply, autoSave, debugRun, runWorkflowRef]
       autoApply: autoApply.value,
       autoSave: autoSave.value,
       debugRun: debugRun.value,
-      runWorkflowRef: runWorkflowRef.value
-    })
+      runWorkflowRef: runWorkflowRef.value,
+    }),
   );
 });
 
@@ -386,16 +457,24 @@ watch(selectedFilePath, (value) => {
 // auto-save the edited wdl to disk (debounced) so the watch/apply loop sees in-app edits.
 let autoSaveTimer = 0;
 watch(sourceText, () => {
-  if (!autoSave.value) return;
+  if (!autoSave.value) {
+    return;
+  }
+
   window.clearTimeout(autoSaveTimer);
   autoSaveTimer = window.setTimeout(() => {
-    if (autoSave.value && canSaveSource.value && !saving.value && !busy.value) void saveSelectedSource();
+    if (autoSave.value && canSaveSource.value && !saving.value && !busy.value) {
+      void saveSelectedSource();
+    }
   }, 800);
 });
 
-function loadDevOptions(): Record<string, any> {
+function loadDevOptions(): Record<string, unknown> {
   try {
-    return JSON.parse(window.localStorage.getItem(OPTIONS_STORAGE_KEY) || "{}");
+    return JSON.parse(window.localStorage.getItem(OPTIONS_STORAGE_KEY) ?? "{}") as Record<
+      string,
+      unknown
+    >;
   } catch {
     return {};
   }
@@ -403,18 +482,31 @@ function loadDevOptions(): Record<string, any> {
 
 // edit-loop keyboard shortcuts: save, inspect, run, and apply.
 function onKeydown(event: KeyboardEvent) {
-  if (!event.metaKey && !event.ctrlKey) return;
+  if (!event.metaKey && !event.ctrlKey) {
+    return;
+  }
+
   const key = event.key.toLowerCase();
+
   if (key === "s") {
     event.preventDefault();
-    if (canSaveSource.value && !saving.value) void saveSelectedSource();
+
+    if (canSaveSource.value && !saving.value) {
+      void saveSelectedSource();
+    }
   } else if (key === "i") {
     event.preventDefault();
-    if (!busy.value && packPath.value.trim()) inspectPackNow();
+
+    if (!busy.value && packPath.value.trim()) {
+      inspectPackNow();
+    }
   } else if (key === "enter") {
     event.preventDefault();
+
     if (event.shiftKey) {
-      if (!busy.value && packPath.value.trim()) void applyPack();
+      if (!busy.value && packPath.value.trim()) {
+        void applyPack();
+      }
     } else if (canRun.value) {
       void runSelectedWorkflow();
     }
@@ -422,18 +514,27 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function rememberRun(id: string) {
-  recentRunIds.value = [id, ...recentRunIds.value.filter((existing) => existing !== id)].slice(0, 8);
+  recentRunIds.value = [id, ...recentRunIds.value.filter((existing) => existing !== id)].slice(
+    0,
+    8,
+  );
 }
 
 async function viewRun(id: string) {
-  if (id === latestRunId.value && latestRunDetail.value) return;
+  if (id === latestRunId.value && latestRunDetail.value) {
+    return;
+  }
+
   latestRunId.value = id;
   await refreshLatestRun();
   watchLatestRun();
 }
 
 async function cancelRun() {
-  if (!latestRunId.value || !runInFlight.value) return;
+  if (!latestRunId.value || !runInFlight.value) {
+    return;
+  }
+
   try {
     await cancelWorkflowRun(latestRunId.value);
     statusText.value = `Canceled run #${latestRunId.value}.`;
@@ -445,14 +546,19 @@ async function cancelRun() {
 
 function loadRecentPacks(): string[] {
   try {
-    return JSON.parse(window.localStorage.getItem("runinator.devPack.recentPaths") || "[]");
+    return JSON.parse(
+      window.localStorage.getItem("runinator.devPack.recentPaths") ?? "[]",
+    ) as string[];
   } catch {
     return [];
   }
 }
 
 function rememberPack(path: string) {
-  recentPacks.value = [path, ...recentPacks.value.filter((existing) => existing !== path)].slice(0, 8);
+  recentPacks.value = [path, ...recentPacks.value.filter((existing) => existing !== path)].slice(
+    0,
+    8,
+  );
   window.localStorage.setItem("runinator.devPack.recentPaths", JSON.stringify(recentPacks.value));
 }
 
@@ -465,19 +571,27 @@ watch(
       document.title = defaultDocumentTitle;
       return;
     }
-    const icon = status === "succeeded" ? "✓" : status === "failed" || status === "timed_out" ? "✕" : "▶";
+
+    const icon =
+      status === "succeeded" ? "✓" : status === "failed" || status === "timed_out" ? "✕" : "▶";
     document.title = `${icon} #${id} ${status} · Runinator`;
-  }
+  },
 );
 
 async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean } = {}) {
   const path = packPath.value.trim();
-  if (!path) return;
+
+  if (!path) {
+    return;
+  }
+
   if (!options.quiet) {
     errorText.value = "";
     statusText.value = "Inspecting pack...";
   }
+
   busy.value = true;
+
   try {
     const result = await inspectDevPack(path, skipSettings.value);
     const previousFingerprint = lastFingerprint;
@@ -485,13 +599,19 @@ async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean }
     rememberPack(path);
     lastInspectAt.value = new Date();
     lastFingerprint = fingerprint(result.files);
-    if (!selectedFilePath.value || !result.files.some((file) => file.path === selectedFilePath.value)) {
+
+    if (
+      !selectedFilePath.value ||
+      !result.files.some((file) => file.path === selectedFilePath.value)
+    ) {
       const firstWdl = result.files.find((file) => file.kind === "workflow") ?? result.files[0];
-      if (firstWdl) await selectFile(firstWdl.path);
+      await selectFile(firstWdl.path);
     } else if (previousFingerprint && previousFingerprint !== lastFingerprint) {
       await reloadSelectedSource();
     }
-    statusText.value = `Pack ready: ${result.workflows.length} workflow${result.workflows.length === 1 ? "" : "s"}.`;
+
+    statusText.value = `Pack ready: ${String(result.workflows.length)} workflow${result.workflows.length === 1 ? "" : "s"}.`;
+
     if (options.applyOnChange && previousFingerprint && previousFingerprint !== lastFingerprint) {
       await applyPack();
     }
@@ -509,13 +629,18 @@ function inspectPackNow() {
 
 async function applyPack() {
   const path = packPath.value.trim();
-  if (!path) return;
+
+  if (!path) {
+    return;
+  }
+
   errorText.value = "";
   statusText.value = "Applying pack...";
   busy.value = true;
+
   try {
     const result = await applyDevPack(path, skipSettings.value);
-    await workflows.refreshWorkflows().catch(() => {});
+    await workflows.refreshWorkflows().catch(() => undefined);
     inspectResult.value = {
       path: result.path,
       files: result.files,
@@ -523,11 +648,12 @@ async function applyPack() {
       triggers: result.imported.workflows.triggers,
       settings_count: result.imported.secrets?.secrets?.length ?? 0,
       // re-inspect repopulates real setting identities; after apply they are already on the server.
-      settings: inspectResult.value?.settings ?? []
+      settings: inspectResult.value?.settings ?? [],
     };
     lastFingerprint = fingerprint(result.files);
     lastInspectAt.value = new Date();
-    statusText.value = `Applied ${result.imported.workflows.workflows.length} workflow${result.imported.workflows.workflows.length === 1 ? "" : "s"}.`;
+    statusText.value = `Applied ${String(result.imported.workflows.workflows.length)} workflow${result.imported.workflows.workflows.length === 1 ? "" : "s"}.`;
+
     if (runWorkflowRef.value) {
       await runSelectedWorkflow();
     }
@@ -541,10 +667,12 @@ async function applyPack() {
 
 async function runSelectedWorkflow() {
   const workflow = resolveRunWorkflow();
+
   if (!workflow?.id) {
     errorText.value = `Workflow not found: ${runWorkflowRef.value}`;
     return;
   }
+
   const parameters = runInputValue.value ?? {};
   const created = await createWorkflowRun(workflow.id, { debug: debugRun.value, parameters });
   runInputFormRef.value?.persistLast();
@@ -557,13 +685,25 @@ async function runSelectedWorkflow() {
 
 function resolveRunWorkflow() {
   const value = runWorkflowRef.value;
-  const byId = availableWorkflows.value.find((workflow) => workflow.id === value) ?? workflows.workflows.find((workflow) => workflow.id === value);
-  if (byId) return byId;
-  return availableWorkflows.value.find((workflow) => workflow.name === value) ?? workflows.workflows.find((workflow) => workflow.name === value);
+  const byId =
+    availableWorkflows.value.find((workflow) => workflow.id === value) ??
+    workflows.workflows.find((workflow) => workflow.id === value);
+
+  if (byId) {
+    return byId;
+  }
+
+  return (
+    availableWorkflows.value.find((workflow) => workflow.name === value) ??
+    workflows.workflows.find((workflow) => workflow.name === value)
+  );
 }
 
 async function refreshLatestRun() {
-  if (!latestRunId.value) return;
+  if (!latestRunId.value) {
+    return;
+  }
+
   latestRunDetail.value = await fetchWorkflowRun(latestRunId.value);
 }
 
@@ -572,12 +712,19 @@ function selectRunNode(nodeId: string) {
 }
 
 async function onRunNodeAction(payload: { type: RunNodeActionType; node: WorkflowNodeRun }) {
-  if (!latestRunDetail.value) return;
+  if (!latestRunDetail.value) {
+    return;
+  }
+
   // the dev panel has no canvas, so editor/provider actions are handled by the standalone views.
-  if (payload.type !== "replay-run" && payload.type !== "replay-from") return;
+  if (payload.type !== "replay-run" && payload.type !== "replay-from") {
+    return;
+  }
+
   const runId = latestRunDetail.value.run.id;
   busy.value = true;
   errorText.value = "";
+
   try {
     const options = payload.type === "replay-from" ? { fromStepId: payload.node.node_id } : {};
     const created = await replayWorkflowRun(runId, options);
@@ -597,11 +744,15 @@ async function onRunNodeAction(payload: { type: RunNodeActionType; node: Workflo
 function watchLatestRun() {
   window.clearInterval(runTimer);
   runTimer = window.setInterval(async () => {
-    if (!latestRunId.value) return;
-    await refreshLatestRun().catch((err) => {
+    if (!latestRunId.value) {
+      return;
+    }
+
+    await refreshLatestRun().catch((err: unknown) => {
       errorText.value = String(err);
     });
     const status = latestRunDetail.value?.run.status;
+
     if (status && TERMINAL_STATUSES.has(status)) {
       window.clearInterval(runTimer);
     }
@@ -614,7 +765,10 @@ async function selectFile(path: string) {
 }
 
 async function reloadSelectedSource() {
-  if (!selectedFilePath.value) return;
+  if (!selectedFilePath.value) {
+    return;
+  }
+
   try {
     const file = await readDevPackFile(selectedFilePath.value);
     sourceText.value = file.content;
@@ -625,9 +779,13 @@ async function reloadSelectedSource() {
 }
 
 async function saveSelectedSource() {
-  if (!selectedFilePath.value || !canSaveSource.value) return;
+  if (!selectedFilePath.value || !canSaveSource.value) {
+    return;
+  }
+
   saving.value = true;
   errorText.value = "";
+
   try {
     const file = await writeDevPackFile(selectedFilePath.value, sourceText.value);
     sourceText.value = file.content;
@@ -642,7 +800,9 @@ async function saveSelectedSource() {
 }
 
 function fingerprint(files: DevPackFile[]) {
-  return files.map((file) => `${file.path}:${file.modified_at ?? ""}:${file.size_bytes ?? ""}`).join("|");
+  return files
+    .map((file) => `${file.path}:${file.modified_at ?? ""}:${String(file.size_bytes ?? "")}`)
+    .join("|");
 }
 
 function relativePath(path: string) {
@@ -651,7 +811,7 @@ function relativePath(path: string) {
 }
 
 function fileMeta(file: DevPackFile) {
-  const size = file.size_bytes == null ? "-" : `${file.size_bytes}b`;
+  const size = file.size_bytes == null ? "-" : `${String(file.size_bytes)}b`;
   const time = file.modified_at ? new Date(file.modified_at).toLocaleTimeString() : "-";
   return `${size} · ${time}`;
 }
@@ -898,7 +1058,12 @@ function fileMeta(file: DevPackFile) {
   padding: 12px 0 0;
   resize: none;
   background: transparent;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    12px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
 }
 
 .dev-run-summary {

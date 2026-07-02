@@ -8,7 +8,7 @@ describe("feedback toasts", () => {
     // no-op timers so auto-dismiss never fires during the test.
     vi.stubGlobal("window", {
       clearTimeout: () => undefined,
-      setTimeout: () => 0
+      setTimeout: () => 0,
     });
   });
 
@@ -43,7 +43,9 @@ describe("feedback toasts", () => {
   it("caps the stack at four toasts, dropping the oldest", () => {
     const app = useAppStore();
 
-    for (let i = 0; i < 6; i += 1) app.pushToast("info", `msg ${i}`);
+    for (let i = 0; i < 6; i += 1) {
+      app.pushToast("info", `msg ${String(i)}`);
+    }
 
     expect(app.toasts).toHaveLength(4);
     expect(app.toasts[0].text).toBe("msg 2");

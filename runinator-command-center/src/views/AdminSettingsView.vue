@@ -57,7 +57,9 @@
             <div class="settings-card-row">
               <div class="settings-card-label">
                 <span>Theme</span>
-                <span class="settings-card-hint">Override the app color scheme. "System" follows your OS setting.</span>
+                <span class="settings-card-hint"
+                  >Override the app color scheme. "System" follows your OS setting.</span
+                >
               </div>
               <div class="theme-options">
                 <label
@@ -84,7 +86,9 @@
                 <span class="settings-card-hint">Which page opens when you launch the app.</span>
               </div>
               <select :value="prefs.defaultTab" @change="onDefaultTabChange">
-                <option v-for="opt in tabOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                <option v-for="opt in tabOptions" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
               </select>
             </div>
           </div>
@@ -113,7 +117,9 @@
                 <h3>{{ activeLanguage.label }}</h3>
                 <p>
                   <span>{{ activeLanguage.language }}</span>
-                  <span v-if="activeLanguage.aliases.length">aliases: {{ activeLanguage.aliases.join(", ") }}</span>
+                  <span v-if="activeLanguage.aliases.length"
+                    >aliases: {{ activeLanguage.aliases.join(", ") }}</span
+                  >
                 </p>
               </div>
               <span class="lang-badge">{{ activeLanguage.defaultImage }}</span>
@@ -148,7 +154,11 @@
 import { computed, onMounted, ref } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import { useAdminSettingsStore } from "../stores/adminSettings";
-import { DEFAULT_TAB_OPTIONS, useDisplayPreferencesStore, type AppTheme } from "../stores/displayPreferences";
+import {
+  DEFAULT_TAB_OPTIONS,
+  useDisplayPreferencesStore,
+  type AppTheme,
+} from "../stores/displayPreferences";
 
 const settings = useAdminSettingsStore();
 const prefs = useDisplayPreferencesStore();
@@ -156,18 +166,20 @@ const prefs = useDisplayPreferencesStore();
 type ActiveSection = "display" | "languages";
 const activeSection = ref<ActiveSection>("display");
 const languagesOpen = ref(true);
-const selected = ref<string>(settings.languages[0]?.language ?? "");
+const selected = ref<string>(settings.languages[0].language);
 
 const themeOptions: { value: AppTheme; label: string }[] = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" }
+  { value: "dark", label: "Dark" },
 ];
 
 const tabOptions = DEFAULT_TAB_OPTIONS;
 
 const activeLanguage = computed(() =>
-  activeSection.value === "languages" ? settings.languages.find((entry) => entry.language === selected.value) : undefined
+  activeSection.value === "languages"
+    ? settings.languages.find((entry) => entry.language === selected.value)
+    : undefined,
 );
 
 function selectSection(section: ActiveSection) {
@@ -185,7 +197,9 @@ function onDefaultTabChange(event: Event) {
 }
 
 onMounted(() => {
-  if (!settings.loaded) void settings.refresh();
+  if (!settings.loaded) {
+    void settings.refresh();
+  }
 });
 </script>
 

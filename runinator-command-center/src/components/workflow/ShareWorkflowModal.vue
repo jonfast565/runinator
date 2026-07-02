@@ -4,18 +4,27 @@
       <h3>Access</h3>
       <table v-if="grants.length" class="grants-table">
         <thead>
-          <tr><th>Principal</th><th>Type</th><th>Permission</th><th></th></tr>
+          <tr>
+            <th>Principal</th>
+            <th>Type</th>
+            <th>Permission</th>
+            <th></th>
+          </tr>
         </thead>
         <tbody>
           <tr v-for="grant in grants" :key="String(grant.id)">
             <td class="mono">{{ grant.principal_id }}</td>
             <td>{{ grant.principal_type }}</td>
             <td>{{ grant.permission }}</td>
-            <td><Button size="sm" variant="ghost" @click="revoke(String(grant.id))">Remove</Button></td>
+            <td>
+              <Button size="sm" variant="ghost" @click="revoke(String(grant.id))">Remove</Button>
+            </td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="hint">No grants yet. The creator owns this workflow; add grants to share it.</p>
+      <p v-else class="hint">
+        No grants yet. The creator owns this workflow; add grants to share it.
+      </p>
     </section>
 
     <section class="form-section">
@@ -41,7 +50,9 @@
             <option value="own">own</option>
           </select>
         </label>
-        <Button variant="primary" type="submit" :loading="busy" :disabled="!principalId">Add</Button>
+        <Button variant="primary" type="submit" :loading="busy" :disabled="!principalId"
+          >Add</Button
+        >
       </form>
       <p v-if="error" class="error">{{ error }}</p>
     </section>
@@ -53,7 +64,7 @@ import { onMounted, ref } from "vue";
 import {
   createWorkflowGrant,
   listWorkflowGrants,
-  revokeWorkflowGrant
+  revokeWorkflowGrant,
 } from "../../api/commandCenterApi";
 import Modal from "../shared/Modal.vue";
 import Button from "../shared/Button.vue";
@@ -71,6 +82,7 @@ const busy = ref(false);
 
 async function refresh() {
   error.value = "";
+
   try {
     grants.value = await listWorkflowGrants(props.workflowId);
   } catch (err) {
@@ -81,8 +93,14 @@ async function refresh() {
 async function add() {
   busy.value = true;
   error.value = "";
+
   try {
-    await createWorkflowGrant(props.workflowId, principalType.value, principalId.value.trim(), permission.value);
+    await createWorkflowGrant(
+      props.workflowId,
+      principalType.value,
+      principalId.value.trim(),
+      permission.value,
+    );
     principalId.value = "";
     await refresh();
   } catch (err) {

@@ -1,13 +1,22 @@
 <template>
-  <div ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="workflows.closeRunInput">
+  <div
+    ref="modalRoot"
+    class="modal-backdrop"
+    tabindex="-1"
+    @keydown.esc.stop.prevent="workflows.closeRunInput"
+  >
     <form class="modal run-input-modal" @submit.prevent="onSubmit">
       <header class="modal-header">
         <div>
           <h2>Run {{ workflows.selectedWorkflow?.name }}</h2>
-          <span>{{ workflows.runInputDebug ? "Debug run — provide inputs" : "Provide inputs for this run" }}</span>
+          <span>{{
+            workflows.runInputDebug ? "Debug run — provide inputs" : "Provide inputs for this run"
+          }}</span>
         </div>
         <div class="modal-header-actions">
-          <button type="submit" class="primary">{{ workflows.runInputDebug ? "Run Debug" : "Run" }}</button>
+          <button type="submit" class="primary">
+            {{ workflows.runInputDebug ? "Run Debug" : "Run" }}
+          </button>
           <button type="button" @click="workflows.closeRunInput">Close</button>
         </div>
       </header>
@@ -24,7 +33,9 @@
 
       <div class="modal-actions">
         <button type="button" @click="workflows.closeRunInput">Cancel</button>
-        <button type="submit" class="primary">{{ workflows.runInputDebug ? "Run Debug" : "Run" }}</button>
+        <button type="submit" class="primary">
+          {{ workflows.runInputDebug ? "Run Debug" : "Run" }}
+        </button>
       </div>
     </form>
   </div>
@@ -42,16 +53,21 @@ const modalRoot = ref<HTMLElement | null>(null);
 
 onMounted(() => modalRoot.value?.focus());
 
-const inputType = computed<RuninatorType>(() => workflows.selectedWorkflowInputType ?? { type: "any" });
-const storageKey = computed(() => String(workflows.selectedWorkflow?.id ?? workflows.selectedWorkflow?.name ?? "none"));
+const inputType = computed<RuninatorType>(
+  () => workflows.selectedWorkflowInputType ?? { type: "any" },
+);
+const storageKey = computed(
+  () => workflows.selectedWorkflow?.id ?? workflows.selectedWorkflow?.name ?? "none",
+);
 
 function onInputChange(value: unknown) {
-  workflows.runInputDraft = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as JsonRecord;
+  workflows.runInputDraft =
+    value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function onSubmit() {
   runInputFormRef.value?.persistLast();
-  workflows.confirmRunInput();
+  void workflows.confirmRunInput();
 }
 </script>
 

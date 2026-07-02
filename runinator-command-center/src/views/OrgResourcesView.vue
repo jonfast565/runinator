@@ -26,13 +26,21 @@
           <div class="res-stat">
             <label>Monthly budget</label>
             <div class="res-stat-value">
-              {{ quota && quota.max_monthly_cents > 0 ? fmtCents(quota.max_monthly_cents) : "unlimited" }}
+              {{
+                quota && quota.max_monthly_cents > 0
+                  ? fmtCents(quota.max_monthly_cents)
+                  : "unlimited"
+              }}
             </div>
           </div>
         </div>
 
         <div v-if="budgetPct !== null" class="budget-bar">
-          <div class="budget-fill" :class="{ over: budgetPct >= 100 }" :style="{ width: Math.min(budgetPct, 100) + '%' }"></div>
+          <div
+            class="budget-fill"
+            :class="{ over: budgetPct >= 100 }"
+            :style="{ width: Math.min(budgetPct, 100) + '%' }"
+          ></div>
         </div>
       </div>
 
@@ -40,10 +48,18 @@
         <div class="res-grid">
           <section class="res-card res-card-wide">
             <h3 class="res-card-title">Dedicated allocations</h3>
-            <div v-if="!groups.length" class="empty-state">No dedicated node pools. Scale one below.</div>
+            <div v-if="!groups.length" class="empty-state">
+              No dedicated node pools. Scale one below.
+            </div>
             <table v-else class="res-table">
               <thead>
-                <tr><th>Backend</th><th>Kind</th><th>Desired</th><th>Rate</th><th>Monthly</th></tr>
+                <tr>
+                  <th>Backend</th>
+                  <th>Kind</th>
+                  <th>Desired</th>
+                  <th>Rate</th>
+                  <th>Monthly</th>
+                </tr>
               </thead>
               <tbody>
                 <tr v-for="g in groups" :key="g.backend + g.kind">
@@ -61,7 +77,12 @@
             <h3 class="res-card-title">Node-hours (30d)</h3>
             <div v-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
             <table v-else class="res-table">
-              <thead><tr><th>Kind</th><th>Node-hours</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th>Node-hours</th>
+                </tr>
+              </thead>
               <tbody>
                 <tr v-for="[kind, hours] in usageKinds" :key="kind">
                   <td>{{ kind }}</td>
@@ -91,7 +112,8 @@
             </form>
             <p class="res-note">
               A worker pool with a positive count makes this org's workflows route to its dedicated,
-              <span class="mono">org={{ orgs.activeOrg.slug }}</span>-labeled workers.
+              <span class="mono">org={{ orgs.activeOrg.slug }}</span
+              >-labeled workers.
             </p>
           </section>
         </div>
@@ -112,7 +134,7 @@ import {
   type OrgQuota,
   type OrgResourceGroup,
   type OrgUsage,
-  type RateCard
+  type RateCard,
 } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
 import { useOrgsStore } from "../stores/orgs";
@@ -135,12 +157,17 @@ const scaleDesired = ref(1);
 
 const usageKinds = computed(() => Object.entries(usage.value?.node_hours ?? {}));
 const budgetPct = computed(() => {
-  if (!quota.value || quota.value.max_monthly_cents <= 0) return null;
+  if (!quota.value || quota.value.max_monthly_cents <= 0) {
+    return null;
+  }
+
   return Math.round((projectedMonthlyCents.value / quota.value.max_monthly_cents) * 100);
 });
 
 function rate(backend: string, kind: string): number {
-  return rateCard.value.entries.find((e) => e.backend === backend && e.kind === kind)?.hourly_cents ?? 0;
+  return (
+    rateCard.value.entries.find((e) => e.backend === backend && e.kind === kind)?.hourly_cents ?? 0
+  );
 }
 
 function fmtCents(cents: number): string {
@@ -153,8 +180,13 @@ async function refresh() {
   projectedMonthlyCents.value = 0;
   quota.value = null;
   usage.value = null;
-  if (!orgId) return;
+
+  if (!orgId) {
+    return;
+  }
+
   loading.value = true;
+
   try {
     rateCard.value = await fetchRateCard().catch(() => ({ entries: [] }));
     const nodes = await app
@@ -171,15 +203,20 @@ async function refresh() {
 
 async function scale() {
   const orgId = orgs.activeOrgId;
-  if (!orgId) return;
+
+  if (!orgId) {
+    return;
+  }
+
   scaling.value = true;
+
   try {
     await app.runOperation("Scaling pool", () =>
       scaleOrgNodes(orgId, {
         backend: scaleBackend.value,
         kind: scaleKind.value,
-        desired: Math.max(0, Math.floor(scaleDesired.value))
-      })
+        desired: Math.max(0, Math.floor(scaleDesired.value)),
+      }),
     );
     await refresh();
   } finally {

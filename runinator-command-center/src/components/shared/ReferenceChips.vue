@@ -1,7 +1,11 @@
 <template>
   <div class="reference-chips">
     <p class="reference-chips-hint">
-      {{ insertTarget ? "Click to insert into the focused field" : "Click to copy — focus an expression field to insert directly" }}
+      {{
+        insertTarget
+          ? "Click to insert into the focused field"
+          : "Click to copy — focus an expression field to insert directly"
+      }}
     </p>
     <div v-for="group in groups" :key="group.title" class="reference-chip-group">
       <span class="reference-chip-group-title">{{ group.title }}</span>
@@ -19,7 +23,9 @@
         >
           <code class="reference-chip-label">{{ reference.label }}</code>
           <small class="reference-chip-type">{{ reference.type }}</small>
-          <span v-if="flashed === reference.insert" class="reference-chip-flag">{{ flashLabel }}</span>
+          <span v-if="flashed === reference.insert" class="reference-chip-flag">{{
+            flashLabel
+          }}</span>
         </button>
       </div>
     </div>
@@ -43,19 +49,25 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null;
 // insert into the focused expression field if one is active, otherwise fall back to clipboard copy.
 function pick(reference: WorkflowReference) {
   const insert = insertTarget.value;
+
   if (insert) {
     insert(reference.insert);
     flash(reference.insert, "inserted");
     return;
   }
-  navigator.clipboard.writeText(reference.insert).catch(() => {});
+
+  void navigator.clipboard.writeText(reference.insert).catch(() => undefined);
   flash(reference.insert, "copied");
 }
 
 function flash(insert: string, label: string) {
   flashed.value = insert;
   flashLabel.value = label;
-  if (flashTimer) clearTimeout(flashTimer);
+
+  if (flashTimer) {
+    clearTimeout(flashTimer);
+  }
+
   flashTimer = setTimeout(() => {
     flashed.value = null;
   }, 900);
@@ -104,7 +116,10 @@ function flash(insert: string, label: string) {
   cursor: pointer;
   font: inherit;
   line-height: 1.4;
-  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease;
 }
 
 .reference-chip:hover {

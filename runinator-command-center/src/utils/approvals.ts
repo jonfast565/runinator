@@ -1,4 +1,5 @@
 import type { JsonRecord, WorkflowNodeRun } from "../types/models";
+import { displayValue } from "./values";
 
 export type ApprovalAction = "approve" | "reject";
 
@@ -7,12 +8,28 @@ export function isApprovalWaitingStatus(status: unknown): boolean {
 }
 
 export function approvalIdFromNodeRun(nodeRun: WorkflowNodeRun): string | null {
-  return nonEmptyString(nodeRun.state?.approval_id) ?? nonEmptyString(nodeRun.output_json?.approval_id) ?? nonEmptyString(nodeRun.state?.approval?.id);
+  return (
+    nonEmptyString(nodeRun.state?.approval_id) ??
+    nonEmptyString((nodeRun.output_json as Record<string, unknown> | undefined)?.approval_id) ??
+    nonEmptyString((nodeRun.state?.approval as Record<string, unknown> | undefined)?.id)
+  );
 }
 
-export function selectWorkflowApprovalRecord(records: JsonRecord[], workflowRunId: string, nodeId: string): JsonRecord | null {
-  const matches = records.filter((record) => nonEmptyString(record.id) && String(record.workflow_run_id ?? "") === workflowRunId && String(record.node_id ?? "") === nodeId);
-  matches.sort((left, right) => approvalRecordRank(left) - approvalRecordRank(right) || recordTime(right) - recordTime(left));
+export function selectWorkflowApprovalRecord(
+  records: JsonRecord[],
+  workflowRunId: string,
+  nodeId: string,
+): JsonRecord | null {
+  const matches = records.filter(
+    (record) =>
+      nonEmptyString(record.id) &&
+      displayValue(record.workflow_run_id) === workflowRunId &&
+      displayValue(record.node_id) === nodeId,
+  );
+  matches.sort(
+    (left, right) =>
+      approvalRecordRank(left) - approvalRecordRank(right) || recordTime(right) - recordTime(left),
+  );
   return matches[0] ?? null;
 }
 
@@ -32,7 +49,7 @@ function recordTime(record: JsonRecord): number {
 }
 
 function normalizeStatus(status: unknown): string {
-  return String(status ?? "")
+  return displayValue(status)
     .trim()
     .toLowerCase()
     .replaceAll("-", "_");

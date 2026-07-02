@@ -13,7 +13,7 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   listUsers: vi.fn(),
   revokeApiKey: vi.fn(),
   rotateApiKey: vi.fn(),
-  updateApiKey: vi.fn()
+  updateApiKey: vi.fn(),
 }));
 
 import {
@@ -26,7 +26,7 @@ import {
   listUsers,
   revokeApiKey,
   rotateApiKey,
-  updateApiKey
+  updateApiKey,
 } from "../../api/commandCenterApi";
 
 describe("permissions store", () => {
@@ -35,7 +35,7 @@ describe("permissions store", () => {
     vi.clearAllMocks();
     vi.stubGlobal("window", {
       clearTimeout: vi.fn(),
-      setTimeout: vi.fn()
+      setTimeout: vi.fn(),
     });
     vi.mocked(listApiKeys).mockResolvedValue([
       {
@@ -47,7 +47,7 @@ describe("permissions store", () => {
         last_used_at: null,
         expires_at: null,
         disabled: false,
-        created_at: "2026-01-01T00:00:00Z"
+        created_at: "2026-01-01T00:00:00Z",
       },
       {
         id: "k-2",
@@ -58,8 +58,8 @@ describe("permissions store", () => {
         last_used_at: null,
         expires_at: null,
         disabled: false,
-        created_at: "2026-01-01T00:00:00Z"
-      }
+        created_at: "2026-01-01T00:00:00Z",
+      },
     ]);
     vi.mocked(listUsers).mockResolvedValue([
       {
@@ -69,15 +69,15 @@ describe("permissions store", () => {
         is_admin: true,
         disabled: false,
         created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z"
-      }
+        updated_at: "2026-01-01T00:00:00Z",
+      },
     ]);
     vi.mocked(listTeams).mockResolvedValue([
       {
         id: "t-1",
         name: "platform",
-        created_at: "2026-01-01T00:00:00Z"
-      }
+        created_at: "2026-01-01T00:00:00Z",
+      },
     ]);
     vi.mocked(listUserTeams).mockResolvedValue([]);
     vi.mocked(listTeamMembers).mockResolvedValue([]);
@@ -92,9 +92,9 @@ describe("permissions store", () => {
         last_used_at: null,
         expires_at: null,
         disabled: false,
-        created_at: "2026-01-02T00:00:00Z"
+        created_at: "2026-01-02T00:00:00Z",
       },
-      secret: "new.secret"
+      secret: "new.secret",
     });
     vi.mocked(updateApiKey).mockResolvedValue({
       id: "k-1",
@@ -105,7 +105,7 @@ describe("permissions store", () => {
       last_used_at: null,
       expires_at: null,
       disabled: false,
-      created_at: "2026-01-01T00:00:00Z"
+      created_at: "2026-01-01T00:00:00Z",
     });
     vi.mocked(revokeApiKey).mockResolvedValue({ success: true, message: "API key revoked" });
     vi.mocked(rotateApiKey).mockResolvedValue({
@@ -118,9 +118,9 @@ describe("permissions store", () => {
         last_used_at: null,
         expires_at: null,
         disabled: false,
-        created_at: "2026-01-03T00:00:00Z"
+        created_at: "2026-01-03T00:00:00Z",
       },
-      secret: "rotated.secret"
+      secret: "rotated.secret",
     });
   });
 
@@ -166,7 +166,7 @@ describe("permissions store", () => {
       name: "new key",
       is_service: false,
       user_id: "u-1",
-      expires_at: null
+      expires_at: null,
     });
     expect(permissions.revealedApiKey?.secret).toBe("new.secret");
   });
@@ -181,7 +181,7 @@ describe("permissions store", () => {
     expect(updateApiKey).toHaveBeenCalledWith("k-1", {
       name: "renamed key",
       expires_at: null,
-      disabled: false
+      disabled: false,
     });
 
     await permissions.revokeSelectedApiKey();

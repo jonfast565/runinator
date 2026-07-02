@@ -11,65 +11,65 @@ const darkTheme = EditorView.theme(
   {
     "&": {
       color: "var(--text)",
-      backgroundColor: "var(--surface-sunken)"
+      backgroundColor: "var(--surface-sunken)",
     },
     ".cm-content": {
-      caretColor: "var(--accent)"
+      caretColor: "var(--accent)",
     },
     ".cm-cursor, .cm-dropCursor": {
-      borderLeftColor: "var(--accent)"
+      borderLeftColor: "var(--accent)",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "rgba(98, 162, 255, 0.28)"
+      backgroundColor: "rgba(98, 162, 255, 0.28)",
     },
     ".cm-panels": {
       backgroundColor: "var(--surface)",
-      color: "var(--text)"
+      color: "var(--text)",
     },
     ".cm-panels.cm-panels-top": {
-      borderBottomColor: "var(--border-subtle)"
+      borderBottomColor: "var(--border-subtle)",
     },
     ".cm-panels.cm-panels-bottom": {
-      borderTopColor: "var(--border-subtle)"
+      borderTopColor: "var(--border-subtle)",
     },
     ".cm-searchMatch": {
       backgroundColor: "var(--warning-bg)",
-      outlineColor: "var(--warning-fg)"
+      outlineColor: "var(--warning-fg)",
     },
     ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "var(--accent-soft)"
+      backgroundColor: "var(--accent-soft)",
     },
     ".cm-activeLine": {
-      backgroundColor: "var(--surface-hover)"
+      backgroundColor: "var(--surface-hover)",
     },
     ".cm-gutters": {
       backgroundColor: "var(--surface-sunken)",
       color: "var(--text-muted)",
-      borderRightColor: "var(--border-subtle)"
+      borderRightColor: "var(--border-subtle)",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: "var(--surface-hover)"
+      backgroundColor: "var(--surface-hover)",
     },
     ".cm-tooltip": {
       backgroundColor: "var(--surface)",
       color: "var(--text)",
-      borderColor: "var(--border-strong)"
+      borderColor: "var(--border-strong)",
     },
     ".cm-tooltip-autocomplete ul li[aria-selected]": {
       backgroundColor: "var(--accent)",
-      color: "#ffffff"
+      color: "#ffffff",
     },
     ".cm-diagnostic": {
-      backgroundColor: "var(--surface)"
+      backgroundColor: "var(--surface)",
     },
     ".cm-diagnostic-error": {
-      borderLeftColor: "var(--danger-solid)"
+      borderLeftColor: "var(--danger-solid)",
     },
     ".cm-diagnostic-warning": {
-      borderLeftColor: "var(--warn-solid)"
-    }
+      borderLeftColor: "var(--warn-solid)",
+    },
   },
-  { dark: true }
+  { dark: true },
 );
 
 export function osCodeMirrorTheme(): OsCodeMirrorTheme {
@@ -81,12 +81,15 @@ export function osCodeMirrorTheme(): OsCodeMirrorTheme {
     install(view) {
       const onChange = (event: MediaQueryListEvent) => {
         view.dispatch({
-          effects: compartment.reconfigure(event.matches ? darkTheme : [])
+          effects: compartment.reconfigure(event.matches ? darkTheme : []),
         });
       };
 
       media.addEventListener("change", onChange);
-      return () => media.removeEventListener("change", onChange);
-    }
+
+      return () => {
+        media.removeEventListener("change", onChange);
+      };
+    },
   };
 }

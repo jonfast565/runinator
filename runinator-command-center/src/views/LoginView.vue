@@ -30,6 +30,7 @@ const submitting = ref(false);
 
 async function submit() {
   submitting.value = true;
+
   try {
     await auth.signIn(username.value, password.value);
   } finally {

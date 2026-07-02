@@ -5,7 +5,7 @@ import {
   listMyOrgs,
   switchOrg,
   type OrgMembershipView,
-  type OrgRole
+  type OrgRole,
 } from "../api/commandCenterApi";
 import { useAppStore } from "./app";
 import { useAuthStore } from "./auth";
@@ -22,8 +22,11 @@ function safeGet(key: string): string | null {
 
 function safeSet(key: string, value: string | null) {
   try {
-    if (value) localStorage.setItem(key, value);
-    else localStorage.removeItem(key);
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
   } catch {
     /* storage unavailable; active org is then memory-only */
   }
@@ -41,12 +44,12 @@ export const useOrgsStore = defineStore("orgs", () => {
   const activeOrgId = ref<string | null>(safeGet(ACTIVE_ORG_KEY));
 
   const activeMembership = computed(
-    () => memberships.value.find((m) => m.org.id === activeOrgId.value) ?? null
+    () => memberships.value.find((m) => m.org.id === activeOrgId.value) ?? null,
   );
   const activeOrg = computed(() => activeMembership.value?.org ?? null);
   const activeRole = computed<OrgRole | null>(() => activeMembership.value?.role ?? null);
   const isActiveOrgAdmin = computed(
-    () => activeRole.value != null && ROLE_RANK[activeRole.value] >= ROLE_RANK.admin
+    () => activeRole.value != null && ROLE_RANK[activeRole.value] >= ROLE_RANK.admin,
   );
   const hasOrgs = computed(() => memberships.value.length > 0);
 
@@ -54,10 +57,12 @@ export const useOrgsStore = defineStore("orgs", () => {
     memberships.value = await app
       .runOperation("Loading organizations", () => listMyOrgs())
       .catch(() => []);
+
     // drop a stale active selection; auto-select the first org when none is active.
     if (activeOrgId.value && !memberships.value.some((m) => m.org.id === activeOrgId.value)) {
       setActiveLocal(null);
     }
+
     if (!activeOrgId.value && memberships.value.length > 0) {
       await setActive(memberships.value[0].org.id);
     }
@@ -86,7 +91,11 @@ export const useOrgsStore = defineStore("orgs", () => {
     const org = await app
       .runOperation("Creating organization", () => apiCreateOrg(name))
       .catch(() => null);
-    if (!org) return false;
+
+    if (!org) {
+      return false;
+    }
+
     await refresh();
     await setActive(org.id);
     return true;
@@ -108,6 +117,6 @@ export const useOrgsStore = defineStore("orgs", () => {
     refresh,
     setActive,
     create,
-    clear
+    clear,
   };
 });

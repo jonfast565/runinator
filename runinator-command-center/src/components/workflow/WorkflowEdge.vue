@@ -15,12 +15,17 @@
   <EdgeLabelRenderer v-if="labelText">
     <div
       class="workflow-edge-label nodrag nopan"
-      :class="[severityClass, { 'is-interactive': interactive, 'is-manual': hasManualOffset, 'is-dragging': dragging }]"
+      :class="[
+        severityClass,
+        { 'is-interactive': interactive, 'is-manual': hasManualOffset, 'is-dragging': dragging },
+      ]"
       :style="labelStyle"
       :title="labelTitle"
       @pointerdown="onPointerDown"
       @dblclick.stop.prevent="onReset"
-    >{{ labelText }}</div>
+    >
+      {{ labelText }}
+    </div>
   </EdgeLabelRenderer>
 </template>
 
@@ -33,7 +38,7 @@ import {
   getBezierPath,
   getSmoothStepPath,
   getStraightPath,
-  useVueFlow
+  useVueFlow,
 } from "@vue-flow/core";
 import { useWorkflowsStore } from "../../stores/workflows";
 import type { WorkflowEditorEdgeData } from "../../types/models";
@@ -73,12 +78,22 @@ const pathParams = computed(() => {
     sourcePosition: props.sourcePosition,
     targetX: props.targetX,
     targetY: props.targetY,
-    targetPosition: props.targetPosition
+    targetPosition: props.targetPosition,
   };
-  if (style === "bezier") return getBezierPath(base);
-  if (style === "straight") {
-    return getStraightPath({ sourceX: props.sourceX, sourceY: props.sourceY, targetX: props.targetX, targetY: props.targetY });
+
+  if (style === "bezier") {
+    return getBezierPath(base);
   }
+
+  if (style === "straight") {
+    return getStraightPath({
+      sourceX: props.sourceX,
+      sourceY: props.sourceY,
+      targetX: props.targetX,
+      targetY: props.targetY,
+    });
+  }
+
   // square renders as a sharp smoothstep path (border radius 0).
   return getSmoothStepPath({ ...base, borderRadius: 0, offset: props.data?.parallelOffset });
 });
@@ -88,7 +103,11 @@ const labelText = computed(() => (typeof props.label === "string" ? props.label 
 
 const manualOffset = computed(() => {
   const offset = props.data?.labelOffset;
-  if (!offset || (offset.x === 0 && offset.y === 0)) return null;
+
+  if (!offset || (offset.x === 0 && offset.y === 0)) {
+    return null;
+  }
+
   return offset;
 });
 const hasManualOffset = computed(() => manualOffset.value !== null);
@@ -101,28 +120,37 @@ let dragMoved = false;
 
 const labelDimensions = computed(() => ({
   width: Math.min(180, labelText.value.length * 6.5 + 16),
-  height: 20
+  height: 20,
 }));
 
 const labelPosition = computed(() => {
   const anchor = anchorPoint.value;
-  if (dragging.value && dragOffset.value) return { x: anchor.x + dragOffset.value.x, y: anchor.y + dragOffset.value.y };
-  if (manualOffset.value) return { x: anchor.x + manualOffset.value.x, y: anchor.y + manualOffset.value.y };
+
+  if (dragging.value && dragOffset.value) {
+    return { x: anchor.x + dragOffset.value.x, y: anchor.y + dragOffset.value.y };
+  }
+
+  if (manualOffset.value) {
+    return { x: anchor.x + manualOffset.value.x, y: anchor.y + manualOffset.value.y };
+  }
+
   return avoidNodes(anchor.x, anchor.y);
 });
 
 const labelStyle = computed<CSSProperties>(() => ({
-  transform: `translate(-50%, -50%) translate(${labelPosition.value.x}px, ${labelPosition.value.y}px)`,
-  pointerEvents: interactive ? "all" : "none"
+  transform: `translate(-50%, -50%) translate(${String(labelPosition.value.x)}px, ${String(labelPosition.value.y)}px)`,
+  pointerEvents: interactive ? "all" : "none",
 }));
 
 // the natural label anchor on the path; the leader line points back here.
 const anchorPoint = computed(() => {
   const anchor = props.data?.labelAnchor?.position;
   const [, labelX, labelY] = pathParams.value;
+
   if (typeof anchor === "number" && Number.isFinite(anchor) && Math.abs(anchor - 0.5) > 0.001) {
     return pointOnPath(path.value, anchor);
   }
+
   return { x: labelX, y: labelY };
 });
 
@@ -137,18 +165,26 @@ const connectorPath = computed(() => {
   const { width, height } = labelDimensions.value;
   // while the label still overlaps its anchor the link is already obvious.
   const minDistance = Math.min(width, height) / 2 + labelPadding;
-  if (distance <= minDistance) return "";
+
+  if (distance <= minDistance) {
+    return "";
+  }
+
   // stop the line at the label box edge so it visibly meets the label.
   const scale = Math.min(width / 2 / Math.abs(dx || 1e-6), height / 2 / Math.abs(dy || 1e-6));
   const edgeX = pos.x - dx * scale;
   const edgeY = pos.y - dy * scale;
-  return `M ${anchor.x},${anchor.y} L ${edgeX},${edgeY}`;
+  return `M ${String(anchor.x)},${String(anchor.y)} L ${String(edgeX)},${String(edgeY)}`;
 });
 
 const severityClass = computed(() => props.data?.validationSeverity ?? "");
 const labelTitle = computed(() => {
   const messages = props.data?.validationMessages ?? [];
-  if (messages.length) return messages.join("\n");
+
+  if (messages.length) {
+    return messages.join("\n");
+  }
+
   return interactive ? "Drag to reposition, double-click to reset" : "";
 });
 
@@ -157,26 +193,40 @@ function avoidNodes(startX: number, startY: number): { x: number; y: number } {
   const { width, height } = labelDimensions.value;
   let x = startX;
   let y = startY;
+
   for (let pass = 0; pass < 8; pass += 1) {
     let moved = false;
+
     for (const node of getNodes.value) {
-      const nodeWidth = node.dimensions?.width || 180;
-      const nodeHeight = node.dimensions?.height || 64;
+      const nodeWidth = node.dimensions.width;
+      const nodeHeight = node.dimensions.height;
       const centerX = node.computedPosition.x + nodeWidth / 2;
       const centerY = node.computedPosition.y + nodeHeight / 2;
       const overlapX = width / 2 + nodeWidth / 2 + labelPadding - Math.abs(x - centerX);
       const overlapY = height / 2 + nodeHeight / 2 + labelPadding - Math.abs(y - centerY);
-      if (overlapX <= 0 || overlapY <= 0) continue;
-      if (overlapX < overlapY) x += (x >= centerX ? 1 : -1) * overlapX;
-      else y += (y >= centerY ? 1 : -1) * overlapY;
+
+      if (overlapX <= 0 || overlapY <= 0) {
+        continue;
+      }
+
+      if (overlapX < overlapY) {
+        x += (x >= centerX ? 1 : -1) * overlapX;
+      } else {
+        y += (y >= centerY ? 1 : -1) * overlapY;
+      }
+
       moved = true;
     }
-    if (!moved) break;
+
+    if (!moved) {
+      break;
+    }
   }
+
   // keep the auto-shift bounded so a buried label never flies off-screen.
   return {
     x: clamp(x, startX - maxAutoShift, startX + maxAutoShift),
-    y: clamp(y, startY - maxAutoShift, startY + maxAutoShift)
+    y: clamp(y, startY - maxAutoShift, startY + maxAutoShift),
   };
 }
 
@@ -186,11 +236,13 @@ function clamp(value: number, min: number, max: number): number {
 
 function pointOnPath(pathData: string, position: number): { x: number; y: number } {
   const clamped = clamp(position, 0, 1);
+
   if (typeof document !== "undefined") {
     try {
       const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
       pathElement.setAttribute("d", pathData);
       const total = pathElement.getTotalLength();
+
       if (Number.isFinite(total) && total > 0) {
         const point = pathElement.getPointAtLength(total * clamped);
         return { x: point.x, y: point.y };
@@ -199,14 +251,18 @@ function pointOnPath(pathData: string, position: number): { x: number; y: number
       // fall back to a straight interpolation if the browser cannot measure the path.
     }
   }
+
   return {
     x: props.sourceX + (props.targetX - props.sourceX) * clamped,
-    y: props.sourceY + (props.targetY - props.sourceY) * clamped
+    y: props.sourceY + (props.targetY - props.sourceY) * clamped,
   };
 }
 
 function onPointerDown(event: PointerEvent) {
-  if (!interactive || event.button !== 0) return;
+  if (!interactive || event.button !== 0) {
+    return;
+  }
+
   event.stopPropagation();
   const anchor = anchorPoint.value;
   const current = labelPosition.value;
@@ -220,26 +276,43 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
-  if (!dragging.value) return;
+  if (!dragging.value) {
+    return;
+  }
+
   const zoom = viewport.value.zoom || 1;
   const dx = (event.clientX - dragStartPointer.x) / zoom;
   const dy = (event.clientY - dragStartPointer.y) / zoom;
-  if (Math.abs(dx) + Math.abs(dy) > 1.5) dragMoved = true;
+
+  if (Math.abs(dx) + Math.abs(dy) > 1.5) {
+    dragMoved = true;
+  }
+
   dragOffset.value = { x: dragStartOffset.x + dx, y: dragStartOffset.y + dy };
 }
 
 function onPointerUp() {
-  if (!dragging.value) return;
+  if (!dragging.value) {
+    return;
+  }
+
   const offset = dragOffset.value;
   const moved = dragMoved;
   stopDragging();
+
   // a click without movement should not freeze the auto-placement into a manual offset.
-  if (!moved || !offset) return;
+  if (!moved || !offset) {
+    return;
+  }
+
   workflows.setEdgeLabelOffset(props.id, { x: Math.round(offset.x), y: Math.round(offset.y) });
 }
 
 function onReset() {
-  if (!interactive || !hasManualOffset.value) return;
+  if (!interactive || !hasManualOffset.value) {
+    return;
+  }
+
   workflows.setEdgeLabelOffset(props.id, null);
 }
 

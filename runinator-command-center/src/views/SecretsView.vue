@@ -1,55 +1,64 @@
 <template>
   <section class="pane settings-pane">
-    <SplitPane class="split" :storage-key="`command-center.settings.${settingKind}.split`" :initial-first-pct="60" :min-first="420" :min-second="320" collapsible-second>
+    <SplitPane
+      class="split"
+      :storage-key="`command-center.settings.${settingKind}.split`"
+      :initial-first-pct="60"
+      :min-first="420"
+      :min-second="320"
+      collapsible-second
+    >
       <template #first>
-    <div class="settings-shell panel">
-      <header class="settings-header">
-        <div>
-          <h2>{{ pageTitle }}</h2>
-          <p>{{ pageDescription }}</p>
-        </div>
-        <div class="btn-row">
-          <button class="btn" @click="refreshPage">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </button>
-          <button class="btn btn-primary" @click="openNewSetting">
-            <Icon name="plus" />
-            <span>{{ newLabel }}</span>
-          </button>
-        </div>
-      </header>
+        <div class="settings-shell panel">
+          <header class="settings-header">
+            <div>
+              <h2>{{ pageTitle }}</h2>
+              <p>{{ pageDescription }}</p>
+            </div>
+            <div class="btn-row">
+              <button class="btn" @click="refreshPage">
+                <Icon name="refresh" />
+                <span>Refresh</span>
+              </button>
+              <button class="btn btn-primary" @click="openNewSetting">
+                <Icon name="plus" />
+                <span>{{ newLabel }}</span>
+              </button>
+            </div>
+          </header>
 
-      <div class="settings-summary">
-        <div>
-          <span>{{ isConfig ? "Configs" : "Secrets" }}</span>
-          <strong>{{ filteredEntries.length }}</strong>
-        </div>
-        <div>
-          <span>Scopes</span>
-          <strong>{{ knownScopes.length }}</strong>
-        </div>
-        <div>
-          <span>Values</span>
-          <strong>{{ isConfig ? "Visible" : "Hidden" }}</strong>
-        </div>
-      </div>
+          <div class="settings-summary">
+            <div>
+              <span>{{ isConfig ? "Configs" : "Secrets" }}</span>
+              <strong>{{ filteredEntries.length }}</strong>
+            </div>
+            <div>
+              <span>Scopes</span>
+              <strong>{{ knownScopes.length }}</strong>
+            </div>
+            <div>
+              <span>Values</span>
+              <strong>{{ isConfig ? "Visible" : "Hidden" }}</strong>
+            </div>
+          </div>
 
-      <div class="settings-tree-shell">
-        <ul v-if="settingsTree.length" class="settings-tree-root">
-          <SettingsTreeNode
-            v-for="node in settingsTree"
-            :key="node.path"
-            :node="node"
-            :is-config="isConfig"
-            :config-values="secrets.configValues"
-            :selected-key="secrets.selectedSecretKey"
-            @select="selectOverview"
-          />
-        </ul>
-        <div v-else class="settings-tree-empty">{{ isConfig ? "No configs match." : "No secrets match." }}</div>
-      </div>
-    </div>
+          <div class="settings-tree-shell">
+            <ul v-if="settingsTree.length" class="settings-tree-root">
+              <SettingsTreeNode
+                v-for="node in settingsTree"
+                :key="node.path"
+                :node="node"
+                :is-config="isConfig"
+                :config-values="secrets.configValues"
+                :selected-key="secrets.selectedSecretKey"
+                @select="selectOverview"
+              />
+            </ul>
+            <div v-else class="settings-tree-empty">
+              {{ isConfig ? "No configs match." : "No secrets match." }}
+            </div>
+          </div>
+        </div>
       </template>
       <template #second>
         <div class="panel overview-panel">
@@ -62,25 +71,47 @@
               </button>
             </div>
           </div>
-          <div v-if="!selected" class="empty-state">Select an entry to preview its value. Editing happens in a modal.</div>
+          <div v-if="!selected" class="empty-state">
+            Select an entry to preview its value. Editing happens in a modal.
+          </div>
           <template v-else>
             <div class="overview-grid">
-              <div class="overview-field"><label>Scope</label><div>{{ selected.scope }}</div></div>
-              <div class="overview-field"><label>Name</label><div>{{ selected.name }}</div></div>
-              <div class="overview-field"><label>Reference</label><code>{{ settingRef(selected.kind, selected.scope, selected.name) }}</code></div>
-              <div class="overview-field"><label>Kind</label><div>{{ selected.kind }}</div></div>
+              <div class="overview-field">
+                <label>Scope</label>
+                <div>{{ selected.scope }}</div>
+              </div>
+              <div class="overview-field">
+                <label>Name</label>
+                <div>{{ selected.name }}</div>
+              </div>
+              <div class="overview-field">
+                <label>Reference</label
+                ><code>{{ settingRef(selected.kind, selected.scope, selected.name) }}</code>
+              </div>
+              <div class="overview-field">
+                <label>Kind</label>
+                <div>{{ selected.kind }}</div>
+              </div>
             </div>
             <div class="overview-value">
               <label>Value</label>
               <pre v-if="isConfig" class="overview-pre">{{ overviewValue }}</pre>
-              <div v-else class="overview-hidden">Secret values are write-only and never displayed. Use Edit to replace it.</div>
+              <div v-else class="overview-hidden">
+                Secret values are write-only and never displayed. Use Edit to replace it.
+              </div>
             </div>
           </template>
         </div>
       </template>
     </SplitPane>
 
-    <div v-if="editorOpen" ref="modalRoot" class="modal-backdrop" tabindex="-1" @keydown.esc.stop.prevent="closeEditor">
+    <div
+      v-if="editorOpen"
+      ref="modalRoot"
+      class="modal-backdrop"
+      tabindex="-1"
+      @keydown.esc.stop.prevent="closeEditor"
+    >
       <form class="modal setting-modal" @submit.prevent="saveEditor">
         <header class="modal-header">
           <div>
@@ -122,7 +153,12 @@
         </div>
 
         <div class="modal-actions">
-          <button class="btn btn-danger" type="button" :disabled="!secrets.selectedSecret" @click="deleteEditorSetting">
+          <button
+            class="btn btn-danger"
+            type="button"
+            :disabled="!secrets.selectedSecret"
+            @click="deleteEditorSetting"
+          >
             <Icon name="trash" />
             <span>Delete</span>
           </button>
@@ -161,15 +197,21 @@ const editorOpen = ref(false);
 const modalRoot = ref<HTMLElement | null>(null);
 
 const isConfig = computed(() => props.settingKind === "config");
-const baseEntries = computed(() => (isConfig.value ? secrets.configEntries : secrets.secretEntries));
+const baseEntries = computed(() =>
+  isConfig.value ? secrets.configEntries : secrets.secretEntries,
+);
 const filteredEntries = computed(() => {
   const query = app.normalizedSearch;
-  if (!query) return baseEntries.value;
+
+  if (!query) {
+    return baseEntries.value;
+  }
+
   return baseEntries.value.filter((setting) =>
     [setting.scope, setting.name, settingRef(setting.kind, setting.scope, setting.name)]
       .join(" ")
       .toLowerCase()
-      .includes(query)
+      .includes(query),
   );
 });
 const settingsTree = computed(() => buildSettingsTree(filteredEntries.value));
@@ -177,30 +219,46 @@ const pageTitle = computed(() => (isConfig.value ? "Configs" : "Secrets"));
 const pageDescription = computed(() =>
   isConfig.value
     ? "Plain JSON values resolved by the web service and visible to admins."
-    : "Encrypted values resolved at the worker. Secret values are never displayed after saving."
+    : "Encrypted values resolved at the worker. Secret values are never displayed after saving.",
 );
 const newLabel = computed(() => (isConfig.value ? "New Config" : "New Secret"));
-const formTitle = computed(() => `${secrets.selectedSecret ? "Update" : "Add"} ${isConfig.value ? "Config" : "Secret"}`);
+const formTitle = computed(
+  () => `${secrets.selectedSecret ? "Update" : "Add"} ${isConfig.value ? "Config" : "Secret"}`,
+);
 const saveLabel = computed(() => (isConfig.value ? "Save Config" : "Save Secret"));
-const valuePlaceholder = computed(() => (isConfig.value ? 'JSON value, e.g. "https://api.example.com" or { "url": "..." }' : "Paste the secret value to add or replace it."));
+const valuePlaceholder = computed(() =>
+  isConfig.value
+    ? 'JSON value, e.g. "https://api.example.com" or { "url": "..." }'
+    : "Paste the secret value to add or replace it.",
+);
 const hint = computed(() =>
   isConfig.value
     ? "Config values are visible JSON. The web service infers the slot schema from the first value; later writes must stay consistent with it."
-    : "Secret values are write-only from this interface. Select an existing secret, enter a new value, and save to replace it."
+    : "Secret values are write-only from this interface. Select an existing secret, enter a new value, and save to replace it.",
 );
 
 const knownScopes = computed(() => {
   const scopes = new Set<string>(secrets.scopes);
+
   for (const provider of providers.providers) {
-    for (const scope of provider.metadata.credential_scopes) scopes.add(scope);
+    for (const scope of provider.metadata.credential_scopes) {
+      scopes.add(scope);
+    }
   }
-  if (secrets.draft.scope.trim()) scopes.add(secrets.draft.scope.trim());
+
+  if (secrets.draft.scope.trim()) {
+    scopes.add(secrets.draft.scope.trim());
+  }
+
   return Array.from(scopes).sort();
 });
 
 async function refreshPage() {
   await secrets.refreshSecrets();
-  if (isConfig.value) await secrets.loadConfigValues(filteredEntries.value);
+
+  if (isConfig.value) {
+    await secrets.loadConfigValues(filteredEntries.value);
+  }
 }
 
 function openNewSetting() {
@@ -213,22 +271,31 @@ function openNewSetting() {
 const selected = computed<CredentialSummary | null>(() => secrets.selectedSecret);
 const overviewValue = computed(() => {
   const setting = selected.value;
-  if (!setting) return "";
+
+  if (!setting) {
+    return "";
+  }
+
   return secrets.configValues[secretKey(setting)] ?? "(no value loaded)";
 });
 
 // select an entry for the read-only overview pane without opening the editor modal.
 async function selectOverview(setting: CredentialSummary) {
   secrets.selectSecret(setting);
-  if (isConfig.value) await secrets.loadConfigValue(setting);
+
+  if (isConfig.value) {
+    await secrets.loadConfigValue(setting);
+  }
 }
 
 async function openEditSetting(setting: CredentialSummary) {
   secrets.selectSecret(setting);
+
   if (isConfig.value) {
     await secrets.loadConfigValue(setting);
     secrets.draft.secret = secrets.configValues[secretKey(setting)] ?? "";
   }
+
   editorOpen.value = true;
 }
 
@@ -239,18 +306,36 @@ function closeEditor() {
 async function saveEditor() {
   secrets.draft.kind = props.settingKind;
   await secrets.saveDraft();
+
   if (!app.errorText) {
-    if (isConfig.value && secrets.selectedSecret) await secrets.loadConfigValue(secrets.selectedSecret);
+    if (isConfig.value && secrets.selectedSecret) {
+      await secrets.loadConfigValue(secrets.selectedSecret);
+    }
+
     editorOpen.value = false;
   }
 }
 
 async function deleteEditorSetting() {
   const setting = secrets.selectedSecret;
-  if (!setting) return;
-  if (!window.confirm(`Delete ${isConfig.value ? "config" : "secret"} ${setting.scope}/${setting.name}?`)) return;
+
+  if (!setting) {
+    return;
+  }
+
+  if (
+    !window.confirm(
+      `Delete ${isConfig.value ? "config" : "secret"} ${setting.scope}/${setting.name}?`,
+    )
+  ) {
+    return;
+  }
+
   await secrets.deleteSelectedSecret();
-  if (!app.errorText) editorOpen.value = false;
+
+  if (!app.errorText) {
+    editorOpen.value = false;
+  }
 }
 
 watch(
@@ -259,18 +344,24 @@ watch(
     editorOpen.value = false;
     secrets.clearDraft(props.settingKind);
     void refreshPage();
-  }
+  },
 );
 
 // focus the modal on open so its scoped escape handler works without a manual click.
 watch(editorOpen, async (open) => {
-  if (!open) return;
+  if (!open) {
+    return;
+  }
+
   await nextTick();
   modalRoot.value?.focus();
 });
 
 onMounted(() => {
-  if (providers.providers.length === 0 && !providers.loading) providers.fetchProviders();
+  if (providers.providers.length === 0 && !providers.loading) {
+    void providers.fetchProviders();
+  }
+
   void refreshPage();
 });
 </script>

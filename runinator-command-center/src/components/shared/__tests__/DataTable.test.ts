@@ -10,7 +10,7 @@ interface Row {
 
 const columns: DataTableColumn<Row>[] = [
   { key: "id", label: "ID", sortable: true },
-  { key: "name", label: "Name", sortable: true }
+  { key: "name", label: "Name", sortable: true },
 ];
 
 const rows: Row[] = [
@@ -18,7 +18,7 @@ const rows: Row[] = [
   { id: 2, name: "bravo" },
   { id: 3, name: "charlie" },
   { id: 4, name: "delta" },
-  { id: 5, name: "echo" }
+  { id: 5, name: "echo" },
 ];
 
 function render(props: Record<string, unknown>) {
@@ -42,7 +42,14 @@ describe("DataTable (column mode)", () => {
   });
 
   it("applies the initial descending sort", async () => {
-    const html = await render({ columns, rows, rowKey: "id", pageSize: 2, initialSortKey: "id", initialSortDir: "desc" });
+    const html = await render({
+      columns,
+      rows,
+      rowKey: "id",
+      pageSize: 2,
+      initialSortKey: "id",
+      initialSortDir: "desc",
+    });
     // desc by id => echo (5), delta (4) on the first page; alpha (1) excluded.
     expect(html).toContain("echo");
     expect(html).toContain("delta");
@@ -54,7 +61,7 @@ describe("DataTable (column mode)", () => {
       columns,
       rows: [],
       emptyTitle: "No records yet",
-      emptyDescription: "Nothing here."
+      emptyDescription: "Nothing here.",
     });
     expect(html).toContain("No records yet");
     expect(html).toContain("Nothing here.");
@@ -62,7 +69,7 @@ describe("DataTable (column mode)", () => {
 
   it("stays a plain scroll wrapper when no columns are given", async () => {
     const html = await renderToString(
-      createSSRApp({ render: () => h(DataTable, {}, { default: () => h("table", "custom") }) })
+      createSSRApp({ render: () => h(DataTable, {}, { default: () => h("table", "custom") }) }),
     );
     expect(html).toContain("table-scroll");
     expect(html).toContain("custom");

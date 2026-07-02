@@ -1,23 +1,39 @@
-import { snippet, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
+import {
+  snippet,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 import { completeWdl } from "../api/commandCenterApi";
-import type { ProviderMetadata, WdlCompletionRequest, WdlCompletionResponse, WdlSettingRef } from "../types/models";
+import type {
+  ProviderMetadata,
+  WdlCompletionRequest,
+  WdlCompletionResponse,
+  WdlSettingRef,
+} from "../types/models";
 import { wdlCompletion } from "./codemirror-lang-wdl";
 
 export function wdlProviderCompletionSource(
   providers: () => ProviderMetadata[],
-  settings: () => WdlSettingRef[] = () => []
+  settings: () => WdlSettingRef[] = () => [],
 ): CompletionSource {
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
     const source = context.state.doc.toString();
     const request = buildWdlCompletionRequest(source, context.pos, providers(), settings());
     let result: CompletionResult;
+
     try {
       const response = await completeWdl(request);
       result = completionResponseToCodeMirror(source, response);
     } catch {
       return wdlCompletion(context);
     }
-    if (!result.options.length && !context.explicit) return null;
+
+    if (!result.options.length && !context.explicit) {
+      return null;
+    }
+
     return result;
   };
 }
@@ -26,21 +42,24 @@ export function buildWdlCompletionRequest(
   source: string,
   cursorOffset: number,
   providers: ProviderMetadata[],
-  settings: WdlSettingRef[] = []
+  settings: WdlSettingRef[] = [],
 ): WdlCompletionRequest {
   return {
     source,
     cursor_byte: utf16OffsetToUtf8ByteOffset(source, cursorOffset),
     providers,
-    settings
+    settings,
   };
 }
 
-export function completionResponseToCodeMirror(source: string, response: WdlCompletionResponse): CompletionResult {
+export function completionResponseToCodeMirror(
+  source: string,
+  response: WdlCompletionResponse,
+): CompletionResult {
   return {
     from: utf8ByteOffsetToUtf16Offset(source, response.replace_start_byte),
     to: utf8ByteOffsetToUtf16Offset(source, response.replace_end_byte),
-    options: response.items.map(itemToCompletion)
+    options: response.items.map(itemToCompletion),
   };
 }
 
@@ -59,13 +78,15 @@ function itemToCompletion(item: WdlCompletionResponse["items"][number]): Complet
     label: item.label,
     type: completionType(item.kind),
     detail: item.detail ?? undefined,
-    info: item.documentation ?? undefined
+    info: item.documentation ?? undefined,
   };
+
   if (item.is_snippet) {
     completion.apply = snippet(item.insert_text);
   } else {
     completion.apply = item.insert_text;
   }
+
   return completion;
 }
 
@@ -84,6 +105,6 @@ function completionType(kind: string): Completion["type"] {
     case "target":
       return "property";
     default:
-      return kind as Completion["type"];
+      return kind;
   }
 }

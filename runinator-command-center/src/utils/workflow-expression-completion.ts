@@ -1,16 +1,32 @@
-import { snippet, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
-import { nodeOutputReferences, paramsReferences, type WorkflowExpressionEditorContext } from "./workflow-references";
+import {
+  snippet,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
+import {
+  nodeOutputReferences,
+  paramsReferences,
+  type WorkflowExpressionEditorContext,
+} from "./workflow-references";
 export { isWorkflowExpressionValue } from "./wdl-expression";
 export type { WorkflowExpressionEditorContext } from "./workflow-references";
 
-export function workflowExpressionCompletionSource(context: () => WorkflowExpressionEditorContext | undefined): CompletionSource {
+export function workflowExpressionCompletionSource(
+  context: () => WorkflowExpressionEditorContext | undefined,
+): CompletionSource {
   return (completionContext: CompletionContext): CompletionResult | null => {
     const word = completionContext.matchBefore(/[\w./-]+/);
-    if (!completionContext.explicit && !word) return null;
+
+    if (!completionContext.explicit && !word) {
+      return null;
+    }
+
     return {
       from: word?.from ?? completionContext.pos,
       options: expressionCompletions(context()),
-      validFor: /^[\w./-]*$/
+      validFor: /^[\w./-]*$/,
     };
   };
 }
@@ -29,9 +45,14 @@ function expressionCompletions(context?: WorkflowExpressionEditorContext): Compl
     snippetCompletion("json", "json(${value})", "function", "convert object or array to JSON text"),
     snippetCompletion("concat", "${left} ++ ${right}", "function", "string concatenation"),
     snippetCompletion("coalesce", "${left} ?? ${right}", "function", "first non-null value"),
-    snippetCompletion("secret URI", "\"secret://${scope}/${name}\"", "constant", "secret URI literal"),
+    snippetCompletion(
+      "secret URI",
+      '"secret://${scope}/${name}"',
+      "constant",
+      "secret URI literal",
+    ),
     snippetCompletion("object", "{ ${key}: ${value} }", "constant", "object literal"),
-    snippetCompletion("array", "[${items}]", "constant", "array literal")
+    snippetCompletion("array", "[${items}]", "constant", "array literal"),
   ];
 
   // schema-derived parameter fields and prior node outputs share the picker's reference catalog.
@@ -46,11 +67,16 @@ function expressionCompletions(context?: WorkflowExpressionEditorContext): Compl
   return completions;
 }
 
-function snippetCompletion(label: string, apply: string, type: Completion["type"], detail: string): Completion {
+function snippetCompletion(
+  label: string,
+  apply: string,
+  type: Completion["type"],
+  detail: string,
+): Completion {
   return {
     label,
     type,
     detail,
-    apply: snippet(apply)
+    apply: snippet(apply),
   };
 }

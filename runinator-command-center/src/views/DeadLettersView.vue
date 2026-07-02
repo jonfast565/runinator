@@ -39,7 +39,9 @@
             <template v-for="row in rows" :key="String(row.id)">
               <tr class="dlq-row" @click="toggle(String(row.id))">
                 <td>{{ formatDate(row.created_at as string) }}</td>
-                <td><span class="badge">{{ row.channel }}</span></td>
+                <td>
+                  <span class="badge">{{ row.channel }}</span>
+                </td>
                 <td>{{ row.attempts }}</td>
                 <td class="dlq-error">{{ row.error }}</td>
                 <td class="mono">{{ row.event_id || row.dedupe_key || "-" }}</td>
@@ -82,6 +84,7 @@ async function refresh() {
   loading.value = true;
   rows.value = [];
   expanded.value = null;
+
   try {
     await app.runOperation("Loading dead letters", async () => {
       rows.value = await listDeadLetters(channel.value || undefined, 200);

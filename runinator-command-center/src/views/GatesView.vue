@@ -1,6 +1,13 @@
 <template>
   <section class="pane resources-pane">
-    <SplitPane class="split" storage-key="command-center.gates.split" :initial-first-pct="58" :min-first="420" :min-second="340" collapsible-second>
+    <SplitPane
+      class="split"
+      storage-key="command-center.gates.split"
+      :initial-first-pct="58"
+      :min-first="420"
+      :min-second="340"
+      collapsible-second
+    >
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
@@ -10,11 +17,19 @@
                 <Icon name="refresh" />
                 <span>Refresh</span>
               </button>
-              <button class="btn btn-primary" :disabled="!gates.canResolveSelected" @click="resolve('open')">
+              <button
+                class="btn btn-primary"
+                :disabled="!gates.canResolveSelected"
+                @click="resolve('open')"
+              >
                 <Icon name="approve" />
                 <span>Open</span>
               </button>
-              <button class="btn btn-danger" :disabled="!gates.canResolveSelected" @click="resolve('close')">
+              <button
+                class="btn btn-danger"
+                :disabled="!gates.canResolveSelected"
+                @click="resolve('close')"
+              >
                 <Icon name="reject" />
                 <span>Close</span>
               </button>
@@ -25,8 +40,9 @@
             </div>
           </div>
           <p class="gates-hint">
-            A gate blocks its workflow node until it opens. <strong>condition</strong> gates open automatically; open or
-            close <strong>manual</strong> and <strong>external</strong> gates here.
+            A gate blocks its workflow node until it opens. <strong>condition</strong> gates open
+            automatically; open or close <strong>manual</strong> and <strong>external</strong> gates
+            here.
           </p>
           <DataTable>
             <table>
@@ -42,13 +58,21 @@
               <tbody>
                 <tr v-if="!gates.filteredGates.length">
                   <td colspan="5" class="empty-cell">
-                    {{ gates.gates.length ? `No gates match “${app.searchQuery}”.` : "No gates are currently blocking a workflow." }}
+                    {{
+                      gates.gates.length
+                        ? `No gates match “${app.searchQuery}”.`
+                        : "No gates are currently blocking a workflow."
+                    }}
                   </td>
                 </tr>
                 <tr
                   v-for="gate in gates.filteredGates"
                   :key="String(gate.id ?? JSON.stringify(gate))"
-                  :class="{ selected: gates.selectedGate === gate, danger: isBadStatus(gate.status), success: isGoodStatus(gate.status) }"
+                  :class="{
+                    selected: gates.selectedGate === gate,
+                    danger: isBadStatus(gate.status),
+                    success: isGoodStatus(gate.status),
+                  }"
                   @click="gates.selectedGate = gate"
                 >
                   <td><StatusBadge :status="gate.status" /></td>

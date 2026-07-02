@@ -32,7 +32,7 @@ describe("useEventStream", () => {
       clearInterval,
       clearTimeout,
       setInterval,
-      setTimeout
+      setTimeout,
     });
     setHttpAuthToken(null);
   });
@@ -47,7 +47,9 @@ describe("useEventStream", () => {
     app.setServiceUrl("http://127.0.0.1:8080/");
 
     const scope = effectScope();
-    scope.run(() => useEventStream());
+    scope.run(() => {
+      useEventStream();
+    });
     await nextTick();
 
     expect(app.eventStreamState).toBe("connecting");
@@ -65,7 +67,9 @@ describe("useEventStream", () => {
     app.setServiceUrl("http://127.0.0.1:8080/");
 
     const scope = effectScope();
-    scope.run(() => useEventStream());
+    scope.run(() => {
+      useEventStream();
+    });
     await nextTick();
     const first = MockWebSocket.sockets[0];
 
@@ -87,7 +91,9 @@ describe("useEventStream", () => {
     app.setServiceUrl("http://127.0.0.1:8080/");
 
     const scope = effectScope();
-    scope.run(() => useEventStream());
+    scope.run(() => {
+      useEventStream();
+    });
     await nextTick();
 
     await auth.applyAccessToken("org-token-2");
@@ -107,11 +113,13 @@ describe("useEventStream", () => {
     app.activeTab = "Events";
 
     const scope = effectScope();
-    scope.run(() => useEventStream());
+    scope.run(() => {
+      useEventStream();
+    });
     await nextTick();
 
     MockWebSocket.sockets[0].onmessage?.({
-      data: JSON.stringify({ type: "workflow_run_changed", run_id: "run-1" })
+      data: JSON.stringify({ type: "workflow_run_changed", run_id: "run-1" }),
     });
 
     expect(refreshResourcesFor).toHaveBeenCalledWith("automation_events");

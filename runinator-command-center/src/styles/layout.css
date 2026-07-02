@@ -81,7 +81,7 @@
   height: 100vh;
   position: relative;
   overflow: hidden;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .app-loader-overlay {
@@ -115,7 +115,9 @@
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .topbar {
@@ -196,8 +198,23 @@
 }
 
 main {
+  grid-row: 3;
   min-height: 0;
   overflow: hidden;
+}
+
+.app-shell.interactions-disabled .sidebar,
+.app-shell.interactions-disabled .topbar,
+main[inert] {
+  opacity: 0.52;
+  filter: grayscale(0.45);
+}
+
+.app-shell.interactions-disabled .sidebar,
+.app-shell.interactions-disabled .topbar,
+main[inert] {
+  pointer-events: none;
+  user-select: none;
 }
 
 .pane {

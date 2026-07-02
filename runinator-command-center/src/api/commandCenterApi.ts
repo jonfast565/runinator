@@ -20,9 +20,7 @@ import type {
   RunArtifact,
   RunChunk,
   RunSummary,
-  SaveTaskResponse,
   SettingKind,
-  ScheduledTask,
   ServiceStatus,
   TaskResponse,
   Team,
@@ -37,7 +35,7 @@ import type {
   WorkflowRunCreated,
   WorkflowRunArtifact,
   WorkflowRunDetail,
-  WorkflowTrigger
+  WorkflowTrigger,
 } from "../types/models";
 
 export interface WorkflowWdlSaveRequest {
@@ -56,7 +54,10 @@ export interface ForeignLanguageRuntimeConfig {
 const FOREIGN_LANGUAGE_SCOPE = "foreign_languages";
 
 function command<T>(name: string, args?: Record<string, unknown>) {
-  if (isTauriRuntime()) return invoke<T>(name, args);
+  if (isTauriRuntime()) {
+    return invoke<T>(name, args);
+  }
+
   return invokeViaHttp<T>(name, args);
 }
 
@@ -94,7 +95,10 @@ export async function logout(refreshToken: string) {
 // push the access token to both runtimes: the web fetch layer and (on desktop) the tauri client.
 export async function setAccessToken(token: string | null) {
   setHttpAuthToken(token);
-  if (isTauriRuntime()) await command<void>("set_access_token", { token });
+
+  if (isTauriRuntime()) {
+    await command<TaskResponse>("set_access_token", { token });
+  }
 }
 
 export async function listWorkflowGrants(workflowId: string) {
@@ -105,18 +109,18 @@ export async function createWorkflowGrant(
   workflowId: string,
   principalType: "user" | "team",
   principalId: string,
-  permission: "view" | "run" | "edit" | "own"
+  permission: "view" | "run" | "edit" | "own",
 ) {
   return command<JsonRecord>("create_workflow_grant", {
     workflowId,
     principalType,
     principalId,
-    permission
+    permission,
   });
 }
 
 export async function revokeWorkflowGrant(workflowId: string, grantId: string) {
-  return command<any>("revoke_workflow_grant", { workflowId, grantId });
+  return command<TaskResponse>("revoke_workflow_grant", { workflowId, grantId });
 }
 
 export interface CreateUserInput {
@@ -226,13 +230,13 @@ export async function grantWorkflowAccess(
   workflowId: string,
   principalType: PrincipalType,
   principalId: string,
-  permission: PermissionLevel
+  permission: PermissionLevel,
 ) {
   return command<Grant>("create_workflow_grant", {
     workflowId,
     principalType,
     principalId,
-    permission
+    permission,
   });
 }
 
@@ -242,26 +246,6 @@ export async function getServiceStatus() {
 
 export async function startServiceDiscovery() {
   return command("start_service_discovery");
-}
-
-export async function fetchTasks() {
-  return command<ScheduledTask[]>("fetch_tasks");
-}
-
-export async function saveTask(task: ScheduledTask, creating: boolean) {
-  return command<SaveTaskResponse>("save_task", { request: { task, creating } });
-}
-
-export async function deleteTask(taskId: string) {
-  return command<TaskResponse>("delete_task", { taskId });
-}
-
-export async function requestTaskRun(taskId: string) {
-  return command<any>("request_task_run", { taskId });
-}
-
-export async function fetchTaskRuns(taskId: string) {
-  return command<RunSummary[]>("fetch_task_runs", { taskId });
 }
 
 export async function fetchRunChunks(runId: string) {
@@ -358,7 +342,10 @@ export async function deleteWorkflow(workflowId: string) {
   return command<TaskResponse>("delete_workflow", { workflowId });
 }
 
-export async function duplicateWorkflow(workflowId: string, bump: "major" | "minor" | "patch" = "minor") {
+export async function duplicateWorkflow(
+  workflowId: string,
+  bump: "major" | "minor" | "patch" = "minor",
+) {
   return command<WorkflowDefinition>("duplicate_workflow", { workflowId, bump });
 }
 
@@ -374,11 +361,14 @@ export async function deleteWorkflowTrigger(triggerId: string) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
 }
 
-export async function createWorkflowRun(workflowId: string, options: { debug?: boolean; parameters?: unknown } = {}) {
+export async function createWorkflowRun(
+  workflowId: string,
+  options: { debug?: boolean; parameters?: unknown } = {},
+) {
   return command<WorkflowRunCreated>("create_workflow_run", {
     workflowId,
     debug: Boolean(options.debug),
-    parameters: options.parameters ?? {}
+    parameters: options.parameters ?? {},
   });
 }
 
@@ -410,11 +400,11 @@ export async function resumeWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("resume_workflow_run", { workflowRunId });
 }
 
-export type WorkflowDebugPatch = {
+export interface WorkflowDebugPatch {
   breakpoints?: string[];
   mode?: "step_all" | "breakpoints";
   one_shot_breakpoint?: string | null;
-};
+}
 
 export async function patchWorkflowRunDebug(workflowRunId: string, patch: WorkflowDebugPatch) {
   return command<TaskResponse>("patch_workflow_run_debug", { workflowRunId, patch });
@@ -424,32 +414,54 @@ export async function runToCursorWorkflowRun(workflowRunId: string, nodeId: stri
   return command<TaskResponse>("run_to_cursor_workflow_run", { workflowRunId, nodeId });
 }
 
-export async function skipWorkflowNode(workflowRunId: string, outputJson: any, message?: string) {
+export async function skipWorkflowNode(
+  workflowRunId: string,
+  outputJson: unknown,
+  message?: string,
+) {
   return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
 }
 
-export async function resolveWorkflowInput(nodeRunId: string, outputJson: any, resolvedBy?: string, message?: string) {
-  return command<TaskResponse>("resolve_workflow_input", { nodeRunId, outputJson, resolvedBy, message });
+export async function resolveWorkflowInput(
+  nodeRunId: string,
+  outputJson: unknown,
+  resolvedBy?: string,
+  message?: string,
+) {
+  return command<TaskResponse>("resolve_workflow_input", {
+    nodeRunId,
+    outputJson,
+    resolvedBy,
+    message,
+  });
 }
 
-export async function rerunWorkflowNode(workflowRunId: string, parameters: any) {
+export async function rerunWorkflowNode(workflowRunId: string, parameters: unknown) {
   return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
 }
 
-export async function replayWorkflowRun(workflowRunId: string, options: { fromStepId?: string } = {}) {
-  return command<WorkflowRunCreated>("replay_workflow_run", { workflowRunId, fromStepId: options.fromStepId ?? null });
+export async function replayWorkflowRun(
+  workflowRunId: string,
+  options: { fromStepId?: string } = {},
+) {
+  return command<WorkflowRunCreated>("replay_workflow_run", {
+    workflowRunId,
+    fromStepId: options.fromStepId ?? null,
+  });
 }
 
 export async function renameWorkflowRun(workflowRunId: string, name: string | null) {
   return command<TaskResponse>("rename_workflow_run", { workflowRunId, name });
 }
 
-export type ArtifactUploadRequest = {
+export interface ArtifactUploadRequest {
   run_id: string;
   workflow_node_run_id?: string | null;
-};
+}
 
-export type ArtifactDownloadResult = { saved_to: string | null };
+export interface ArtifactDownloadResult {
+  saved_to: string | null;
+}
 
 export async function fetchAllArtifacts() {
   return command<RunArtifact[]>("fetch_all_artifacts");
@@ -465,27 +477,33 @@ export async function downloadArtifactToPath(artifactId: string, defaultName: st
 
 export async function uploadArtifactFromBrowser(request: ArtifactUploadRequest, file: File) {
   const form = new FormData();
-  form.set("run_id", String(request.run_id));
+  form.set("run_id", request.run_id);
   form.set("name", file.name);
   form.set("mime_type", file.type || "application/octet-stream");
+
   if (request.workflow_node_run_id != null) {
-    form.set("workflow_node_run_id", String(request.workflow_node_run_id));
+    form.set("workflow_node_run_id", request.workflow_node_run_id);
   }
+
   form.set("file", file, file.name);
   const response = await fetch(`${apiBaseUrl()}/artifacts/upload`, { method: "POST", body: form });
+
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`POST artifacts/upload -> ${response.status}: ${text}`);
+    throw new Error(`POST artifacts/upload -> ${String(response.status)}: ${text}`);
   }
+
   return (await response.json()) as RunArtifact;
 }
 
 export async function downloadArtifactInBrowser(artifactId: string, defaultName: string) {
   const response = await fetch(`${apiBaseUrl()}/artifacts/${artifactId}/download`);
+
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`GET artifacts/${artifactId}/download -> ${response.status}: ${text}`);
+    throw new Error(`GET artifacts/${artifactId}/download -> ${String(response.status)}: ${text}`);
   }
+
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -523,7 +541,7 @@ export function pickFileFromBrowser(): Promise<File | null> {
     let settled = false;
     input.addEventListener("change", () => {
       settled = true;
-      const file = input.files && input.files[0] ? input.files[0] : null;
+      const file = input.files?.[0] ?? null;
       input.remove();
       resolve(file);
     });
@@ -531,7 +549,10 @@ export function pickFileFromBrowser(): Promise<File | null> {
     window.addEventListener("focus", function onFocus() {
       window.removeEventListener("focus", onFocus);
       setTimeout(() => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
+
         input.remove();
         resolve(null);
       }, 250);
@@ -540,12 +561,15 @@ export function pickFileFromBrowser(): Promise<File | null> {
   });
 }
 
-export type NotificationListOptions = { unreadOnly?: boolean; limit?: number };
+export interface NotificationListOptions {
+  unreadOnly?: boolean;
+  limit?: number;
+}
 
 export async function fetchNotifications(options: NotificationListOptions = {}) {
   return command<Notification[]>("fetch_notifications", {
     unreadOnly: Boolean(options.unreadOnly),
-    limit: options.limit ?? 200
+    limit: options.limit ?? 200,
   });
 }
 
@@ -558,22 +582,22 @@ export async function markAllNotificationsRead() {
 }
 
 export async function deleteNotification(notificationId: string) {
-  return command<any>("delete_notification", { notificationId });
+  return command<TaskResponse>("delete_notification", { notificationId });
 }
 
 export async function deleteArtifact(artifactId: string) {
-  return command<any>("delete_artifact", { artifactId });
+  return command<TaskResponse>("delete_artifact", { artifactId });
 }
 
 export async function deleteGate(gateId: string) {
-  return command<any>("delete_gate", { gateId });
+  return command<TaskResponse>("delete_gate", { gateId });
 }
 
 export async function deleteAutomationEvent(eventId: string) {
-  return command<any>("delete_automation_event", { eventId });
+  return command<TaskResponse>("delete_automation_event", { eventId });
 }
 
-export type ReplicaSample = {
+export interface ReplicaSample {
   replica_id: string;
   sampled_at: string;
   cpu_percent: number;
@@ -585,9 +609,12 @@ export type ReplicaSample = {
   process_mem_bytes: number;
   net_rx_bytes_per_sec: number;
   net_tx_bytes_per_sec: number;
-};
+}
 
-export type ReplicaSampleSeries = { replica_id: string; samples: ReplicaSample[] };
+export interface ReplicaSampleSeries {
+  replica_id: string;
+  samples: ReplicaSample[];
+}
 
 export async function fetchReplicaSamples(replicaId: string, sinceSeconds?: number) {
   return command<ReplicaSampleSeries>("fetch_replica_samples", { replicaId, sinceSeconds });
@@ -597,7 +624,7 @@ export async function setWorkflowOwner(workflowId: string, orgId: string | null)
   return command<WorkflowDefinition>("set_workflow_owner", { workflowId, orgId });
 }
 
-export type SupervisorProcessSnapshot = {
+export interface SupervisorProcessSnapshot {
   name: string;
   status: string;
   pid?: number | null;
@@ -609,9 +636,9 @@ export type SupervisorProcessSnapshot = {
   command: string;
   cwd: string;
   log_file: string;
-};
+}
 
-export type SupervisorStatus = {
+export interface SupervisorStatus {
   configured: boolean;
   path?: string;
   supervisor_pid?: number;
@@ -621,7 +648,7 @@ export type SupervisorStatus = {
   processes?: SupervisorProcessSnapshot[];
   stale_seconds?: number | null;
   error?: string;
-};
+}
 
 export async function fetchSupervisorStatus() {
   return command<SupervisorStatus>("fetch_supervisor_status");
@@ -862,47 +889,61 @@ export async function saveCredential(
   name: string,
   value: unknown,
   kind: SettingKind = "secret",
-  schema?: unknown
+  schema?: unknown,
 ) {
-  return command<any>("save_credential", { request: { scope, name, value, kind, schema } });
+  return command<TaskResponse>("save_credential", {
+    request: { scope, name, value, kind, schema },
+  });
 }
 
 export async function deleteCredential(scope: string, name: string, kind: SettingKind = "secret") {
-  return command<any>("delete_credential", { scope, name, kind });
+  return command<TaskResponse>("delete_credential", { scope, name, kind });
 }
 
 export async function fetchForeignLanguageRuntime(language: string) {
-  return fetchCredential(FOREIGN_LANGUAGE_SCOPE, language, "config") as Promise<CredentialDetail & { value?: ForeignLanguageRuntimeConfig }>;
+  return fetchCredential(FOREIGN_LANGUAGE_SCOPE, language, "config") as Promise<
+    CredentialDetail & { value?: ForeignLanguageRuntimeConfig }
+  >;
 }
 
-export async function saveForeignLanguageRuntime(language: string, value: ForeignLanguageRuntimeConfig) {
+export async function saveForeignLanguageRuntime(
+  language: string,
+  value: ForeignLanguageRuntimeConfig,
+) {
   return saveCredential(FOREIGN_LANGUAGE_SCOPE, language, value, "config");
 }
 
 export async function approveApproval(approvalId: string) {
-  return command<any>("approve_approval", { approvalId });
+  return command<TaskResponse>("approve_approval", { approvalId });
 }
 
 export async function rejectApproval(approvalId: string) {
-  return command<any>("reject_approval", { approvalId });
+  return command<TaskResponse>("reject_approval", { approvalId });
 }
 
 export async function fetchGates(workflowRunId?: string, status?: string) {
   const query = new URLSearchParams();
-  if (workflowRunId?.trim()) query.set("workflow_run_id", workflowRunId.trim());
-  if (status?.trim()) query.set("status", status.trim());
+
+  if (workflowRunId?.trim()) {
+    query.set("workflow_run_id", workflowRunId.trim());
+  }
+
+  if (status?.trim()) {
+    query.set("status", status.trim());
+  }
+
   const suffix = query.size ? `?${query.toString()}` : "";
   return command<GateRecord[]>("fetch_resource_records", { endpoint: `gates${suffix}` });
 }
 
 export async function openGate(gateId: string, reason?: string) {
-  return command<any>("open_gate", { gateId, reason: reason ?? null });
+  return command<TaskResponse>("open_gate", { gateId, reason: reason ?? null });
 }
 
 export async function closeGate(gateId: string, reason?: string) {
-  return command<any>("close_gate", { gateId, reason: reason ?? null });
+  return command<TaskResponse>("close_gate", { gateId, reason: reason ?? null });
 }
 
 export async function deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {
-  return command<any>("deliver_signal", { workflowRunId, name, payload });
+  return command<TaskResponse>("deliver_signal", { workflowRunId, name, payload });
 }

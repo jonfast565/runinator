@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { buildSettingsTree, type SettingsTreeFolder } from "../settings-tree";
 import type { CredentialSummary } from "../../types/models";
 
-function setting(scope: string, name: string, kind: CredentialSummary["kind"] = "config"): CredentialSummary {
+function setting(
+  scope: string,
+  name: string,
+  kind: CredentialSummary["kind"] = "config",
+): CredentialSummary {
   return { scope, name, kind };
 }
 
@@ -11,7 +15,7 @@ describe("buildSettingsTree", () => {
     const tree = buildSettingsTree([
       setting("github", "token"),
       setting("github", "webhook_secret"),
-      setting("foreign_languages", "python")
+      setting("foreign_languages", "python"),
     ]);
 
     expect(tree.map((node) => node.path)).toEqual(["foreign_languages", "github"]);
@@ -28,14 +32,15 @@ describe("buildSettingsTree", () => {
     const primary = database.children[0] as SettingsTreeFolder;
     expect(primary.type).toBe("folder");
     expect(primary.path).toBe("database.primary");
-    expect(primary.children[0]).toMatchObject({ type: "leaf", label: "host", path: "database.primary.host" });
+    expect(primary.children[0]).toMatchObject({
+      type: "leaf",
+      label: "host",
+      path: "database.primary.host",
+    });
   });
 
   it("orders folders before leaves at the same level", () => {
-    const tree = buildSettingsTree([
-      setting("api", "url"),
-      setting("api", "nested.value")
-    ]);
+    const tree = buildSettingsTree([setting("api", "url"), setting("api", "nested.value")]);
     const api = tree[0] as SettingsTreeFolder;
     expect(api.children.map((child) => child.type)).toEqual(["folder", "leaf"]);
     expect(api.children.map((child) => child.label)).toEqual(["nested", "url"]);

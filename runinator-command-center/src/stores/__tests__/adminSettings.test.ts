@@ -7,13 +7,13 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
   fetchCredentials: vi.fn(),
   fetchForeignLanguageRuntime: vi.fn(),
-  saveForeignLanguageRuntime: vi.fn()
+  saveForeignLanguageRuntime: vi.fn(),
 }));
 
 import {
   fetchCredentials,
   fetchForeignLanguageRuntime,
-  saveForeignLanguageRuntime
+  saveForeignLanguageRuntime,
 } from "../../api/commandCenterApi";
 
 describe("admin settings store", () => {
@@ -22,18 +22,18 @@ describe("admin settings store", () => {
     vi.clearAllMocks();
     vi.stubGlobal("window", {
       clearTimeout: vi.fn(),
-      setTimeout: vi.fn()
+      setTimeout: vi.fn(),
     });
     vi.mocked(fetchCredentials).mockResolvedValue([]);
     vi.mocked(fetchForeignLanguageRuntime).mockResolvedValue({
       scope: "foreign_languages",
       name: "python",
       kind: "config",
-      value: { image: "python:3.13", setup_script: "pip install requests" }
+      value: { image: "python:3.13", setup_script: "pip install requests" },
     });
     vi.mocked(saveForeignLanguageRuntime).mockResolvedValue({
       success: true,
-      message: "saved"
+      message: "saved",
     });
   });
 
@@ -44,7 +44,7 @@ describe("admin settings store", () => {
       tab: "AdminSettings",
       label: "Settings",
       icon: "settings",
-      adminOnly: true
+      adminOnly: true,
     });
   });
 
@@ -59,7 +59,7 @@ describe("admin settings store", () => {
       ["bash", "bash:5.2"],
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
-      ["php", "php:8.3-cli"]
+      ["php", "php:8.3-cli"],
     ]);
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });
@@ -69,8 +69,8 @@ describe("admin settings store", () => {
       {
         scope: "foreign_languages",
         name: "python",
-        kind: "config"
-      }
+        kind: "config",
+      },
     ]);
     const settings = useAdminSettingsStore();
 
@@ -79,13 +79,16 @@ describe("admin settings store", () => {
     expect(python?.image).toBe("python:3.13");
     expect(python?.setup_script).toBe("pip install requests");
 
-    if (!python) throw new Error("missing python runtime");
+    if (!python) {
+      throw new Error("missing python runtime");
+    }
+
     python.image = "python:3.13-slim";
     await settings.saveLanguage("python");
 
     expect(saveForeignLanguageRuntime).toHaveBeenCalledWith("python", {
       image: "python:3.13-slim",
-      setup_script: "pip install requests"
+      setup_script: "pip install requests",
     });
   });
 });

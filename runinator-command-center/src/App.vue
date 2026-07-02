@@ -4,7 +4,8 @@
     <DevView v-if="app.activeTab === 'Dev' && isDesktop" />
     <section v-else-if="app.activeTab === 'Dev'" class="pane">
       <div class="dev-unavailable">
-        The Dev environment is only available in the desktop client. It is disabled in the hosted web app.
+        The Dev environment is only available in the desktop client. It is disabled in the hosted
+        web app.
       </div>
     </section>
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
@@ -31,7 +32,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from "vue";
 import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi";
-import { wsBaseUrl } from "./api/httpRuntime";
+import { pingBackendHealth, wsBaseUrl } from "./api/httpRuntime";
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useEventStream } from "./composables/useEventStream";
@@ -50,7 +51,6 @@ import { usePermissionsStore } from "./stores/permissions";
 import { useAdminSettingsStore } from "./stores/adminSettings";
 import { useDisplayPreferencesStore } from "./stores/displayPreferences";
 import { useGatesStore } from "./stores/gates";
-import { useTasksStore } from "./stores/tasks";
 import RunsView from "./views/RunsView.vue";
 import ProvidersView from "./views/ProvidersView.vue";
 import ReplicasView from "./views/ReplicasView.vue";
@@ -83,7 +83,6 @@ const providers = useProvidersStore();
 const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
 const gates = useGatesStore();
-const tasks = useTasksStore();
 // initialize early so the theme data-theme attribute is set before first render.
 useDisplayPreferencesStore();
 useEventStream();
@@ -93,23 +92,28 @@ useUrlSync();
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
 let replicaRefreshTimer = 0;
+let healthPollTimer = 0;
 let tenantRefreshId = 0;
 
 onMounted(async () => {
-  unlistenUrl = await listenTauri<{ service_url?: string | null } | null>("service-url-changed", (event) => {
-    void handleServiceUrlChanged(event.payload?.service_url ?? null);
+  unlistenUrl = await listenTauri("service-url-changed", (event) => {
+    const payload = event.payload as { service_url?: string | null } | null;
+    void handleServiceUrlChanged(payload?.service_url ?? null);
   });
-  unlistenError = await listenTauri<string>("service-discovery-error", (event) => {
-    app.setError(event.payload);
+  unlistenError = await listenTauri("service-discovery-error", (event) => {
+    app.setError(String(event.payload));
     app.initialLoading = false;
   });
+
   if (!isTauriRuntime()) {
     // web mode: same-origin (proxied to runinator-ws via nginx) or
     // VITE_RUNINATOR_WS_URL override for local dev. No Tauri discovery dance.
     const baseUrl = wsBaseUrl();
     app.setServiceUrl(baseUrl || null);
+
     if (baseUrl) {
       await auth.init();
+
       if (auth.authenticated) {
         try {
           await refreshBackendState(true);
@@ -118,26 +122,40 @@ onMounted(async () => {
         }
       }
     } else {
-      app.setError("No service URL configured. Set VITE_RUNINATOR_WS_URL or serve the SPA from the runinator-command-center-web pod.");
+      app.setError(
+        "No service URL configured. Set VITE_RUNINATOR_WS_URL or serve the SPA from the runinator-command-center-web pod.",
+      );
       clearBackendState();
     }
+
     app.initialLoading = false;
+
+    if (baseUrl) {
+      startHealthPoll();
+    }
+
     return;
   }
+
   try {
     const [status] = await Promise.all([getServiceStatus(), startServiceDiscovery()]);
     console.info("[command-center] Initial service status", status);
     app.setServiceUrl(status.service_url);
+
     if (!status.service_url) {
       await waitForConcreteServiceUrl();
     }
+
     if (app.serviceUrl) {
       await auth.init();
+
       if (auth.authenticated) {
         await refreshBackendState(true);
       }
     } else {
-      app.setError("No Runinator service discovered. Ensure the web service is running and accessible.");
+      app.setError(
+        "No Runinator service discovered. Ensure the web service is running and accessible.",
+      );
       clearBackendState();
     }
   } catch (err) {
@@ -145,10 +163,14 @@ onMounted(async () => {
   } finally {
     app.initialLoading = false;
   }
+
   await refreshServiceStatus();
   replicaRefreshTimer = window.setInterval(() => {
-    if (!app.serviceUrl) return;
-    void app.refreshReplicas().catch(() => {});
+    if (!app.serviceUrl) {
+      return;
+    }
+
+    void app.refreshReplicas().catch(() => undefined);
   }, 15000);
 });
 
@@ -159,15 +181,18 @@ watch(
     if (authenticated && app.serviceUrl) {
       void refreshBackendState(true);
     }
-  }
+  },
 );
 
 watch(
   () => orgs.activeOrgId,
   (orgId, previousOrgId) => {
-    if (!orgId || orgId === previousOrgId || !app.serviceUrl || !auth.authenticated) return;
+    if (!orgId || orgId === previousOrgId || !app.serviceUrl || !auth.authenticated) {
+      return;
+    }
+
     void refreshTenantScopedState();
-  }
+  },
 );
 
 watch(
@@ -175,45 +200,88 @@ watch(
   (tab) => {
     // reset the shared search box so a query typed on one tab doesn't silently filter the next.
     app.searchQuery = "";
-    if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
-    if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
-    if (tab === "Replicas") app.refreshReplicas().catch(() => {});
-    if (tab === "Configs") secrets.refreshSecrets();
-    if (tab === "Secrets") secrets.refreshSecrets();
-    if (tab === "AdminSettings") adminSettings.refresh();
-    if (tab === "Artifacts") artifacts.refreshArtifacts();
-    if (tab === "Notifications") notifications.refreshNotifications();
-    if (tab === "Permissions") permissions.refreshAll();
+
+    if (tab === "Workflows" && !workflows.isDirty) {
+      void workflows.refreshWorkflows();
+    }
+
+    if (tab === "Runs") {
+      void workflows.fetchRecentWorkflowRuns();
+    }
+
+    if (tab === "Replicas") {
+      void app.refreshReplicas().catch(() => undefined);
+    }
+
+    if (tab === "Configs") {
+      void secrets.refreshSecrets();
+    }
+
+    if (tab === "Secrets") {
+      void secrets.refreshSecrets();
+    }
+
+    if (tab === "AdminSettings") {
+      void adminSettings.refresh();
+    }
+
+    if (tab === "Artifacts") {
+      void artifacts.refreshArtifacts();
+    }
+
+    if (tab === "Notifications") {
+      void notifications.refreshNotifications();
+    }
+
+    if (tab === "Permissions") {
+      void permissions.refreshAll();
+    }
+
     if (isResourceTab(tab)) {
       const endpoint = endpointForTab(tab);
-      if (endpoint) void resources.refreshResourcesFor(endpoint);
+
+      if (endpoint) {
+        void resources.refreshResourcesFor(endpoint);
+      }
     }
-  }
+  },
 );
 
 watch(
   () => [workflows.workflows.length, resources.resourceRecords.length, secrets.secrets.length],
   () => {
-    refreshServiceStatus();
-  }
+    void refreshServiceStatus();
+  },
 );
 
 async function refreshServiceStatus() {
-  if (!isTauriRuntime()) return;
+  if (!isTauriRuntime()) {
+    return;
+  }
+
   const status = await getServiceStatus().catch(() => null);
-  if (!status) return;
+
+  if (!status) {
+    return;
+  }
+
   app.setServiceUrl(status.service_url);
-  if (!status.service_url) clearBackendState();
+
+  if (!status.service_url) {
+    clearBackendState();
+  }
 }
 
 async function handleServiceUrlChanged(serviceUrl: string | null) {
   const previousServiceUrl = app.serviceUrl;
   app.setServiceUrl(serviceUrl);
   app.initialLoading = false;
+
   if (!serviceUrl) {
     clearBackendState();
     return;
   }
+
   await refreshBackendState(previousServiceUrl !== serviceUrl || providers.providers.length === 0);
 }
 
@@ -224,7 +292,6 @@ function clearBackendState() {
   notifications.clearNotifications();
   secrets.clearSecrets();
   gates.clearGates();
-  tasks.clearTasks();
   adminSettings.clear();
   providers.clearProviders();
   permissions.clearPermissions();
@@ -240,7 +307,6 @@ function clearTenantScopedState() {
   secrets.clearSecrets();
   permissions.clearPermissions();
   gates.clearGates();
-  tasks.clearTasks();
   providers.clearProviders();
   app.clearReplicaState();
 }
@@ -249,18 +315,18 @@ async function refreshTenantScopedState() {
   const refreshId = ++tenantRefreshId;
   clearTenantScopedState();
   await Promise.all([
-    workflows.refreshWorkflows().catch(() => {}),
-    workflows.fetchRecentWorkflowRuns().catch(() => {}),
-    resources.refreshResources().catch(() => {}),
-    artifacts.refreshArtifacts().catch(() => {}),
-    notifications.refreshNotifications().catch(() => {}),
-    secrets.refreshSecrets().catch(() => {}),
-    permissions.refreshAll().catch(() => {}),
-    gates.refreshGates().catch(() => {}),
-    tasks.refreshTasks().catch(() => {}),
-    providers.fetchProviders().catch(() => {}),
-    app.refreshReplicas().catch(() => {})
+    workflows.refreshWorkflows().catch(() => undefined),
+    workflows.fetchRecentWorkflowRuns().catch(() => undefined),
+    resources.refreshResources().catch(() => undefined),
+    artifacts.refreshArtifacts().catch(() => undefined),
+    notifications.refreshNotifications().catch(() => undefined),
+    secrets.refreshSecrets().catch(() => undefined),
+    permissions.refreshAll().catch(() => undefined),
+    gates.refreshGates().catch(() => undefined),
+    providers.fetchProviders().catch(() => undefined),
+    app.refreshReplicas().catch(() => undefined),
   ]);
+
   if (refreshId === tenantRefreshId && orgs.activeOrg) {
     app.setStatus(`Active organization: ${orgs.activeOrg.name}`);
   }
@@ -268,35 +334,56 @@ async function refreshTenantScopedState() {
 
 async function refreshBackendState(refreshProviders: boolean) {
   await Promise.all([
-    workflows.refreshWorkflows().catch(() => {}),
-    workflows.fetchRecentWorkflowRuns().catch(() => {}),
-    resources.refreshResources().catch(() => {}),
-    notifications.refreshNotifications().catch(() => {}),
-    secrets.refreshSecrets().catch(() => {}),
-    gates.refreshGates().catch(() => {}),
-    tasks.refreshTasks().catch(() => {}),
-    app.refreshReplicas().catch(() => {}),
-    orgs.refresh().catch(() => {}),
-    refreshProviders ? providers.fetchProviders().catch(() => {}) : Promise.resolve()
+    workflows.refreshWorkflows().catch(() => undefined),
+    workflows.fetchRecentWorkflowRuns().catch(() => undefined),
+    resources.refreshResources().catch(() => undefined),
+    notifications.refreshNotifications().catch(() => undefined),
+    secrets.refreshSecrets().catch(() => undefined),
+    gates.refreshGates().catch(() => undefined),
+    app.refreshReplicas().catch(() => undefined),
+    orgs.refresh().catch(() => undefined),
+    refreshProviders ? providers.fetchProviders().catch(() => undefined) : Promise.resolve(),
   ]);
 }
 
 async function waitForConcreteServiceUrl(timeoutMs = 5000) {
   const startedAt = Date.now();
+
   while (Date.now() - startedAt < timeoutMs) {
     const status = await getServiceStatus().catch(() => null);
+
     if (status?.service_url) {
       app.setServiceUrl(status.service_url);
       return;
     }
+
     await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
+}
+
+// web mode has no Tauri discovery loop, so poll the public /health endpoint to detect an idle
+// outage (proxy/backend down) or recovery even when the user is not triggering requests.
+function startHealthPoll() {
+  if (healthPollTimer) {
+    return;
+  }
+
+  healthPollTimer = window.setInterval(async () => {
+    const healthy = await pingBackendHealth();
+
+    if (healthy) {
+      app.markBackendReachable();
+    } else {
+      app.markBackendUnreachable();
+    }
+  }, 10000);
 }
 
 onBeforeUnmount(() => {
   unlistenUrl?.();
   unlistenError?.();
   window.clearInterval(replicaRefreshTimer);
+  window.clearInterval(healthPollTimer);
   app.dispose();
 });
 </script>

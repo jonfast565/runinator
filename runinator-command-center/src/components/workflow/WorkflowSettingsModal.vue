@@ -8,10 +8,36 @@
 
       <section class="form-section">
         <div class="form-grid">
-          <label>Name <input v-model="workflows.workflowDraft.name" @input="workflows.markWorkflowDirty" /></label>
-          <label>Version <input v-model="workflows.workflowDraft.version" type="text" placeholder="1.0.0" pattern="\d+\.\d+\.\d+" @input="workflows.markWorkflowDirty" /></label>
-          <label>Concurrency <input v-model.number="workflows.workflowConcurrency" type="number" min="1" max="256" @input="workflows.markWorkflowDirty" /></label>
-          <label class="checkbox"><input v-model="workflows.workflowDraft.enabled" type="checkbox" @change="workflows.markWorkflowDirty" /> Enabled</label>
+          <label
+            >Name
+            <input v-model="workflows.workflowDraft.name" @input="workflows.markWorkflowDirty"
+          /></label>
+          <label
+            >Version
+            <input
+              v-model="workflows.workflowDraft.version"
+              type="text"
+              placeholder="1.0.0"
+              pattern="\d+\.\d+\.\d+"
+              @input="workflows.markWorkflowDirty"
+          /></label>
+          <label
+            >Concurrency
+            <input
+              v-model.number="workflows.workflowConcurrency"
+              type="number"
+              min="1"
+              max="256"
+              @input="workflows.markWorkflowDirty"
+          /></label>
+          <label class="checkbox"
+            ><input
+              v-model="workflows.workflowDraft.enabled"
+              type="checkbox"
+              @change="workflows.markWorkflowDirty"
+            />
+            Enabled</label
+          >
         </div>
       </section>
 
@@ -19,20 +45,25 @@
         <div class="section-toolbar">
           <h3>Ownership</h3>
         </div>
-        <p v-if="!workflows.workflowDraft.id" class="hint">Save the workflow before assigning an owner.</p>
+        <p v-if="!workflows.workflowDraft.id" class="hint">
+          Save the workflow before assigning an owner.
+        </p>
         <template v-else>
           <div class="form-grid">
             <label>
               Owning organization
               <select v-model="ownerOrgId" :disabled="ownerSaving" @change="saveOwner">
                 <option value="">Platform-global (none)</option>
-                <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">{{ m.org.name }}</option>
+                <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">
+                  {{ m.org.name }}
+                </option>
               </select>
             </label>
           </div>
           <p class="hint">
-            Scoping a workflow to an org limits its runs and visibility to that org's members. Share with individual
-            users or teams from the Share dialog. Only org admins can move a workflow into an org.
+            Scoping a workflow to an org limits its runs and visibility to that org's members. Share
+            with individual users or teams from the Share dialog. Only org admins can move a
+            workflow into an org.
           </p>
         </template>
       </section>
@@ -41,14 +72,36 @@
         <div class="section-toolbar">
           <h3>Triggers</h3>
           <div class="section-actions">
-            <button type="button" :disabled="!workflows.canManageWorkflowTriggers" @click="workflows.refreshWorkflowTriggers">Refresh</button>
-            <button type="button" :disabled="!workflows.canManageWorkflowTriggers" @click="workflows.addWorkflowTrigger('cron')">New Cron</button>
-            <button type="button" :disabled="!workflows.canManageWorkflowTriggers" @click="workflows.addWorkflowTrigger('manual')">New Manual</button>
+            <button
+              type="button"
+              :disabled="!workflows.canManageWorkflowTriggers"
+              @click="workflows.refreshWorkflowTriggers"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              :disabled="!workflows.canManageWorkflowTriggers"
+              @click="workflows.addWorkflowTrigger('cron')"
+            >
+              New Cron
+            </button>
+            <button
+              type="button"
+              :disabled="!workflows.canManageWorkflowTriggers"
+              @click="workflows.addWorkflowTrigger('manual')"
+            >
+              New Manual
+            </button>
           </div>
         </div>
 
-        <p v-if="!workflows.canManageWorkflowTriggers" class="hint">Save the workflow before adding triggers.</p>
-        <p v-else-if="workflows.workflowTriggers.length === 0" class="hint">No triggers configured.</p>
+        <p v-if="!workflows.canManageWorkflowTriggers" class="hint">
+          Save the workflow before adding triggers.
+        </p>
+        <p v-else-if="workflows.workflowTriggers.length === 0" class="hint">
+          No triggers configured.
+        </p>
 
         <div v-else class="trigger-table-wrap">
           <table class="compact">
@@ -62,14 +115,22 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="trigger in workflows.workflowTriggers" :key="trigger.id ?? `${trigger.kind}-${trigger.workflow_id}`" :class="{ muted: !trigger.enabled }">
+              <tr
+                v-for="trigger in workflows.workflowTriggers"
+                :key="trigger.id ?? `${trigger.kind}-${trigger.workflow_id}`"
+                :class="{ muted: !trigger.enabled }"
+              >
                 <td>{{ trigger.kind }}</td>
                 <td>{{ trigger.enabled ? "enabled" : "disabled" }}</td>
                 <td>{{ workflows.triggerCronSummary(trigger) || "-" }}</td>
                 <td>{{ trigger.next_execution ?? "-" }}</td>
                 <td class="row-actions">
-                  <button type="button" @click="workflows.editWorkflowTrigger(trigger)">Edit</button>
-                  <button type="button" @click="workflows.deleteSelectedWorkflowTrigger(trigger)">Delete</button>
+                  <button type="button" @click="workflows.editWorkflowTrigger(trigger)">
+                    Edit
+                  </button>
+                  <button type="button" @click="workflows.deleteSelectedWorkflowTrigger(trigger)">
+                    Delete
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -84,15 +145,29 @@
           <div class="form-grid">
             <label>
               Kind
-              <select v-model="workflows.triggerDraft.kind" @change="workflows.setTriggerKind(workflows.triggerDraft.kind)">
+              <select
+                v-model="workflows.triggerDraft.kind"
+                @change="workflows.setTriggerKind(workflows.triggerDraft.kind)"
+              >
                 <option value="cron">cron</option>
                 <option value="manual">manual</option>
               </select>
             </label>
-            <label class="checkbox"><input v-model="workflows.triggerDraft.enabled" type="checkbox" /> Enabled</label>
-            <label>Next Execution <input v-model="workflows.triggerDraft.next_execution" type="datetime-local" /></label>
-            <label>Blackout Start <input v-model="workflows.triggerDraft.blackout_start" type="datetime-local" /></label>
-            <label>Blackout End <input v-model="workflows.triggerDraft.blackout_end" type="datetime-local" /></label>
+            <label class="checkbox"
+              ><input v-model="workflows.triggerDraft.enabled" type="checkbox" /> Enabled</label
+            >
+            <label
+              >Next Execution
+              <input v-model="workflows.triggerDraft.next_execution" type="datetime-local"
+            /></label>
+            <label
+              >Blackout Start
+              <input v-model="workflows.triggerDraft.blackout_start" type="datetime-local"
+            /></label>
+            <label
+              >Blackout End
+              <input v-model="workflows.triggerDraft.blackout_end" type="datetime-local"
+            /></label>
           </div>
           <div class="trigger-json-grid">
             <div class="form-field">
@@ -104,7 +179,9 @@
               <JsonEditor v-model="workflows.triggerJson.metadata" />
             </div>
           </div>
-          <p v-if="workflows.triggerEditorError" class="form-error">{{ workflows.triggerEditorError }}</p>
+          <p v-if="workflows.triggerEditorError" class="form-error">
+            {{ workflows.triggerEditorError }}
+          </p>
           <div class="modal-actions">
             <button type="button" @click="workflows.closeTriggerEditor">Cancel</button>
             <button type="button" @click="workflows.submitWorkflowTrigger">Save Trigger</button>
@@ -113,8 +190,21 @@
       </section>
 
       <div class="modal-actions">
-        <button type="button" class="danger" :disabled="!workflows.workflowDraft.id" @click="workflows.deleteSelectedWorkflow">Delete Workflow</button>
-        <button type="button" :disabled="!workflows.workflowDraft.id || workflows.isDirty" @click="workflows.duplicateSelectedWorkflow('minor')">Duplicate (bump version)</button>
+        <button
+          type="button"
+          class="danger"
+          :disabled="!workflows.workflowDraft.id"
+          @click="workflows.deleteSelectedWorkflow"
+        >
+          Delete Workflow
+        </button>
+        <button
+          type="button"
+          :disabled="!workflows.workflowDraft.id || workflows.isDirty"
+          @click="workflows.duplicateSelectedWorkflow('minor')"
+        >
+          Duplicate (bump version)
+        </button>
         <button type="submit">Done</button>
       </div>
     </form>
@@ -141,13 +231,18 @@ watch(
   () => workflows.workflowDraft.id,
   () => {
     ownerOrgId.value = workflows.workflowDraft.org_id ?? "";
-  }
+  },
 );
 
 async function saveOwner() {
   const id = workflows.workflowDraft.id;
-  if (!id) return;
+
+  if (!id) {
+    return;
+  }
+
   ownerSaving.value = true;
+
   try {
     const updated = await setWorkflowOwner(id, ownerOrgId.value || null);
     workflows.workflowDraft.org_id = updated.org_id ?? null;
@@ -161,7 +256,9 @@ async function saveOwner() {
   }
 }
 
-if (!orgs.memberships.length) void orgs.refresh();
+if (!orgs.memberships.length) {
+  void orgs.refresh();
+}
 </script>
 
 <style scoped>

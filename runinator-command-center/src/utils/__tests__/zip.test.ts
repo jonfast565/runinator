@@ -12,6 +12,7 @@ async function readZip(blob: Blob): Promise<Map<string, string>> {
   let offset = view.getUint32(eocd + 16, true);
   const decoder = new TextDecoder();
   const out = new Map<string, string>();
+
   for (let i = 0; i < count; i += 1) {
     expect(view.getUint32(offset, true)).toBe(0x02014b50);
     const size = view.getUint32(offset + 20, true);
@@ -28,6 +29,7 @@ async function readZip(blob: Blob): Promise<Map<string, string>> {
     out.set(name, decoder.decode(bytes.subarray(dataStart, dataStart + size)));
     offset += 46 + nameLen + extraLen + commentLen;
   }
+
   return out;
 }
 

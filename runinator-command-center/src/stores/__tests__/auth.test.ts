@@ -9,14 +9,14 @@ vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
   login: vi.fn(),
   logout: vi.fn(),
   refreshSession: vi.fn(),
-  setAccessToken: vi.fn()
+  setAccessToken: vi.fn(),
 }));
 
 import {
   fetchAuthConfig,
   fetchAuthMe,
   refreshSession,
-  setAccessToken
+  setAccessToken,
 } from "../../api/commandCenterApi";
 
 function storageMock(seed: Record<string, string> = {}) {
@@ -28,7 +28,7 @@ function storageMock(seed: Record<string, string> = {}) {
     }),
     removeItem: vi.fn((key: string) => {
       data.delete(key);
-    })
+    }),
   };
 }
 
@@ -59,14 +59,14 @@ describe("auth store", () => {
       access_token: "fresh-access",
       refresh_token: "fresh-refresh",
       expires_in: 3600,
-      user: { id: "u-1", username: "admin" }
+      user: { id: "u-1", username: "admin" },
     });
     vi.stubGlobal(
       "localStorage",
       storageMock({
         "runinator.auth.access": "stale-access",
-        "runinator.auth.refresh": "refresh-1"
-      })
+        "runinator.auth.refresh": "refresh-1",
+      }),
     );
 
     const auth = useAuthStore();

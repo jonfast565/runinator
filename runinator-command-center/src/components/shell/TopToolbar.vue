@@ -5,7 +5,12 @@
       <span>{{ activeSubtitle }}</span>
     </div>
     <div v-if="searchPlaceholder" class="toolbar-search">
-      <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" :placeholder="searchPlaceholder" />
+      <input
+        id="global-search"
+        v-model="app.searchQuery"
+        :disabled="app.interactionsDisabled"
+        :placeholder="searchPlaceholder"
+      />
     </div>
     <div class="actions">
       <select
@@ -13,6 +18,7 @@
         class="org-select"
         :value="orgs.activeOrgId ?? ''"
         title="Active organization"
+        :disabled="app.interactionsDisabled"
         @change="onSwitchOrg"
       >
         <option value="" disabled>Org…</option>
@@ -26,7 +32,7 @@
         class="btn"
         aria-label="Refresh"
         title="Refresh"
-        :disabled="app.serviceBlocked"
+        :disabled="app.interactionsDisabled"
         @click="$emit('refresh')"
       >
         <Icon name="refresh" />
@@ -37,7 +43,7 @@
         class="btn btn-primary"
         aria-label="Run workflow"
         title="Run workflow"
-        :disabled="app.serviceBlocked || !workflows.canRunWorkflow"
+        :disabled="app.interactionsDisabled || !workflows.canRunWorkflow"
         @click="workflows.runSelectedWorkflow()"
       >
         <Icon name="play" />
@@ -72,11 +78,14 @@ const secrets = useSecretsStore();
 
 function onSwitchOrg(event: Event) {
   const orgId = (event.target as HTMLSelectElement).value;
-  if (orgId) void orgs.setActive(orgId);
+
+  if (orgId) {
+    void orgs.setActive(orgId);
+  }
 }
 
 function headingFor(tab: AppTab): string {
-  return navItemForTab(tab)?.label ?? String(tab);
+  return navItemForTab(tab)?.label ?? tab;
 }
 
 // only show the global search box on tabs whose list actually consumes app.searchQuery.
@@ -85,19 +94,25 @@ const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPla
 const activeSubtitle = computed(() => {
   switch (app.activeTab) {
     case "Runs":
-      return workflows.selectedWorkflowRunId ? `Run ${workflows.selectedWorkflowRunId}` : "Selected workflow runs";
+      return workflows.selectedWorkflowRunId
+        ? `Run ${workflows.selectedWorkflowRunId}`
+        : "Selected workflow runs";
     case "Workflows":
-      return workflows.selectedWorkflow?.name ?? `${workflows.workflows.length} workflows`;
+      return workflows.selectedWorkflow?.name ?? `${String(workflows.workflows.length)} workflows`;
     case "Replicas":
-      return `${app.liveReplicaCount}/${app.replicas.length} healthy across ${app.replicaCounts.webservices} ws, ${app.replicaCounts.workers} workers, ${app.replicaCounts.wakers} wakers`;
+      return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy across ${String(app.replicaCounts.webservices)} ws, ${String(app.replicaCounts.workers)} workers, ${String(app.replicaCounts.wakers)} wakers`;
     case "Secrets":
-      return `${secrets.secrets.length} secrets`;
+      return `${String(secrets.secrets.length)} secrets`;
     case "Artifacts":
       return "File artifacts attached to runs";
     case "Notifications":
       return "In-app and email notifications";
     default:
-      return resources.resources.find((resource) => resource.endpoint === resources.selectedResourceEndpoint)?.label ?? "";
+      return (
+        resources.resources.find(
+          (resource) => resource.endpoint === resources.selectedResourceEndpoint,
+        )?.label ?? ""
+      );
   }
 });
 </script>

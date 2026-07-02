@@ -57,9 +57,11 @@
               <button
                 class="btn"
                 :disabled="busy || !group.manageable || isProtected(group) || group.desired === 0"
-                :title="isProtected(group)
-                  ? `${group.kind} is a control-plane node and cannot be scaled to zero from here`
-                  : 'Scale to zero'"
+                :title="
+                  isProtected(group)
+                    ? `${group.kind} is a control-plane node and cannot be scaled to zero from here`
+                    : 'Scale to zero'
+                "
                 @click="scaleTo(group, 0)"
               >
                 <span>Stop all</span>
@@ -89,18 +91,21 @@ import {
 } from "../../api/commandCenterApi";
 import { useAppStore } from "../../stores/app";
 import { useAuthStore } from "../../stores/auth";
+import { errorMessage } from "../../utils/format";
 
 const app = useAppStore();
 const auth = useAuthStore();
 
-const isAdmin = computed(() => !auth.required || (auth.user as any)?.is_admin === true);
+const isAdmin = computed(() => !auth.required || auth.user?.is_admin === true);
 
 // webservice and postgres back the control plane; scaling them to zero from here would take down
 // the api or database, so keep a floor of one replica on these kinds.
 const PROTECTED_KINDS = new Set(["webservice", "postgres"]);
+
 function isProtected(group: ProvisionedGroup): boolean {
   return PROTECTED_KINDS.has(group.kind);
 }
+
 function minDesired(group: ProvisionedGroup): number {
   return isProtected(group) ? 1 : 0;
 }
@@ -112,14 +117,18 @@ const busy = ref(false);
 const error = ref<string | null>(null);
 
 async function refresh() {
-  if (!isAdmin.value) return;
+  if (!isAdmin.value) {
+    return;
+  }
+
   loading.value = true;
   error.value = null;
+
   try {
-    backends.value = (await fetchNodeBackends()).backends ?? [];
+    backends.value = (await fetchNodeBackends()).backends;
     groups.value = await fetchNodes();
-  } catch (err: any) {
-    error.value = err?.message || "Failed to load node pools";
+  } catch (err) {
+    error.value = errorMessage(err) || "Failed to load node pools";
   } finally {
     loading.value = false;
   }
@@ -128,13 +137,14 @@ async function refresh() {
 async function scaleTo(group: ProvisionedGroup, desired: number) {
   busy.value = true;
   error.value = null;
+
   try {
-    await app.runOperation(`Scaling ${group.kind} to ${desired}`, () =>
-      scaleNodes({ backend: group.backend, kind: group.kind, desired })
+    await app.runOperation(`Scaling ${group.kind} to ${String(desired)}`, () =>
+      scaleNodes({ backend: group.backend, kind: group.kind, desired }),
     );
     await refresh();
-  } catch (err: any) {
-    error.value = err?.message || "Scale request failed";
+  } catch (err) {
+    error.value = errorMessage(err) || "Scale request failed";
   } finally {
     busy.value = false;
   }

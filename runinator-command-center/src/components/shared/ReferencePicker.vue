@@ -27,10 +27,18 @@
     </div>
     <footer class="reference-transforms">
       <span class="reference-transforms-label">Wrap selection</span>
-      <button type="button" @click="emit('transform', 'string')" title="string(selection)">string()</button>
-      <button type="button" @click="emit('transform', 'json')" title="json(selection)">json()</button>
-      <button type="button" @click="emit('transform', 'coalesce')" title="selection ?? fallback">??</button>
-      <button type="button" @click="emit('transform', 'concat')" title="selection ++ value">++</button>
+      <button type="button" title="string(selection)" @click="emit('transform', 'string')">
+        string()
+      </button>
+      <button type="button" title="json(selection)" @click="emit('transform', 'json')">
+        json()
+      </button>
+      <button type="button" title="selection ?? fallback" @click="emit('transform', 'coalesce')">
+        ??
+      </button>
+      <button type="button" title="selection ++ value" @click="emit('transform', 'concat')">
+        ++
+      </button>
     </footer>
   </section>
 </template>
@@ -53,11 +61,17 @@ const query = ref("");
 // filter references case-insensitively by label, dropping groups left empty.
 const filteredGroups = computed<ReferenceGroup[]>(() => {
   const needle = query.value.trim().toLowerCase();
-  if (!needle) return props.groups;
+
+  if (!needle) {
+    return props.groups;
+  }
+
   return props.groups
     .map((group) => ({
       title: group.title,
-      references: group.references.filter((reference) => reference.label.toLowerCase().includes(needle))
+      references: group.references.filter((reference) =>
+        reference.label.toLowerCase().includes(needle),
+      ),
     }))
     .filter((group) => group.references.length > 0);
 });

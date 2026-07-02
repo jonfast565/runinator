@@ -9,7 +9,11 @@
     >
       <span class="run-tab-dot" :class="statusClass(runId)"></span>
       <span class="run-tab-label">{{ labelFor(runId) }}</span>
-      <button class="btn-close" :title="`Close run ${runId}`" @click.stop="workflows.closeRunTab(runId)">
+      <button
+        class="btn-close"
+        :title="`Close run ${runId}`"
+        @click.stop="workflows.closeRunTab(runId)"
+      >
         <Icon name="x" :size="11" />
       </button>
     </div>
@@ -26,7 +30,7 @@ function labelFor(runId: string): string {
   const detail = workflows.runDetailById.get(runId);
   const summary = workflows.workflowRuns.find((run) => run.id === runId);
   const name = (detail?.run.name ?? summary?.name)?.trim();
-  return name ? name : `Run #${runId}`;
+  return name ?? `Run #${runId}`;
 }
 
 function tabTitle(runId: string): string {
@@ -36,18 +40,38 @@ function tabTitle(runId: string): string {
 
 function statusFor(runId: string): string | undefined {
   const detail = workflows.runDetailById.get(runId);
-  if (detail?.run.status) return detail.run.status;
+
+  if (detail?.run.status) {
+    return detail.run.status;
+  }
+
   const summary = workflows.workflowRuns.find((run) => run.id === runId);
   return summary?.status;
 }
 
 function statusClass(runId: string): string {
   const status = statusFor(runId);
-  if (!status) return "pending";
-  if (status === "succeeded") return "ok";
-  if (status === "failed" || status === "timed_out") return "fail";
-  if (status === "canceled") return "warn";
-  if (status === "running" || status === "queued" || status === "debug_paused") return "live";
+
+  if (!status) {
+    return "pending";
+  }
+
+  if (status === "succeeded") {
+    return "ok";
+  }
+
+  if (status === "failed" || status === "timed_out") {
+    return "fail";
+  }
+
+  if (status === "canceled") {
+    return "warn";
+  }
+
+  if (status === "running" || status === "queued" || status === "debug_paused") {
+    return "live";
+  }
+
   return "pending";
 }
 </script>

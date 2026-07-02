@@ -15,7 +15,11 @@
       <tr
         v-for="run in runs"
         :key="run.id"
-        :class="{ selected: run.id === selectedRunId, danger: isBadStatus(run.status), success: isGoodStatus(run.status) }"
+        :class="{
+          selected: run.id === selectedRunId,
+          danger: isBadStatus(run.status),
+          success: isGoodStatus(run.status),
+        }"
         @click="$emit('select', run)"
       >
         <td>{{ runLabel(run) }}</td>
@@ -49,13 +53,16 @@ defineEmits<{
 }>();
 
 function workflowLabel(run: RunSummary): string {
-  if (!run.workflow_id) return "-";
+  if (!run.workflow_id) {
+    return "-";
+  }
+
   const name = props.workflowNames?.[run.workflow_id];
-  return name ? `${name} #${run.workflow_id}` : String(run.workflow_id);
+  return name ? `${name} #${run.workflow_id}` : run.workflow_id;
 }
 
 function runLabel(run: RunSummary): string {
   const name = run.name?.trim();
-  return name ? `${name} (#${run.id})` : String(run.id);
+  return name ? `${name} (#${run.id})` : run.id;
 }
 </script>

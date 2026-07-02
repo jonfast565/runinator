@@ -3,7 +3,9 @@ import { genericRecordSummary, genericRecordType } from "../resources";
 
 describe("resource utils", () => {
   it("derives jira summaries from key and title", () => {
-    expect(genericRecordSummary({ provider: "jira", key: "ABC-1", title: "Fix it" })).toBe("ABC-1 Fix it");
+    expect(genericRecordSummary({ provider: "jira", key: "ABC-1", title: "Fix it" })).toBe(
+      "ABC-1 Fix it",
+    );
   });
 
   it("uses explicit type fields first", () => {

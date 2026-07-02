@@ -4,7 +4,6 @@ import { useArtifactsStore } from "../stores/artifacts";
 import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
 import { useResourcesStore } from "../stores/resources";
-import { useTasksStore } from "../stores/tasks";
 import { useWorkflowsStore } from "../stores/workflows";
 import { buildWebSocketUrl } from "../utils/websocket";
 
@@ -19,14 +18,19 @@ export function useEventStream() {
   const artifacts = useArtifactsStore();
   const notifications = useNotificationsStore();
   const auth = useAuthStore();
-  // Tasks store still referenced by the rest of the app; we no longer poll it here.
-  void useTasksStore;
 
   function refreshResourcesIfActive() {
-    if (!isResourceTab(app.activeTab)) return;
+    if (!isResourceTab(app.activeTab)) {
+      return;
+    }
+
     const endpoint = endpointForTab(app.activeTab);
-    if (endpoint) void resources.refreshResourcesFor(endpoint);
+
+    if (endpoint) {
+      void resources.refreshResourcesFor(endpoint);
+    }
   }
+
   let ws: WebSocket | null = null;
   let fallbackTimer: number | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,9 +39,13 @@ export function useEventStream() {
 
   function handleEvent(event: { type: string; [k: string]: unknown }) {
     console.info("[command-center] server event", event);
+
     switch (event.type) {
       case "run_status_changed":
-        if (workflows.selectedWorkflowRunId) workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+        if (workflows.selectedWorkflowRunId) {
+          void workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+        }
+
         refreshResourcesIfActive();
         break;
       case "resync":
@@ -46,23 +54,36 @@ export function useEventStream() {
       case "tasks_changed":
         break;
       case "workflows_changed":
-        if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
+        if (app.activeTab === "Workflows" && !workflows.isDirty) {
+          void workflows.refreshWorkflows();
+        }
+
         break;
+
       case "workflow_run_changed": {
         const runId = event.run_id as string;
+
         if (workflows.selectedWorkflowRunId === runId) {
-          workflows.fetchWorkflowRunDetail(runId, true);
+          void workflows.fetchWorkflowRunDetail(runId, true);
         }
-        if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
+
+        if (app.activeTab === "Runs") {
+          void workflows.fetchRecentWorkflowRuns();
+        }
+
         refreshResourcesIfActive();
         break;
       }
+
       case "resources_changed":
         refreshResourcesIfActive();
         break;
       case "artifact_created":
       case "artifacts_changed":
-        if (app.activeTab === "Artifacts") void artifacts.refreshArtifacts();
+        if (app.activeTab === "Artifacts") {
+          void artifacts.refreshArtifacts();
+        }
+
         break;
       case "notification_created":
       case "notifications_changed":
@@ -73,19 +94,35 @@ export function useEventStream() {
   }
 
   function startFallback() {
-    if (fallbackTimer !== null) return;
+    if (fallbackTimer !== null) {
+      return;
+    }
+
     app.setEventStreamState("fallback");
     fallbackTimer = window.setInterval(refreshActiveState, FALLBACK_INTERVAL);
   }
 
   function refreshActiveState() {
-    if (app.activeTab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
-    if (app.activeTab === "Runs") workflows.fetchRecentWorkflowRuns();
-    if (workflows.selectedWorkflowRunId) {
-      workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+    if (app.activeTab === "Workflows" && !workflows.isDirty) {
+      void workflows.refreshWorkflows();
     }
-    if (app.activeTab === "Artifacts") void artifacts.refreshArtifacts();
-    if (app.activeTab === "Notifications") void notifications.refreshNotifications();
+
+    if (app.activeTab === "Runs") {
+      void workflows.fetchRecentWorkflowRuns();
+    }
+
+    if (workflows.selectedWorkflowRunId) {
+      void workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
+    }
+
+    if (app.activeTab === "Artifacts") {
+      void artifacts.refreshArtifacts();
+    }
+
+    if (app.activeTab === "Notifications") {
+      void notifications.refreshNotifications();
+    }
+
     refreshResourcesIfActive();
   }
 
@@ -97,13 +134,19 @@ export function useEventStream() {
   }
 
   function clearReconnectTimer() {
-    if (reconnectTimer === null) return;
+    if (reconnectTimer === null) {
+      return;
+    }
+
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
 
   function clearConnectTimer() {
-    if (connectTimer === null) return;
+    if (connectTimer === null) {
+      return;
+    }
+
     clearTimeout(connectTimer);
     connectTimer = null;
   }
@@ -112,48 +155,73 @@ export function useEventStream() {
     clearReconnectTimer();
     clearConnectTimer();
     const serviceUrl = app.serviceUrl;
+
     if (!serviceUrl) {
       startFallback();
       return;
     }
+
     const currentConnection = ++connectionId;
     app.setEventStreamState("connecting");
     const url = buildWebSocketUrl(serviceUrl, "/ws/events");
     ws = new WebSocket(url);
     connectTimer = setTimeout(() => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       console.info("[command-center] event stream connection timed out", { url });
       ws?.close();
       startFallback();
     }, CONNECT_TIMEOUT);
+
     ws.onopen = () => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       clearConnectTimer();
       console.info("[command-center] event stream connected", { url });
       app.setEventStreamState("connected");
       stopFallback();
     };
-    ws.onmessage = ({ data }) => {
-      if (currentConnection !== connectionId) return;
+
+    ws.onmessage = ({ data }: MessageEvent<string>) => {
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       try {
         console.info("[command-center] event stream message", data);
-        handleEvent(JSON.parse(data));
+        handleEvent(JSON.parse(data) as { type: string; [k: string]: unknown });
       } catch (err) {
         console.info("[command-center] failed to parse event stream message", { data, err });
       }
     };
+
     ws.onclose = () => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       clearConnectTimer();
-      console.info("[command-center] event stream closed, starting fallback and scheduling reconnect", { url });
+      console.info(
+        "[command-center] event stream closed, starting fallback and scheduling reconnect",
+        { url },
+      );
       ws = null;
       startFallback();
-      if (app.serviceConnected) {
+
+      if (app.serviceKnown) {
         reconnectTimer = setTimeout(connect, RECONNECT_DELAY);
       }
     };
+
     ws.onerror = (event) => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       clearConnectTimer();
       console.info("[command-center] event stream connection error", { url, event });
       ws?.close();
@@ -174,19 +242,27 @@ export function useEventStream() {
     () => app.serviceUrl,
     (url) => {
       disconnect();
-      if (url) connect();
-      else startFallback();
+
+      if (url) {
+        connect();
+      } else {
+        startFallback();
+      }
     },
-    { immediate: true }
+    { immediate: true },
   );
 
   watch(
     () => auth.accessTokenRevision,
     () => {
       disconnect();
-      if (app.serviceUrl) connect();
-      else startFallback();
-    }
+
+      if (app.serviceUrl) {
+        connect();
+      } else {
+        startFallback();
+      }
+    },
   );
 
   onBeforeUnmount(disconnect);

@@ -7,7 +7,7 @@ import {
   logout as apiLogout,
   refreshSession,
   setAccessToken,
-  type LoginResult
+  type LoginResult,
 } from "../api/commandCenterApi";
 import type { JsonRecord } from "../types/models";
 
@@ -35,11 +35,19 @@ export const useAuthStore = defineStore("auth", () => {
 
   function persist(access: string | null, refresh: string | null) {
     refreshToken = refresh;
+
     try {
-      if (access) localStorage.setItem(ACCESS_KEY, access);
-      else localStorage.removeItem(ACCESS_KEY);
-      if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-      else localStorage.removeItem(REFRESH_KEY);
+      if (access) {
+        localStorage.setItem(ACCESS_KEY, access);
+      } else {
+        localStorage.removeItem(ACCESS_KEY);
+      }
+
+      if (refresh) {
+        localStorage.setItem(REFRESH_KEY, refresh);
+      } else {
+        localStorage.removeItem(REFRESH_KEY);
+      }
     } catch {
       /* storage unavailable; session is then memory-only */
     }
@@ -48,7 +56,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function apply(result: LoginResult) {
     persist(result.access_token, result.refresh_token);
     await publishAccessToken(result.access_token);
-    user.value = result.user ?? null;
+    user.value = result.user;
     authenticated.value = true;
   }
 
@@ -83,20 +91,24 @@ export const useAuthStore = defineStore("auth", () => {
   // probe whether auth is required, then restore any persisted session.
   async function init() {
     try {
-      required.value = Boolean((await fetchAuthConfig())?.enabled);
+      required.value = (await fetchAuthConfig()).enabled;
     } catch {
       required.value = false;
     }
+
     if (!required.value) {
       authenticated.value = true;
       ready.value = true;
       return;
     }
+
     const access = safeGet(ACCESS_KEY);
     const refresh = safeGet(REFRESH_KEY);
+
     if (access) {
       refreshToken = refresh;
       await publishAccessToken(access);
+
       try {
         user.value = await fetchAuthMe();
         authenticated.value = true;
@@ -104,11 +116,13 @@ export const useAuthStore = defineStore("auth", () => {
         authenticated.value = refresh ? await tryRefresh(refresh) : false;
       }
     }
+
     ready.value = true;
   }
 
   async function signIn(username: string, password: string): Promise<boolean> {
     error.value = "";
+
     try {
       await apply(await apiLogin(username, password));
       return true;
@@ -126,8 +140,20 @@ export const useAuthStore = defineStore("auth", () => {
         /* best effort */
       }
     }
+
     await clear();
   }
 
-  return { required, authenticated, ready, user, error, accessTokenRevision, init, signIn, signOut, applyAccessToken };
+  return {
+    required,
+    authenticated,
+    ready,
+    user,
+    error,
+    accessTokenRevision,
+    init,
+    signIn,
+    signOut,
+    applyAccessToken,
+  };
 });

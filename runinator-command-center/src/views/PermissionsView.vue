@@ -13,10 +13,34 @@
       </header>
 
       <nav class="permissions-tabs" aria-label="Permissions sections">
-        <button :class="{ active: activeTab === 'users' }" type="button" @click="activeTab = 'users'">Users</button>
-        <button :class="{ active: activeTab === 'teams' }" type="button" @click="activeTab = 'teams'">Teams</button>
-        <button :class="{ active: activeTab === 'access' }" type="button" @click="activeTab = 'access'">Access</button>
-        <button :class="{ active: activeTab === 'apiKeys' }" type="button" @click="activeTab = 'apiKeys'">API Keys</button>
+        <button
+          :class="{ active: activeTab === 'users' }"
+          type="button"
+          @click="activeTab = 'users'"
+        >
+          Users
+        </button>
+        <button
+          :class="{ active: activeTab === 'teams' }"
+          type="button"
+          @click="activeTab = 'teams'"
+        >
+          Teams
+        </button>
+        <button
+          :class="{ active: activeTab === 'access' }"
+          type="button"
+          @click="activeTab = 'access'"
+        >
+          Access
+        </button>
+        <button
+          :class="{ active: activeTab === 'apiKeys' }"
+          type="button"
+          @click="activeTab = 'apiKeys'"
+        >
+          API Keys
+        </button>
       </nav>
 
       <div v-if="activeTab === 'users'" class="permissions-content">
@@ -45,7 +69,10 @@
                 <tr
                   v-for="user in permissions.filteredUsers"
                   :key="String(user.id)"
-                  :class="{ selected: permissions.selectedUserId === user.id, muted: user.disabled }"
+                  :class="{
+                    selected: permissions.selectedUserId === user.id,
+                    muted: user.disabled,
+                  }"
                   @click="openEditUser(user)"
                 >
                   <td>{{ user.username }}</td>
@@ -102,7 +129,12 @@
               <h3>Workflows</h3>
               <p class="muted">{{ filteredWorkflows.length }} shown</p>
             </div>
-            <button class="btn btn-primary" type="button" :disabled="!permissions.selectedWorkflowId" @click="openGrantModal">
+            <button
+              class="btn btn-primary"
+              type="button"
+              :disabled="!permissions.selectedWorkflowId"
+              @click="openGrantModal"
+            >
               <Icon name="plus" />
               <span>Add Access</span>
             </button>
@@ -133,7 +165,12 @@
         <section class="permissions-list">
           <div class="panel-toolbar">
             <h3>Access</h3>
-            <button class="btn" type="button" :disabled="!permissions.selectedWorkflowId" @click="permissions.refreshWorkflowGrants">
+            <button
+              class="btn"
+              type="button"
+              :disabled="!permissions.selectedWorkflowId"
+              @click="permissions.refreshWorkflowGrants"
+            >
               <Icon name="refresh" />
               <span>Refresh</span>
             </button>
@@ -156,7 +193,13 @@
                   <td>{{ grant.permission }}</td>
                   <td>{{ formatDate(grant.created_at) }}</td>
                   <td>
-                    <button class="btn btn-sm btn-ghost" type="button" @click="permissions.revokeGrant(grant.id)">Revoke</button>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      type="button"
+                      @click="permissions.revokeGrant(grant.id)"
+                    >
+                      Revoke
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -199,12 +242,17 @@
                 <tr
                   v-for="apiKey in permissions.visibleApiKeys"
                   :key="String(apiKey.id)"
-                  :class="{ selected: permissions.selectedApiKeyId === apiKey.id, muted: apiKey.disabled }"
+                  :class="{
+                    selected: permissions.selectedApiKeyId === apiKey.id,
+                    muted: apiKey.disabled,
+                  }"
                   @click="openEditApiKey(apiKey)"
                 >
                   <td>{{ apiKey.name }}</td>
                   <td>{{ keyOwnerLabel(apiKey) }}</td>
-                  <td><code>{{ apiKey.key_prefix }}</code></td>
+                  <td>
+                    <code>{{ apiKey.key_prefix }}</code>
+                  </td>
                   <td>{{ apiKey.disabled ? "revoked" : "active" }}</td>
                   <td>{{ apiKey.last_used_at ? formatDate(apiKey.last_used_at) : "-" }}</td>
                 </tr>
@@ -226,7 +274,11 @@
         <div class="form-grid">
           <label>
             <span>Username</span>
-            <input v-model="permissions.userDraft.username" :disabled="Boolean(permissions.selectedUser)" autocomplete="off" />
+            <input
+              v-model="permissions.userDraft.username"
+              :disabled="Boolean(permissions.selectedUser)"
+              autocomplete="off"
+            />
           </label>
           <label>
             <span>Email</span>
@@ -234,15 +286,27 @@
           </label>
           <label>
             <span>{{ permissions.selectedUser ? "New Password" : "Password" }}</span>
-            <input v-model="permissions.userDraft.password" type="password" autocomplete="new-password" />
+            <input
+              v-model="permissions.userDraft.password"
+              type="password"
+              autocomplete="new-password"
+            />
           </label>
           <div class="check-grid">
             <label>
-              <input v-model="permissions.userDraft.is_admin" type="checkbox" :disabled="selectedUserIsLastEnabledAdmin && permissions.userDraft.is_admin" />
+              <input
+                v-model="permissions.userDraft.is_admin"
+                type="checkbox"
+                :disabled="selectedUserIsLastEnabledAdmin && permissions.userDraft.is_admin"
+              />
               <span>Admin</span>
             </label>
             <label>
-              <input v-model="permissions.userDraft.disabled" type="checkbox" :disabled="selectedUserIsLastEnabledAdmin && !permissions.userDraft.disabled" />
+              <input
+                v-model="permissions.userDraft.disabled"
+                type="checkbox"
+                :disabled="selectedUserIsLastEnabledAdmin && !permissions.userDraft.disabled"
+              />
               <span>Disabled</span>
             </label>
           </div>
@@ -251,23 +315,49 @@
           <div class="section-head">
             <h4>Teams</h4>
             <div class="inline-actions">
-              <select v-model="userTeamId" :disabled="!permissions.selectedUser || availableUserTeams.length === 0">
+              <select
+                v-model="userTeamId"
+                :disabled="!permissions.selectedUser || availableUserTeams.length === 0"
+              >
                 <option value="">Add team</option>
-                <option v-for="team in availableUserTeams" :key="String(team.id)" :value="String(team.id)">{{ team.name }}</option>
+                <option
+                  v-for="team in availableUserTeams"
+                  :key="String(team.id)"
+                  :value="String(team.id)"
+                >
+                  {{ team.name }}
+                </option>
               </select>
-              <button class="btn btn-sm" type="button" :disabled="!userTeamId" @click="assignUserTeam">Add</button>
+              <button
+                class="btn btn-sm"
+                type="button"
+                :disabled="!userTeamId"
+                @click="assignUserTeam"
+              >
+                Add
+              </button>
             </div>
           </div>
           <div v-if="permissions.userTeams.length" class="pill-list">
             <span v-for="team in permissions.userTeams" :key="String(team.id)" class="pill">
               {{ team.name }}
-              <button type="button" @click="permissions.removeSelectedUserFromTeam(String(team.id))">×</button>
+              <button
+                type="button"
+                @click="permissions.removeSelectedUserFromTeam(String(team.id))"
+              >
+                ×
+              </button>
             </span>
           </div>
           <div v-else class="empty-state small">No teams assigned.</div>
         </section>
         <div class="modal-actions">
-          <button class="btn btn-danger" type="button" :disabled="!permissions.selectedUser || selectedUserIsLastEnabledAdmin" @click="confirmDeleteUser">
+          <button
+            class="btn btn-danger"
+            type="button"
+            :disabled="!permissions.selectedUser || selectedUserIsLastEnabledAdmin"
+            @click="confirmDeleteUser"
+          >
             <Icon name="trash" />
             <span>Delete</span>
           </button>
@@ -298,11 +388,27 @@
           <div class="section-head">
             <h4>Members</h4>
             <div class="inline-actions">
-              <select v-model="memberUserId" :disabled="!permissions.selectedTeam || availableTeamUsers.length === 0">
+              <select
+                v-model="memberUserId"
+                :disabled="!permissions.selectedTeam || availableTeamUsers.length === 0"
+              >
                 <option value="">Add user</option>
-                <option v-for="user in availableTeamUsers" :key="String(user.id)" :value="String(user.id)">{{ user.username }}</option>
+                <option
+                  v-for="user in availableTeamUsers"
+                  :key="String(user.id)"
+                  :value="String(user.id)"
+                >
+                  {{ user.username }}
+                </option>
               </select>
-              <button class="btn btn-sm" type="button" :disabled="!memberUserId" @click="addTeamMember">Add</button>
+              <button
+                class="btn btn-sm"
+                type="button"
+                :disabled="!memberUserId"
+                @click="addTeamMember"
+              >
+                Add
+              </button>
             </div>
           </div>
           <DataTable>
@@ -319,7 +425,13 @@
                   <td>{{ user.username }}</td>
                   <td>{{ user.email || "-" }}</td>
                   <td>
-                    <button class="btn btn-sm btn-ghost" type="button" @click="permissions.removeSelectedTeamMember(String(user.id))">Remove</button>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      type="button"
+                      @click="permissions.removeSelectedTeamMember(String(user.id))"
+                    >
+                      Remove
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -327,7 +439,12 @@
           </DataTable>
         </section>
         <div class="modal-actions">
-          <button class="btn btn-danger" type="button" :disabled="!permissions.selectedTeam" @click="confirmDeleteTeam">
+          <button
+            class="btn btn-danger"
+            type="button"
+            :disabled="!permissions.selectedTeam"
+            @click="confirmDeleteTeam"
+          >
             <Icon name="trash" />
             <span>Delete</span>
           </button>
@@ -351,28 +468,46 @@
         <div class="form-grid single">
           <label>
             <span>Principal Type</span>
-            <select v-model="permissions.grantDraft.principal_type" @change="permissions.grantDraft.principal_id = ''">
+            <select
+              v-model="permissions.grantDraft.principal_type"
+              @change="permissions.grantDraft.principal_id = ''"
+            >
               <option value="user">User</option>
               <option value="team">Team</option>
             </select>
           </label>
           <label>
             <span>Principal</span>
-            <select v-model="permissions.grantDraft.principal_id" :disabled="grantPrincipalOptions.length === 0">
+            <select
+              v-model="permissions.grantDraft.principal_id"
+              :disabled="grantPrincipalOptions.length === 0"
+            >
               <option value="">Principal</option>
-              <option v-for="principal in grantPrincipalOptions" :key="principal.id" :value="principal.id">{{ principal.label }}</option>
+              <option
+                v-for="principal in grantPrincipalOptions"
+                :key="principal.id"
+                :value="principal.id"
+              >
+                {{ principal.label }}
+              </option>
             </select>
           </label>
           <label>
             <span>Permission</span>
             <select v-model="permissions.grantDraft.permission">
-              <option v-for="level in permissionLevels" :key="level" :value="level">{{ level }}</option>
+              <option v-for="level in permissionLevels" :key="level" :value="level">
+                {{ level }}
+              </option>
             </select>
           </label>
         </div>
         <div class="modal-actions">
           <button class="btn" type="button" @click="grantModalOpen = false">Cancel</button>
-          <button class="btn btn-primary" type="submit" :disabled="!permissions.selectedWorkflowId || !permissions.grantDraft.principal_id">
+          <button
+            class="btn btn-primary"
+            type="submit"
+            :disabled="!permissions.selectedWorkflowId || !permissions.grantDraft.principal_id"
+          >
             <Icon name="save" />
             <span>Save Access</span>
           </button>
@@ -413,7 +548,11 @@
             <span>Owner</span>
             <select v-model="apiKeyOwner" :disabled="Boolean(permissions.selectedApiKey)">
               <option value="service">Service key</option>
-              <option v-for="user in apiKeyOwnerOptions" :key="String(user.id)" :value="String(user.id)">
+              <option
+                v-for="user in apiKeyOwnerOptions"
+                :key="String(user.id)"
+                :value="String(user.id)"
+              >
                 {{ user.username }}
               </option>
             </select>
@@ -428,11 +567,21 @@
           </label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-danger" type="button" :disabled="!permissions.selectedApiKey" @click="confirmRevokeApiKey">
+          <button
+            class="btn btn-danger"
+            type="button"
+            :disabled="!permissions.selectedApiKey"
+            @click="confirmRevokeApiKey"
+          >
             <Icon name="trash" />
             <span>Revoke</span>
           </button>
-          <button class="btn" type="button" :disabled="!permissions.selectedApiKey || permissions.selectedApiKey.disabled" @click="confirmRotateApiKey">
+          <button
+            class="btn"
+            type="button"
+            :disabled="!permissions.selectedApiKey || permissions.selectedApiKey.disabled"
+            @click="confirmRotateApiKey"
+          >
             <Icon name="refresh" />
             <span>Rotate</span>
           </button>
@@ -486,48 +635,81 @@ const availableTeamUsers = computed(() => {
 const filteredWorkflows = computed(() => {
   const query = app.normalizedSearch;
   const list = workflows.workflows.filter((workflow) => workflow.id != null);
-  if (!query) return list;
-  return list.filter((workflow) => [workflow.id, workflow.name, workflow.version].filter(Boolean).join(" ").toLowerCase().includes(query));
+
+  if (!query) {
+    return list;
+  }
+
+  return list.filter((workflow) =>
+    [workflow.id, workflow.name, workflow.version]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
 });
 
 const grantPrincipalOptions = computed(() => {
   if (permissions.grantDraft.principal_type === "team") {
-    return permissions.teams.filter((team) => team.id).map((team) => ({ id: String(team.id), label: team.name }));
+    return permissions.teams
+      .filter((team) => team.id)
+      .map((team) => ({ id: String(team.id), label: team.name }));
   }
-  return permissions.users.filter((user) => user.id).map((user) => ({ id: String(user.id), label: user.username }));
+
+  return permissions.users
+    .filter((user) => user.id)
+    .map((user) => ({ id: String(user.id), label: user.username }));
 });
 
 const apiKeyOwner = computed({
   get() {
-    return permissions.apiKeyDraft.is_service ? "service" : permissions.apiKeyDraft.user_id || permissions.selectedUserId || "";
+    if (permissions.apiKeyDraft.is_service) {
+      return "service";
+    }
+
+    return permissions.apiKeyDraft.user_id
+      ? permissions.apiKeyDraft.user_id
+      : (permissions.selectedUserId ?? "");
   },
   set(value: string) {
     permissions.apiKeyDraft.is_service = value === "service";
     permissions.apiKeyDraft.user_id = value === "service" ? "" : value;
-  }
+  },
 });
 
 const apiKeyOwnerOptions = computed(() => {
-  if (permissions.selectedUser) return [permissions.selectedUser];
+  if (permissions.selectedUser) {
+    return [permissions.selectedUser];
+  }
+
   return permissions.users;
 });
 
 const apiKeyScopeLabel = computed(() => {
-  if (permissions.selectedUser) return `Showing service keys and keys owned by ${permissions.selectedUser.username}.`;
+  if (permissions.selectedUser) {
+    return `Showing service keys and keys owned by ${permissions.selectedUser.username}.`;
+  }
+
   return "Showing all API keys.";
 });
 
 async function refresh() {
   await Promise.all([
     permissions.refreshAll(),
-    workflows.workflows.length === 0 ? workflows.refreshWorkflows() : Promise.resolve()
+    workflows.workflows.length === 0 ? workflows.refreshWorkflows() : Promise.resolve(),
   ]);
-  if (activeTab.value === "access" && !permissions.selectedWorkflowId) selectFirstWorkflow();
+
+  if (activeTab.value === "access" && !permissions.selectedWorkflowId) {
+    selectFirstWorkflow();
+  }
 }
 
 function selectFirstWorkflow() {
   const first = filteredWorkflows.value[0];
-  if (first?.id) void permissions.selectWorkflow(first.id);
+
+  if (first.id) {
+    void permissions.selectWorkflow(first.id);
+  }
 }
 
 function assignUserTeam() {
@@ -561,13 +743,24 @@ function closeUserModal() {
 
 async function saveUserModal() {
   await permissions.saveUserDraft();
-  if (!app.errorText) closeUserModal();
+
+  if (!app.errorText) {
+    closeUserModal();
+  }
 }
 
 function confirmDeleteUser() {
-  if (!permissions.selectedUser) return;
-  if (!window.confirm(`Delete user ${permissions.selectedUser.username}?`)) return;
-  void permissions.deleteSelectedUser().then(() => closeUserModal());
+  if (!permissions.selectedUser) {
+    return;
+  }
+
+  if (!window.confirm(`Delete user ${permissions.selectedUser.username}?`)) {
+    return;
+  }
+
+  void permissions.deleteSelectedUser().then(() => {
+    closeUserModal();
+  });
 }
 
 function openNewTeam() {
@@ -589,13 +782,24 @@ function closeTeamModal() {
 
 async function saveTeamModal() {
   await permissions.saveTeamDraft();
-  if (!app.errorText) closeTeamModal();
+
+  if (!app.errorText) {
+    closeTeamModal();
+  }
 }
 
 function confirmDeleteTeam() {
-  if (!permissions.selectedTeam) return;
-  if (!window.confirm(`Delete team ${permissions.selectedTeam.name}?`)) return;
-  void permissions.deleteSelectedTeam().then(() => closeTeamModal());
+  if (!permissions.selectedTeam) {
+    return;
+  }
+
+  if (!window.confirm(`Delete team ${permissions.selectedTeam.name}?`)) {
+    return;
+  }
+
+  void permissions.deleteSelectedTeam().then(() => {
+    closeTeamModal();
+  });
 }
 
 function openGrantModal() {
@@ -605,7 +809,10 @@ function openGrantModal() {
 
 async function saveGrantModal() {
   await permissions.saveGrantDraft();
-  if (!app.errorText) grantModalOpen.value = false;
+
+  if (!app.errorText) {
+    grantModalOpen.value = false;
+  }
 }
 
 function openNewApiKey() {
@@ -623,27 +830,52 @@ function closeApiKeyModal() {
 }
 
 function confirmRevokeApiKey() {
-  if (!permissions.selectedApiKey) return;
-  if (!window.confirm(`Revoke API key ${permissions.selectedApiKey.name}?`)) return;
-  void permissions.revokeSelectedApiKey().then(() => closeApiKeyModal());
+  if (!permissions.selectedApiKey) {
+    return;
+  }
+
+  if (!window.confirm(`Revoke API key ${permissions.selectedApiKey.name}?`)) {
+    return;
+  }
+
+  void permissions.revokeSelectedApiKey().then(() => {
+    closeApiKeyModal();
+  });
 }
 
 function confirmRotateApiKey() {
-  if (!permissions.selectedApiKey) return;
-  if (!window.confirm(`Rotate API key ${permissions.selectedApiKey.name}? The old secret will stop working.`)) return;
+  if (!permissions.selectedApiKey) {
+    return;
+  }
+
+  if (
+    !window.confirm(
+      `Rotate API key ${permissions.selectedApiKey.name}? The old secret will stop working.`,
+    )
+  ) {
+    return;
+  }
+
   void permissions.rotateSelectedApiKey();
 }
 
 async function saveApiKeyModal() {
   await permissions.saveApiKeyDraft();
-  if (!app.errorText && !permissions.revealedApiKey) closeApiKeyModal();
+
+  if (!app.errorText && !permissions.revealedApiKey) {
+    closeApiKeyModal();
+  }
 }
 
 async function copySecret() {
   const secret = permissions.revealedApiKey?.secret;
-  if (!secret) return;
+
+  if (!secret) {
+    return;
+  }
+
   try {
-    await navigator.clipboard?.writeText(secret);
+    await navigator.clipboard.writeText(secret);
     app.setStatus("API key secret copied.");
   } catch {
     app.setError("Unable to copy API key secret.");
@@ -651,17 +883,29 @@ async function copySecret() {
 }
 
 function principalLabel(type: PrincipalType, id: string) {
-  if (type === "team") return permissions.teams.find((team) => team.id === id)?.name ?? id;
+  if (type === "team") {
+    return permissions.teams.find((team) => team.id === id)?.name ?? id;
+  }
+
   return permissions.users.find((user) => user.id === id)?.username ?? id;
 }
 
 function keyOwnerLabel(apiKey: ApiKey): string {
-  if (apiKey.is_service) return "service";
-  return permissions.users.find((user) => user.id === apiKey.user_id)?.username ?? apiKey.user_id ?? "user";
+  if (apiKey.is_service) {
+    return "service";
+  }
+
+  return (
+    permissions.users.find((user) => user.id === apiKey.user_id)?.username ??
+    apiKey.user_id ??
+    "user"
+  );
 }
 
 watch(activeTab, (tab) => {
-  if (tab === "access" && !permissions.selectedWorkflowId) selectFirstWorkflow();
+  if (tab === "access" && !permissions.selectedWorkflowId) {
+    selectFirstWorkflow();
+  }
 });
 
 onMounted(refresh);

@@ -16,42 +16,75 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
   let connectionId = 0;
 
   function clearReconnectTimer() {
-    if (reconnectTimer === null) return;
+    if (reconnectTimer === null) {
+      return;
+    }
+
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
 
   function connect(id: string) {
     clearReconnectTimer();
-    if (nodeRunId.value !== id) return;
-    if (!app.serviceUrl) return;
+
+    if (nodeRunId.value !== id) {
+      return;
+    }
+
+    if (!app.serviceUrl) {
+      return;
+    }
+
     const currentConnection = ++connectionId;
     ws = new WebSocket(buildWebSocketUrl(app.serviceUrl, `/ws/workflow-node-runs/${id}/stream`));
+
     ws.onopen = () => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       clearReconnectTimer();
       console.info("[command-center] workflow node run log stream connected", { nodeRunId: id });
     };
-    ws.onmessage = ({ data }) => {
-      if (currentConnection !== connectionId) return;
+
+    ws.onmessage = ({ data }: MessageEvent<string>) => {
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       try {
         chunks.value.push(JSON.parse(data) as RunChunk);
         lastChunkAt.value = Date.now();
       } catch (err) {
-        console.info("[command-center] failed to parse workflow node run log stream message", { nodeRunId: id, data, err });
+        console.info("[command-center] failed to parse workflow node run log stream message", {
+          nodeRunId: id,
+          data,
+          err,
+        });
       }
     };
+
     ws.onerror = (event) => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       console.info("[command-center] workflow node run log stream error", { nodeRunId: id, event });
       ws?.close();
     };
+
     ws.onclose = () => {
-      if (currentConnection !== connectionId) return;
+      if (currentConnection !== connectionId) {
+        return;
+      }
+
       console.info("[command-center] workflow node run log stream closed", { nodeRunId: id });
       ws = null;
-      if (nodeRunId.value === id && app.serviceConnected) {
-        reconnectTimer = setTimeout(() => connect(id), RECONNECT_DELAY);
+
+      if (nodeRunId.value === id && app.serviceKnown) {
+        reconnectTimer = setTimeout(() => {
+          connect(id);
+        }, RECONNECT_DELAY);
       }
     };
   }
@@ -69,9 +102,12 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
       disconnect();
       chunks.value = [];
       lastChunkAt.value = 0;
-      if (id) connect(id);
+
+      if (id) {
+        connect(id);
+      }
     },
-    { immediate: true }
+    { immediate: true },
   );
 
   watch(
@@ -79,8 +115,11 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
     () => {
       const id = nodeRunId.value;
       disconnect();
-      if (id) connect(id);
-    }
+
+      if (id) {
+        connect(id);
+      }
+    },
   );
 
   onBeforeUnmount(() => {

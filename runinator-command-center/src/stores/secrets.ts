@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
-import { deleteCredential, fetchCredential, fetchCredentials, saveCredential } from "../api/commandCenterApi";
+import {
+  deleteCredential,
+  fetchCredential,
+  fetchCredentials,
+  saveCredential,
+} from "../api/commandCenterApi";
 import type { CredentialSummary, SettingKind } from "../types/models";
 import { secretKey } from "../utils/secrets";
 import { useAppStore } from "./app";
@@ -9,30 +14,58 @@ export const useSecretsStore = defineStore("secrets", () => {
   const secrets = ref<CredentialSummary[]>([]);
   const configValues = ref<Record<string, string>>({});
   const selectedSecretKey = ref("");
-  const draft = reactive({
+  const draft = reactive<{
+    scope: string;
+    name: string;
+    secret: string;
+    kind: SettingKind;
+  }>({
     scope: "",
     name: "",
     secret: "",
-    kind: "secret" as SettingKind
+    kind: "secret",
   });
   const app = useAppStore();
 
-  const selectedSecret = computed(() => secrets.value.find((secret) => secretKey(secret) === selectedSecretKey.value) ?? null);
-  const configEntries = computed(() => secrets.value.filter((secret) => (secret.kind ?? "secret") === "config"));
-  const secretEntries = computed(() => secrets.value.filter((secret) => (secret.kind ?? "secret") === "secret"));
+  const selectedSecret = computed(
+    () => secrets.value.find((secret) => secretKey(secret) === selectedSecretKey.value) ?? null,
+  );
+  const configEntries = computed(() =>
+    secrets.value.filter((secret) => (secret.kind ?? "secret") === "config"),
+  );
+  const secretEntries = computed(() =>
+    secrets.value.filter((secret) => (secret.kind ?? "secret") === "secret"),
+  );
   const filteredSecrets = computed(() => {
     const query = app.normalizedSearch;
-    if (!query) return secrets.value;
-    return secrets.value.filter((secret) => [secret.scope, secret.name].some((value) => value.toLowerCase().includes(query)));
+
+    if (!query) {
+      return secrets.value;
+    }
+
+    return secrets.value.filter((secret) =>
+      [secret.scope, secret.name].some((value) => value.toLowerCase().includes(query)),
+    );
   });
-  const scopes = computed(() => Array.from(new Set(secrets.value.map((secret) => secret.scope))).sort());
+  const scopes = computed(() =>
+    Array.from(new Set(secrets.value.map((secret) => secret.scope))).sort(),
+  );
 
   async function refreshSecrets() {
-    secrets.value = await app.runOperation("Refreshing secrets", () => fetchCredentials()).catch(() => []);
-    secrets.value.sort((left, right) => left.scope.localeCompare(right.scope) || left.name.localeCompare(right.name));
-    if (selectedSecretKey.value && !secrets.value.some((secret) => secretKey(secret) === selectedSecretKey.value)) {
+    secrets.value = await app
+      .runOperation("Refreshing secrets", () => fetchCredentials())
+      .catch(() => []);
+    secrets.value.sort(
+      (left, right) => left.scope.localeCompare(right.scope) || left.name.localeCompare(right.name),
+    );
+
+    if (
+      selectedSecretKey.value &&
+      !secrets.value.some((secret) => secretKey(secret) === selectedSecretKey.value)
+    ) {
       selectedSecretKey.value = "";
     }
+
     if (!selectedSecretKey.value && secrets.value.length > 0) {
       selectSecret(secrets.value[0]);
     }
@@ -46,17 +79,26 @@ export const useSecretsStore = defineStore("secrets", () => {
   }
 
   async function loadConfigValue(setting: CredentialSummary) {
-    if ((setting.kind ?? "secret") !== "config") return;
+    if ((setting.kind ?? "secret") !== "config") {
+      return;
+    }
+
     const key = secretKey(setting);
-    const detail = await app.runOperation("Loading config value", () => fetchCredential(setting.scope, setting.name, "config"));
+    const detail = await app.runOperation("Loading config value", () =>
+      fetchCredential(setting.scope, setting.name, "config"),
+    );
     configValues.value = {
       ...configValues.value,
-      [key]: formatConfigValue(detail.value ?? detail.secret)
+      [key]: formatConfigValue(detail.value ?? detail.secret),
     };
   }
 
   async function loadConfigValues(settings: CredentialSummary[]) {
-    await Promise.all(settings.filter((setting) => (setting.kind ?? "secret") === "config").map((setting) => loadConfigValue(setting)));
+    await Promise.all(
+      settings
+        .filter((setting) => (setting.kind ?? "secret") === "config")
+        .map((setting) => loadConfigValue(setting)),
+    );
   }
 
   async function saveDraft() {
@@ -64,16 +106,22 @@ export const useSecretsStore = defineStore("secrets", () => {
     const name = draft.name.trim();
     const kind = draft.kind;
     const label = kind === "config" ? "Config" : "Secret";
-    if (!scope || !name || !draft.secret.trim()) return app.setError(`${label} scope, name, and value are required`);
+
+    if (!scope || !name || !draft.secret.trim()) {
+      app.setError(`${label} scope, name, and value are required`);
+      return;
+    }
 
     // config values are json; secrets are sent as a plain string. the web service infers a
     // config slot's schema from its first value, so the client never sends one.
     let value: unknown = draft.secret;
+
     if (kind === "config") {
       try {
         value = JSON.parse(draft.secret);
       } catch {
-        return app.setError("Config value must be valid JSON");
+        app.setError("Config value must be valid JSON");
+        return;
       }
     }
 
@@ -86,10 +134,19 @@ export const useSecretsStore = defineStore("secrets", () => {
 
   async function deleteSelectedSecret() {
     const secret = selectedSecret.value;
-    if (!secret) return app.setError("No setting selected");
+
+    if (!secret) {
+      app.setError("No setting selected");
+      return;
+    }
+
     const kind = secret.kind ?? "secret";
-    await app.runOperation(`Deleting ${kind}`, () => deleteCredential(secret.scope, secret.name, kind));
-    app.setStatus(`${kind === "config" ? "Config" : "Secret"} deleted: ${secret.scope}/${secret.name}`);
+    await app.runOperation(`Deleting ${kind}`, () =>
+      deleteCredential(secret.scope, secret.name, kind),
+    );
+    app.setStatus(
+      `${kind === "config" ? "Config" : "Secret"} deleted: ${secret.scope}/${secret.name}`,
+    );
     selectedSecretKey.value = "";
     clearDraft();
     await refreshSecrets();
@@ -112,13 +169,20 @@ export const useSecretsStore = defineStore("secrets", () => {
 
   function moveSecretSelection(delta: number) {
     const list = filteredSecrets.value;
-    if (list.length === 0) return;
+
+    if (list.length === 0) {
+      return;
+    }
+
     const current = list.findIndex((secret) => secretKey(secret) === selectedSecretKey.value);
     selectSecret(list[boundedIndex(current, delta, list.length)]);
   }
 
   function secretsForScopes(credentialScopes: string[]): CredentialSummary[] {
-    if (credentialScopes.length === 0) return secrets.value;
+    if (credentialScopes.length === 0) {
+      return secrets.value;
+    }
+
     const allowed = new Set(credentialScopes);
     return secrets.value.filter((secret) => allowed.has(secret.scope));
   }
@@ -142,16 +206,22 @@ export const useSecretsStore = defineStore("secrets", () => {
     selectSecret,
     clearDraft,
     moveSecretSelection,
-    secretsForScopes
+    secretsForScopes,
   };
 });
 
 function boundedIndex(current: number, delta: number, length: number): number {
-  if (current < 0) return delta > 0 ? 0 : length - 1;
+  if (current < 0) {
+    return delta > 0 ? 0 : length - 1;
+  }
+
   return Math.min(length - 1, Math.max(0, current + delta));
 }
 
 function formatConfigValue(value: unknown): string {
-  if (value === undefined) return "";
+  if (value === undefined) {
+    return "";
+  }
+
   return JSON.stringify(value, null, 2);
 }

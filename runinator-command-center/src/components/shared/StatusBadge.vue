@@ -13,11 +13,17 @@ const props = defineProps<{
 }>();
 
 const label = computed(() => {
-  if (typeof props.status === "boolean") return props.status ? props.trueLabel ?? "Enabled" : props.falseLabel ?? "Disabled";
+  if (typeof props.status === "boolean") {
+    return props.status ? (props.trueLabel ?? "Enabled") : (props.falseLabel ?? "Disabled");
+  }
+
   return props.status ?? "-";
 });
 const badgeClass = computed(() => {
-  if (typeof props.status === "boolean") return props.status ? "status-succeeded" : "status-muted";
+  if (typeof props.status === "boolean") {
+    return props.status ? "status-succeeded" : "status-muted";
+  }
+
   return statusBadgeClass(props.status ?? undefined);
 });
 </script>

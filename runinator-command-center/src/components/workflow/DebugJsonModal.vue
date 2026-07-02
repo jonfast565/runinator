@@ -25,22 +25,25 @@ import JsonEditor from "../shared/JsonEditor.vue";
 const props = defineProps<{
   title: string;
   hint?: string;
-  initialValue: any;
+  initialValue: unknown;
   editorTitle?: string;
   submitLabel?: string;
 }>();
 
 const emit = defineEmits<{
   close: [];
-  submit: [value: any];
+  submit: [value: unknown];
 }>();
 
 const text = ref(format(props.initialValue));
 const error = ref<string>("");
 
-watch(() => props.initialValue, (next) => {
-  text.value = format(next);
-});
+watch(
+  () => props.initialValue,
+  (next) => {
+    text.value = format(next);
+  },
+);
 
 const submitLabel = computed(() => props.submitLabel ?? "Submit");
 const editorTitle = computed(() => props.editorTitle ?? "JSON");
@@ -54,7 +57,7 @@ const isValid = computed(() => {
   }
 });
 
-function format(value: any): string {
+function format(value: unknown): string {
   try {
     return JSON.stringify(value ?? {}, null, 2);
   } catch {
@@ -69,7 +72,7 @@ function onChange(next: string) {
 
 function onSubmit() {
   try {
-    const parsed = JSON.parse(text.value);
+    const parsed: unknown = JSON.parse(text.value);
     emit("submit", parsed);
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Invalid JSON";

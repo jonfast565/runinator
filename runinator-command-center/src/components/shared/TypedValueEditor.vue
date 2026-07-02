@@ -1,8 +1,20 @@
 <template>
   <div class="typed-value-editor" @mousedown.stop @click.stop>
     <div v-if="expressionsAllowed" class="value-mode-row">
-      <button type="button" :class="{ active: !showExpressionEditor }" @click="setExpressionMode(false)">Value</button>
-      <button type="button" :class="{ active: showExpressionEditor }" @click="setExpressionMode(true)">Expression</button>
+      <button
+        type="button"
+        :class="{ active: !showExpressionEditor }"
+        @click="setExpressionMode(false)"
+      >
+        Value
+      </button>
+      <button
+        type="button"
+        :class="{ active: showExpressionEditor }"
+        @click="setExpressionMode(true)"
+      >
+        Expression
+      </button>
     </div>
     <ExpressionJsonEditor
       v-if="showExpressionEditor"
@@ -12,7 +24,10 @@
       @update:model-value="setExpressionJsonValue"
     />
     <div v-else-if="typeKind === 'any'" class="any-editor">
-      <select :value="anyValueKind" @change="setAnyValueKind(($event.target as HTMLSelectElement).value)">
+      <select
+        :value="anyValueKind"
+        @change="setAnyValueKind(($event.target as HTMLSelectElement).value)"
+      >
         <option value="string">string</option>
         <option value="number">number</option>
         <option value="boolean">boolean</option>
@@ -78,7 +93,11 @@
       @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
     />
     <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
-      <div v-for="(_item, index) in arrayValue" :key="arrayKeys[index] ?? index" class="collection-row">
+      <div
+        v-for="(_item, index) in arrayValue"
+        :key="arrayKeys[index] ?? index"
+        class="collection-row"
+      >
         <TypedValueEditor
           class="collection-value"
           :model-value="arrayValue[index]"
@@ -110,7 +129,11 @@
       </label>
       <div v-if="structAdditionalType" class="map-editor">
         <div v-for="[key, value] in additionalStructEntries" :key="key" class="collection-row">
-          <input class="collection-key" :value="key" @input="renameRecordField(key, ($event.target as HTMLInputElement).value)" />
+          <input
+            class="collection-key"
+            :value="key"
+            @input="renameRecordField(key, ($event.target as HTMLInputElement).value)"
+          />
           <TypedValueEditor
             class="collection-value"
             :model-value="value"
@@ -127,7 +150,11 @@
     </div>
     <div v-else-if="typeKind === 'map' && mapValueType" class="map-editor">
       <div v-for="[key, value] in recordEntries" :key="key" class="collection-row">
-        <input class="collection-key" :value="key" @input="renameRecordField(key, ($event.target as HTMLInputElement).value)" />
+        <input
+          class="collection-key"
+          :value="key"
+          @input="renameRecordField(key, ($event.target as HTMLInputElement).value)"
+        />
         <TypedValueEditor
           class="collection-value"
           :model-value="value"
@@ -142,7 +169,10 @@
       <button type="button" @click="addRecordField">Add Entry</button>
     </div>
     <div v-else-if="typeKind === 'union' && unionVariants.length" class="union-editor">
-      <select :value="unionVariantIndex" @change="selectUnionVariant(Number(($event.target as HTMLSelectElement).value))">
+      <select
+        :value="unionVariantIndex"
+        @change="selectUnionVariant(Number(($event.target as HTMLSelectElement).value))"
+      >
         <option v-for="(variant, index) in unionVariants" :key="index" :value="index">
           {{ describeType(variant) }}
         </option>
@@ -176,62 +206,112 @@ import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
 
 defineOptions({ name: "TypedValueEditor" });
 
-const props = withDefaults(defineProps<{
-  modelValue: unknown;
-  ty: RuninatorType;
-  placeholder?: string;
-  allowExpressions?: boolean;
-  forceExpression?: boolean;
-  expressionContext?: WorkflowExpressionEditorContext;
-}>(), {
-  allowExpressions: true,
-  forceExpression: false
-});
+const props = withDefaults(
+  defineProps<{
+    modelValue: unknown;
+    ty: RuninatorType;
+    placeholder?: string;
+    allowExpressions?: boolean;
+    forceExpression?: boolean;
+    expressionContext?: WorkflowExpressionEditorContext;
+  }>(),
+  {
+    allowExpressions: true,
+    forceExpression: false,
+    placeholder: undefined,
+    expressionContext: undefined,
+  },
+);
 
 const emit = defineEmits<{
   "update:modelValue": [value: unknown];
 }>();
 
-const typeKind = computed(() => props.ty?.type ?? "any");
+const typeKind = computed(() => props.ty.type);
 const stringValue = computed(() => (typeof props.modelValue === "string" ? props.modelValue : ""));
 const numberValue = computed(() => (typeof props.modelValue === "number" ? props.modelValue : ""));
 const anyValueKind = computed(() => {
-  if (props.modelValue === null || props.modelValue === undefined) return "null";
-  if (Array.isArray(props.modelValue)) return "array";
-  if (typeof props.modelValue === "object") return "object";
-  if (typeof props.modelValue === "number") return "number";
-  if (typeof props.modelValue === "boolean") return "boolean";
+  if (props.modelValue === null || props.modelValue === undefined) {
+    return "null";
+  }
+
+  if (Array.isArray(props.modelValue)) {
+    return "array";
+  }
+
+  if (typeof props.modelValue === "object") {
+    return "object";
+  }
+
+  if (typeof props.modelValue === "number") {
+    return "number";
+  }
+
+  if (typeof props.modelValue === "boolean") {
+    return "boolean";
+  }
+
   return "string";
 });
-const arrayValue = computed<unknown[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : []));
-const recordValue = computed<JsonRecord>(() => (isPlainRecord(props.modelValue) ? props.modelValue : {}));
+const arrayValue = computed<unknown[]>(() =>
+  Array.isArray(props.modelValue) ? props.modelValue : [],
+);
+const recordValue = computed<JsonRecord>(() =>
+  isPlainRecord(props.modelValue) ? props.modelValue : {},
+);
 const recordEntries = computed(() => Object.entries(recordValue.value));
 const arrayItemType = computed(() => (props.ty.type === "array" ? props.ty.items : null));
 const mapValueType = computed(() => (props.ty.type === "map" ? props.ty.values : null));
-const structEntries = computed<Array<[string, RuninatorField]>>(() => (props.ty.type === "struct" ? Object.entries(props.ty.fields) : []));
+const structEntries = computed<[string, RuninatorField][]>(() =>
+  props.ty.type === "struct" ? Object.entries(props.ty.fields) : [],
+);
 const structFieldNames = computed(() => new Set(structEntries.value.map(([name]) => name)));
-const structAdditionalType = computed(() => (props.ty.type === "struct" ? props.ty.additional ?? null : null));
-const additionalStructEntries = computed(() => recordEntries.value.filter(([key]) => !structFieldNames.value.has(key)));
+const structAdditionalType = computed(() =>
+  props.ty.type === "struct" ? (props.ty.additional ?? null) : null,
+);
+const additionalStructEntries = computed(() =>
+  recordEntries.value.filter(([key]) => !structFieldNames.value.has(key)),
+);
 const unionVariants = computed(() => (props.ty.type === "union" ? props.ty.variants : []));
-const unionVariantIndex = computed(() => selectedUnionVariantIndex(props.modelValue, unionVariants.value));
-const selectedUnionVariant = computed(() => unionVariants.value[unionVariantIndex.value] ?? { type: "any" });
-const unionValue = computed(() => matchesType(props.modelValue, selectedUnionVariant.value) ? props.modelValue : defaultValueForType(selectedUnionVariant.value));
+const unionVariantIndex = computed(() =>
+  selectedUnionVariantIndex(props.modelValue, unionVariants.value),
+);
+const selectedUnionVariant = computed(
+  () => unionVariants.value[unionVariantIndex.value] ?? { type: "any" },
+);
+const unionValue = computed(() =>
+  matchesType(props.modelValue, selectedUnionVariant.value)
+    ? props.modelValue
+    : defaultValueForType(selectedUnionVariant.value),
+);
 const isStringArray = computed(() => props.ty.type === "array" && props.ty.items.type === "string");
 const stringArrayText = computed(() => arrayValue.value.join("\n"));
 const jsonText = computed(() => pretty(props.modelValue ?? defaultValueForType(props.ty)));
-const expressionsAllowed = computed(() => props.allowExpressions !== false);
+const expressionsAllowed = computed(() => props.allowExpressions);
 // the toggle is driven by an explicit local intent, seeded from the incoming
 // value, so the editor never swaps modes under the user while they type.
-const localExpressionMode = ref(Boolean(props.forceExpression) || isWorkflowExpressionValue(props.modelValue));
+const localExpressionMode = ref(
+  props.forceExpression || isWorkflowExpressionValue(props.modelValue),
+);
 const showExpressionEditor = computed(() => expressionsAllowed.value && localExpressionMode.value);
 
 // an incoming expression value (or a forced expression) latches expression mode on.
-watch(() => props.forceExpression, (forced) => {
-  if (forced) localExpressionMode.value = true;
-});
-watch(() => props.modelValue, (value) => {
-  if (isWorkflowExpressionValue(value)) localExpressionMode.value = true;
-});
+watch(
+  () => props.forceExpression,
+  (forced) => {
+    if (forced) {
+      localExpressionMode.value = true;
+    }
+  },
+);
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (isWorkflowExpressionValue(value)) {
+      localExpressionMode.value = true;
+    }
+  },
+);
 
 // stable per-item keys so editing or removing one array entry never remounts its siblings (which
 // would re-seed their expression/value mode). keys are reconciled to the array length and stay put.
@@ -240,10 +320,15 @@ let nextArrayKey = 0;
 watch(
   () => arrayValue.value.length,
   (length) => {
-    while (arrayKeys.value.length < length) arrayKeys.value.push(nextArrayKey++);
-    if (arrayKeys.value.length > length) arrayKeys.value.length = length;
+    while (arrayKeys.value.length < length) {
+      arrayKeys.value.push(nextArrayKey++);
+    }
+
+    if (arrayKeys.value.length > length) {
+      arrayKeys.value.length = length;
+    }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 function emitValue(value: unknown) {
@@ -258,10 +343,12 @@ function expressionTextFor(value: unknown): string {
 
 function setExpressionMode(enabled: boolean) {
   localExpressionMode.value = enabled;
+
   if (enabled && isEmptyValue(props.modelValue)) {
     emitValue(defaultExpressionForType(props.ty));
     return;
   }
+
   if (!enabled && isWorkflowExpressionValue(props.modelValue)) {
     emitValue(defaultValueForType(props.ty));
   }
@@ -284,6 +371,7 @@ function setNumberValue(raw: string) {
     emitValue(null);
     return;
   }
+
   emitValue(typeKind.value === "integer" ? Number.parseInt(raw, 10) : Number(raw));
 }
 
@@ -292,17 +380,28 @@ function setAnyNumberValue(raw: string) {
     emitValue(null);
     return;
   }
+
   emitValue(Number(raw));
 }
 
 function setAnyValueKind(kind: string) {
-  if (kind === anyValueKind.value) return;
-  if (kind === "string") emitValue("");
-  else if (kind === "number") emitValue(0);
-  else if (kind === "boolean") emitValue(false);
-  else if (kind === "array") emitValue([]);
-  else if (kind === "object") emitValue({});
-  else emitValue(null);
+  if (kind === anyValueKind.value) {
+    return;
+  }
+
+  if (kind === "string") {
+    emitValue("");
+  } else if (kind === "number") {
+    emitValue(0);
+  } else if (kind === "boolean") {
+    emitValue(false);
+  } else if (kind === "array") {
+    emitValue([]);
+  } else if (kind === "object") {
+    emitValue({});
+  } else {
+    emitValue(null);
+  }
 }
 
 function setJsonValue(raw: string) {
@@ -320,7 +419,10 @@ function setArrayItem(index: number, value: unknown) {
 }
 
 function addArrayItem() {
-  if (!arrayItemType.value) return;
+  if (!arrayItemType.value) {
+    return;
+  }
+
   emitValue([...arrayValue.value, defaultValueForType(arrayItemType.value)]);
 }
 
@@ -335,30 +437,33 @@ function setRecordField(key: string, value: unknown) {
 }
 
 function renameRecordField(previousKey: string, nextKey: string) {
-  if (previousKey === nextKey) return;
-  const next = { ...recordValue.value };
-  const value = next[previousKey];
-  delete next[previousKey];
-  next[nextKey] = value;
-  emitValue(next);
+  if (previousKey === nextKey) {
+    return;
+  }
+
+  const { [previousKey]: value, ...rest } = recordValue.value;
+  emitValue({ ...rest, [nextKey]: value });
 }
 
 function removeRecordField(key: string) {
-  const next = { ...recordValue.value };
-  delete next[key];
-  emitValue(next);
+  emitValue(
+    Object.fromEntries(Object.entries(recordValue.value).filter(([entryKey]) => entryKey !== key)),
+  );
 }
 
 function addRecordField() {
   const valueType = mapValueType.value ?? structAdditionalType.value;
-  if (!valueType) return;
+
+  if (!valueType) {
+    return;
+  }
+
   const key = uniqueRecordKey(recordValue.value);
   setRecordField(key, defaultValueForType(valueType));
 }
 
 function selectUnionVariant(index: number) {
   const variant = unionVariants.value[index];
-  if (!variant) return;
   emitValue(defaultValueForType(variant));
 }
 
@@ -372,10 +477,12 @@ function splitLines(value: string): string[] {
 function uniqueRecordKey(record: JsonRecord): string {
   let index = 1;
   let key = "key";
+
   while (key in record) {
     index += 1;
-    key = `key_${index}`;
+    key = `key_${String(index)}`;
   }
+
   return key;
 }
 
@@ -385,52 +492,141 @@ function selectedUnionVariantIndex(value: unknown, variants: RuninatorType[]): n
 }
 
 function matchesType(value: unknown, ty: RuninatorType): boolean {
-  if (ty.type === "any") return true;
-  if (ty.type === "null") return value === null;
-  if (ty.type === "string") return typeof value === "string";
-  if (ty.type === "boolean") return typeof value === "boolean";
-  if (ty.type === "integer") return typeof value === "number" && Number.isInteger(value);
-  if (ty.type === "number") return typeof value === "number" && !Number.isNaN(value);
-  if (ty.type === "duration") return typeof value === "number" && Number.isInteger(value);
-  if (ty.type === "enum") return ty.values.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value));
-  if (ty.type === "range") return matchesType(value, ty.base)
-    && (ty.min === undefined || (typeof value === "number" && value >= ty.min))
-    && (ty.max === undefined || (typeof value === "number" && value <= ty.max));
-  if (ty.type === "array") return Array.isArray(value);
-  if (ty.type === "map" || ty.type === "struct") return isPlainRecord(value);
-  if (ty.type === "union") return ty.variants.some((variant) => matchesType(value, variant));
-  return false;
+  if (ty.type === "any") {
+    return true;
+  }
+
+  if (ty.type === "null") {
+    return value === null;
+  }
+
+  if (ty.type === "string") {
+    return typeof value === "string";
+  }
+
+  if (ty.type === "boolean") {
+    return typeof value === "boolean";
+  }
+
+  if (ty.type === "integer") {
+    return typeof value === "number" && Number.isInteger(value);
+  }
+
+  if (ty.type === "number") {
+    return typeof value === "number" && !Number.isNaN(value);
+  }
+
+  if (ty.type === "duration") {
+    return typeof value === "number" && Number.isInteger(value);
+  }
+
+  if (ty.type === "enum") {
+    return ty.values.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value));
+  }
+
+  if (ty.type === "range") {
+    return (
+      matchesType(value, ty.base) &&
+      (ty.min === undefined || (typeof value === "number" && value >= ty.min)) &&
+      (ty.max === undefined || (typeof value === "number" && value <= ty.max))
+    );
+  }
+
+  if (ty.type === "array") {
+    return Array.isArray(value);
+  }
+
+  if (ty.type === "map" || ty.type === "struct") {
+    return isPlainRecord(value);
+  }
+
+  return ty.variants.some((variant) => matchesType(value, variant));
 }
 
 function defaultValueForType(ty: RuninatorType): unknown {
-  if (ty.type === "string") return "";
-  if (ty.type === "boolean") return false;
-  if (ty.type === "integer" || ty.type === "number" || ty.type === "duration") return 0;
-  if (ty.type === "enum") return ty.values[0] ?? null;
-  if (ty.type === "range") return ty.min ?? defaultValueForType(ty.base);
-  if (ty.type === "array") return [];
-  if (ty.type === "map" || ty.type === "struct") return {};
-  if (ty.type === "union") return defaultValueForType(ty.variants[0] ?? { type: "any" });
+  if (ty.type === "string") {
+    return "";
+  }
+
+  if (ty.type === "boolean") {
+    return false;
+  }
+
+  if (ty.type === "integer" || ty.type === "number" || ty.type === "duration") {
+    return 0;
+  }
+
+  if (ty.type === "enum") {
+    return ty.values[0] ?? null;
+  }
+
+  if (ty.type === "range") {
+    return ty.min ?? defaultValueForType(ty.base);
+  }
+
+  if (ty.type === "array") {
+    return [];
+  }
+
+  if (ty.type === "map" || ty.type === "struct") {
+    return {};
+  }
+
+  if (ty.type === "union") {
+    return defaultValueForType(ty.variants[0] ?? { type: "any" });
+  }
+
   return null;
 }
 
 function defaultExpressionForType(ty: RuninatorType): JsonRecord {
-  if (ty.type === "string") return { "$to_string": { "$ref": { params: ["value"] } } };
-  return { "$ref": { params: ["value"] } };
+  if (ty.type === "string") {
+    return { $to_string: { $ref: { params: ["value"] } } };
+  }
+
+  return { $ref: { params: ["value"] } };
 }
 
 function describeType(ty: RuninatorType | undefined, depth = 0): string {
-  if (!ty) return "any";
-  if (ty.type === "array") return `${describeType(ty.items, depth + 1)}[]`;
-  if (ty.type === "map") return `map<string, ${describeType(ty.values, depth + 1)}>`;
-  if (ty.type === "union") return ty.variants.map((variant) => describeType(variant, depth + 1)).join(" | ");
-  if (ty.type === "enum") return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
-  if (ty.type === "range") return `${describeType(ty.base, depth + 1)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
-  if (ty.type !== "struct") return ty.type;
+  if (!ty) {
+    return "any";
+  }
+
+  if (ty.type === "array") {
+    return `${describeType(ty.items, depth + 1)}[]`;
+  }
+
+  if (ty.type === "map") {
+    return `map<string, ${describeType(ty.values, depth + 1)}>`;
+  }
+
+  if (ty.type === "union") {
+    return ty.variants.map((variant) => describeType(variant, depth + 1)).join(" | ");
+  }
+
+  if (ty.type === "enum") {
+    return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
+  }
+
+  if (ty.type === "range") {
+    return `${describeType(ty.base, depth + 1)} range ${String(ty.min ?? "")}..${String(ty.max ?? "")}`;
+  }
+
+  if (ty.type !== "struct") {
+    return ty.type;
+  }
+
   const entries = Object.entries(ty.fields);
-  if (depth > 0 || entries.length > 3) return "struct";
+
+  if (depth > 0 || entries.length > 3) {
+    return "struct";
+  }
+
   const fields = entries
-    .map(([name, field]) => `${name}${field.required ? "" : "?"}: ${describeType(field.ty, depth + 1)}`)
+    .map(
+      ([name, field]) =>
+        `${name}${field.required ? "" : "?"}: ${describeType(field.ty, depth + 1)}`,
+    )
     .join("; ");
   return `{ ${fields} }`;
 }

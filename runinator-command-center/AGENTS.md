@@ -31,8 +31,19 @@ Guidance for agents working in `runinator-command-center`.
 Use:
 
 ```bash
+pnpm --dir runinator-command-center lint
+pnpm --dir runinator-command-center format:check
 pnpm --dir runinator-command-center test -- --run
 pnpm --dir runinator-command-center build
 ```
+
+`lint` (ESLint) and `format:check` (Prettier) are the gate. Hard errors: braces on every
+`if`/`for`, blank-line separation around braced constructs, Prettier formatting, and the
+type-safety core — `no-explicit-any` and the `no-unsafe-*` family. Source is fully typed
+(`JsonRecord = Record<string, unknown>`); model JSON is read through the `asRecord` /
+`asArray` / `recordArray` coercers in `utils/workflows`, not `any`. Test files relax the
+any/unsafe family since fixtures poke at internals. The remaining type-checked rules
+(`no-unnecessary-condition`, `restrict-template-expressions`, etc.) stay warnings and do
+not fail the gate. Run `lint:fix` and `format` to auto-apply fixes.
 
 For visual changes, run the app and verify the affected workflow on desktop-sized and narrow viewports.

@@ -34,7 +34,7 @@ describe("useWorkflowRunStream", () => {
     vi.stubGlobal("WebSocket", MockWebSocket);
     vi.stubGlobal("window", {
       clearTimeout,
-      setTimeout
+      setTimeout,
     });
     setHttpAuthToken(null);
   });
@@ -52,7 +52,9 @@ describe("useWorkflowRunStream", () => {
     workflows.activateRunTab(RUN_ID);
 
     const scope = effectScope();
-    scope.run(() => useWorkflowRunStream());
+    scope.run(() => {
+      useWorkflowRunStream();
+    });
     await nextTick();
 
     const socket = MockWebSocket.sockets[0];
@@ -76,7 +78,9 @@ describe("useWorkflowRunStream", () => {
     workflows.activateRunTab(RUN_ID);
 
     const scope = effectScope();
-    scope.run(() => useWorkflowRunStream());
+    scope.run(() => {
+      useWorkflowRunStream();
+    });
     await nextTick();
 
     await auth.applyAccessToken("org-token-2");
@@ -84,7 +88,9 @@ describe("useWorkflowRunStream", () => {
 
     expect(MockWebSocket.sockets).toHaveLength(2);
     expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
-    expect(MockWebSocket.sockets[1].url).toBe(`ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}?token=org-token-2`);
+    expect(MockWebSocket.sockets[1].url).toBe(
+      `ws://127.0.0.1:8080/ws/workflow-runs/${RUN_ID}?token=org-token-2`,
+    );
     scope.stop();
   });
 });
@@ -101,8 +107,8 @@ function workflowDetail(id: string, status: string): WorkflowRunDetail {
       created_at: "2026-01-01T00:00:00Z",
       started_at: null,
       finished_at: status === "succeeded" ? "2026-01-01T00:01:00Z" : null,
-      message: null
+      message: null,
     },
-    nodes: []
+    nodes: [],
   };
 }

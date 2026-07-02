@@ -2,15 +2,18 @@
   <div class="connection-cluster">
     <div class="connection-summary">
       <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
-      <span class="connection-pill" :class="{ connected: app.serviceConnected, waiting: !app.serviceConnected }">
-        {{ app.serviceConnected ? "Service up" : "Service pending" }}
+      <span class="connection-pill" :class="connectionPillClass">
+        {{ connectionPillLabel }}
       </span>
-      <span class="connection-pill stream-state" :class="app.eventStreamState">{{ app.eventStreamLabel }}</span>
-      <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh">Last refresh: {{ app.lastRefreshText }}</span>
+      <span class="connection-pill stream-state" :class="app.eventStreamState">{{
+        app.eventStreamLabel
+      }}</span>
+      <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh"
+        >Last refresh: {{ app.lastRefreshText }}</span
+      >
       <span v-if="app.hasReplicaState" class="replica-summary">
         {{ app.liveReplicaCount }}/{{ app.replicas.length }} healthy ·
-        {{ app.replicaCounts.webservices }} ws ·
-        {{ app.replicaCounts.workers }} workers ·
+        {{ app.replicaCounts.webservices }} ws · {{ app.replicaCounts.workers }} workers ·
         {{ app.replicaCounts.wakers }} wakers
       </span>
       <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
@@ -38,39 +41,104 @@ import type { SupervisorProcessSnapshot } from "../../api/commandCenterApi";
 const app = useAppStore();
 const supervisor = useSupervisorStatus();
 
+// three-way tag: reachable (green), known-but-unreachable (red), or not yet discovered (amber).
+const connectionPillClass = computed(() => {
+  if (app.serviceConnected) {
+    return "connected";
+  }
+
+  if (app.serviceKnown) {
+    return "down";
+  }
+
+  return "waiting";
+});
+const connectionPillLabel = computed(() => {
+  if (app.serviceConnected) {
+    return "Service up";
+  }
+
+  if (app.serviceKnown) {
+    return "Service down";
+  }
+
+  return "Service pending";
+});
+
 const staleHint = computed(() => {
   const seconds = supervisor.status.value?.stale_seconds;
-  if (seconds == null || seconds < 30) return "";
-  return `state ${seconds}s old`;
+
+  if (seconds == null || seconds < 30) {
+    return "";
+  }
+
+  return `state ${String(seconds)}s old`;
 });
 
 function pillClass(status: string, staleSeconds: number | null | undefined) {
   const stale = staleSeconds != null && staleSeconds > 30;
-  if (stale) return "supervisor-pill-stale";
+
+  if (stale) {
+    return "supervisor-pill-stale";
+  }
+
   const normalized = status.toLowerCase();
-  if (normalized === "running") return "supervisor-pill-running";
-  if (normalized === "starting" || normalized === "backoff") return "supervisor-pill-warn";
-  if (normalized === "failed" || normalized === "exited" || normalized === "stopping") return "supervisor-pill-fail";
+
+  if (normalized === "running") {
+    return "supervisor-pill-running";
+  }
+
+  if (normalized === "starting" || normalized === "backoff") {
+    return "supervisor-pill-warn";
+  }
+
+  if (normalized === "failed" || normalized === "exited" || normalized === "stopping") {
+    return "supervisor-pill-fail";
+  }
+
   return "supervisor-pill-neutral";
 }
 
 function processTooltip(proc: SupervisorProcessSnapshot): string {
   const parts: string[] = [];
   parts.push(`status: ${proc.status}`);
-  if (proc.pid != null) parts.push(`pid ${proc.pid}`);
-  if (proc.uptime_seconds != null) parts.push(`uptime ${formatUptime(proc.uptime_seconds)}`);
-  if (proc.restarts > 0) parts.push(`${proc.restarts} restarts`);
-  if (proc.last_exit_code != null) parts.push(`last exit ${proc.last_exit_code}`);
-  if (proc.last_error) parts.push(proc.last_error);
+
+  if (proc.pid != null) {
+    parts.push(`pid ${String(proc.pid)}`);
+  }
+
+  if (proc.uptime_seconds != null) {
+    parts.push(`uptime ${formatUptime(proc.uptime_seconds)}`);
+  }
+
+  if (proc.restarts > 0) {
+    parts.push(`${String(proc.restarts)} restarts`);
+  }
+
+  if (proc.last_exit_code != null) {
+    parts.push(`last exit ${String(proc.last_exit_code)}`);
+  }
+
+  if (proc.last_error) {
+    parts.push(proc.last_error);
+  }
+
   return parts.join(" · ");
 }
 
 function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) {
+    return `${String(seconds)}s`;
+  }
+
   const m = Math.floor(seconds / 60);
-  if (m < 60) return `${m}m`;
+
+  if (m < 60) {
+    return `${String(m)}m`;
+  }
+
   const h = Math.floor(m / 60);
-  return `${h}h${m % 60}m`;
+  return `${String(h)}h${String(m % 60)}m`;
 }
 </script>
 

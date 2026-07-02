@@ -5,7 +5,7 @@
         <h2>Notifications</h2>
         <div class="btn-row">
           <label class="filter-toggle">
-            <input type="checkbox" v-model="store.unreadOnly" @change="refresh" />
+            <input v-model="store.unreadOnly" type="checkbox" @change="refresh" />
             <span>Unread only</span>
           </label>
           <button class="btn" :disabled="loading" @click="refresh">
@@ -32,14 +32,27 @@
         initial-sort-dir="desc"
         empty-icon="bell"
         :empty-title="store.notifications.length ? 'No matches' : 'No notifications yet'"
-        :empty-description="store.notifications.length ? `No notifications match “${app.searchQuery}”.` : 'In-app and email notifications will appear here.'"
+        :empty-description="
+          store.notifications.length
+            ? `No notifications match “${app.searchQuery}”.`
+            : 'In-app and email notifications will appear here.'
+        "
       >
-        <template #cell-title="{ row }"><span :class="{ 'nt-unread': !row.read_at }">{{ row.title }}</span></template>
-        <template #cell-body="{ row }"><span class="body-cell">{{ row.body ?? "" }}</span></template>
+        <template #cell-title="{ row }"
+          ><span :class="{ 'nt-unread': !row.read_at }">{{ row.title }}</span></template
+        >
+        <template #cell-body="{ row }"
+          ><span class="body-cell">{{ row.body ?? "" }}</span></template
+        >
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
         <template #cell-actions="{ row }">
           <span class="row-actions">
-            <button v-if="!row.read_at" class="btn btn-icon btn-ghost" title="Mark read" @click.stop="markRead(row.id)">
+            <button
+              v-if="!row.read_at"
+              class="btn btn-icon btn-ghost"
+              title="Mark read"
+              @click.stop="markRead(row.id)"
+            >
               <Icon name="check" />
             </button>
             <button class="btn btn-icon btn-ghost" title="Delete" @click.stop="remove(row.id)">
@@ -73,7 +86,7 @@ const columns: DataTableColumn<Notification>[] = [
   { key: "body", label: "Body" },
   { key: "workflow_run_id", label: "Run" },
   { key: "created_at", label: "Created", sortable: true },
-  { key: "actions", label: "", align: "right" }
+  { key: "actions", label: "", align: "right" },
 ];
 
 function rowClass(notification: Notification): Record<string, boolean> {
@@ -81,7 +94,7 @@ function rowClass(notification: Notification): Record<string, boolean> {
     unread: !notification.read_at,
     danger: notification.severity === "error",
     success: notification.severity === "success",
-    warning: notification.severity === "warning"
+    warning: notification.severity === "warning",
   };
 }
 
@@ -90,15 +103,27 @@ const hasRead = computed(() => store.notifications.some((notification) => notifi
 // filter notifications by the global search box (matches title, body, channel, or severity).
 const filteredNotifications = computed(() => {
   const query = app.normalizedSearch;
-  if (!query) return store.notifications;
+
+  if (!query) {
+    return store.notifications;
+  }
+
   return store.notifications.filter((notification) =>
-    [notification.title, notification.body, notification.channel, notification.severity, String(notification.workflow_run_id ?? "")]
-      .some((value) => String(value ?? "").toLowerCase().includes(query))
+    [
+      notification.title,
+      notification.body,
+      notification.channel,
+      notification.severity,
+      notification.workflow_run_id ?? "",
+    ].some((value) =>
+      (value ?? "").toLowerCase().includes(query),
+    ),
   );
 });
 
 async function refresh() {
   loading.value = true;
+
   try {
     await store.refreshNotifications();
   } finally {

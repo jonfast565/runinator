@@ -1,8 +1,27 @@
 <template>
-  <div class="workflow-node-content" :class="[statusClass, { 'waiting-node': isWaitingState, 'node-debug-active': isDebugActive, 'node-breakpointed': data.debugBreakpoint, 'node-skipped': data.skipped }]">
+  <div
+    class="workflow-node-content"
+    :class="[
+      statusClass,
+      {
+        'waiting-node': isWaitingState,
+        'node-debug-active': isDebugActive,
+        'node-breakpointed': data.debugBreakpoint,
+        'node-skipped': data.skipped,
+      },
+    ]"
+  >
     <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
-    <span v-if="data.locked" class="lock-dot" title="Locked node"><Icon name="lock" :size="11" /></span>
-    <span v-if="data.skipped" class="skip-dot" :class="{ shifted: data.locked }" title="Skipped node"><Icon name="skip" :size="11" /></span>
+    <span v-if="data.locked" class="lock-dot" title="Locked node"
+      ><Icon name="lock" :size="11"
+    /></span>
+    <span
+      v-if="data.skipped"
+      class="skip-dot"
+      :class="{ shifted: data.locked }"
+      title="Skipped node"
+      ><Icon name="skip" :size="11"
+    /></span>
     <div class="node-topline">
       <span class="node-kind">
         <Icon :name="kindIcon" :size="12" class="node-kind-icon" />
@@ -13,7 +32,12 @@
         <Icon name="hourglass" :size="12" />
       </span>
       <span v-if="data.statusLabel" class="node-status">{{ data.statusLabel }}</span>
-      <span v-if="executionCount > 1" class="node-execution-count" :title="`Executed ${executionCount} times`">{{ executionCount }}</span>
+      <span
+        v-if="executionCount > 1"
+        class="node-execution-count"
+        :title="`Executed ${executionCount} times`"
+        >{{ executionCount }}</span
+      >
       <span
         v-if="kindDescription"
         class="node-info"
@@ -27,14 +51,28 @@
           {{ kindDescription }}
         </span>
       </span>
-      <span v-if="data.validationCount" class="node-validation-badge" :class="data.validationSeverity" :title="validationTitle">!</span>
+      <span
+        v-if="data.validationCount"
+        class="node-validation-badge"
+        :class="data.validationSeverity"
+        :title="validationTitle"
+        >!</span
+      >
     </div>
-    <form v-if="isInlineEditing && !data.readOnly" class="node-inline-editor" @submit.prevent="applyInlineEdit" @keydown.esc.prevent="cancelInlineEdit" @click.stop>
+    <form
+      v-if="isInlineEditing && !data.readOnly"
+      class="node-inline-editor"
+      @submit.prevent="applyInlineEdit"
+      @keydown.esc.prevent="cancelInlineEdit"
+      @click.stop
+    >
       <input v-model="inlineId" aria-label="Node ID" placeholder="Step ID" />
       <input v-model="inlineValue" type="text" aria-label="Node name" placeholder="Name" />
       <div class="node-inline-actions">
         <button type="submit" class="node-icon-btn">Apply</button>
-        <button type="button" class="node-icon-btn" @click="workflows.openStepEditor(id)">Edit</button>
+        <button type="button" class="node-icon-btn" @click="workflows.openStepEditor(id)">
+          Edit
+        </button>
         <button type="button" class="node-icon-btn" @click="cancelInlineEdit">Cancel</button>
       </div>
     </form>
@@ -42,45 +80,85 @@
       <div class="node-title">{{ data.title }}</div>
       <div v-if="data.summary" class="node-summary">{{ data.summary }}</div>
     </template>
-    <div v-if="isWaiting && (data.approvalPrompt || data.inputPrompt)" class="node-prompt">{{ data.approvalPrompt || data.inputPrompt }}</div>
+    <div v-if="isWaiting && (data.approvalPrompt || data.inputPrompt)" class="node-prompt">
+      {{ data.approvalPrompt || data.inputPrompt }}
+    </div>
     <div v-if="gateStateText" class="node-gate-state">
       <div class="node-gate-line">
         <span class="node-gate-kind">{{ gateKindLabel }}</span>
         <span class="node-gate-status">{{ gateStatusLabel }}</span>
       </div>
       <div v-if="gateReasonText" class="node-gate-reason">{{ gateReasonText }}</div>
-      <div v-else-if="isConditionGate" class="node-gate-reason">Condition gates are reducer-controlled.</div>
+      <div v-else-if="isConditionGate" class="node-gate-reason">
+        Condition gates are reducer-controlled.
+      </div>
     </div>
     <div v-if="isNodeRunning" class="node-loader">
       <div class="spinner"></div>
     </div>
 
-    <div v-if="isWaiting && isApprovalPending && !data.readOnly && !submitting" class="node-actions">
+    <div
+      v-if="isWaiting && isApprovalPending && !data.readOnly && !submitting"
+      class="node-actions"
+    >
       <button class="node-btn approve" @click.stop="onApprove">Approve</button>
       <button class="node-btn reject" @click.stop="onReject">Reject</button>
     </div>
 
-    <form v-if="isSignalPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSendSignal" @click.stop>
-      <JsonEditor class="node-input-json" :model-value="signalPayloadDraft" title="" @update:model-value="onSignalPayloadChange" />
+    <form
+      v-if="isSignalPending && !data.readOnly && !submitting"
+      class="node-input-form"
+      @submit.prevent="onSendSignal"
+      @click.stop
+    >
+      <JsonEditor
+        class="node-input-json"
+        :model-value="signalPayloadDraft"
+        title=""
+        @update:model-value="onSignalPayloadChange"
+      />
       <div class="node-actions">
         <button class="node-btn approve" type="submit">Send signal</button>
       </div>
       <div v-if="signalError" class="node-input-error">{{ signalError }}</div>
     </form>
 
-    <form v-else-if="isWaiting && isInputPending && !data.readOnly && !submitting" class="node-input-form" @submit.prevent="onSubmitInput">
-      <JsonEditor class="node-input-json" :model-value="inputDraft" title="" @update:model-value="onInputDraftChange" />
+    <form
+      v-else-if="isWaiting && isInputPending && !data.readOnly && !submitting"
+      class="node-input-form"
+      @submit.prevent="onSubmitInput"
+    >
+      <JsonEditor
+        class="node-input-json"
+        :model-value="inputDraft"
+        title=""
+        @update:model-value="onInputDraftChange"
+      />
       <div class="node-actions">
         <button class="node-btn approve" type="submit">Submit</button>
       </div>
       <div v-if="inputError" class="node-input-error">{{ inputError }}</div>
     </form>
 
-    <form v-else-if="canResolveGate && !submitting" class="node-gate-form" @submit.prevent @click.stop>
-      <input v-model="gateReasonDraft" class="node-gate-input" type="text" placeholder="Gate reason (optional)" />
+    <form
+      v-else-if="canResolveGate && !submitting"
+      class="node-gate-form"
+      @submit.prevent
+      @click.stop
+    >
+      <input
+        v-model="gateReasonDraft"
+        class="node-gate-input"
+        type="text"
+        placeholder="Gate reason (optional)"
+      />
       <div class="node-actions">
-        <button class="node-btn approve" type="button" @click.stop="onResolveGate('open')">Open gate</button>
-        <button class="node-btn reject" type="button" @click.stop="onResolveGate('close')">Close gate</button>
+        <button class="node-btn approve" type="button" @click.stop="onResolveGate('open')">
+          Open gate
+        </button>
+        <button class="node-btn reject" type="button" @click.stop="onResolveGate('close')">
+          Close gate
+        </button>
       </div>
     </form>
 
@@ -90,25 +168,41 @@
 
     <template v-for="handle in semanticTargets" :key="handle.id">
       <Handle
+        :id="handle.id"
         class="workflow-handle workflow-handle-target workflow-handle-semantic"
         type="target"
-        :id="handle.id"
         :position="Position.Left"
       />
     </template>
     <template v-for="(handle, index) in semanticSources" :key="handle.id">
       <Handle
+        :id="handle.id"
         class="workflow-handle workflow-handle-source workflow-handle-semantic"
         type="source"
-        :id="handle.id"
         :position="Position.Right"
         :style="semanticHandleStyle(index, semanticSources.length)"
       />
-      <span class="workflow-handle-label" :style="semanticLabelStyle(index, semanticSources.length)">{{ handle.label }}</span>
+      <span
+        class="workflow-handle-label"
+        :style="semanticLabelStyle(index, semanticSources.length)"
+        >{{ handle.label }}</span
+      >
     </template>
     <template v-for="handle in compassHandles" :key="handle.id">
-      <Handle class="workflow-handle workflow-handle-target workflow-handle-compass" type="target" :id="handle.id" :position="handle.position" :style="handle.style" />
-      <Handle class="workflow-handle workflow-handle-source workflow-handle-compass" type="source" :id="handle.id" :position="handle.position" :style="handle.style" />
+      <Handle
+        :id="handle.id"
+        class="workflow-handle workflow-handle-target workflow-handle-compass"
+        type="target"
+        :position="handle.position"
+        :style="handle.style"
+      />
+      <Handle
+        :id="handle.id"
+        class="workflow-handle workflow-handle-source workflow-handle-compass"
+        type="source"
+        :position="handle.position"
+        :style="handle.style"
+      />
     </template>
   </div>
 </template>
@@ -122,9 +216,20 @@ import { useAppStore } from "../../stores/app";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../utils/approvals";
 import { isInputWaitingStatus } from "../../utils/inputs";
 import { statusClassForNode } from "../../utils/status";
-import { workflowNodeKindIcon, workflowNodeKindDescription, workflowNodeKindLabel } from "../../utils/workflows";
+import {
+  workflowNodeKindIcon,
+  workflowNodeKindDescription,
+  workflowNodeKindLabel,
+} from "../../utils/workflows";
+import { displayValue } from "../../utils/values";
 import { deliverSignal, resolveWorkflowInput } from "../../api/commandCenterApi";
-import type { GateRecord, WorkflowInlineEditDescriptor, WorkflowSemanticHandle, WorkflowValidationIssue, WorkflowValidationSeverity } from "../../types/models";
+import type {
+  GateRecord,
+  WorkflowInlineEditDescriptor,
+  WorkflowSemanticHandle,
+  WorkflowValidationIssue,
+  WorkflowValidationSeverity,
+} from "../../types/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
 
@@ -173,30 +278,51 @@ const statusClass = computed(() => statusClassForNode(props.data.status));
 const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
 const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
 const kindLabel = computed(() => workflowNodeKindLabel(props.data.kind));
-const executionCount = computed(() => Math.max(0, Math.floor(Number(props.data.executionCount ?? 0))));
+const executionCount = computed(() =>
+  Math.max(0, Math.floor(props.data.executionCount ?? 0)),
+);
 const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
 const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
-const isWaitingState = computed(() => ["waiting", "approval_required", "approval-required", "input_required", "pending"].includes(props.data.status ?? ""));
+const isWaitingState = computed(() =>
+  ["waiting", "approval_required", "approval-required", "input_required", "pending"].includes(
+    props.data.status ?? "",
+  ),
+);
 // a parked signal node shares the generic `waiting` status with wait nodes; disambiguate by kind.
-const isSignalPending = computed(() => props.data.kind === "signal" && props.data.status === "waiting");
+const isSignalPending = computed(
+  () => props.data.kind === "signal" && props.data.status === "waiting",
+);
 const gate = computed(() => props.data.gate ?? null);
-const gateKind = computed(() => String(gate.value?.kind ?? ""));
-const gateStatus = computed(() => String(gate.value?.status ?? ""));
-const gateKindLabel = computed(() => gateKind.value ? `${gateKind.value} gate` : "gate");
+const gateKind = computed(() => gate.value?.kind ?? "");
+const gateStatus = computed(() => gate.value?.status ?? "");
+const gateKindLabel = computed(() => (gateKind.value ? `${gateKind.value} gate` : "gate"));
 const gateStatusLabel = computed(() => gateStatus.value || "waiting");
-const gateReasonText = computed(() => String(gate.value?.reason ?? "").trim());
+const gateReasonText = computed(() => (gate.value?.reason ?? "").trim());
 const gateStateText = computed(() => props.data.kind === "gate" && Boolean(gate.value));
 const isConditionGate = computed(() => gateKind.value === "condition");
 const canResolveGate = computed(() => {
-  if (props.data.kind !== "gate") return false;
-  if (!props.data.allowGateResolution || !gate.value?.id) return false;
-  if (!["manual", "external"].includes(gateKind.value)) return false;
+  if (props.data.kind !== "gate") {
+    return false;
+  }
+
+  if (!props.data.allowGateResolution || !gate.value?.id) {
+    return false;
+  }
+
+  if (!["manual", "external"].includes(gateKind.value)) {
+    return false;
+  }
+
   return ["pending", "closed"].includes(gateStatus.value);
 });
 
 const isNodeRunning = computed(() => {
-  const run = workflows.workflowRunDetail?.nodes.find(n => n.node_id === props.id);
-  if (run) return run.status === "running" || run.status === "queued";
+  const run = workflows.workflowRunDetail?.nodes.find((n) => n.node_id === props.id);
+
+  if (run) {
+    return run.status === "running" || run.status === "queued";
+  }
+
   return props.data.running ?? false;
 });
 
@@ -206,7 +332,11 @@ const isWaiting = computed(() => {
 
 const isDebugActive = computed(() => {
   const debug = workflows.debugState;
-  if (!debug?.paused) return false;
+
+  if (!debug?.paused) {
+    return false;
+  }
+
   return debug.current_node_id === props.id;
 });
 // the inline mini-editor opens on double-click only, tracked separately from selection.
@@ -217,42 +347,66 @@ const compassHandles = computed(() => [
   { id: "top", position: Position.Top, style: { left: "50%", top: "0" } },
   { id: "right", position: Position.Right, style: { right: "0", top: "50%" } },
   { id: "bottom", position: Position.Bottom, style: { left: "50%", bottom: "0" } },
-  { id: "left", position: Position.Left, style: { left: "0", top: "50%" } }
+  { id: "left", position: Position.Left, style: { left: "0", top: "50%" } },
 ]);
-const semanticSources = computed(() => (props.data.semanticHandles ?? []).filter((handle) => handle.type === "source"));
-const semanticTargets = computed(() => (props.data.semanticHandles ?? []).filter((handle) => handle.type === "target"));
-const validationTitle = computed(() => (props.data.validationIssues ?? []).map((issue) => issue.message).join("\n"));
-
-watch(() => [props.id, props.data.inlineEdit?.value], () => {
-  inlineId.value = props.id;
-  inlineValue.value = props.data.inlineEdit?.value ?? "";
-});
-
-watch(() => gate.value?.id, () => {
-  gateReasonDraft.value = "";
-});
+const semanticSources = computed(() =>
+  (props.data.semanticHandles ?? []).filter((handle) => handle.type === "source"),
+);
+const semanticTargets = computed(() =>
+  (props.data.semanticHandles ?? []).filter((handle) => handle.type === "target"),
+);
+const validationTitle = computed(() =>
+  (props.data.validationIssues ?? []).map((issue) => issue.message).join("\n"),
+);
 
 watch(
-  () => [props.id, workflows.workflowRunDetail?.nodes?.filter((node) => node.node_id === props.id).at(-1)?.status],
+  () => [props.id, props.data.inlineEdit?.value],
   () => {
-    const nodeRun = workflows.workflowRunDetail?.nodes.filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status)).at(-1);
-    if (!nodeRun) return;
+    inlineId.value = props.id;
+    inlineValue.value = props.data.inlineEdit?.value ?? "";
+  },
+);
+
+watch(
+  () => gate.value?.id,
+  () => {
+    gateReasonDraft.value = "";
+  },
+);
+
+watch(
+  () => [
+    props.id,
+    workflows.workflowRunDetail?.nodes.filter((node) => node.node_id === props.id).at(-1)?.status,
+  ],
+  () => {
+    const nodeRun = workflows.workflowRunDetail?.nodes
+      .filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status))
+      .at(-1);
+
+    if (!nodeRun) {
+      return;
+    }
+
     inputDraft.value = formatInputDraft(nodeRun.output_json ?? nodeRun.state?.input ?? {});
     inputError.value = "";
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 function semanticHandleStyle(index: number, total: number) {
-  return { right: "0", top: `${semanticHandleTop(index, total)}%` };
+  return { right: "0", top: `${String(semanticHandleTop(index, total))}%` };
 }
 
 function semanticLabelStyle(index: number, total: number) {
-  return { top: `${semanticHandleTop(index, total)}%` };
+  return { top: `${String(semanticHandleTop(index, total))}%` };
 }
 
 function semanticHandleTop(index: number, total: number) {
-  if (total <= 1) return 50;
+  if (total <= 1) {
+    return 50;
+  }
+
   return 18 + (64 * index) / Math.max(1, total - 1);
 }
 
@@ -282,11 +436,23 @@ async function onReject() {
 
 async function resolveApproval(action: ApprovalAction) {
   const detail = workflows.workflowRunDetail;
-  if (!detail) return app.setError("No workflow run selected");
-  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && isApprovalWaitingStatus(node.status)).at(-1);
-  if (!nodeRun) return app.setError(`No pending approval found for workflow node ${props.id}`);
+
+  if (!detail) {
+    app.setError("No workflow run selected");
+    return;
+  }
+
+  const nodeRun = detail.nodes
+    .filter((node) => node.node_id === props.id && isApprovalWaitingStatus(node.status))
+    .at(-1);
+
+  if (!nodeRun) {
+    app.setError(`No pending approval found for workflow node ${props.id}`);
+    return;
+  }
 
   submitting.value = true;
+
   try {
     await resources.resolveWorkflowApproval(detail.run.id, props.id, nodeRun, action);
     await workflows.fetchWorkflowRunDetail(detail.run.id);
@@ -302,12 +468,30 @@ function onSignalPayloadChange(value: string) {
 
 async function onSendSignal() {
   const detail = workflows.workflowRunDetail;
-  if (!detail) return app.setError("No workflow run selected");
-  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && node.status === "waiting").at(-1);
-  if (!nodeRun) return app.setError(`No waiting signal found for node ${props.id}`);
-  const name = String(nodeRun.state?.name ?? "");
-  if (!name) return app.setError(`Signal node ${props.id} has no signal name`);
+
+  if (!detail) {
+    app.setError("No workflow run selected");
+    return;
+  }
+
+  const nodeRun = detail.nodes
+    .filter((node) => node.node_id === props.id && node.status === "waiting")
+    .at(-1);
+
+  if (!nodeRun) {
+    app.setError(`No waiting signal found for node ${props.id}`);
+    return;
+  }
+
+  const name = displayValue(nodeRun.state?.name ?? "");
+
+  if (!name) {
+    app.setError(`Signal node ${props.id} has no signal name`);
+    return;
+  }
+
   let payload: unknown;
+
   try {
     payload = JSON.parse(signalPayloadDraft.value || "{}");
     signalError.value = "";
@@ -317,8 +501,11 @@ async function onSendSignal() {
   }
 
   submitting.value = true;
+
   try {
-    await app.runOperation(`Sending signal '${name}'`, () => deliverSignal(detail.run.id, name, payload));
+    await app.runOperation(`Sending signal '${name}'`, () =>
+      deliverSignal(detail.run.id, name, payload),
+    );
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;
@@ -327,10 +514,23 @@ async function onSendSignal() {
 
 async function onSubmitInput() {
   const detail = workflows.workflowRunDetail;
-  if (!detail) return app.setError("No workflow run selected");
-  const nodeRun = detail.nodes.filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status)).at(-1);
-  if (!nodeRun) return app.setError(`No pending input found for workflow node ${props.id}`);
+
+  if (!detail) {
+    app.setError("No workflow run selected");
+    return;
+  }
+
+  const nodeRun = detail.nodes
+    .filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status))
+    .at(-1);
+
+  if (!nodeRun) {
+    app.setError(`No pending input found for workflow node ${props.id}`);
+    return;
+  }
+
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(inputDraft.value || "null");
     inputError.value = "";
@@ -338,9 +538,13 @@ async function onSubmitInput() {
     inputError.value = String(err);
     return;
   }
+
   submitting.value = true;
+
   try {
-    await app.runOperation(`Submitting input for ${props.id}`, () => resolveWorkflowInput(nodeRun.id, parsed, undefined, "Input submitted"));
+    await app.runOperation(`Submitting input for ${props.id}`, () =>
+      resolveWorkflowInput(nodeRun.id, parsed, undefined, "Input submitted"),
+    );
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;
@@ -348,9 +552,15 @@ async function onSubmitInput() {
 }
 
 async function onResolveGate(action: "open" | "close") {
-  const gateId = String(gate.value?.id ?? "");
-  if (!gateId) return app.setError(`No gate found for workflow node ${props.id}`);
+  const gateId = gate.value?.id ?? "";
+
+  if (!gateId) {
+    app.setError(`No gate found for workflow node ${props.id}`);
+    return;
+  }
+
   submitting.value = true;
+
   try {
     await workflows.resolveWorkflowRunGate(gateId, action, gateReasonDraft.value);
     gateReasonDraft.value = "";
@@ -388,7 +598,9 @@ function formatInputDraft(value: unknown): string {
   opacity: 0;
   border: 2px solid var(--surface);
   background: var(--accent);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 .workflow-handle-semantic {
@@ -708,8 +920,14 @@ function formatInputDraft(value: unknown): string {
   pointer-events: all;
 }
 
-.approve { background: var(--success-fg); color: #ffffff; }
-.reject { background: var(--danger-solid); color: #ffffff; }
+.approve {
+  background: var(--success-fg);
+  color: #ffffff;
+}
+.reject {
+  background: var(--danger-solid);
+  color: #ffffff;
+}
 
 .breakpoint-dot {
   position: absolute;
@@ -775,8 +993,13 @@ function formatInputDraft(value: unknown): string {
 }
 
 @keyframes debug-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
-  50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
+  }
 }
 
 @keyframes spin {

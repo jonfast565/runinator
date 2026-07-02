@@ -49,19 +49,28 @@ import { computed, reactive, watch } from "vue";
 import type { JsonRecord, RuninatorType } from "../../types/models";
 import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expression-completion";
 import { isWorkflowExpressionValue } from "../../utils/workflow-expression-completion";
-import { removeObjectKey, renameObjectKey, setObjectValue, uniqueObjectKey } from "../../utils/key-value-object";
+import {
+  removeObjectKey,
+  renameObjectKey,
+  setObjectValue,
+  uniqueObjectKey,
+} from "../../utils/key-value-object";
 import Icon from "./Icon.vue";
 import TypedValueEditor from "./TypedValueEditor.vue";
 
-const props = withDefaults(defineProps<{
-  modelValue: JsonRecord;
-  title?: string;
-  emptyLabel?: string;
-  expressionContext?: WorkflowExpressionEditorContext;
-}>(), {
-  title: "",
-  emptyLabel: "No fields configured."
-});
+const props = withDefaults(
+  defineProps<{
+    modelValue: JsonRecord;
+    title?: string;
+    emptyLabel?: string;
+    expressionContext?: WorkflowExpressionEditorContext;
+  }>(),
+  {
+    title: "",
+    emptyLabel: "No fields configured.",
+    expressionContext: undefined,
+  },
+);
 
 const emit = defineEmits<{
   "update:modelValue": [value: JsonRecord];
@@ -70,22 +79,38 @@ const emit = defineEmits<{
 const anyType: RuninatorType = { type: "any" };
 const draftKeys = reactive<Record<string, string>>({});
 const keyErrors = reactive<Record<string, string>>({});
-const rows = computed(() => Object.entries(props.modelValue ?? {}).map(([key, value]) => ({ key, value })));
+
+function omitReactiveKey(target: Record<string, string>, key: string): void {
+  const rest = Object.fromEntries(Object.entries(target).filter(([entryKey]) => entryKey !== key));
+
+  for (const existingKey of Object.keys(target)) {
+    if (!(existingKey in rest)) {
+      Reflect.deleteProperty(target, existingKey);
+    }
+  }
+
+  Object.assign(target, rest);
+}
+
+const rows = computed(() =>
+  Object.entries(props.modelValue).map(([key, value]) => ({ key, value })),
+);
 
 watch(
-  () => Object.keys(props.modelValue ?? {}),
+  () => Object.keys(props.modelValue),
   (keys) => {
     for (const key of Object.keys(draftKeys)) {
       if (!keys.includes(key)) {
-        delete draftKeys[key];
-        delete keyErrors[key];
+        omitReactiveKey(draftKeys, key);
+        omitReactiveKey(keyErrors, key);
       }
     }
+
     for (const key of keys) {
-      if (draftKeys[key] === undefined) draftKeys[key] = key;
+      draftKeys[key] ??= key;
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 function draftKey(key: string): string {
@@ -99,36 +124,53 @@ function setDraftKey(previousKey: string, nextKey: string) {
 
 function commitDraftKey(previousKey: string) {
   const nextKey = draftKeys[previousKey] ?? previousKey;
-  const result = renameObjectKey(props.modelValue ?? {}, previousKey, nextKey);
+  const result = renameObjectKey(props.modelValue, previousKey, nextKey);
   keyErrors[previousKey] = result.error;
-  if (result.error) return;
-  delete draftKeys[previousKey];
-  delete keyErrors[previousKey];
+
+  if (result.error) {
+    return;
+  }
+
+  omitReactiveKey(draftKeys, previousKey);
+  omitReactiveKey(keyErrors, previousKey);
   draftKeys[nextKey.trim()] = nextKey.trim();
   emit("update:modelValue", result.value);
 }
 
 function validateDraftKey(previousKey: string, nextKey: string): string {
   const trimmed = nextKey.trim();
-  if (!trimmed) return "Key is required";
-  if (trimmed !== previousKey && Object.prototype.hasOwnProperty.call(props.modelValue ?? {}, trimmed)) return "Key already exists";
+
+  if (!trimmed) {
+    return "Key is required";
+  }
+
+  if (
+    trimmed !== previousKey &&
+    Object.prototype.hasOwnProperty.call(props.modelValue, trimmed)
+  ) {
+    return "Key already exists";
+  }
+
   return "";
 }
 
 function setValue(key: string, value: unknown) {
-  if (keyErrors[key]) return;
-  emit("update:modelValue", setObjectValue(props.modelValue ?? {}, key, value));
+  if (keyErrors[key]) {
+    return;
+  }
+
+  emit("update:modelValue", setObjectValue(props.modelValue, key, value));
 }
 
 function addRow() {
-  const key = uniqueObjectKey(props.modelValue ?? {});
-  emit("update:modelValue", setObjectValue(props.modelValue ?? {}, key, null));
+  const key = uniqueObjectKey(props.modelValue);
+  emit("update:modelValue", setObjectValue(props.modelValue, key, null));
 }
 
 function removeRow(key: string) {
-  delete draftKeys[key];
-  delete keyErrors[key];
-  emit("update:modelValue", removeObjectKey(props.modelValue ?? {}, key));
+  omitReactiveKey(draftKeys, key);
+  omitReactiveKey(keyErrors, key);
+  emit("update:modelValue", removeObjectKey(props.modelValue, key));
 }
 </script>
 

@@ -29,13 +29,21 @@
         empty-description="Logins and authorization denials are recorded here."
       >
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at as string) }}</template>
-        <template #cell-action="{ row }"><span class="mono">{{ row.action }}</span></template>
+        <template #cell-action="{ row }"
+          ><span class="mono">{{ row.action }}</span></template
+        >
         <template #cell-outcome="{ row }">
           <span class="badge" :class="`badge-${row.outcome}`">{{ row.outcome }}</span>
         </template>
-        <template #cell-actor="{ row }"><span class="mono">{{ row.actor_id || row.actor_kind || "-" }}</span></template>
-        <template #cell-resource="{ row }"><span class="mono">{{ resourceLabel(row) }}</span></template>
-        <template #cell-detail="{ row }"><span class="audit-detail">{{ row.detail || "-" }}</span></template>
+        <template #cell-actor="{ row }"
+          ><span class="mono">{{ row.actor_id || row.actor_kind || "-" }}</span></template
+        >
+        <template #cell-resource="{ row }"
+          ><span class="mono">{{ resourceLabel(row) }}</span></template
+        >
+        <template #cell-detail="{ row }"
+          ><span class="audit-detail">{{ row.detail || "-" }}</span></template
+        >
       </DataTable>
     </div>
   </section>
@@ -49,6 +57,7 @@ import { listAuditLog } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
 import { useOrgsStore } from "../stores/orgs";
 import type { JsonRecord } from "../types/models";
+import { displayValue } from "../utils/values";
 import { formatDate } from "../utils/format";
 
 const app = useAppStore();
@@ -61,19 +70,28 @@ const columns: DataTableColumn<JsonRecord>[] = [
   { key: "created_at", label: "Time", sortable: true },
   { key: "action", label: "Action", sortable: true },
   { key: "outcome", label: "Outcome", sortable: true },
-  { key: "actor", label: "Actor", sortable: true, value: (row) => (row.actor_id || row.actor_kind || "-") as string },
-  { key: "resource", label: "Resource", value: (row) => resourceLabel(row) },
-  { key: "detail", label: "Detail" }
+  {
+    key: "actor",
+    label: "Actor",
+    sortable: true,
+    value: (row: JsonRecord) => displayValue(row.actor_id ?? row.actor_kind ?? "-"),
+  },
+  { key: "resource", label: "Resource", value: (row: JsonRecord) => resourceLabel(row) },
+  { key: "detail", label: "Detail" },
 ];
 
 function resourceLabel(row: JsonRecord): string {
-  if (!row.resource_type) return "-";
-  return `${row.resource_type}:${row.resource_id ?? "?"}`;
+  if (!row.resource_type) {
+    return "-";
+  }
+
+  return `${displayValue(row.resource_type)}:${displayValue(row.resource_id ?? "?")}`;
 }
 
 async function refresh() {
   loading.value = true;
   rows.value = [];
+
   try {
     await app.runOperation("Loading audit log", async () => {
       rows.value = await listAuditLog(undefined, action.value || undefined, 200);

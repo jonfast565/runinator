@@ -50,8 +50,15 @@ const isAdmin = computed(() => auth.user?.is_admin === true);
 const initials = computed(() => {
   const source = username.value.trim();
   const parts = source.split(/[\s._-]+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  if (parts.length === 0) {
+    return "?";
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 });
 
@@ -70,13 +77,22 @@ async function signOut() {
 
 function onDocumentPointerDown(event: PointerEvent) {
   const target = event.target;
-  if (!(target instanceof Node)) return;
-  if (menuRef.value?.contains(target)) return;
+
+  if (!(target instanceof Node)) {
+    return;
+  }
+
+  if (menuRef.value?.contains(target)) {
+    return;
+  }
+
   close();
 }
 
 function onDocumentKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape") close();
+  if (event.key === "Escape") {
+    close();
+  }
 }
 
 // dismissal listeners live only while the menu is open, so they are not always-on global handlers.

@@ -16,7 +16,7 @@ describe("useKeyboardShortcuts", () => {
     const target = {
       tagName: "DIV",
       isContentEditable: false,
-      closest: vi.fn((selectors: string) => (selectors.includes(".cm-editor") ? {} : null))
+      closest: vi.fn((selectors: string) => (selectors.includes(".cm-editor") ? {} : null)),
     } as unknown as EventTarget;
 
     handleKeydown({ key: "e", target, preventDefault } as unknown as KeyboardEvent);
@@ -32,7 +32,7 @@ describe("useKeyboardShortcuts", () => {
     const target = {
       tagName: "DIV",
       isContentEditable: false,
-      closest: vi.fn(() => null)
+      closest: vi.fn(() => null),
     } as unknown as EventTarget;
 
     handleKeydown({ key: "e", target, preventDefault } as unknown as KeyboardEvent);

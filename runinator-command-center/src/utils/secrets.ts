@@ -11,18 +11,29 @@ export function secretRef(scope: string, name: string): string {
 }
 
 // wdl-style reference for a setting, e.g. `secret.github.token` or `config.api.url`.
-export function settingRef(kind: "secret" | "config" | undefined, scope: string, name: string): string {
+export function settingRef(
+  kind: "secret" | "config" | undefined,
+  scope: string,
+  name: string,
+): string {
   return `${kind ?? "secret"}.${scope}.${name}`;
 }
 
 export function parseSecretRef(value: unknown): CredentialSummary | null {
-  if (typeof value !== "string" || !value.startsWith(SECRET_REF_PREFIX)) return null;
+  if (typeof value !== "string" || !value.startsWith(SECRET_REF_PREFIX)) {
+    return null;
+  }
+
   const path = value.slice(SECRET_REF_PREFIX.length);
   const [rawScope, rawName] = path.split("/", 2);
-  if (!rawScope || !rawName) return null;
+
+  if (!rawScope || !rawName) {
+    return null;
+  }
+
   return {
     scope: decodeURIComponent(rawScope),
-    name: decodeURIComponent(rawName)
+    name: decodeURIComponent(rawName),
   };
 }
 

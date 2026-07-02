@@ -1,4 +1,4 @@
-export type JsonRecord = Record<string, any>;
+export type JsonRecord = Record<string, unknown>;
 
 export type PermissionLevel = "view" | "run" | "edit" | "own";
 export type PrincipalType = "user" | "team";
@@ -21,7 +21,7 @@ export interface Team {
 
 export interface Grant {
   id: string | null;
-  resource_type: "workflow" | string;
+  resource_type: string;
   resource_id: string;
   principal_type: PrincipalType;
   principal_id: string;
@@ -82,11 +82,12 @@ export type WorkflowNodeKind =
   | "end"
   | "fail";
 
-export type WorkflowDirectTransitionKey = "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
+export type WorkflowDirectTransitionKey =
+  "next" | "on_success" | "on_failure" | "on_timeout" | "on_reject";
 export type WorkflowConnectionHandle = string;
 export type WorkflowNodeId = string;
 export interface WorkflowNodeRef {
-  "$node": WorkflowNodeId;
+  $node: WorkflowNodeId;
 }
 export type WorkflowPathSegment = string | number;
 
@@ -188,7 +189,6 @@ export interface WorkflowLayoutPosition {
 
 export type WorkflowLayoutDirection = "horizontal" | "vertical";
 
-
 export interface ActionMetadata {
   function_name: string;
   description?: string | null;
@@ -203,8 +203,8 @@ export type RuninatorType =
   | { type: "number" }
   | { type: "duration" }
   | { type: "string" }
-  | { type: "enum"; values: any[] }
-  | { type: "range"; base: RuninatorType; min?: any; max?: any }
+  | { type: "enum"; values: unknown[] }
+  | { type: "range"; base: RuninatorType; min?: number; max?: number }
   | { type: "array"; items: RuninatorType }
   | { type: "map"; values: RuninatorType }
   | { type: "struct"; fields: Record<string, RuninatorField>; additional?: RuninatorType }
@@ -222,7 +222,7 @@ export interface ActionParameterMetadata {
   label?: string | null;
   description?: string | null;
   required: boolean;
-  default_value?: any;
+  default_value?: unknown;
   secret: boolean;
 }
 
@@ -250,7 +250,7 @@ export interface RunSummary {
   workflow_snapshot?: WorkflowDefinition | null;
   status: string;
   parameters?: JsonRecord;
-  output_json?: any;
+  output_json?: unknown;
   message?: string | null;
   trigger?: string;
   created_at: string;
@@ -301,32 +301,14 @@ export interface Notification {
   id: string;
   workflow_run_id?: string | null;
   workflow_node_id?: string | null;
-  channel: NotificationChannel | string;
-  severity: NotificationSeverity | string;
+  channel: string;
+  severity: string;
   title: string;
   body?: string | null;
   target?: string | null;
   metadata?: JsonRecord;
   read_at?: string | null;
   created_at: string;
-}
-
-export interface ScheduledTask {
-  id: string | null;
-  name: string;
-  cron_schedule: string;
-  action_name: string;
-  action_function: string;
-  enabled: boolean;
-  mcp_enabled?: boolean;
-  timeout: number;
-  configuration: JsonRecord;
-}
-
-export interface SaveTaskResponse {
-  success: boolean;
-  message: string;
-  task?: ScheduledTask | null;
 }
 
 export interface WorkflowDefinition {
@@ -419,10 +401,10 @@ export interface GateRecord {
   id?: string | null;
   workflow_run_id: string;
   node_id: string;
-  kind: "manual" | "condition" | "external" | string;
+  kind: string;
   status: string;
   label?: string | null;
-  condition?: JsonRecord | unknown;
+  condition?: unknown;
   reason?: string | null;
   resolved_by?: string | null;
   resolved_at?: string | null;
@@ -438,7 +420,7 @@ export interface WorkflowNodeRun {
   status: string;
   attempt: number;
   parameters: JsonRecord;
-  output_json?: any;
+  output_json?: unknown;
   state?: JsonRecord;
   transition_reason?: string | null;
   prev_node_run_id?: string | null;
@@ -449,7 +431,11 @@ export interface WorkflowNodeRun {
 }
 
 export interface WorkflowRunDetail {
-  run: RunSummary & { workflow_id: string; workflow_snapshot?: WorkflowDefinition | null; message?: string | null };
+  run: RunSummary & {
+    workflow_id: string;
+    workflow_snapshot?: WorkflowDefinition | null;
+    message?: string | null;
+  };
   nodes: WorkflowNodeRun[];
 }
 
@@ -457,7 +443,6 @@ export interface TaskResponse {
   success: boolean;
   message: string;
 }
-
 
 export type SettingKind = "secret" | "config";
 

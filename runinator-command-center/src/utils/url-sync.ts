@@ -8,7 +8,11 @@ export interface ParsedRoute {
 
 export function parseRoute(hash: string, isKnownTab: (tab: string) => boolean): ParsedRoute {
   const raw = hash.replace(/^#\/?/, "");
-  if (!raw) return { tab: null, id: null };
+
+  if (!raw) {
+    return { tab: null, id: null };
+  }
+
   const [tabPart, idPart] = raw.split("/");
   const tab = isKnownTab(tabPart) ? tabPart : null;
   return { tab, id: idPart ? decodeURIComponent(idPart) : null };

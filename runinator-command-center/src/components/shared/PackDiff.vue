@@ -2,11 +2,21 @@
   <div class="pack-diff">
     <div class="pd-summary">
       <span :class="['pd-pill', overwrites ? 'warn' : 'ok']">
-        {{ overwrites ? `Overwrites ${overwriteCount} item${overwriteCount === 1 ? "" : "s"}` : "No overwrites" }}
+        {{
+          overwrites
+            ? `Overwrites ${overwriteCount} item${overwriteCount === 1 ? "" : "s"}`
+            : "No overwrites"
+        }}
       </span>
-      <span class="pd-pill muted">{{ workflowRows.length }} workflow{{ workflowRows.length === 1 ? "" : "s" }}</span>
-      <span v-if="triggerRows.length" class="pd-pill muted">{{ triggerRows.length }} trigger{{ triggerRows.length === 1 ? "" : "s" }}</span>
-      <span v-if="settingRows.length" class="pd-pill muted">{{ settingRows.length }} setting{{ settingRows.length === 1 ? "" : "s" }}</span>
+      <span class="pd-pill muted"
+        >{{ workflowRows.length }} workflow{{ workflowRows.length === 1 ? "" : "s" }}</span
+      >
+      <span v-if="triggerRows.length" class="pd-pill muted"
+        >{{ triggerRows.length }} trigger{{ triggerRows.length === 1 ? "" : "s" }}</span
+      >
+      <span v-if="settingRows.length" class="pd-pill muted"
+        >{{ settingRows.length }} setting{{ settingRows.length === 1 ? "" : "s" }}</span
+      >
     </div>
 
     <div v-if="!pack" class="pd-empty">Inspect a pack to preview changes.</div>
@@ -18,7 +28,9 @@
           <li v-for="row in workflowRows" :key="row.name">
             <span class="pd-tag" :class="row.status">{{ statusLabel(row.status) }}</span>
             <span class="pd-name">{{ row.name }}</span>
-            <span v-if="row.status === 'changed'" class="pd-detail">v{{ row.previousVersion }} → v{{ row.version }}</span>
+            <span v-if="row.status === 'changed'" class="pd-detail"
+              >v{{ row.previousVersion }} → v{{ row.version }}</span
+            >
             <span v-else class="pd-detail">v{{ row.version }}</span>
           </li>
         </ul>
@@ -81,34 +93,52 @@ const props = defineProps<{
 
 const existingByName = computed(() => {
   const map = new Map<string, WorkflowDefinition>();
-  for (const workflow of props.existingWorkflows) map.set(workflow.name, workflow);
+
+  for (const workflow of props.existingWorkflows) {
+    map.set(workflow.name, workflow);
+  }
+
   return map;
 });
 
 const existingSettingKeys = computed(() => {
   const set = new Set<string>();
-  for (const setting of props.existingSettings) set.add(`${setting.kind ?? "secret"}:${setting.scope}:${setting.name}`);
+
+  for (const setting of props.existingSettings) {
+    set.add(`${setting.kind ?? "secret"}:${setting.scope}:${setting.name}`);
+  }
+
   return set;
 });
 
 const workflowRows = computed<WorkflowRow[]>(() => {
   const rows: WorkflowRow[] = [];
+
   for (const workflow of props.pack?.workflows ?? []) {
     const existing = existingByName.value.get(workflow.name);
     let status: DiffStatus = "added";
-    if (existing) status = workflowsEqual(workflow, existing) ? "unchanged" : "changed";
+
+    if (existing) {
+      status = workflowsEqual(workflow, existing) ? "unchanged" : "changed";
+    }
+
     rows.push({
       name: workflow.name,
       status,
       version: workflow.version,
-      previousVersion: existing?.version ?? workflow.version
+      previousVersion: existing?.version ?? workflow.version,
     });
   }
-  return rows.sort((left, right) => statusRank(left.status) - statusRank(right.status) || left.name.localeCompare(right.name));
+
+  return rows.sort(
+    (left, right) =>
+      statusRank(left.status) - statusRank(right.status) || left.name.localeCompare(right.name),
+  );
 });
 
 const settingRows = computed<SettingRow[]>(() => {
   const rows: SettingRow[] = [];
+
   for (const setting of props.pack?.settings ?? []) {
     const key = `${setting.kind}:${setting.scope}:${setting.name}`;
     rows.push({
@@ -116,28 +146,35 @@ const settingRows = computed<SettingRow[]>(() => {
       name: setting.name,
       kind: setting.kind,
       // the server does not expose stored values, so an existing slot is reported as overwritten.
-      status: existingSettingKeys.value.has(key) ? "changed" : "added"
+      status: existingSettingKeys.value.has(key) ? "changed" : "added",
     });
   }
-  return rows.sort((left, right) => statusRank(left.status) - statusRank(right.status) || left.scope.localeCompare(right.scope));
+
+  return rows.sort(
+    (left, right) =>
+      statusRank(left.status) - statusRank(right.status) || left.scope.localeCompare(right.scope),
+  );
 });
 
 const triggerRows = computed<TriggerRow[]>(() => {
   const rows: TriggerRow[] = [];
+
   for (const workflow of props.pack?.workflows ?? []) {
     // a workflow that does not yet exist contributes added triggers; an existing one has them replaced.
     const status: DiffStatus = existingByName.value.has(workflow.name) ? "changed" : "added";
+
     for (const cron of cronExpressionsFor(workflow)) {
       rows.push({ workflow: workflow.name, cron, status });
     }
   }
+
   return rows;
 });
 
 const overwriteCount = computed(
   () =>
     workflowRows.value.filter((row) => row.status === "changed").length +
-    settingRows.value.filter((row) => row.status === "changed").length
+    settingRows.value.filter((row) => row.status === "changed").length,
 );
 const overwrites = computed(() => overwriteCount.value > 0);
 
@@ -146,8 +183,14 @@ function statusRank(status: DiffStatus): number {
 }
 
 function statusLabel(status: DiffStatus): string {
-  if (status === "added") return "new";
-  if (status === "changed") return "overwrite";
+  if (status === "added") {
+    return "new";
+  }
+
+  if (status === "changed") {
+    return "overwrite";
+  }
+
   return "unchanged";
 }
 
@@ -167,28 +210,48 @@ function canonical(value: unknown): string {
 }
 
 function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
+  if (Array.isArray(value)) {
+    return value.map(sortKeys);
+  }
+
   if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
     return Object.fromEntries(entries.map(([key, val]) => [key, sortKeys(val)]));
   }
+
   return value;
 }
 
 // pull cron expressions a pack workflow declares via its wdl header (definition.metadata.triggers).
 function cronExpressionsFor(workflow: WorkflowDefinition): string[] {
-  const triggers = (workflow.definition?.metadata as Record<string, unknown> | undefined)?.triggers;
-  if (!Array.isArray(triggers)) return [];
+  const triggers = (workflow.definition.metadata as Record<string, unknown> | undefined)?.triggers;
+
+  if (!Array.isArray(triggers)) {
+    return [];
+  }
+
   const crons: string[] = [];
+
   for (const trigger of triggers) {
     if (typeof trigger === "string") {
       crons.push(trigger);
     } else if (trigger && typeof trigger === "object") {
-      const record = trigger as Record<string, any>;
-      const cron = record.cron ?? record.expression ?? record.configuration?.cron;
-      if (typeof cron === "string") crons.push(cron);
+      const record = trigger as Record<string, unknown>;
+      const configuration = record.configuration;
+      const configCron =
+        configuration && typeof configuration === "object"
+          ? (configuration as Record<string, unknown>).cron
+          : undefined;
+      const cron = record.cron ?? record.expression ?? configCron;
+
+      if (typeof cron === "string") {
+        crons.push(cron);
+      }
     }
   }
+
   return crons;
 }
 </script>

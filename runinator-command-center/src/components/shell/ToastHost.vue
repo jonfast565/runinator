@@ -1,7 +1,13 @@
 <template>
   <div class="toast-stack" aria-live="polite">
     <transition-group name="toast">
-      <div v-for="toast in app.toasts" :key="toast.id" class="toast" :class="`toast-${toast.kind}`" role="status">
+      <div
+        v-for="toast in app.toasts"
+        :key="toast.id"
+        class="toast"
+        :class="`toast-${toast.kind}`"
+        role="status"
+      >
         <span v-if="toast.kind === 'loading'" class="toast-spinner" aria-hidden="true"></span>
         <Icon v-else :name="iconFor(toast.kind)" :size="16" class="toast-icon" />
         <span class="toast-text">{{ toast.text }}</span>
@@ -14,12 +20,12 @@
 </template>
 
 <script setup lang="ts">
-import Icon from "../shared/Icon.vue";
+import Icon, { type IconName } from "../shared/Icon.vue";
 import { useAppStore, type ToastKind } from "../../stores/app";
 
 const app = useAppStore();
 
-function iconFor(kind: ToastKind): string {
+function iconFor(kind: ToastKind): IconName {
   switch (kind) {
     case "success":
       return "check";
@@ -124,7 +130,9 @@ function iconFor(kind: ToastKind): string {
 
 .toast-enter-active,
 .toast-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .toast-enter-from,

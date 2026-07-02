@@ -7,6 +7,7 @@
         class="sidebar-toggle"
         :title="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         :aria-label="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        :disabled="app.interactionsDisabled"
         @click="app.toggleSidebar()"
       >
         <Icon :name="app.sidebarCollapsed ? 'chevron-right' : 'chevron-left'" :size="16" />
@@ -19,7 +20,7 @@
           v-for="item in section.items"
           :key="item.tab"
           :class="{ active: app.activeTab === item.tab }"
-          :disabled="app.serviceBlocked"
+          :disabled="app.interactionsDisabled"
           :title="app.sidebarCollapsed ? item.label : undefined"
           @click="app.activeTab = item.tab"
         >
@@ -50,12 +51,27 @@ const resources = useResourcesStore();
 const secrets = useSecretsStore();
 
 function countFor(tab: AppTab): number | null {
-  if (tab === "Runs") return workflows.recentWorkflowRuns.length;
-  if (tab === "Workflows") return workflows.workflows.length;
-  if (tab === "Replicas") return app.replicas.length;
-  if (tab === "Secrets") return secrets.secrets.length;
+  if (tab === "Runs") {
+    return workflows.recentWorkflowRuns.length;
+  }
+
+  if (tab === "Workflows") {
+    return workflows.workflows.length;
+  }
+
+  if (tab === "Replicas") {
+    return app.replicas.length;
+  }
+
+  if (tab === "Secrets") {
+    return secrets.secrets.length;
+  }
+
   // Counts for resource tabs are only accurate for the currently-selected endpoint.
-  if (resources.selectedResourceEndpoint === resourceEndpointFor(tab)) return resources.resourceRecords.length;
+  if (resources.selectedResourceEndpoint === resourceEndpointFor(tab)) {
+    return resources.resourceRecords.length;
+  }
+
   return null;
 }
 

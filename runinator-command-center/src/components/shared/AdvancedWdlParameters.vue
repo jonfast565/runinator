@@ -23,7 +23,7 @@ withDefaults(
     context?: WorkflowExpressionEditorContext;
     title?: string;
   }>(),
-  { title: "Advanced WDL parameters" }
+  { title: "Advanced WDL parameters", context: undefined },
 );
 
 defineEmits<{ "update:modelValue": [value: string] }>();

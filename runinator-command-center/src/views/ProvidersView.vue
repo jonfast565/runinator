@@ -11,7 +11,9 @@
         </div>
         <div v-if="providers.error" class="providers-error">{{ providers.error }}</div>
         <div v-if="!providers.providers.length" class="empty-state">No providers registered.</div>
-        <div v-else-if="!filteredProviders.length" class="empty-state">No providers match "{{ app.searchQuery }}".</div>
+        <div v-else-if="!filteredProviders.length" class="empty-state">
+          No providers match "{{ app.searchQuery }}".
+        </div>
         <div class="providers-tree">
           <div v-for="provider in filteredProviders" :key="provider.name" class="providers-group">
             <button
@@ -29,7 +31,10 @@
               :key="action.function_name"
               type="button"
               class="providers-action"
-              :class="{ selected: selectedProvider === provider.name && selectedAction === action.function_name }"
+              :class="{
+                selected:
+                  selectedProvider === provider.name && selectedAction === action.function_name,
+              }"
               @click="selectAction(provider.name, action.function_name)"
             >
               {{ action.function_name }}
@@ -43,12 +48,25 @@
           <div class="providers-detail-head">
             <h2>{{ currentProvider.name }}.{{ currentAction.function_name }}</h2>
           </div>
-          <p v-if="currentAction.description" class="providers-detail-desc">{{ currentAction.description }}</p>
-          <div v-if="currentProvider.metadata.credential_scopes.length || currentProvider.metadata.contract" class="providers-meta-row">
-            <span v-for="scope in currentProvider.metadata.credential_scopes" :key="scope" class="providers-chip">
+          <p v-if="currentAction.description" class="providers-detail-desc">
+            {{ currentAction.description }}
+          </p>
+          <div
+            v-if="
+              currentProvider.metadata.credential_scopes.length || currentProvider.metadata.contract
+            "
+            class="providers-meta-row"
+          >
+            <span
+              v-for="scope in currentProvider.metadata.credential_scopes"
+              :key="scope"
+              class="providers-chip"
+            >
               <Icon name="key" :size="11" /> {{ scope }}
             </span>
-            <span v-if="currentProvider.metadata.contract" class="providers-chip muted">{{ currentProvider.metadata.contract }}</span>
+            <span v-if="currentProvider.metadata.contract" class="providers-chip muted">{{
+              currentProvider.metadata.contract
+            }}</span>
           </div>
 
           <h3 class="providers-section-title">Parameters</h3>
@@ -70,11 +88,20 @@
                     <span class="providers-param-name">{{ param.name }}</span>
                     <span v-if="param.secret" class="providers-tag secret">secret</span>
                   </td>
-                  <td><code>{{ describeType(param.ty) }}</code></td>
                   <td>
-                    <span :class="['providers-tag', param.required ? 'req' : 'opt']">{{ param.required ? "yes" : "no" }}</span>
+                    <code>{{ describeType(param.ty) }}</code>
                   </td>
-                  <td><code v-if="param.default_value !== undefined && param.default_value !== null">{{ shortJson(param.default_value) }}</code><span v-else class="providers-dim">—</span></td>
+                  <td>
+                    <span :class="['providers-tag', param.required ? 'req' : 'opt']">{{
+                      param.required ? "yes" : "no"
+                    }}</span>
+                  </td>
+                  <td>
+                    <code
+                      v-if="param.default_value !== undefined && param.default_value !== null"
+                      >{{ shortJson(param.default_value) }}</code
+                    ><span v-else class="providers-dim">—</span>
+                  </td>
                   <td>{{ param.description || param.label || "" }}</td>
                 </tr>
               </tbody>
@@ -82,7 +109,9 @@
           </div>
 
           <h3 class="providers-section-title">Results</h3>
-          <div v-if="!currentAction.results.length" class="providers-none">No declared results.</div>
+          <div v-if="!currentAction.results.length" class="providers-none">
+            No declared results.
+          </div>
           <div v-else class="table-scroll compact-scroll">
             <table class="compact">
               <thead>
@@ -94,8 +123,12 @@
               </thead>
               <tbody>
                 <tr v-for="result in currentAction.results" :key="result.name">
-                  <td><span class="providers-param-name">{{ result.name }}</span></td>
-                  <td><code>{{ describeType(result.ty) }}</code></td>
+                  <td>
+                    <span class="providers-param-name">{{ result.name }}</span>
+                  </td>
+                  <td>
+                    <code>{{ describeType(result.ty) }}</code>
+                  </td>
                   <td>{{ result.description || result.label || "" }}</td>
                 </tr>
               </tbody>
@@ -108,13 +141,21 @@
             <h2>{{ currentProvider.name }}</h2>
           </div>
           <div v-if="currentProvider.metadata.credential_scopes.length" class="providers-meta-row">
-            <span v-for="scope in currentProvider.metadata.credential_scopes" :key="scope" class="providers-chip">
+            <span
+              v-for="scope in currentProvider.metadata.credential_scopes"
+              :key="scope"
+              class="providers-chip"
+            >
               <Icon name="key" :size="11" /> {{ scope }}
             </span>
           </div>
           <h3 class="providers-section-title">Actions</h3>
           <ul class="providers-action-summary">
-            <li v-for="action in currentProvider.actions" :key="action.function_name" @click="selectAction(currentProvider.name, action.function_name)">
+            <li
+              v-for="action in currentProvider.actions"
+              :key="action.function_name"
+              @click="selectAction(currentProvider.name, action.function_name)"
+            >
               <span class="providers-param-name">{{ action.function_name }}</span>
               <span class="providers-dim">{{ action.description || "" }}</span>
             </li>
@@ -142,18 +183,31 @@ const selectedAction = ref("");
 // filter the provider tree by the global search box (matches provider or action name).
 const filteredProviders = computed(() => {
   const query = app.normalizedSearch;
-  if (!query) return providers.providers;
+
+  if (!query) {
+    return providers.providers;
+  }
+
   return providers.providers.filter(
     (provider) =>
       provider.name.toLowerCase().includes(query) ||
-      provider.actions.some((action) => action.function_name.toLowerCase().includes(query))
+      provider.actions.some((action) => action.function_name.toLowerCase().includes(query)),
   );
 });
 
-const currentProvider = computed(() => providers.providers.find((provider) => provider.name === selectedProvider.value) ?? null);
+const currentProvider = computed(
+  () => providers.providers.find((provider) => provider.name === selectedProvider.value) ?? null,
+);
 const currentAction = computed(() => {
-  if (!selectedAction.value) return null;
-  return currentProvider.value?.actions.find((action) => action.function_name === selectedAction.value) ?? null;
+  if (!selectedAction.value) {
+    return null;
+  }
+
+  return (
+    currentProvider.value?.actions.find(
+      (action) => action.function_name === selectedAction.value,
+    ) ?? null
+  );
 });
 
 function selectProvider(name: string) {
@@ -174,22 +228,34 @@ function applyFocus() {
     providers.focusProviderAction("", "");
     return;
   }
+
   if (!selectedProvider.value && providers.providers.length) {
     selectedProvider.value = providers.providers[0].name;
   }
 }
 
 onMounted(async () => {
-  if (!providers.providers.length) await providers.fetchProviders();
+  if (!providers.providers.length) {
+    await providers.fetchProviders();
+  }
+
   applyFocus();
 });
 
 watch(() => [providers.focusedProvider, providers.focusedAction], applyFocus);
-watch(() => providers.providers.length, () => applyFocus());
+watch(
+  () => providers.providers.length,
+  () => {
+    applyFocus();
+  },
+);
 
 // compact, human-readable rendering of a runinator type.
 function describeType(ty: RuninatorType | undefined, depth = 0): string {
-  if (!ty) return "any";
+  if (!ty) {
+    return "any";
+  }
+
   switch (ty.type) {
     case "array":
       return `${describeType(ty.items, depth + 1)}[]`;
@@ -200,12 +266,18 @@ function describeType(ty: RuninatorType | undefined, depth = 0): string {
     case "enum":
       return `enum[${ty.values.map((value) => JSON.stringify(value)).join(", ")}]`;
     case "range":
-      return `${describeType(ty.base, depth + 1)} range ${ty.min ?? ""}..${ty.max ?? ""}`;
+      return `${describeType(ty.base, depth + 1)} range ${String(ty.min ?? "")}..${String(ty.max ?? "")}`;
+
     case "struct": {
       const entries = Object.entries(ty.fields);
-      if (depth > 0 || entries.length > 4) return "struct";
+
+      if (depth > 0 || entries.length > 4) {
+        return "struct";
+      }
+
       return `{ ${entries.map(([name, field]) => `${name}${field.required ? "" : "?"}: ${describeType(field.ty, depth + 1)}`).join("; ")} }`;
     }
+
     default:
       return ty.type;
   }
@@ -363,7 +435,12 @@ function shortJson(value: unknown): string {
   color: var(--text-faint);
 }
 .providers-detail-panel code {
-  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    11px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
   color: var(--text);
 }
 .providers-action-summary {

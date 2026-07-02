@@ -28,6 +28,11 @@
   color: var(--warning-fg);
 }
 
+.connection-pill.down {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
 .status-failed {
   background: var(--danger-bg);
   color: var(--danger-fg);

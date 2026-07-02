@@ -11,31 +11,52 @@ export function useKeyboardShortcuts() {
 
   function handleKeydown(event: KeyboardEvent) {
     const editing = isEditableTarget(event.target);
+
     // debug shortcuts intentionally run even while editing as long as the editor
     // doesn't swallow them — CodeMirror handles its own focus.
     if (event.key === "F5") {
       event.preventDefault();
-      if (event.shiftKey) workflows.cancelSelectedWorkflowRun();
-      else workflows.continueSelectedWorkflowRun();
+
+      if (event.shiftKey) {
+        void workflows.cancelSelectedWorkflowRun();
+      } else {
+        void workflows.continueSelectedWorkflowRun();
+      }
+
       return;
     }
+
     if (event.key === "F10") {
       event.preventDefault();
+
       if (event.ctrlKey) {
         const nodeId = workflows.selectedWorkflowRunNodeId;
-        if (nodeId) workflows.runToCursor(nodeId);
+
+        if (nodeId) {
+          void workflows.runToCursor(nodeId);
+        }
       } else {
-        workflows.stepSelectedWorkflowRun();
+        void workflows.stepSelectedWorkflowRun();
       }
+
       return;
     }
+
     if (event.key === "F9") {
       event.preventDefault();
       const nodeId = workflows.selectedWorkflowRunNodeId;
-      if (nodeId) workflows.toggleBreakpoint(nodeId);
+
+      if (nodeId) {
+        void workflows.toggleBreakpoint(nodeId);
+      }
+
       return;
     }
-    if (editing) return;
+
+    if (editing) {
+      return;
+    }
+
     if (event.key === "/") {
       event.preventDefault();
       document.getElementById("global-search")?.focus();
@@ -47,10 +68,13 @@ export function useKeyboardShortcuts() {
       moveSelection(-1);
     } else if (event.key === "r" || (event.ctrlKey && event.key.toLowerCase() === "r")) {
       event.preventDefault();
-      refreshActive();
+      void refreshActive();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (app.activeTab === "Workflows") workflows.runSelectedWorkflow();
+
+      if (app.activeTab === "Workflows") {
+        void workflows.runSelectedWorkflow();
+      }
     } else if (event.ctrlKey && event.key.toLowerCase() === "n") {
       event.preventDefault();
     } else if (event.key.toLowerCase() === "e") {
@@ -59,12 +83,18 @@ export function useKeyboardShortcuts() {
   }
 
   async function refreshActive() {
-    if (app.activeTab === "Runs") await workflows.fetchRecentWorkflowRuns();
-    else if (app.activeTab === "Workflows") await workflows.refreshWorkflows();
-    else if (app.activeTab === "Secrets") await secrets.refreshSecrets();
-    else if (isResourceTab(app.activeTab)) {
+    if (app.activeTab === "Runs") {
+      await workflows.fetchRecentWorkflowRuns();
+    } else if (app.activeTab === "Workflows") {
+      await workflows.refreshWorkflows();
+    } else if (app.activeTab === "Secrets") {
+      await secrets.refreshSecrets();
+    } else if (isResourceTab(app.activeTab)) {
       const endpoint = endpointForTab(app.activeTab);
-      if (endpoint) await resources.refreshResourcesFor(endpoint);
+
+      if (endpoint) {
+        await resources.refreshResourcesFor(endpoint);
+      }
     }
   }
 
@@ -82,14 +112,27 @@ export function useKeyboardShortcuts() {
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
-  if (!target || typeof target !== "object") return false;
+  if (!target || typeof target !== "object") {
+    return false;
+  }
+
   const element = target as HTMLElement & {
     isContentEditable?: boolean;
     closest?: (selectors: string) => Element | null;
     tagName?: string;
   };
-  if (typeof element.tagName !== "string") return false;
-  if (element.isContentEditable) return true;
-  if (element.closest?.(".cm-editor, [contenteditable='true']")) return true;
+
+  if (typeof element.tagName !== "string") {
+    return false;
+  }
+
+  if (element.isContentEditable) {
+    return true;
+  }
+
+  if (element.closest(".cm-editor, [contenteditable='true']")) {
+    return true;
+  }
+
   return ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName);
 }

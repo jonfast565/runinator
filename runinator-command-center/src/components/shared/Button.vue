@@ -2,7 +2,10 @@
   <button
     :type="type"
     class="btn"
-    :class="[variantClass, { 'btn-sm': size === 'sm', 'btn-icon': iconOnly, 'is-loading': loading }]"
+    :class="[
+      variantClass,
+      { 'btn-sm': size === 'sm', 'btn-icon': iconOnly, 'is-loading': loading },
+    ]"
     :disabled="disabled || loading"
     @click="emit('click', $event)"
   >
@@ -14,7 +17,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import Icon from "./Icon.vue";
+import Icon, { type IconName } from "./Icon.vue";
 
 // shared button wrapping the .btn vocabulary in buttons.css. adds a built-in loading spinner
 // (which also disables the button) so callers stop hand-rolling per-button busy state.
@@ -22,13 +25,21 @@ const props = withDefaults(
   defineProps<{
     variant?: "default" | "primary" | "danger" | "warn" | "ghost";
     size?: "md" | "sm";
-    icon?: string;
+    icon?: IconName;
     iconOnly?: boolean;
     loading?: boolean;
     disabled?: boolean;
     type?: "button" | "submit" | "reset";
   }>(),
-  { variant: "default", size: "md", iconOnly: false, loading: false, disabled: false, type: "button" }
+  {
+    variant: "default",
+    size: "md",
+    iconOnly: false,
+    loading: false,
+    disabled: false,
+    type: "button",
+    icon: undefined,
+  },
 );
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>();

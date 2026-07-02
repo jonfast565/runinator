@@ -1,4 +1,5 @@
 import type { WorkflowNodeRun } from "../types/models";
+import { displayValue } from "./values";
 
 export function isInputWaitingStatus(status: unknown): boolean {
   return ["waiting", "input_required", "pending"].includes(normalizeStatus(status));
@@ -9,7 +10,7 @@ export function inputValueFromNodeRun(nodeRun: WorkflowNodeRun): unknown {
 }
 
 function normalizeStatus(status: unknown): string {
-  return String(status ?? "")
+  return displayValue(status)
     .trim()
     .toLowerCase()
     .replaceAll("-", "_");

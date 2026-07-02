@@ -7,7 +7,7 @@ import {
   fetchAllArtifacts,
   pickFileFromBrowser,
   uploadArtifactFromBrowser,
-  uploadArtifactFromPath
+  uploadArtifactFromPath,
 } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
 import type { RunArtifact } from "../types/models";
@@ -19,12 +19,14 @@ export const useArtifactsStore = defineStore("artifacts", () => {
   const selectedArtifactId = ref<string | null>(null);
   const uploadRunId = ref<string>("");
 
-  const selectedArtifact = computed(() =>
-    artifacts.value.find((artifact) => artifact.id === selectedArtifactId.value) ?? null
+  const selectedArtifact = computed(
+    () => artifacts.value.find((artifact) => artifact.id === selectedArtifactId.value) ?? null,
   );
 
   async function refreshArtifacts() {
-    artifacts.value = await app.runOperation("Loading artifacts", () => fetchAllArtifacts()).catch(() => []);
+    artifacts.value = await app
+      .runOperation("Loading artifacts", () => fetchAllArtifacts())
+      .catch(() => []);
   }
 
   function clearArtifacts() {
@@ -33,17 +35,31 @@ export const useArtifactsStore = defineStore("artifacts", () => {
   }
 
   async function promptUploadArtifact() {
-    const result = await app.runOperation("Uploading artifact", async () => {
-      const runId = uploadRunId.value.trim() || promptForRunId();
-      if (!runId) return null;
-      if (isTauriRuntime()) return uploadArtifactFromPath({ run_id: runId });
-      const file = await pickFileFromBrowser();
-      if (!file) return null;
-      return uploadArtifactFromBrowser({ run_id: runId }, file);
-    }).catch((error) => {
-      app.setError(String(error));
-      return null;
-    });
+    const result = await app
+      .runOperation("Uploading artifact", async () => {
+        const runId = uploadRunId.value.trim() || promptForRunId();
+
+        if (!runId) {
+          return null;
+        }
+
+        if (isTauriRuntime()) {
+          return uploadArtifactFromPath({ run_id: runId });
+        }
+
+        const file = await pickFileFromBrowser();
+
+        if (!file) {
+          return null;
+        }
+
+        return uploadArtifactFromBrowser({ run_id: runId }, file);
+      })
+      .catch((error: unknown) => {
+        app.setError(String(error));
+        return null;
+      });
+
     if (result) {
       app.setStatus(`Uploaded artifact ${result.name}`);
       await refreshArtifacts();
@@ -52,37 +68,59 @@ export const useArtifactsStore = defineStore("artifacts", () => {
 
   function promptForRunId(): string | null {
     const value = window.prompt("Attach artifact to which run id?");
-    if (!value) return null;
+
+    if (!value) {
+      return null;
+    }
+
     const runId = value.trim();
+
     if (!runId) {
       app.setError("Invalid run id");
       return null;
     }
+
     return runId;
   }
 
   async function promptDownloadArtifact(artifact: RunArtifact) {
-    await app.runOperation(`Downloading ${artifact.name}`, async () => {
-      if (isTauriRuntime()) return downloadArtifactToPath(artifact.id, artifact.name);
-      await downloadArtifactInBrowser(artifact.id, artifact.name);
-      return { saved_to: null };
-    }).then((info) => {
-      if (info?.saved_to) app.setStatus(`Saved to ${info.saved_to}`);
-      else app.setStatus(`Downloaded ${artifact.name}`);
-    }).catch((error) => {
-      app.setError(String(error));
-    });
+    await app
+      .runOperation(`Downloading ${artifact.name}`, async () => {
+        if (isTauriRuntime()) {
+          return downloadArtifactToPath(artifact.id, artifact.name);
+        }
+
+        await downloadArtifactInBrowser(artifact.id, artifact.name);
+        return { saved_to: null };
+      })
+      .then((info) => {
+        if (info.saved_to) {
+          app.setStatus(`Saved to ${info.saved_to}`);
+        } else {
+          app.setStatus(`Downloaded ${artifact.name}`);
+        }
+      })
+      .catch((error: unknown) => {
+        app.setError(String(error));
+      });
   }
 
   async function removeArtifact(artifact: RunArtifact) {
     if (!window.confirm(`Delete artifact "${artifact.name}"? This also removes the stored file.`)) {
       return;
     }
-    await app.runOperation(`Deleting ${artifact.name}`, () => deleteArtifact(artifact.id)).catch((error) => {
-      app.setError(String(error));
-    });
+
+    await app
+      .runOperation(`Deleting ${artifact.name}`, () => deleteArtifact(artifact.id))
+      .catch((error: unknown) => {
+        app.setError(String(error));
+      });
     artifacts.value = artifacts.value.filter((entry) => entry.id !== artifact.id);
-    if (selectedArtifactId.value === artifact.id) selectedArtifactId.value = null;
+
+    if (selectedArtifactId.value === artifact.id) {
+      selectedArtifactId.value = null;
+    }
+
     await refreshArtifacts();
   }
 
@@ -95,6 +133,6 @@ export const useArtifactsStore = defineStore("artifacts", () => {
     clearArtifacts,
     promptUploadArtifact,
     promptDownloadArtifact,
-    removeArtifact
+    removeArtifact,
   };
 });

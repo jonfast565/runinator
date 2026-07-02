@@ -3,7 +3,6 @@ import { tabs, useAppStore } from "../stores/app";
 import { useWorkflowsStore } from "../stores/workflows";
 import { formatRoute, parseRoute } from "../utils/url-sync";
 import type { AppTab } from "../types/app";
-import type { RunSummary } from "../types/models";
 
 // keeps the URL hash in sync with the active tab and the selected workflow/run so views are
 // deep-linkable (#/Runs/<id>, #/Workflows/<id>) and browser back/forward works. a lightweight
@@ -29,75 +28,126 @@ export function useUrlSync() {
   function currentHash(): string {
     const tab = app.activeTab;
     let id: string | null = null;
-    if (tab === "Workflows") id = workflows.selectedWorkflowId ?? null;
-    else if (tab === "Runs") id = workflows.selectedWorkflowRunId ?? null;
+
+    if (tab === "Workflows") {
+      id = workflows.selectedWorkflowId ?? null;
+    } else if (tab === "Runs") {
+      id = workflows.selectedWorkflowRunId ?? null;
+    }
+
     return formatRoute(tab, id);
   }
 
   function selectWorkflowById(id: string): boolean {
     const workflow = workflows.workflows.find((candidate) => candidate.id === id);
-    if (!workflow) return false;
+
+    if (!workflow) {
+      return false;
+    }
+
     void workflows.selectWorkflow(workflow);
     return true;
   }
 
   function selectRunById(id: string, allowFallbackFetch: boolean): boolean {
     const run = workflows.recentWorkflowRuns.find((candidate) => candidate.id === id);
+
     if (run) {
       void workflows.selectWorkflowRun(run);
       return true;
     }
-    if (!allowFallbackFetch) return false;
+
+    if (!allowFallbackFetch) {
+      return false;
+    }
+
     // run isn't in the recent list (e.g. an older shared link); select by a minimal summary so the
     // tab system opens it and fetches the real detail.
-    void workflows.selectWorkflowRun({ id, status: "", created_at: "", started_at: null, finished_at: null } as RunSummary);
+    void workflows.selectWorkflowRun({
+      id,
+      status: "",
+      created_at: "",
+      started_at: null,
+      finished_at: null,
+    });
     return true;
   }
 
   function applyFromUrl() {
     const { tab, id } = parseHash();
-    if (!tab) return;
+
+    if (!tab) {
+      return;
+    }
+
     applyingFromUrl = true;
     app.activeTab = tab;
     pendingWorkflowId = null;
     pendingRunId = null;
-    if (tab === "Workflows" && id && !selectWorkflowById(id)) pendingWorkflowId = id;
-    else if (tab === "Runs" && id && !selectRunById(id, true)) pendingRunId = id;
+
+    if (tab === "Workflows" && id && !selectWorkflowById(id)) {
+      pendingWorkflowId = id;
+    } else if (tab === "Runs" && id && !selectRunById(id, true)) {
+      pendingRunId = id;
+    }
+
     void nextTick(() => (applyingFromUrl = false));
   }
 
   function writeUrl(replace = false) {
-    if (applyingFromUrl) return;
+    if (applyingFromUrl) {
+      return;
+    }
+
     const hash = currentHash();
-    if (hash === window.location.hash) return;
+
+    if (hash === window.location.hash) {
+      return;
+    }
+
     const url = `${window.location.pathname}${window.location.search}${hash}`;
-    if (replace) window.history.replaceState(null, "", url);
-    else window.history.pushState(null, "", url);
+
+    if (replace) {
+      window.history.replaceState(null, "", url);
+    } else {
+      window.history.pushState(null, "", url);
+    }
   }
 
   // initial load: honor a deep link if present, otherwise seed the URL with the current tab.
-  if (parseHash().tab) applyFromUrl();
-  else writeUrl(true);
+  if (parseHash().tab) {
+    applyFromUrl();
+  } else {
+    writeUrl(true);
+  }
 
   watch(
     () => [app.activeTab, workflows.selectedWorkflowId, workflows.selectedWorkflowRunId],
-    () => writeUrl()
+    () => {
+      writeUrl();
+    },
   );
 
   // resolve pending deep-link selections once the backing data arrives.
   watch(
     () => workflows.workflows.length,
     () => {
-      if (pendingWorkflowId && selectWorkflowById(pendingWorkflowId)) pendingWorkflowId = null;
-    }
+      if (pendingWorkflowId && selectWorkflowById(pendingWorkflowId)) {
+        pendingWorkflowId = null;
+      }
+    },
   );
   watch(
     () => workflows.recentWorkflowRuns.length,
     () => {
-      if (pendingRunId && selectRunById(pendingRunId, false)) pendingRunId = null;
-    }
+      if (pendingRunId && selectRunById(pendingRunId, false)) {
+        pendingRunId = null;
+      }
+    },
   );
 
   window.addEventListener("popstate", applyFromUrl);
-  onScopeDispose(() => window.removeEventListener("popstate", applyFromUrl));
+  onScopeDispose(() => {
+    window.removeEventListener("popstate", applyFromUrl);
+  });
 }

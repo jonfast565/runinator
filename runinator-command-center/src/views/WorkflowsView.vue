@@ -1,6 +1,13 @@
 <template>
   <section class="pane workflows-pane">
-    <SplitPane class="workflow-layout" storage-key="command-center.workflows.list-split" :initial-first-pct="20" :min-first="240" :min-second="720" collapsible-first>
+    <SplitPane
+      class="workflow-layout"
+      storage-key="command-center.workflows.list-split"
+      :initial-first-pct="20"
+      :min-first="240"
+      :min-second="720"
+      collapsible-first
+    >
       <template #first>
         <div class="panel workflow-list">
           <div class="panel-toolbar">
@@ -52,7 +59,11 @@
             compact
             icon="search"
             title="No matches"
-            :description="app.searchQuery ? `No workflows match “${app.searchQuery}”.` : 'No workflows match the current scope filter.'"
+            :description="
+              app.searchQuery
+                ? `No workflows match “${app.searchQuery}”.`
+                : 'No workflows match the current scope filter.'
+            "
           />
           <DataTable v-else>
             <table>
@@ -67,7 +78,10 @@
                 <tr
                   v-for="workflow in scopedWorkflows"
                   :key="workflow.id ?? workflow.name"
-                  :class="{ selected: workflows.selectedWorkflowId === workflow.id, muted: !workflow.enabled }"
+                  :class="{
+                    selected: workflows.selectedWorkflowId === workflow.id,
+                    muted: !workflow.enabled,
+                  }"
                   @click="chooseWorkflow(workflow)"
                 >
                   <td>{{ workflow.name }}</td>
@@ -81,7 +95,14 @@
       </template>
 
       <template #second>
-        <SplitPane class="workflow-main-split" storage-key="command-center.workflows.inspector-split" :initial-first-pct="64" :min-first="360" :min-second="320" collapsible-second>
+        <SplitPane
+          class="workflow-main-split"
+          storage-key="command-center.workflows.inspector-split"
+          :initial-first-pct="64"
+          :min-first="360"
+          :min-second="320"
+          collapsible-second
+        >
           <template #first>
             <WorkflowCanvas />
           </template>
@@ -120,31 +141,50 @@ const scopeFilter = ref<"all" | "org" | "global">("all");
 // workflows owned by the active org, "global" keeps only unassigned (platform-global) ones.
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;
-  if (scopeFilter.value === "global") return list.filter((workflow) => !workflow.org_id);
+
+  if (scopeFilter.value === "global") {
+    return list.filter((workflow) => !workflow.org_id);
+  }
+
   if (scopeFilter.value === "org") {
     const orgId = orgs.activeOrgId;
     return orgId ? list.filter((workflow) => workflow.org_id === orgId) : list;
   }
+
   return list;
 });
 
-const disabledWorkflowCount = computed(() => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length);
+const disabledWorkflowCount = computed(
+  () => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length,
+);
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
 
 // confirm before discarding unsaved edits when switching to a different workflow.
 function confirmDiscardIfDirty(): boolean {
-  if (!workflows.isDirty) return true;
+  if (!workflows.isDirty) {
+    return true;
+  }
+
   return window.confirm("You have unsaved changes to this workflow. Discard them?");
 }
 
 function chooseWorkflow(workflow: (typeof scopedWorkflows.value)[number]) {
-  if (workflow.id === workflows.selectedWorkflowId) return;
-  if (!confirmDiscardIfDirty()) return;
+  if (workflow.id === workflows.selectedWorkflowId) {
+    return;
+  }
+
+  if (!confirmDiscardIfDirty()) {
+    return;
+  }
+
   void workflows.selectWorkflow(workflow);
 }
 
 function newWorkflow() {
-  if (!confirmDiscardIfDirty()) return;
+  if (!confirmDiscardIfDirty()) {
+    return;
+  }
+
   workflows.addWorkflow();
 }
 </script>

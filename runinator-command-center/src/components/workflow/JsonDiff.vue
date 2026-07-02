@@ -23,16 +23,22 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { displayValue } from "../../utils/values";
 
 const props = defineProps<{
-  before: any;
-  after: any;
+  before: unknown;
+  after: unknown;
   title?: string;
   open?: boolean;
 }>();
 
 type DiffKind = "added" | "removed" | "changed";
-type DiffRow = { path: string; kind: DiffKind; before: any; after: any };
+interface DiffRow {
+  path: string;
+  kind: DiffKind;
+  before: unknown;
+  after: unknown;
+}
 
 const title = computed(() => props.title ?? "Diff (input → output)");
 
@@ -42,61 +48,104 @@ const rows = computed<DiffRow[]>(() => {
   return out;
 });
 
-function isObject(v: any): v is Record<string, any> {
+function isObject(v: unknown): v is Record<string, unknown> {
   return v != null && typeof v === "object" && !Array.isArray(v);
 }
 
-function walk(path: string, a: any, b: any, out: DiffRow[]) {
-  if (deepEqual(a, b)) return;
+function walk(path: string, a: unknown, b: unknown, out: DiffRow[]) {
+  if (deepEqual(a, b)) {
+    return;
+  }
+
   if (isObject(a) && isObject(b)) {
     const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
+
     for (const k of keys) {
       const next = path ? `${path}.${k}` : k;
       walk(next, a[k], b[k], out);
     }
+
     return;
   }
+
   if (Array.isArray(a) && Array.isArray(b)) {
     const len = Math.max(a.length, b.length);
+
     for (let i = 0; i < len; i++) {
-      walk(`${path}[${i}]`, a[i], b[i], out);
+      walk(`${path}[${String(i)}]`, a[i], b[i], out);
     }
+
     return;
   }
+
   if (a === undefined && b !== undefined) {
     out.push({ path, kind: "added", before: a, after: b });
     return;
   }
+
   if (a !== undefined && b === undefined) {
     out.push({ path, kind: "removed", before: a, after: b });
     return;
   }
+
   out.push({ path, kind: "changed", before: a, after: b });
 }
 
-function deepEqual(a: any, b: any): boolean {
-  if (a === b) return true;
-  if (a == null || b == null) return a === b;
-  if (typeof a !== typeof b) return false;
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+
+  if (a == null || b == null) {
+    return a === b;
+  }
+
+  if (typeof a !== typeof b) {
+    return false;
+  }
+
   if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+
     return a.every((v, i) => deepEqual(v, b[i]));
   }
-  if (typeof a === "object") {
-    const ka = Object.keys(a);
-    const kb = Object.keys(b);
-    if (ka.length !== kb.length) return false;
-    return ka.every((k) => deepEqual(a[k], b[k]));
+
+  if (typeof a === "object" && typeof b === "object") {
+    const recordA = a as Record<string, unknown>;
+    const recordB = b as Record<string, unknown>;
+    const ka = Object.keys(recordA);
+    const kb = Object.keys(recordB);
+
+    if (ka.length !== kb.length) {
+      return false;
+    }
+
+    return ka.every((k) => deepEqual(recordA[k], recordB[k]));
   }
+
   return false;
 }
 
-function formatValue(v: any): string {
-  if (v === undefined) return "—";
-  if (v === null) return "null";
-  if (typeof v === "string") return JSON.stringify(v);
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
+function formatValue(v: unknown): string {
+  if (v === undefined) {
+    return "—";
+  }
+
+  if (v === null) {
+    return "null";
+  }
+
+  if (typeof v === "string") {
+    return JSON.stringify(v);
+  }
+
+  if (typeof v === "object") {
+    return JSON.stringify(v);
+  }
+
+  return displayValue(v);
 }
 </script>
 

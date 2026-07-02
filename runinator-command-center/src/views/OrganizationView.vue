@@ -28,7 +28,7 @@
           <label class="org-card-label">Create organization</label>
           <input v-model="newOrgName" placeholder="Acme Inc." />
           <button class="btn btn-primary" type="submit" :disabled="!newOrgName.trim()">
-            <Icon name="add" />
+            <Icon name="plus" />
             <span>Create organization</span>
           </button>
         </form>
@@ -44,7 +44,11 @@
       <div v-if="!members.length" class="empty-state">No members loaded.</div>
       <table v-else class="org-table">
         <thead>
-          <tr><th>User</th><th>Role</th><th v-if="orgs.isActiveOrgAdmin" class="col-actions"></th></tr>
+          <tr>
+            <th>User</th>
+            <th>Role</th>
+            <th v-if="orgs.isActiveOrgAdmin" class="col-actions"></th>
+          </tr>
         </thead>
         <tbody>
           <tr v-for="member in members" :key="member.user_id">
@@ -65,7 +69,11 @@
               <span v-else class="chip role-badge">{{ member.role }}</span>
             </td>
             <td v-if="orgs.isActiveOrgAdmin" class="col-actions">
-              <button class="btn btn-icon btn-ghost" title="Remove" @click="removeMember(member.user_id)">
+              <button
+                class="btn btn-icon btn-ghost"
+                title="Remove"
+                @click="removeMember(member.user_id)"
+              >
                 <Icon name="trash" />
               </button>
             </td>
@@ -93,7 +101,10 @@
         <h2>Teams</h2>
         <span class="chip role-badge">{{ teams.length }} team(s)</span>
       </div>
-      <p class="org-hint">Teams are named principals you can grant workflow access to. Add users to a team, then share a workflow with the whole team.</p>
+      <p class="org-hint">
+        Teams are named principals you can grant workflow access to. Add users to a team, then share
+        a workflow with the whole team.
+      </p>
 
       <div class="teams-layout">
         <div class="teams-list">
@@ -136,7 +147,9 @@
             <form class="org-inline-form" @submit.prevent="onAddTeamMember">
               <select v-model="newTeamMemberId">
                 <option value="" disabled>Add a user…</option>
-                <option v-for="user in users" :key="user.id ?? ''" :value="user.id ?? ''">{{ user.username }}</option>
+                <option v-for="user in users" :key="user.id ?? ''" :value="user.id ?? ''">
+                  {{ user.username }}
+                </option>
               </select>
               <button class="btn" type="submit" :disabled="!newTeamMemberId">Add member</button>
             </form>
@@ -163,7 +176,7 @@ import {
   removeTeamMember,
   updateOrgMember,
   type OrgMembership,
-  type OrgRole
+  type OrgRole,
 } from "../api/commandCenterApi";
 import type { Team, User } from "../types/models";
 import { useAppStore } from "../stores/app";
@@ -185,7 +198,7 @@ const newTeamName = ref("");
 const newTeamMemberId = ref("");
 
 const selectedTeamName = computed(
-  () => teams.value.find((team) => team.id === selectedTeamId.value)?.name ?? ""
+  () => teams.value.find((team) => team.id === selectedTeamId.value)?.name ?? "",
 );
 
 function userLabel(userId: string): string {
@@ -194,7 +207,11 @@ function userLabel(userId: string): string {
 
 function initials(label: string): string {
   const trimmed = label.trim();
-  if (!trimmed) return "?";
+
+  if (!trimmed) {
+    return "?";
+  }
+
   const parts = trimmed.split(/[\s._-]+/).filter(Boolean);
   const chars = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : trimmed.slice(0, 2);
   return chars.toUpperCase();
@@ -202,6 +219,7 @@ function initials(label: string): string {
 
 async function refreshTeams() {
   teams.value = await listTeams().catch(() => []);
+
   if (selectedTeamId.value && !teams.value.some((team) => team.id === selectedTeamId.value)) {
     selectedTeamId.value = null;
     teamMembers.value = [];
@@ -211,47 +229,89 @@ async function refreshTeams() {
 async function selectTeam(team: Team) {
   selectedTeamId.value = team.id ?? null;
   newTeamMemberId.value = "";
-  if (team.id) teamMembers.value = await listTeamMembers(team.id).catch(() => []);
+
+  if (team.id) {
+    teamMembers.value = await listTeamMembers(team.id).catch(() => []);
+  }
 }
 
 async function onCreateTeam() {
   const name = newTeamName.value.trim();
-  if (!name) return;
-  await app.runOperation("Creating team", () => createTeam(name)).catch((error) => app.setError(String(error)));
+
+  if (!name) {
+    return;
+  }
+
+  await app
+    .runOperation("Creating team", () => createTeam(name))
+    .catch((error: unknown) => {
+      app.setError(String(error));
+    });
   newTeamName.value = "";
   await refreshTeams();
 }
 
 async function removeTeam(team: Team) {
-  if (!team.id) return;
-  if (!window.confirm(`Delete team "${team.name}"?`)) return;
-  await app.runOperation("Deleting team", () => deleteTeam(team.id as string)).catch((error) => app.setError(String(error)));
-  if (selectedTeamId.value === team.id) {
+  const teamId = team.id;
+
+  if (!teamId) {
+    return;
+  }
+
+  if (!window.confirm(`Delete team "${team.name}"?`)) {
+    return;
+  }
+
+  await app
+    .runOperation("Deleting team", () => deleteTeam(teamId))
+    .catch((error: unknown) => {
+      app.setError(String(error));
+    });
+
+  if (selectedTeamId.value === teamId) {
     selectedTeamId.value = null;
     teamMembers.value = [];
   }
+
   await refreshTeams();
 }
 
 async function onAddTeamMember() {
-  if (!selectedTeamId.value || !newTeamMemberId.value) return;
+  const teamId = selectedTeamId.value;
+  const userId = newTeamMemberId.value;
+
+  if (!teamId || !userId) {
+    return;
+  }
+
   await app
-    .runOperation("Adding team member", () => addTeamMember(selectedTeamId.value as string, newTeamMemberId.value))
-    .catch((error) => app.setError(String(error)));
+    .runOperation("Adding team member", () => addTeamMember(teamId, userId))
+    .catch((error: unknown) => {
+      app.setError(String(error));
+    });
   newTeamMemberId.value = "";
-  teamMembers.value = await listTeamMembers(selectedTeamId.value).catch(() => []);
+  teamMembers.value = await listTeamMembers(teamId).catch(() => []);
 }
 
 async function removeFromTeam(user: User) {
-  if (!selectedTeamId.value || !user.id) return;
+  const teamId = selectedTeamId.value;
+  const userId = user.id;
+
+  if (!teamId || !userId) {
+    return;
+  }
+
   await app
-    .runOperation("Removing team member", () => removeTeamMember(selectedTeamId.value as string, user.id as string))
-    .catch((error) => app.setError(String(error)));
-  teamMembers.value = await listTeamMembers(selectedTeamId.value).catch(() => []);
+    .runOperation("Removing team member", () => removeTeamMember(teamId, userId))
+    .catch((error: unknown) => {
+      app.setError(String(error));
+    });
+  teamMembers.value = await listTeamMembers(teamId).catch(() => []);
 }
 
 async function refresh() {
   loading.value = true;
+
   try {
     await orgs.refresh();
     // resolve usernames when the caller is a platform admin; ignore a 403 otherwise.
@@ -264,12 +324,15 @@ async function refresh() {
 }
 
 async function refreshMembers() {
-  if (!orgs.activeOrgId) {
+  const orgId = orgs.activeOrgId;
+
+  if (!orgId) {
     members.value = [];
     return;
   }
+
   members.value = await app
-    .runOperation("Loading members", () => listOrgMembers(orgs.activeOrgId as string))
+    .runOperation("Loading members", () => listOrgMembers(orgId))
     .catch(() => []);
 }
 
@@ -283,12 +346,19 @@ async function refreshActiveOrgDetail() {
 
 async function onSwitch(event: Event) {
   const orgId = (event.target as HTMLSelectElement).value;
-  if (orgId && (await orgs.setActive(orgId))) await refreshMembers();
+
+  if (orgId && (await orgs.setActive(orgId))) {
+    await refreshMembers();
+  }
 }
 
 async function createOrg() {
   const name = newOrgName.value.trim();
-  if (!name) return;
+
+  if (!name) {
+    return;
+  }
+
   if (await orgs.create(name)) {
     newOrgName.value = "";
     await refreshMembers();
@@ -297,9 +367,13 @@ async function createOrg() {
 
 async function addMember() {
   const orgId = orgs.activeOrgId;
-  if (!orgId || !newMemberId.value.trim()) return;
+
+  if (!orgId || !newMemberId.value.trim()) {
+    return;
+  }
+
   await app.runOperation("Adding member", () =>
-    addOrgMember(orgId, newMemberId.value.trim(), newMemberRole.value)
+    addOrgMember(orgId, newMemberId.value.trim(), newMemberRole.value),
   );
   newMemberId.value = "";
   await refreshMembers();
@@ -307,7 +381,11 @@ async function addMember() {
 
 async function changeRole(userId: string, event: Event) {
   const orgId = orgs.activeOrgId;
-  if (!orgId) return;
+
+  if (!orgId) {
+    return;
+  }
+
   const role = (event.target as HTMLSelectElement).value as OrgRole;
   await app.runOperation("Updating role", () => updateOrgMember(orgId, userId, role));
   await refreshMembers();
@@ -315,7 +393,11 @@ async function changeRole(userId: string, event: Event) {
 
 async function removeMember(userId: string) {
   const orgId = orgs.activeOrgId;
-  if (!orgId) return;
+
+  if (!orgId) {
+    return;
+  }
+
   await app.runOperation("Removing member", () => removeOrgMember(orgId, userId));
   await refreshMembers();
 }

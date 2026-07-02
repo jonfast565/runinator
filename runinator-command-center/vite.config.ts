@@ -16,14 +16,14 @@ export default defineConfig({
       "/api": {
         target: WS_DEV_TARGET,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, "")
+        rewrite: (path) => path.replace(/^\/api/, ""),
       },
       "/ws": {
         target: WS_WS_TARGET,
         ws: true,
-        changeOrigin: true
-      }
-    }
+        changeOrigin: true,
+      },
+    },
   },
-  envPrefix: ["VITE_", "TAURI_"]
+  envPrefix: ["VITE_", "TAURI_"],
 });

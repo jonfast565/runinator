@@ -1,6 +1,13 @@
 <template>
   <section class="pane resources-pane">
-    <SplitPane class="split" storage-key="command-center.events.split" :initial-first-pct="62" :min-first="460" :min-second="320" collapsible-second>
+    <SplitPane
+      class="split"
+      storage-key="command-center.events.split"
+      :initial-first-pct="62"
+      :min-first="460"
+      :min-second="320"
+      collapsible-second
+    >
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
@@ -48,7 +55,11 @@
       <template #second>
         <div class="panel details">
           <h2>Event Detail</h2>
-          <pre class="output">{{ resourcesStore.selectedResourceRecord ? pretty(resourcesStore.selectedResourceRecord) : "" }}</pre>
+          <pre class="output">{{
+            resourcesStore.selectedResourceRecord
+              ? pretty(resourcesStore.selectedResourceRecord)
+              : ""
+          }}</pre>
         </div>
       </template>
     </SplitPane>
@@ -64,6 +75,7 @@ import { useOrgsStore } from "../stores/orgs";
 import { useResourcesStore } from "../stores/resources";
 import type { JsonRecord } from "../types/models";
 import { pretty } from "../utils/format";
+import { displayValue } from "../utils/values";
 
 const resourcesStore = useResourcesStore();
 const orgs = useOrgsStore();
@@ -75,11 +87,11 @@ async function refresh() {
 }
 
 function eventType(record: JsonRecord): string {
-  return String(record.event_type ?? record.resource_type ?? "");
+  return displayValue(record.event_type ?? record.resource_type ?? "");
 }
 
 function eventMessage(record: JsonRecord): string {
-  return String(record.message ?? record.title ?? record.summary ?? "");
+  return displayValue(record.message ?? record.title ?? record.summary ?? "");
 }
 
 onMounted(refresh);

@@ -1,22 +1,32 @@
 import { hoverTooltip, type Tooltip, type EditorView } from "@codemirror/view";
 import { hoverWdl } from "../api/commandCenterApi";
-import type { ProviderMetadata, WdlHoverRequest, WdlHoverResponse, WdlSettingRef } from "../types/models";
+import type {
+  ProviderMetadata,
+  WdlHoverRequest,
+  WdlHoverResponse,
+  WdlSettingRef,
+} from "../types/models";
 import { utf16OffsetToUtf8ByteOffset, utf8ByteOffsetToUtf16Offset } from "./wdl-completion";
 
 export function wdlHoverTooltip(
   providers: () => ProviderMetadata[],
-  settings: () => WdlSettingRef[] = () => []
+  settings: () => WdlSettingRef[] = () => [],
 ) {
   return hoverTooltip(async (view: EditorView, pos: number): Promise<Tooltip | null> => {
     const source = view.state.doc.toString();
     const request = buildWdlHoverRequest(source, pos, providers(), settings());
     let response: WdlHoverResponse | null;
+
     try {
       response = await hoverWdl(request);
     } catch {
       return null;
     }
-    if (!response) return null;
+
+    if (!response) {
+      return null;
+    }
+
     return hoverResponseToTooltip(source, response);
   });
 }
@@ -25,13 +35,13 @@ export function buildWdlHoverRequest(
   source: string,
   cursorOffset: number,
   providers: ProviderMetadata[],
-  settings: WdlSettingRef[] = []
+  settings: WdlSettingRef[] = [],
 ): WdlHoverRequest {
   return {
     source,
     cursor_byte: utf16OffsetToUtf8ByteOffset(source, cursorOffset),
     providers,
-    settings
+    settings,
   };
 }
 
@@ -64,6 +74,6 @@ function hoverResponseToTooltip(source: string, response: WdlHoverResponse): Too
       }
 
       return { dom };
-    }
+    },
   };
 }
