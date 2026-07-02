@@ -50,7 +50,7 @@ import { wdl } from "../../../utils/codemirror-lang-wdl";
 import { osCodeMirrorTheme } from "../../../utils/codemirror-theme";
 import { pretty } from "../../../utils/format";
 import { expressionJsonToWdl, parseWdlExpression } from "../../../utils/wdl-expression";
-import { evaluateExpression } from "../../../api/commandCenterApi";
+import { expressionService } from "../../../core/services";
 import ReferencePicker from "./ReferencePicker.vue";
 
 const props = defineProps<{
@@ -121,7 +121,7 @@ async function runPreview() {
   const token = ++previewToken;
 
   try {
-    const resolved = await evaluateExpression(expression, sample);
+    const resolved = await expressionService.evaluateSilent(expression, sample);
 
     if (token !== previewToken) {
       return;

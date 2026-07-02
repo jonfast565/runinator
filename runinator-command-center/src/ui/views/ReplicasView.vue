@@ -186,7 +186,8 @@ import JsonEditor from "../components/shared/JsonEditor.vue";
 import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";
-import { fetchReplicaSamples, type ReplicaSample } from "../../api/commandCenterApi";
+import { replicaSamplesService } from "../../core/services";
+import type { ReplicaSample } from "../../core/services";
 import { useAppStore } from "../../stores/app";
 import type { ReplicaKind } from "../../types/models";
 import { formatDate, pretty } from "../../utils/format";
@@ -230,7 +231,7 @@ async function loadSamples(replicaId: string | null) {
   samplesLoading.value = true;
 
   try {
-    const series = await fetchReplicaSamples(replicaId);
+    const series = await replicaSamplesService.fetch(replicaId);
     samples.value = series.samples;
   } catch {
     samples.value = [];

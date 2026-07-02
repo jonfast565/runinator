@@ -47,7 +47,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAppStore } from "../../../stores/app";
 import { useSupervisorStatus } from "../../composables/useSupervisorStatus";
-import type { SupervisorProcessSnapshot } from "../../../api/commandCenterApi";
+import type { SupervisorProcessSnapshot } from "../../../core/api/commandCenterApi";
 
 const app = useAppStore();
 const supervisor = useSupervisorStatus();

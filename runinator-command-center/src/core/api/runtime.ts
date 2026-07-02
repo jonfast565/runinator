@@ -11,6 +11,10 @@ export function setCommandRuntime(runtime: CommandRuntime) {
   activeRuntime = runtime;
 }
 
+export function getCommandRuntimeOptional(): CommandRuntime | null {
+  return activeRuntime;
+}
+
 export function getCommandRuntime(): CommandRuntime {
   if (!activeRuntime) {
     throw new Error("Command runtime has not been configured. Call setCommandRuntime() at bootstrap.");
@@ -20,7 +24,7 @@ export function getCommandRuntime(): CommandRuntime {
 }
 
 export function isTauriRuntime() {
-  return getCommandRuntime().isTauri();
+  return getCommandRuntimeOptional()?.isTauri() ?? false;
 }
 
 function command<T>(name: string, args?: Record<string, unknown>) {

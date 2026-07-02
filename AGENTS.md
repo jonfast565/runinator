@@ -16,6 +16,14 @@ Primary runtime flow:
 
 There is also a Tauri `runinator-command-center` client. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
 
+#### Command center layering (`runinator-command-center`)
+
+- `src/core/` holds framework-neutral logic: API clients, services, platform interfaces, and workflow graph models. It must not import Vue, Pinia, CodeMirror, Vue Flow, or Tauri.
+- `src/ui/` holds Vue components, Pinia adapters, and UI-specific adapters (CodeMirror `TextEditorHost`, Vue Flow graph builder, browser/Tauri `PlatformAdapter`).
+- Bootstrap (`src/bootstrap.ts`) selects the browser vs Tauri platform adapter and registers the CodeMirror text-editor factory before the app mounts.
+- Views and components call service singletons from `core/services/index.ts`, not `commandCenterApi` directly. Pinia stores mirror service state.
+- Platform I/O (auth storage, dialogs, artifact transport, service discovery) flows through `PlatformAdapter` in `core/platform/`.
+
 ## Crate Boundaries
 
 Keep dependency direction boring and predictable, structured with domains in mind:

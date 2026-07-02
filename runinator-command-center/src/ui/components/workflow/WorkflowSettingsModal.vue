@@ -216,7 +216,7 @@ import { ref, watch } from "vue";
 import { useWorkflowsStore } from "../../../stores/workflows";
 import { useOrgsStore } from "../../../stores/orgs";
 import { useAppStore } from "../../../stores/app";
-import { setWorkflowOwner } from "../../../api/commandCenterApi";
+import { workflowSharingService } from "../../../core/services";
 import JsonEditor from "../shared/JsonEditor.vue";
 
 const workflows = useWorkflowsStore();
@@ -244,7 +244,7 @@ async function saveOwner() {
   ownerSaving.value = true;
 
   try {
-    const updated = await setWorkflowOwner(id, ownerOrgId.value || null);
+    const updated = await workflowSharingService.setOwner(id, ownerOrgId.value || null);
     workflows.workflowDraft.org_id = updated.org_id ?? null;
     app.setStatus("Workflow ownership updated");
   } catch (error) {

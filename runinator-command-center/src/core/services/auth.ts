@@ -8,6 +8,8 @@ import {
   type LoginResult,
 } from "../api/commandCenterApi";
 import type { JsonRecord } from "../domain/models";
+import { getPlatformAdapterOptional } from "../platform";
+import type { AuthStorage } from "../platform/types";
 import { createStore } from "./event-bus";
 
 const ACCESS_KEY = "runinator.auth.access";
@@ -22,12 +24,36 @@ export interface AuthState {
   accessTokenRevision: number;
 }
 
+const fallbackAuthStorage: AuthStorage = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* storage unavailable */
+    }
+  },
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* storage unavailable */
+    }
+  },
+};
+
+function authStorage(): AuthStorage {
+  return getPlatformAdapterOptional()?.authStorage ?? fallbackAuthStorage;
+}
+
 function safeGet(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+  return authStorage().get(key);
 }
 
 export function createAuthService() {
@@ -43,21 +69,18 @@ export function createAuthService() {
 
   function persist(access: string | null, refresh: string | null) {
     refreshToken = refresh;
+    const storage = authStorage();
 
-    try {
-      if (access) {
-        localStorage.setItem(ACCESS_KEY, access);
-      } else {
-        localStorage.removeItem(ACCESS_KEY);
-      }
+    if (access) {
+      storage.set(ACCESS_KEY, access);
+    } else {
+      storage.remove(ACCESS_KEY);
+    }
 
-      if (refresh) {
-        localStorage.setItem(REFRESH_KEY, refresh);
-      } else {
-        localStorage.removeItem(REFRESH_KEY);
-      }
-    } catch {
-      /* storage unavailable */
+    if (refresh) {
+      storage.set(REFRESH_KEY, refresh);
+    } else {
+      storage.remove(REFRESH_KEY);
     }
   }
 

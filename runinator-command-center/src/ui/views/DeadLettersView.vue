@@ -63,7 +63,7 @@
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
-import { listDeadLetters } from "../../api/commandCenterApi";
+import { deadLettersService } from "../../core/services";
 import { useAppStore } from "../../stores/app";
 import { useOrgsStore } from "../../stores/orgs";
 import type { JsonRecord } from "../../types/models";
@@ -87,7 +87,7 @@ async function refresh() {
 
   try {
     await app.runOperation("Loading dead letters", async () => {
-      rows.value = await listDeadLetters(channel.value || undefined, 200);
+      rows.value = await deadLettersService.list(channel.value || undefined, 200);
     });
   } finally {
     loading.value = false;

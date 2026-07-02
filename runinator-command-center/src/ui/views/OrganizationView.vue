@@ -164,21 +164,12 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import {
-  addOrgMember,
-  addTeamMember,
-  createTeam,
-  deleteTeam,
-  listOrgMembers,
-  listTeamMembers,
-  listTeams,
-  listUsers,
-  removeOrgMember,
-  removeTeamMember,
-  updateOrgMember,
+  orgAdminService,
   type OrgMembership,
   type OrgRole,
-} from "../../api/commandCenterApi";
-import type { Team, User } from "../../types/models";
+  type Team,
+  type User,
+} from "../../core/services";
 import { useAppStore } from "../../stores/app";
 import { useOrgsStore } from "../../stores/orgs";
 
@@ -218,7 +209,7 @@ function initials(label: string): string {
 }
 
 async function refreshTeams() {
-  teams.value = await listTeams().catch(() => []);
+  teams.value = await orgAdminService.listTeams().catch(() => []);
 
   if (selectedTeamId.value && !teams.value.some((team) => team.id === selectedTeamId.value)) {
     selectedTeamId.value = null;
@@ -231,7 +222,7 @@ async function selectTeam(team: Team) {
   newTeamMemberId.value = "";
 
   if (team.id) {
-    teamMembers.value = await listTeamMembers(team.id).catch(() => []);
+    teamMembers.value = await orgAdminService.listTeamMembers(team.id).catch(() => []);
   }
 }
 
@@ -242,9 +233,7 @@ async function onCreateTeam() {
     return;
   }
 
-  await app
-    .runOperation("Creating team", () => createTeam(name))
-    .catch((error: unknown) => {
+  await orgAdminService.createTeam(name).catch((error: unknown) => {
       app.setError(String(error));
     });
   newTeamName.value = "";
@@ -262,9 +251,7 @@ async function removeTeam(team: Team) {
     return;
   }
 
-  await app
-    .runOperation("Deleting team", () => deleteTeam(teamId))
-    .catch((error: unknown) => {
+  await orgAdminService.deleteTeam(teamId).catch((error: unknown) => {
       app.setError(String(error));
     });
 
@@ -284,13 +271,11 @@ async function onAddTeamMember() {
     return;
   }
 
-  await app
-    .runOperation("Adding team member", () => addTeamMember(teamId, userId))
-    .catch((error: unknown) => {
+  await orgAdminService.addTeamMember(teamId, userId).catch((error: unknown) => {
       app.setError(String(error));
     });
   newTeamMemberId.value = "";
-  teamMembers.value = await listTeamMembers(teamId).catch(() => []);
+  teamMembers.value = await orgAdminService.listTeamMembers(teamId).catch(() => []);
 }
 
 async function removeFromTeam(user: User) {
@@ -301,12 +286,10 @@ async function removeFromTeam(user: User) {
     return;
   }
 
-  await app
-    .runOperation("Removing team member", () => removeTeamMember(teamId, userId))
-    .catch((error: unknown) => {
+  await orgAdminService.removeTeamMember(teamId, userId).catch((error: unknown) => {
       app.setError(String(error));
     });
-  teamMembers.value = await listTeamMembers(teamId).catch(() => []);
+  teamMembers.value = await orgAdminService.listTeamMembers(teamId).catch(() => []);
 }
 
 async function refresh() {
@@ -315,7 +298,7 @@ async function refresh() {
   try {
     await orgs.refresh();
     // resolve usernames when the caller is a platform admin; ignore a 403 otherwise.
-    users.value = await listUsers().catch(() => []);
+    users.value = await orgAdminService.listUsers().catch(() => []);
     await refreshMembers();
     await refreshTeams();
   } finally {
@@ -331,9 +314,7 @@ async function refreshMembers() {
     return;
   }
 
-  members.value = await app
-    .runOperation("Loading members", () => listOrgMembers(orgId))
-    .catch(() => []);
+  members.value = await orgAdminService.listMembers(orgId).catch(() => []);
 }
 
 async function refreshActiveOrgDetail() {
@@ -372,9 +353,7 @@ async function addMember() {
     return;
   }
 
-  await app.runOperation("Adding member", () =>
-    addOrgMember(orgId, newMemberId.value.trim(), newMemberRole.value),
-  );
+  await orgAdminService.addMember(orgId, newMemberId.value.trim(), newMemberRole.value);
   newMemberId.value = "";
   await refreshMembers();
 }
@@ -387,7 +366,7 @@ async function changeRole(userId: string, event: Event) {
   }
 
   const role = (event.target as HTMLSelectElement).value as OrgRole;
-  await app.runOperation("Updating role", () => updateOrgMember(orgId, userId, role));
+  await orgAdminService.updateMember(orgId, userId, role);
   await refreshMembers();
 }
 
@@ -398,7 +377,7 @@ async function removeMember(userId: string) {
     return;
   }
 
-  await app.runOperation("Removing member", () => removeOrgMember(orgId, userId));
+  await orgAdminService.removeMember(orgId, userId);
   await refreshMembers();
 }
 

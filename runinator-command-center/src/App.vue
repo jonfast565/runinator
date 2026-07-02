@@ -31,9 +31,8 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from "vue";
-import { getServiceStatus, startServiceDiscovery } from "./api/commandCenterApi";
-import { pingBackendHealth, wsBaseUrl } from "./api/httpRuntime";
-import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
+import { getPlatformAdapter } from "./core/platform";
+import { pingBackendHealth } from "./api/httpRuntime";
 import AppShell from "./ui/components/shell/AppShell.vue";
 import { useBreakpoint } from "./ui/composables/useBreakpoint";
 import { useEventStream } from "./ui/composables/useEventStream";
@@ -73,7 +72,9 @@ import AuditLogView from "./ui/views/AuditLogView.vue";
 
 const app = useAppStore();
 const auth = useAuthStore();
-const isDesktop = isTauriRuntime();
+const platform = getPlatformAdapter();
+const discovery = platform.serviceDiscovery;
+const isDesktop = discovery.isDesktop();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const orgs = useOrgsStore();
@@ -99,19 +100,16 @@ let healthPollTimer = 0;
 let tenantRefreshId = 0;
 
 onMounted(async () => {
-  unlistenUrl = await listenTauri("service-url-changed", (event) => {
-    const payload = event.payload as { service_url?: string | null } | null;
-    void handleServiceUrlChanged(payload?.service_url ?? null);
+  unlistenUrl = await discovery.listenServiceUrlChanged((serviceUrl) => {
+    void handleServiceUrlChanged(serviceUrl);
   });
-  unlistenError = await listenTauri("service-discovery-error", (event) => {
-    app.setError(String(event.payload));
+  unlistenError = await discovery.listenDiscoveryError((message) => {
+    app.setError(message);
     app.initialLoading = false;
   });
 
-  if (!isTauriRuntime()) {
-    // web mode: same-origin (proxied to runinator-ws via nginx) or
-    // VITE_RUNINATOR_WS_URL override for local dev. No Tauri discovery dance.
-    const baseUrl = wsBaseUrl();
+  if (!discovery.isDesktop()) {
+    const baseUrl = discovery.webServiceUrl();
     app.setServiceUrl(baseUrl || null);
 
     if (baseUrl) {
@@ -141,7 +139,7 @@ onMounted(async () => {
   }
 
   try {
-    const [status] = await Promise.all([getServiceStatus(), startServiceDiscovery()]);
+    const [status] = await Promise.all([discovery.getInitialStatus(), discovery.startDiscovery()]);
     console.info("[command-center] Initial service status", status);
     app.setServiceUrl(status.service_url);
 
@@ -258,11 +256,11 @@ watch(
 );
 
 async function refreshServiceStatus() {
-  if (!isTauriRuntime()) {
+  if (!discovery.isDesktop()) {
     return;
   }
 
-  const status = await getServiceStatus().catch(() => null);
+  const status = await discovery.getInitialStatus().catch(() => null);
 
   if (!status) {
     return;
@@ -353,7 +351,7 @@ async function waitForConcreteServiceUrl(timeoutMs = 5000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const status = await getServiceStatus().catch(() => null);
+    const status = await discovery.getInitialStatus().catch(() => null);
 
     if (status?.service_url) {
       app.setServiceUrl(status.service_url);

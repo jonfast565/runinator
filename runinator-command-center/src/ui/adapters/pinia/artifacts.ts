@@ -1,40 +1,37 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
-import {
-  downloadArtifactInBrowser,
-  pickFileFromBrowser,
-  uploadArtifactFromBrowser,
-} from "../../../api/commandCenterApi";
-import {
-  downloadArtifactToPath,
-  uploadArtifactFromPath,
-} from "../../../core/api/commandCenterApi";
-import { isTauriRuntime } from "../../../core/api/runtime";
+import { getPlatformAdapter } from "../../../core/platform";
 import { artifactsService } from "../../../core/services";
 import { mirrorServiceState } from "./sync";
 
 function artifactsUploadContext() {
+  const { artifacts } = getPlatformAdapter();
+
   return {
-    isDesktop: () => isTauriRuntime(),
-    pickFile: () => pickFileFromBrowser(),
+    isDesktop: () => artifacts.isDesktop(),
+    pickFile: () => artifacts.pickFile(),
     uploadFromBrowser: (runId: string, file: File) =>
-      uploadArtifactFromBrowser({ run_id: runId }, file),
-    uploadFromPath: (runId: string) => uploadArtifactFromPath({ run_id: runId }),
+      artifacts.uploadFromBrowser({ run_id: runId }, file),
+    uploadFromPath: (runId: string) => artifacts.uploadFromPath({ run_id: runId }),
   };
 }
 
 function artifactsDownloadContext() {
+  const { artifacts } = getPlatformAdapter();
+
   return {
-    isDesktop: () => isTauriRuntime(),
-    downloadInBrowser: downloadArtifactInBrowser,
-    downloadToPath: downloadArtifactToPath,
+    isDesktop: () => artifacts.isDesktop(),
+    downloadInBrowser: artifacts.downloadInBrowser.bind(artifacts),
+    downloadToPath: artifacts.downloadToPath.bind(artifacts),
   };
 }
 
 function confirmContext() {
+  const { dialogs } = getPlatformAdapter();
+
   return {
-    confirm: (message: string) => window.confirm(message),
-    prompt: (message: string) => window.prompt(message),
+    confirm: dialogs.confirm.bind(dialogs),
+    prompt: dialogs.prompt.bind(dialogs),
   };
 }
 

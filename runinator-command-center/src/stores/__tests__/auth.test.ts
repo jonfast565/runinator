@@ -63,13 +63,9 @@ describe("auth store", () => {
       expires_in: 3600,
       user: { id: "u-1", username: "admin" },
     });
-    vi.stubGlobal(
-      "localStorage",
-      storageMock({
-        "runinator.auth.access": "stale-access",
-        "runinator.auth.refresh": "refresh-1",
-      }),
-    );
+    const { getPlatformAdapter } = await import("../../core/platform");
+    getPlatformAdapter().authStorage.set("runinator.auth.access", "stale-access");
+    getPlatformAdapter().authStorage.set("runinator.auth.refresh", "refresh-1");
 
     const auth = useAuthStore();
     await auth.init();

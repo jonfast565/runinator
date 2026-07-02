@@ -21,13 +21,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount } from "vue";
-import { autocompletion, completionKeymap, startCompletion } from "@codemirror/autocomplete";
-import { EditorView, basicSetup } from "codemirror";
-import { json } from "@codemirror/lang-json";
-import { EditorState } from "@codemirror/state";
-import { keymap } from "@codemirror/view";
-import { shouldStartJsonCompletion, jsonCompletionSource } from "../../../utils/json-completion";
-import { osCodeMirrorTheme } from "../../../utils/codemirror-theme";
+import { getTextEditorHostFactory } from "../../../core/platform";
+import type { CodeMirrorHostOptions } from "../../adapters/codemirror/text-editor-host";
 import Icon from "./Icon.vue";
 
 const props = withDefaults(
@@ -35,7 +30,6 @@ const props = withDefaults(
     modelValue: string;
     readonly?: boolean;
     keyHints?: string[];
-    // header label; pass an empty string to hide the title bar.
     title?: string;
   }>(),
   { title: "JSON", keyHints: undefined },
@@ -46,13 +40,11 @@ const emit = defineEmits<{
 }>();
 
 const editorContainer = ref<HTMLElement | null>(null);
-let view: EditorView | null = null;
-let disposeEditorTheme: (() => void) | null = null;
 const title = props.title;
 const copied = ref(false);
 const parseError = ref("");
+let host: ReturnType<ReturnType<typeof getTextEditorHostFactory>["create"]> | null = null;
 
-// surface invalid JSON inline instead of silently emitting it (only caught later on save).
 function validate(text: string) {
   const trimmed = text.trim();
 
@@ -84,45 +76,22 @@ onMounted(() => {
     return;
   }
 
-  const editorTheme = osCodeMirrorTheme();
+  const options: CodeMirrorHostOptions = {
+    language: "json",
+    value: props.modelValue,
+    readonly: props.readonly,
+    jsonKeyHints: () => props.keyHints ?? [],
+    onChange(text) {
+      emit("update:modelValue", text);
 
-  const startState = EditorState.create({
-    doc: props.modelValue,
-    extensions: [
-      basicSetup,
-      json(),
-      editorTheme.extension,
-      autocompletion({
-        override: [jsonCompletionSource(() => ({ keyHints: props.keyHints ?? [] }))],
-      }),
-      keymap.of(completionKeymap),
-      EditorView.editable.of(!props.readonly),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          const text = update.state.doc.toString();
-          emit("update:modelValue", text);
+      if (!props.readonly) {
+        validate(text);
+      }
+    },
+  };
 
-          if (!props.readonly) {
-            validate(text);
-          }
-        }
-
-        if (!props.readonly && shouldStartJsonCompletion(update)) {
-          startCompletion(update.view);
-        }
-      }),
-      EditorView.theme({
-        "&": { height: "100%" },
-        ".cm-scroller": { overflow: "auto" },
-      }),
-    ],
-  });
-
-  view = new EditorView({
-    state: startState,
-    parent: editorContainer.value,
-  });
-  disposeEditorTheme = editorTheme.install(view);
+  host = getTextEditorHostFactory().create(options);
+  host.mount(editorContainer.value);
 
   if (!props.readonly) {
     validate(props.modelValue);
@@ -132,11 +101,7 @@ onMounted(() => {
 watch(
   () => props.modelValue,
   (newValue) => {
-    if (view && newValue !== view.state.doc.toString()) {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: newValue },
-      });
-    }
+    host?.setValue(newValue, true);
 
     if (!props.readonly) {
       validate(newValue);
@@ -144,12 +109,16 @@ watch(
   },
 );
 
-onBeforeUnmount(() => {
-  disposeEditorTheme?.();
+watch(
+  () => props.readonly,
+  (readonly) => {
+    host?.setReadonly(Boolean(readonly));
+  },
+);
 
-  if (view) {
-    view.destroy();
-  }
+onBeforeUnmount(() => {
+  host?.destroy();
+  host = null;
 });
 </script>
 

@@ -54,7 +54,7 @@
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
-import { listAuditLog } from "../../api/commandCenterApi";
+import { auditLogService } from "../../core/services";
 import { useAppStore } from "../../stores/app";
 import { useOrgsStore } from "../../stores/orgs";
 import type { JsonRecord } from "../../types/models";
@@ -95,7 +95,7 @@ async function refresh() {
 
   try {
     await app.runOperation("Loading audit log", async () => {
-      rows.value = await listAuditLog(undefined, action.value || undefined, 200);
+      rows.value = await auditLogService.list(action.value || undefined, 200);
     });
   } finally {
     loading.value = false;

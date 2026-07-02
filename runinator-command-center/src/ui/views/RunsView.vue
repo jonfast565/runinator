@@ -195,13 +195,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import {
-  downloadArtifactInBrowser,
-  downloadArtifactToPath,
-  fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowRunArtifacts,
-} from "../../api/commandCenterApi";
-import { isTauriRuntime } from "../../api/tauriRuntime";
+import { workflowRunExtrasService } from "../../core/services";
 import EmptyState from "../components/shared/EmptyState.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
@@ -224,18 +218,9 @@ const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 
 async function download(artifactId: string, name: string) {
-  await app
-    .runOperation(`Downloading ${name}`, async () => {
-      if (isTauriRuntime()) {
-        return downloadArtifactToPath(artifactId, name);
-      }
-
-      await downloadArtifactInBrowser(artifactId, name);
-      return null;
-    })
-    .catch((error: unknown) => {
-      app.setError(String(error));
-    });
+  await workflowRunExtrasService.downloadArtifact(artifactId, name).catch((error: unknown) => {
+    app.setError(String(error));
+  });
 }
 
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
@@ -267,22 +252,14 @@ watch(
 watch(
   () => workflows.selectedWorkflowNodeRunId,
   async (id) => {
-    artifacts.value = id
-      ? await app
-          .runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(id))
-          .catch(() => [])
-      : [];
+    artifacts.value = id ? await workflowRunExtrasService.fetchNodeRunArtifacts(id) : [];
   },
   { immediate: true },
 );
 watch(
   () => workflows.selectedWorkflowRunId,
   async (id) => {
-    runArtifacts.value = id
-      ? await app
-          .runOperation("Loading artifacts", () => fetchWorkflowRunArtifacts(id))
-          .catch(() => [])
-      : [];
+    runArtifacts.value = id ? await workflowRunExtrasService.fetchRunArtifacts(id) : [];
   },
   { immediate: true },
 );

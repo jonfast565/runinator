@@ -47,23 +47,11 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, watch, onBeforeUnmount } from "vue";
-import { EditorView, basicSetup } from "codemirror";
-import { completionKeymap, startCompletion } from "@codemirror/autocomplete";
-import { Compartment, EditorState, Prec } from "@codemirror/state";
-import { keymap, type ViewUpdate } from "@codemirror/view";
-import { linter, type Diagnostic } from "@codemirror/lint";
-import { wdl } from "../../../utils/codemirror-lang-wdl";
-import { osCodeMirrorTheme } from "../../../utils/codemirror-theme";
-import { wdlProviderCompletionSource } from "../../../utils/wdl-completion";
-import { wdlHoverTooltip } from "../../../utils/wdl-hover";
-import { analyzeWdl, formatWdl } from "../../../api/commandCenterApi";
+import { getTextEditorHostFactory } from "../../../core/platform";
+import type { TextEditorDiagnostic } from "../../../core/platform/text-editor";
 import { useAppStore } from "../../../stores/app";
-import type {
-  CredentialSummary,
-  ProviderMetadata,
-  WdlDiagnostic,
-  WdlSettingRef,
-} from "../../../types/models";
+import type { CredentialSummary, ProviderMetadata, WdlSettingRef } from "../../../types/models";
+import type { CodeMirrorHostOptions } from "../../adapters/codemirror/text-editor-host";
 
 const props = defineProps<{
   modelValue: string;
@@ -74,7 +62,16 @@ const props = defineProps<{
   sourcePath?: string | null;
 }>();
 
-// map stored credential summaries to completion setting refs, defaulting unkinded entries to secret.
+const emit = defineEmits<{
+  "update:modelValue": [value: string];
+}>();
+
+const editorContainer = ref<HTMLElement | null>(null);
+const diagnostics = ref<TextEditorDiagnostic[]>([]);
+const title = props.title ?? "WDL";
+const app = useAppStore();
+let host: ReturnType<ReturnType<typeof getTextEditorHostFactory>["create"]> | null = null;
+
 function settingRefs(): WdlSettingRef[] {
   return (props.settings ?? []).map((setting) => ({
     scope: setting.scope,
@@ -82,21 +79,6 @@ function settingRefs(): WdlSettingRef[] {
     kind: setting.kind ?? "secret",
   }));
 }
-
-const emit = defineEmits<{
-  "update:modelValue": [value: string];
-}>();
-
-const editorContainer = ref<HTMLElement | null>(null);
-const diagnostics = ref<WdlDiagnostic[]>([]);
-// editability is reconfigurable so a readonly toggle after mount takes effect live.
-const editableCompartment = new Compartment();
-let view: EditorView | null = null;
-let disposeEditorTheme: (() => void) | null = null;
-const title = props.title ?? "WDL";
-const app = useAppStore();
-let diagnosticsRequest = 0;
-const WDL_LINT_DELAY_MS = 1500;
 
 const diagnosticCounts = computed(() => ({
   errors: diagnostics.value.filter((diagnostic) => diagnostic.severity === "error").length,
@@ -127,87 +109,24 @@ const diagnosticSummaryClass = computed(() => {
   return "clean";
 });
 
-// async linter backed by the rust runinator-wdl compiler, so editor diagnostics match
-// what the importer would report. codemirror debounces this by default.
-const wdlLinter = linter(
-  async (linterView): Promise<Diagnostic[]> => {
-    const source = linterView.state.doc.toString();
-    const docLength = linterView.state.doc.length;
-    let nextDiagnostics;
-
-    try {
-      nextDiagnostics = await refreshDiagnostics(source);
-    } catch {
-      return [];
-    }
-
-    return nextDiagnostics.map((diagnostic) => {
-      const from = Math.min(Math.max(diagnostic.start, 0), docLength);
-      let to = Math.min(Math.max(diagnostic.end, from), docLength);
-
-      if (to <= from) {
-        to = Math.min(from + 1, docLength);
-      }
-
-      return {
-        from,
-        to,
-        severity: diagnostic.severity === "warning" ? "warning" : "error",
-        message: diagnostic.message,
-      };
-    });
-  },
-  { delay: WDL_LINT_DELAY_MS },
-);
-
-async function refreshDiagnostics(source: string): Promise<WdlDiagnostic[]> {
-  const request = ++diagnosticsRequest;
-  const nextDiagnostics = await analyzeWdl(source, props.sourcePath);
-
-  if (request === diagnosticsRequest) {
-    diagnostics.value = nextDiagnostics;
-  }
-
-  return nextDiagnostics;
+function diagnosticKey(diagnostic: TextEditorDiagnostic) {
+  return `${diagnostic.severity}:${String(diagnostic.line)}:${String(diagnostic.column)}:${diagnostic.message}`;
 }
 
-function diagnosticKey(diagnostic: WdlDiagnostic) {
-  return `${diagnostic.severity}:${String(diagnostic.start)}:${String(diagnostic.end)}:${diagnostic.message}`;
-}
-
-function goToDiagnostic(diagnostic: WdlDiagnostic) {
-  if (!view) {
-    return;
-  }
-
-  const position = Math.min(Math.max(diagnostic.start, 0), view.state.doc.length);
-  view.dispatch({
-    selection: { anchor: position },
-    effects: EditorView.scrollIntoView(position, { y: "center" }),
-  });
-  view.focus();
+function goToDiagnostic(diagnostic: TextEditorDiagnostic) {
+  host?.goToPosition(diagnostic.line, diagnostic.column);
 }
 
 async function formatDocument() {
-  if (!view || props.readonly) {
+  if (!host || props.readonly) {
     return;
   }
-
-  const source = view.state.doc.toString();
-  let formatted: string;
 
   try {
-    formatted = await formatWdl(source);
+    await host.formatDocument?.();
   } catch (err) {
     app.setError(`WDL format error: ${String(err)}`);
-    return;
   }
-
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: formatted },
-  });
-  emit("update:modelValue", formatted);
-  await refreshDiagnostics(formatted);
 }
 
 onMounted(() => {
@@ -215,128 +134,46 @@ onMounted(() => {
     return;
   }
 
-  const editorTheme = osCodeMirrorTheme();
+  const options: CodeMirrorHostOptions = {
+    language: "wdl",
+    value: props.modelValue,
+    readonly: props.readonly,
+    sourcePath: props.sourcePath,
+    onChange(value) {
+      emit("update:modelValue", value);
+    },
+    onDiagnosticsChange(nextDiagnostics) {
+      diagnostics.value = nextDiagnostics;
+    },
+    wdlContext: {
+      providers: () => props.providers ?? [],
+      settings: settingRefs,
+      sourcePath: props.sourcePath,
+    },
+  };
 
-  const startState = EditorState.create({
-    doc: props.modelValue,
-    extensions: [
-      basicSetup,
-      editorTheme.extension,
-      Prec.high(
-        keymap.of([
-          ...completionKeymap,
-          {
-            key: "Tab",
-            run(editor) {
-              if (props.readonly) {
-                return false;
-              }
-
-              editor.dispatch(editor.state.replaceSelection("    "));
-              return true;
-            },
-          },
-        ]),
-      ),
-      wdl(wdlProviderCompletionSource(() => props.providers ?? [], settingRefs)),
-      wdlHoverTooltip(() => props.providers ?? [], settingRefs),
-      wdlLinter,
-      editableCompartment.of(EditorView.editable.of(!props.readonly)),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          emit("update:modelValue", update.state.doc.toString());
-        }
-
-        if (!props.readonly && shouldStartCompletion(update)) {
-          startCompletion(update.view);
-        }
-      }),
-      EditorView.theme({
-        "&": { height: "100%" },
-        ".cm-scroller": { overflow: "auto" },
-        ".cm-tooltip": {
-          border: "1px solid var(--border-strong)",
-          borderRadius: "6px",
-          boxShadow: "var(--workflow-menu-shadow)",
-        },
-        ".wdl-hover": {
-          maxWidth: "420px",
-          padding: "8px 10px",
-          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-          fontSize: "12px",
-          lineHeight: "1.35",
-          color: "var(--text)",
-        },
-        ".wdl-hover-title": {
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-          fontWeight: "700",
-          color: "var(--text)",
-        },
-        ".wdl-hover-meta": {
-          marginTop: "3px",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-          color: "var(--text-muted)",
-        },
-        ".wdl-hover-docs": {
-          marginTop: "7px",
-          color: "var(--text-subtle)",
-          whiteSpace: "pre-line",
-        },
-      }),
-    ],
-  });
-
-  view = new EditorView({
-    state: startState,
-    parent: editorContainer.value,
-  });
-  disposeEditorTheme = editorTheme.install(view);
+  host = getTextEditorHostFactory().create(options);
+  host.mount(editorContainer.value);
 });
 
 watch(
   () => props.modelValue,
   (newValue) => {
-    if (view && newValue !== view.state.doc.toString()) {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: newValue },
-      });
-    }
+    host?.setValue(newValue, true);
   },
 );
 
 watch(
   () => props.readonly,
   (readonly) => {
-    view?.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(!readonly)) });
+    host?.setReadonly(Boolean(readonly));
   },
 );
 
 onBeforeUnmount(() => {
-  disposeEditorTheme?.();
-
-  if (view) {
-    view.destroy();
-  }
+  host?.destroy();
+  host = null;
 });
-
-function shouldStartCompletion(update: ViewUpdate): boolean {
-  if (!update.docChanged) {
-    return false;
-  }
-
-  if (!update.transactions.some((transaction) => transaction.isUserEvent("input"))) {
-    return false;
-  }
-
-  const head = update.state.selection.main.head;
-
-  if (head <= 0) {
-    return false;
-  }
-
-  const previous = update.state.sliceDoc(head - 1, head);
-  return /[\w.]/.test(previous);
-}
 </script>
 
 <style scoped>

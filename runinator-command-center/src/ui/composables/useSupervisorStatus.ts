@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { fetchSupervisorStatus, type SupervisorStatus } from "../../api/commandCenterApi";
+import { supervisorService, type SupervisorStatus } from "../../core/services";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -10,7 +10,7 @@ export function useSupervisorStatus() {
 
   async function refresh() {
     try {
-      const next = await fetchSupervisorStatus();
+      const next = await supervisorService.fetchStatus();
       status.value = next;
       error.value = next.error ?? "";
     } catch (err) {

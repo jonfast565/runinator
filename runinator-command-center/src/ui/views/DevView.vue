@@ -295,16 +295,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import {
-  applyDevPack,
-  cancelWorkflowRun,
-  createWorkflowRun,
-  fetchWorkflowRun,
-  inspectDevPack,
-  readDevPackFile,
-  replayWorkflowRun,
-  writeDevPackFile,
-} from "../../api/commandCenterApi";
+import { devPackService } from "../../core/services";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import PackDiff from "../components/shared/PackDiff.vue";
@@ -538,7 +529,7 @@ async function cancelRun() {
   }
 
   try {
-    await cancelWorkflowRun(latestRunId.value);
+    await devPackService.cancelRun(latestRunId.value);
     statusText.value = `Canceled run #${latestRunId.value}.`;
     await refreshLatestRun();
   } catch (err) {
@@ -595,7 +586,7 @@ async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean }
   busy.value = true;
 
   try {
-    const result = await inspectDevPack(path, skipSettings.value);
+    const result = await devPackService.inspect(path, skipSettings.value);
     const previousFingerprint = lastFingerprint;
     inspectResult.value = result;
     rememberPack(path);
@@ -641,7 +632,7 @@ async function applyPack() {
   busy.value = true;
 
   try {
-    const result = await applyDevPack(path, skipSettings.value);
+    const result = await devPackService.apply(path, skipSettings.value);
     await workflows.refreshWorkflows().catch(() => undefined);
     inspectResult.value = {
       path: result.path,
@@ -676,7 +667,7 @@ async function runSelectedWorkflow() {
   }
 
   const parameters = runInputValue.value ?? {};
-  const created = await createWorkflowRun(workflow.id, { debug: debugRun.value, parameters });
+  const created = await devPackService.createRun(workflow.id, { debug: debugRun.value, parameters });
   runInputFormRef.value?.persistLast();
   latestRunId.value = created.id;
   rememberRun(created.id);
@@ -706,7 +697,7 @@ async function refreshLatestRun() {
     return;
   }
 
-  latestRunDetail.value = await fetchWorkflowRun(latestRunId.value);
+  latestRunDetail.value = await devPackService.fetchRun(latestRunId.value);
 }
 
 function selectRunNode(nodeId: string) {
@@ -729,7 +720,7 @@ async function onRunNodeAction(payload: { type: RunNodeActionType; node: Workflo
 
   try {
     const options = payload.type === "replay-from" ? { fromStepId: payload.node.node_id } : {};
-    const created = await replayWorkflowRun(runId, options);
+    const created = await devPackService.replayRun(runId, options);
     latestRunId.value = created.id;
     rememberRun(created.id);
     selectedRunNodeId.value = null;
@@ -772,7 +763,7 @@ async function reloadSelectedSource() {
   }
 
   try {
-    const file = await readDevPackFile(selectedFilePath.value);
+    const file = await devPackService.readFile(selectedFilePath.value);
     sourceText.value = file.content;
     savedSourceText.value = file.content;
   } catch (err) {
@@ -789,7 +780,7 @@ async function saveSelectedSource() {
   errorText.value = "";
 
   try {
-    const file = await writeDevPackFile(selectedFilePath.value, sourceText.value);
+    const file = await devPackService.writeFile(selectedFilePath.value, sourceText.value);
     sourceText.value = file.content;
     savedSourceText.value = file.content;
     statusText.value = `Saved ${relativePath(file.path)}.`;

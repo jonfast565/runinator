@@ -61,11 +61,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import {
-  createWorkflowGrant,
-  listWorkflowGrants,
-  revokeWorkflowGrant,
-} from "../../../api/commandCenterApi";
+import { workflowSharingService } from "../../../core/services";
 import Modal from "../shared/Modal.vue";
 import Button from "../shared/Button.vue";
 import type { JsonRecord } from "../../../types/models";
@@ -84,7 +80,7 @@ async function refresh() {
   error.value = "";
 
   try {
-    grants.value = await listWorkflowGrants(props.workflowId);
+    grants.value = await workflowSharingService.listGrants(props.workflowId);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -95,7 +91,7 @@ async function add() {
   error.value = "";
 
   try {
-    await createWorkflowGrant(
+    await workflowSharingService.createGrant(
       props.workflowId,
       principalType.value,
       principalId.value.trim(),
@@ -112,7 +108,7 @@ async function add() {
 
 async function revoke(grantId: string) {
   try {
-    await revokeWorkflowGrant(props.workflowId, grantId);
+    await workflowSharingService.revokeGrant(props.workflowId, grantId);
     await refresh();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);

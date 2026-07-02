@@ -83,12 +83,10 @@
 import { computed, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
 import {
-  fetchNodeBackends,
-  fetchNodes,
-  scaleNodes,
+  nodePoolsService,
   type NodeBackendInfo,
   type ProvisionedGroup,
-} from "../../../api/commandCenterApi";
+} from "../../../core/services";
 import { useAppStore } from "../../../stores/app";
 import { useAuthStore } from "../../../stores/auth";
 import { errorMessage } from "../../../utils/format";
@@ -125,8 +123,8 @@ async function refresh() {
   error.value = null;
 
   try {
-    backends.value = (await fetchNodeBackends()).backends;
-    groups.value = await fetchNodes();
+    backends.value = (await nodePoolsService.fetchBackends()).backends;
+    groups.value = await nodePoolsService.fetchNodes();
   } catch (err) {
     error.value = errorMessage(err) || "Failed to load node pools";
   } finally {
@@ -139,9 +137,7 @@ async function scaleTo(group: ProvisionedGroup, desired: number) {
   error.value = null;
 
   try {
-    await app.runOperation(`Scaling ${group.kind} to ${String(desired)}`, () =>
-      scaleNodes({ backend: group.backend, kind: group.kind, desired }),
-    );
+    await nodePoolsService.scale({ backend: group.backend, kind: group.kind, desired });
     await refresh();
   } catch (err) {
     error.value = errorMessage(err) || "Scale request failed";

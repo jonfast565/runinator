@@ -126,16 +126,12 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import {
-  fetchOrgNodes,
-  fetchOrgQuota,
-  fetchOrgUsage,
-  fetchRateCard,
-  scaleOrgNodes,
+  orgResourcesService,
   type OrgQuota,
   type OrgResourceGroup,
   type OrgUsage,
   type RateCard,
-} from "../../api/commandCenterApi";
+} from "../../core/services";
 import { useAppStore } from "../../stores/app";
 import { useOrgsStore } from "../../stores/orgs";
 
@@ -188,14 +184,15 @@ async function refresh() {
   loading.value = true;
 
   try {
-    rateCard.value = await fetchRateCard().catch(() => ({ entries: [] }));
-    const nodes = await app
-      .runOperation("Loading resources", () => fetchOrgNodes(orgId))
-      .catch(() => ({ groups: [], projected_monthly_cents: 0 }));
+    rateCard.value = await orgResourcesService.fetchRateCard().catch(() => ({ entries: [] }));
+    const nodes = await orgResourcesService.fetchNodes(orgId).catch(() => ({
+      groups: [],
+      projected_monthly_cents: 0,
+    }));
     groups.value = nodes.groups;
     projectedMonthlyCents.value = nodes.projected_monthly_cents;
-    quota.value = await fetchOrgQuota(orgId).catch(() => null);
-    usage.value = await fetchOrgUsage(orgId).catch(() => null);
+    quota.value = await orgResourcesService.fetchQuota(orgId).catch(() => null);
+    usage.value = await orgResourcesService.fetchUsage(orgId).catch(() => null);
   } finally {
     loading.value = false;
   }
@@ -211,13 +208,11 @@ async function scale() {
   scaling.value = true;
 
   try {
-    await app.runOperation("Scaling pool", () =>
-      scaleOrgNodes(orgId, {
-        backend: scaleBackend.value,
-        kind: scaleKind.value,
-        desired: Math.max(0, Math.floor(scaleDesired.value)),
-      }),
-    );
+    await orgResourcesService.scaleNodes(orgId, {
+      backend: scaleBackend.value,
+      kind: scaleKind.value,
+      desired: Math.max(0, Math.floor(scaleDesired.value)),
+    });
     await refresh();
   } finally {
     scaling.value = false;

@@ -5,7 +5,7 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from "@codemirror/autocomplete";
-import { completeWdl } from "../../../api/commandCenterApi";
+import { wdlLanguageService } from "../../../core/services";
 import type {
   ProviderMetadata,
   WdlCompletionRequest,
@@ -24,7 +24,7 @@ export function wdlProviderCompletionSource(
     let result: CompletionResult;
 
     try {
-      const response = await completeWdl(request);
+      const response = await wdlLanguageService.complete(request);
       result = completionResponseToCodeMirror(source, response);
     } catch {
       return wdlCompletion(context);

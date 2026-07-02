@@ -102,7 +102,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
-import { fetchWorkflowNodeRunChunks } from "../../../api/commandCenterApi";
+import { workflowRunExtrasService } from "../../../core/services";
 import { statusBadgeClass } from "../../../utils/status";
 import { formatErrorMessage } from "../../../utils/format";
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../../../types/models";
@@ -379,7 +379,7 @@ async function loadLogs(nodeRunId: string) {
   logLoading.value.add(nodeRunId);
 
   try {
-    const chunks = await fetchWorkflowNodeRunChunks(nodeRunId);
+    const chunks = await workflowRunExtrasService.fetchNodeRunChunks(nodeRunId);
     logCache.value = {
       ...logCache.value,
       [nodeRunId]: chunks.map((chunk) => chunk.content).join(""),

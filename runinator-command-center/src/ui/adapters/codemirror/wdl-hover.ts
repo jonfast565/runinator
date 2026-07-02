@@ -1,5 +1,5 @@
 import { hoverTooltip, type Tooltip, type EditorView } from "@codemirror/view";
-import { hoverWdl } from "../../../api/commandCenterApi";
+import { wdlLanguageService } from "../../../core/services";
 import type {
   ProviderMetadata,
   WdlHoverRequest,
@@ -18,7 +18,7 @@ export function wdlHoverTooltip(
     let response: WdlHoverResponse | null;
 
     try {
-      response = await hoverWdl(request);
+      response = await wdlLanguageService.hover(request);
     } catch {
       return null;
     }

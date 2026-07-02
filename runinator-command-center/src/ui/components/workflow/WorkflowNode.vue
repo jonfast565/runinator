@@ -222,7 +222,7 @@ import {
   workflowNodeKindLabel,
 } from "../../../utils/workflows";
 import { displayValue } from "../../../utils/values";
-import { deliverSignal, resolveWorkflowInput } from "../../../api/commandCenterApi";
+import { workflowRunExtrasService } from "../../../core/services";
 import type {
   GateRecord,
   WorkflowInlineEditDescriptor,
@@ -503,9 +503,7 @@ async function onSendSignal() {
   submitting.value = true;
 
   try {
-    await app.runOperation(`Sending signal '${name}'`, () =>
-      deliverSignal(detail.run.id, name, payload),
-    );
+    await workflowRunExtrasService.deliverSignal(detail.run.id, name, payload);
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;
@@ -542,8 +540,11 @@ async function onSubmitInput() {
   submitting.value = true;
 
   try {
-    await app.runOperation(`Submitting input for ${props.id}`, () =>
-      resolveWorkflowInput(nodeRun.id, parsed, undefined, "Input submitted"),
+    await workflowRunExtrasService.resolveInput(
+      nodeRun.id,
+      parsed,
+      undefined,
+      "Input submitted",
     );
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
