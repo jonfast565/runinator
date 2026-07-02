@@ -830,6 +830,8 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::while_stmt => Ok(StmtKind::While(parse_while(inner, false)?)),
         Rule::until_stmt => Ok(StmtKind::While(parse_while(inner, true)?)),
         Rule::match_stmt => Ok(StmtKind::Match(parse_match(inner)?)),
+        Rule::toggle_stmt => Ok(StmtKind::Match(parse_toggle(inner)?)),
+        Rule::split_stmt => Ok(StmtKind::Match(parse_split(inner)?)),
         Rule::parallel_stmt => Ok(StmtKind::Parallel(parse_parallel(inner)?)),
         Rule::try_stmt => Ok(StmtKind::Try(parse_try(inner)?)),
         Rule::race_stmt => Ok(StmtKind::Race(parse_race(inner)?)),
@@ -1896,6 +1898,7 @@ fn parse_match(pair: Pair<Rule>) -> Result<MatchStmt, WdlError> {
     }
     Ok(MatchStmt {
         subject,
+        mode: SwitchMode::Cases,
         arms,
         default,
     })
@@ -1919,7 +1922,85 @@ fn parse_match_arm(pair: Pair<Rule>) -> Result<MatchArm, WdlError> {
             _ => {}
         }
     }
-    Ok(MatchArm { equals, when, body })
+    Ok(MatchArm {
+        equals,
+        when,
+        weight: None,
+        toggle: None,
+        body,
+    })
+}
+
+// `toggle <expr> { on -> … off -> … }` -> a two-arm match in Toggle mode. arm order is normalized so
+// the `on` arm is always first, keeping lowering and formatting order-independent.
+fn parse_toggle(pair: Pair<Rule>) -> Result<MatchStmt, WdlError> {
+    let mut subject = Expr::new(ExprKind::Null, Span::default());
+    let mut on = None;
+    let mut off = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expr => subject = parse_expr(inner)?,
+            Rule::toggle_on => on = Some(parse_arm_body(first_inner(inner)?)?),
+            Rule::toggle_off => off = Some(parse_arm_body(first_inner(inner)?)?),
+            _ => {}
+        }
+    }
+    let on = on.ok_or_else(|| WdlError::lower("toggle requires an `on` arm"))?;
+    let off = off.ok_or_else(|| WdlError::lower("toggle requires an `off` arm"))?;
+    let arm = |toggle: bool, body: Block| MatchArm {
+        equals: None,
+        when: None,
+        weight: None,
+        toggle: Some(toggle),
+        body,
+    };
+    Ok(MatchStmt {
+        subject,
+        mode: SwitchMode::Toggle,
+        arms: vec![arm(true, on), arm(false, off)],
+        default: None,
+    })
+}
+
+// `split on <expr> { N% -> … … else -> … }` -> a weighted match in Percentage mode.
+fn parse_split(pair: Pair<Rule>) -> Result<MatchStmt, WdlError> {
+    let mut subject = Expr::new(ExprKind::Null, Span::default());
+    let mut arms = Vec::new();
+    let mut default = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expr => subject = parse_expr(inner)?,
+            Rule::split_arm => arms.push(parse_split_arm(inner)?),
+            Rule::match_default => default = Some(parse_arm_body(first_inner(inner)?)?),
+            _ => {}
+        }
+    }
+    Ok(MatchStmt {
+        subject,
+        mode: SwitchMode::Percentage,
+        arms,
+        default,
+    })
+}
+
+fn parse_split_arm(pair: Pair<Rule>) -> Result<MatchArm, WdlError> {
+    let mut weight = None;
+    let mut body = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::integer => weight = Some(parse_i64(inner.as_str(), span_of(&inner))?),
+            Rule::arm_body => body = parse_arm_body(inner)?,
+            _ => {}
+        }
+    }
+    let weight = weight.ok_or_else(|| WdlError::lower("split arm requires a percentage weight"))?;
+    Ok(MatchArm {
+        equals: None,
+        when: None,
+        weight: Some(weight),
+        toggle: None,
+        body,
+    })
 }
 
 fn parse_arm_body(pair: Pair<Rule>) -> Result<Block, WdlError> {

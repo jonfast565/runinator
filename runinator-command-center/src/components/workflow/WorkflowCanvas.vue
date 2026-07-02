@@ -69,9 +69,16 @@
       </template>
       <template #second>
         <div class="workflow-wdl-pane">
-          <p v-if="workflows.workflowWdlError" class="workflow-wdl-error">
-            This workflow can't be shown as WDL yet ({{ workflows.workflowWdlError }}). Edit it in the graph until it is well-formed.
-          </p>
+          <div v-if="workflows.workflowWdlError" class="workflow-wdl-error">
+            <Icon name="alert" :size="14" class="workflow-wdl-error-icon" />
+            <div class="workflow-wdl-error-body">
+              <strong>WDL view paused — the graph isn't well-formed yet.</strong>
+              <span>{{ workflows.workflowWdlError }}</span>
+              <span class="workflow-wdl-error-hint">
+                Fix the issues in the Diagnostics panel on the left; the WDL editor re-enables automatically once the graph compiles.
+              </span>
+            </div>
+          </div>
           <WdlEditor
             v-model="workflows.workflowWdl"
             class="workflow-wdl-editor"
@@ -213,6 +220,7 @@ import { useSecretsStore } from "../../stores/secrets";
 import { optionIdForSourceHandle } from "../../utils/workflows";
 import { buildSampleContext } from "../../utils/workflow-references";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
+import Icon from "../shared/Icon.vue";
 import SplitPane from "../shared/SplitPane.vue";
 import WdlEditor from "../shared/WdlEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";

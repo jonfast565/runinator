@@ -703,6 +703,98 @@ fn evaluates_switch_cases_and_default() {
 }
 
 #[test]
+fn evaluates_toggle_on_and_off() {
+    let node: WorkflowNode = serde_json::from_value(
+        runinator_models::json!({
+            "id": "flag",
+            "kind": "toggle",
+            "parameters": {
+                "value": { "$ref": { "config": ["flags", "new_checkout"] } },
+                "on": { "$node": "new_checkout" },
+                "off": { "$node": "old_checkout" }
+            }
+        })
+        .into(),
+    )
+    .unwrap();
+    let params = parse_toggle_parameters(&node).unwrap();
+
+    assert_eq!(
+        evaluate_toggle(
+            &params,
+            &runinator_models::json!({ "config": { "flags": { "new_checkout": true } } })
+        )
+        .unwrap(),
+        "new_checkout"
+    );
+    assert_eq!(
+        evaluate_toggle(
+            &params,
+            &runinator_models::json!({ "config": { "flags": { "new_checkout": false } } })
+        )
+        .unwrap(),
+        "old_checkout"
+    );
+    // a missing/null value is falsy, so the toggle routes to `off`.
+    assert_eq!(
+        evaluate_toggle(&params, &runinator_models::json!({ "config": {} })).unwrap(),
+        "old_checkout"
+    );
+}
+
+#[test]
+fn evaluates_percentage_buckets_stickily() {
+    let node: WorkflowNode = serde_json::from_value(
+        runinator_models::json!({
+            "id": "rollout",
+            "kind": "percentage",
+            "parameters": {
+                "key": { "$ref": { "input": ["user_id"] } },
+                "buckets": [
+                    { "weight": 30, "target": { "$node": "variant_a" } },
+                    { "weight": 70, "target": { "$node": "variant_b" } }
+                ],
+                "default": { "$node": "control" }
+            }
+        })
+        .into(),
+    )
+    .unwrap();
+    let params = parse_percentage_parameters(&node).unwrap();
+
+    let route = |user: &str| {
+        evaluate_percentage(
+            &params,
+            &runinator_models::json!({ "input": { "user_id": user } }),
+        )
+        .unwrap()
+    };
+
+    // deterministic + sticky: the same key always lands in the same bucket.
+    let first = route("user-42");
+    assert_eq!(first, route("user-42"));
+    assert!(matches!(
+        first.as_deref(),
+        Some("variant_a") | Some("variant_b")
+    ));
+
+    // a null key has nothing to hash, so it falls back to the default.
+    assert_eq!(
+        evaluate_percentage(&params, &runinator_models::json!({ "input": {} })).unwrap(),
+        Some("control".into())
+    );
+
+    // the split roughly honors the configured weights across many keys.
+    let variant_a = (0..1000)
+        .filter(|id| route(&format!("user-{id}")).as_deref() == Some("variant_a"))
+        .count();
+    assert!(
+        (150..450).contains(&variant_a),
+        "expected ~30% in variant_a, got {variant_a}/1000"
+    );
+}
+
+#[test]
 fn test_workflow_state_machine_logic_integration() {
     // 1. define a simple state-machine workflow.
     let definition = runinator_models::json!({

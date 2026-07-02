@@ -113,19 +113,19 @@ function formatUptime(seconds: number): string {
 }
 
 .stream-state.connected {
-  background: #dff5e7;
-  color: #1f6f49;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .stream-state.connecting,
 .stream-state.fallback {
-  background: #fff2cc;
-  color: #84620d;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .stream-state.disconnected {
-  background: #eef2f6;
-  color: #66717e;
+  background: var(--surface-muted);
+  color: var(--text-muted);
 }
 .supervisor-pills {
   display: flex;
@@ -143,34 +143,34 @@ function formatUptime(seconds: number): string {
   font-weight: 500;
 }
 .supervisor-pill-running {
-  background: #dcfce7;
-  color: #166534;
-  border-color: #86efac;
+  background: var(--success-bg);
+  color: var(--success-fg);
+  border-color: var(--success-fg);
 }
 .supervisor-pill-warn {
-  background: #fef3c7;
-  color: #92400e;
-  border-color: #fcd34d;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+  border-color: var(--warning-fg);
 }
 .supervisor-pill-fail {
-  background: #fee2e2;
-  color: #991b1b;
-  border-color: #fca5a5;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
 }
 .supervisor-pill-neutral {
-  background: #f1f5f9;
-  color: #475569;
-  border-color: #cbd5e1;
+  background: var(--surface-muted);
+  color: var(--text-subtle);
+  border-color: var(--border);
 }
 .supervisor-pill-stale {
-  background: #f1f5f9;
-  color: #94a3b8;
-  border-color: #e2e8f0;
+  background: var(--surface-muted);
+  color: var(--text-faint);
+  border-color: var(--border-subtle);
 }
 .supervisor-stale {
   flex: 0 0 auto;
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-faint);
   margin-left: 4px;
 }
 

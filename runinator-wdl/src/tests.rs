@@ -1064,6 +1064,31 @@ jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.
 }
 
 #[test]
+fn formats_toggle_and_split_idempotently() {
+    let src = r#"
+        workflow "Rollout" v1 {
+            node seed <- console.run(command: "seed")
+            toggle config.flags.new_checkout {
+                on -> { console.run(command: "new") }
+                off -> { console.run(command: "old") }
+            }
+            split on seed.user_id {
+                30% -> { console.run(command: "variant_a") }
+                70% -> { console.run(command: "variant_b") }
+                else -> { console.run(command: "control") }
+            }
+            node done <- console.run(command: "done")
+        }
+    "#;
+    let formatted = format_str(src).expect("format");
+    assert!(formatted.contains("toggle "), "toggle kept:\n{formatted}");
+    assert!(formatted.contains("split on "), "split kept:\n{formatted}");
+    assert!(formatted.contains("30% -> {"), "weight kept:\n{formatted}");
+    assert_eq!(format_str(&formatted).expect("format twice"), formatted);
+    compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");
+}
+
+#[test]
 fn format_parenthesizes_eventless_scalar_output() {
     // an event-less scalar payload must keep its parens through formatting, otherwise it would
     // be re-parsed as the event type and silently lose the payload.
@@ -1081,6 +1106,77 @@ fn format_parenthesizes_eventless_scalar_output() {
         runinator_workflows::normalize_definition(first.definition),
         runinator_workflows::normalize_definition(second.definition)
     );
+}
+
+#[test]
+fn compiles_toggle_and_split_nodes() {
+    let src = r#"
+        workflow "Rollout" v1 {
+            node seed <- console.run(command: "seed")
+
+            toggle config.flags.new_checkout {
+                on -> { console.run(command: "new") }
+                off -> { console.run(command: "old") }
+            }
+
+            split on seed.user_id {
+                30% -> { console.run(command: "variant_a") }
+                70% -> { console.run(command: "variant_b") }
+                else -> { console.run(command: "control") }
+            }
+
+            node done <- console.run(command: "done")
+        }
+    "#;
+    use runinator_models::workflows::WorkflowNodeKind;
+    let def = compile(src);
+    let has_kind = |kind: WorkflowNodeKind| def.definition.nodes.iter().any(|n| n.kind == kind);
+    assert!(has_kind(WorkflowNodeKind::Toggle), "expected a toggle node");
+    assert!(
+        has_kind(WorkflowNodeKind::Percentage),
+        "expected a percentage node"
+    );
+
+    let toggle = def
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::Toggle)
+        .unwrap();
+    assert!(toggle.parameters.as_value().get("on").is_some());
+    assert!(toggle.parameters.as_value().get("off").is_some());
+
+    let percentage = def
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::Percentage)
+        .unwrap();
+    let buckets = percentage.parameters.as_value().get("buckets").unwrap();
+    assert_eq!(buckets.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn round_trips_toggle_and_split() {
+    let src = r#"
+        workflow "Rollout" v1 {
+            node seed <- console.run(command: "seed")
+
+            toggle config.flags.new_checkout {
+                on -> { console.run(command: "new") }
+                off -> { console.run(command: "old") }
+            }
+
+            split on seed.user_id {
+                30% -> { console.run(command: "variant_a") }
+                70% -> { console.run(command: "variant_b") }
+                else -> { console.run(command: "control") }
+            }
+
+            node done <- console.run(command: "done")
+        }
+    "#;
+    assert_round_trips_unordered(src);
 }
 
 #[test]

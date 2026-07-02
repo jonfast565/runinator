@@ -52,6 +52,8 @@ export type WorkflowNodeKind =
   | "wait"
   | "condition"
   | "switch"
+  | "toggle"
+  | "percentage"
   | "approval"
   | "gate"
   | "signal"

@@ -132,6 +132,8 @@ enum NodeReferenceRole {
     Transition,
     SwitchCase,
     SwitchDefault,
+    ToggleTarget,
+    PercentageBucket,
     ParallelBranch,
     JoinWaitFor,
     TryBody,
@@ -149,6 +151,8 @@ impl NodeReferenceRole {
             Self::Transition => "transition",
             Self::SwitchCase => "switch case target",
             Self::SwitchDefault => "switch default target",
+            Self::ToggleTarget => "toggle on/off target",
+            Self::PercentageBucket => "percentage bucket target",
             Self::ParallelBranch => "parallel branch",
             Self::JoinWaitFor => "join wait_for",
             Self::TryBody => "try body",
@@ -163,9 +167,12 @@ impl NodeReferenceRole {
 
     fn expected(self) -> &'static str {
         match self {
-            Self::Transition | Self::SwitchCase | Self::SwitchDefault | Self::ReentryExhausted => {
-                "a non-start node"
-            }
+            Self::Transition
+            | Self::SwitchCase
+            | Self::SwitchDefault
+            | Self::ToggleTarget
+            | Self::PercentageBucket
+            | Self::ReentryExhausted => "a non-start node",
             Self::ParallelBranch
             | Self::JoinWaitFor
             | Self::TryBody
@@ -179,9 +186,12 @@ impl NodeReferenceRole {
 
     fn accepts(self, kind: &WorkflowNodeKind) -> bool {
         match self {
-            Self::Transition | Self::SwitchCase | Self::SwitchDefault | Self::ReentryExhausted => {
-                *kind != WorkflowNodeKind::Start
-            }
+            Self::Transition
+            | Self::SwitchCase
+            | Self::SwitchDefault
+            | Self::ToggleTarget
+            | Self::PercentageBucket
+            | Self::ReentryExhausted => *kind != WorkflowNodeKind::Start,
             Self::ParallelBranch
             | Self::JoinWaitFor
             | Self::TryBody
@@ -206,6 +216,25 @@ fn validate_parameter_node_refs(
             }
             if let Some(target) = params.default {
                 validate_node_ref(node, &target, NodeReferenceRole::SwitchDefault, node_map)?;
+            }
+        }
+        WorkflowNodeKind::Toggle => {
+            let params = crate::parameters::parse_toggle_parameters(node)?;
+            validate_node_ref(node, &params.on, NodeReferenceRole::ToggleTarget, node_map)?;
+            validate_node_ref(node, &params.off, NodeReferenceRole::ToggleTarget, node_map)?;
+        }
+        WorkflowNodeKind::Percentage => {
+            let params = crate::parameters::parse_percentage_parameters(node)?;
+            for bucket in params.buckets {
+                validate_node_ref(
+                    node,
+                    &bucket.target,
+                    NodeReferenceRole::PercentageBucket,
+                    node_map,
+                )?;
+            }
+            if let Some(target) = params.default {
+                validate_node_ref(node, &target, NodeReferenceRole::PercentageBucket, node_map)?;
             }
         }
         WorkflowNodeKind::Parallel => {
@@ -283,6 +312,8 @@ fn is_output_producing_kind(kind: &WorkflowNodeKind) -> bool {
             | WorkflowNodeKind::Approval
             | WorkflowNodeKind::Wait
             | WorkflowNodeKind::Switch
+            | WorkflowNodeKind::Toggle
+            | WorkflowNodeKind::Percentage
             | WorkflowNodeKind::Gate
             | WorkflowNodeKind::Signal
             | WorkflowNodeKind::Loop

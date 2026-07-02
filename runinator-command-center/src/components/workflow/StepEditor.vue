@@ -305,6 +305,19 @@ function kindSection(current: JsonRecord): DetailSection {
       ]);
     case "switch":
       return section("Switch", [item("Value", valueLabel(current.parameters?.value))], [], switchRows(current));
+    case "toggle":
+      return section("Toggle", [
+        item("Value", valueLabel(current.parameters?.value)),
+        item("On", refLabel(current.parameters?.on)),
+        item("Off", refLabel(current.parameters?.off))
+      ]);
+    case "percentage":
+      return section(
+        "Percentage",
+        [item("Key", valueLabel(current.parameters?.key)), item("Default", refLabel(current.parameters?.default))],
+        [],
+        percentageRows(current)
+      );
     case "parallel":
       return section("Parallel", [], nodeRefArray(current.parameters?.branches).map((target) => `branch -> ${target}`));
     case "join":
@@ -385,6 +398,20 @@ function switchRows(current: JsonRecord): DetailRow[] {
   }));
   if (current.parameters?.default) rows.push({ label: "default", value: refLabel(current.parameters.default) });
   return rows;
+}
+
+function percentageRows(current: JsonRecord): DetailRow[] {
+  const buckets = Array.isArray(current.parameters?.buckets) ? current.parameters.buckets : [];
+  const total = buckets.reduce((sum: number, bucket: JsonRecord) => sum + (Number(bucket?.weight) || 0), 0);
+  return buckets.map((bucket: JsonRecord, index: number) => {
+    const weight = Number(bucket?.weight) || 0;
+    const share = total > 0 ? ` (${Math.round((weight / total) * 100)}%)` : "";
+    return {
+      label: `bucket ${index + 1}`,
+      value: refLabel(bucket.target),
+      note: `weight ${weight}${share}`
+    };
+  });
 }
 
 function waitItems(wait: unknown): DetailItem[] {
@@ -520,13 +547,13 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .step-detail-name {
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 13px;
 }
 
 .node-kind {
-  color: #5560d8;
-  background: #eef0ff;
+  color: var(--accent-text);
+  background: var(--accent-soft);
   border-radius: 4px;
   padding: 2px 7px;
   font-size: 10px;
@@ -537,7 +564,7 @@ function isRecord(value: unknown): value is JsonRecord {
 
 .step-headline {
   margin: 0;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -557,13 +584,13 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .flag-neutral {
-  background: #eef2f7;
-  color: #55606d;
+  background: var(--surface-muted);
+  color: var(--text-subtle);
 }
 
 .flag-warn {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .step-edit-btn {
@@ -573,7 +600,7 @@ function isRecord(value: unknown): value is JsonRecord {
 .detail-section {
   display: grid;
   gap: 8px;
-  border-top: 1px solid #e5ebf1;
+  border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
 }
 
@@ -582,13 +609,13 @@ function isRecord(value: unknown): value is JsonRecord {
   align-items: center;
   gap: 7px;
   margin: 0;
-  color: #17202a;
+  color: var(--text);
   font-size: 13px;
 }
 
 .count-pill {
-  color: #66717e;
-  background: #eef2f7;
+  color: var(--text-muted);
+  background: var(--surface-muted);
   border-radius: 999px;
   padding: 0 7px;
   font-size: 11px;
@@ -598,13 +625,13 @@ function isRecord(value: unknown): value is JsonRecord {
 
 .section-note {
   margin: -2px 0 0;
-  color: #5b6675;
+  color: var(--text-subtle);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .section-note.warn {
-  color: #8a5a00;
+  color: var(--warning-fg);
 }
 
 .detail-grid {
@@ -622,7 +649,7 @@ function isRecord(value: unknown): value is JsonRecord {
 
 .detail-item span,
 .detail-row span {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -633,7 +660,7 @@ function isRecord(value: unknown): value is JsonRecord {
 .detail-row strong {
   min-width: 0;
   overflow: hidden;
-  color: #17202a;
+  color: var(--text);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -649,25 +676,25 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .detail-row {
-  border-left: 3px solid #dbe5ef;
+  border-left: 3px solid var(--border-subtle);
   padding-left: 8px;
 }
 
 .detail-row.transition-row {
-  border-left-color: #c4d4ea;
+  border-left-color: var(--border-strong);
 }
 
 .detail-row.issue-error {
-  border-left-color: #dc2626;
+  border-left-color: var(--danger-solid);
 }
 
 .detail-row.issue-warning {
-  border-left-color: #d97706;
+  border-left-color: var(--warn-solid);
 }
 
 .detail-row small {
   overflow: hidden;
-  color: #4b5663;
+  color: var(--text-subtle);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -682,14 +709,14 @@ function isRecord(value: unknown): value is JsonRecord {
 .param-item {
   display: grid;
   gap: 4px;
-  border: 1px solid #e5ebf1;
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--surface-subtle);
   padding: 8px 10px;
 }
 
 .param-item.unset {
-  background: #fafbfc;
+  background: var(--surface-subtle);
   border-style: dashed;
 }
 
@@ -701,15 +728,15 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .param-name {
-  color: #17202a;
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 600;
 }
 
 .param-type {
-  color: #5560d8;
-  background: #eef0ff;
+  color: var(--accent-text);
+  background: var(--accent-soft);
   border-radius: 4px;
   padding: 0 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -726,17 +753,17 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .tag-req {
-  color: #b42318;
-  background: #fee4e2;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
 }
 
 .tag-secret {
-  color: #6941c6;
-  background: #f4ebff;
+  color: var(--info-fg);
+  background: var(--info-bg);
 }
 
 .param-value {
-  color: #1f2937;
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -744,13 +771,13 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .param-value.muted {
-  color: #97a1ad;
+  color: var(--text-faint);
   font-style: italic;
 }
 
 .param-desc {
   margin: 0;
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -762,24 +789,24 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .detail-chip {
-  border: 1px solid #dbe5ef;
+  border: 1px solid var(--border-subtle);
   border-radius: 999px;
-  background: #ffffff;
-  color: #4b5663;
+  background: var(--surface);
+  color: var(--text-subtle);
   font-size: 12px;
   padding: 3px 8px;
 }
 
 .empty-note {
   margin: 0;
-  color: #97a1ad;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
 .step-summary-actions {
   display: flex;
   gap: 8px;
-  border-top: 1px solid #e5ebf1;
+  border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
 }
 
@@ -790,6 +817,6 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 .empty-detail p {
-  color: #66717e;
+  color: var(--text-muted);
 }
 </style>

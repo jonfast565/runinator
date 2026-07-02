@@ -420,25 +420,7 @@ main {
   white-space: nowrap;
 }
 
-.toast {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 20;
-  max-width: min(520px, calc(100vw - 40px));
-  border: 1px solid var(--success-bg);
-  border-radius: var(--radius-lg);
-  background: var(--success-bg);
-  color: var(--success-fg);
-  padding: 10px 12px;
-  box-shadow: var(--shadow-toast);
-}
-
-.toast.error {
-  border-color: var(--danger-bg);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
+/* toast styling now lives in ToastHost.vue (typed stack). */
 
 @media (max-width: 1180px) {
   .app-shell {

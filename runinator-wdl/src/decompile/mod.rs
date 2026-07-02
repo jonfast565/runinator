@@ -660,6 +660,8 @@ impl<'a> Decompiler<'a> {
                     (merge, false)
                 }
                 WorkflowNodeKind::Switch => (self.emit_match(node, stop)?, false),
+                WorkflowNodeKind::Toggle => (self.emit_toggle(node, stop)?, false),
+                WorkflowNodeKind::Percentage => (self.emit_split(node, stop)?, false),
                 WorkflowNodeKind::Fail => {
                     self.line("fail");
                     (None, true)
@@ -1967,6 +1969,114 @@ impl<'a> Decompiler<'a> {
         Ok(self.close_block_line("}", merge, stop))
     }
 
+    fn emit_toggle(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
+        let value = node.parameters.get("value").cloned().unwrap_or(Value::Null);
+        let arm_target = |name: &str| {
+            node.parameters
+                .get(name)
+                .and_then(|value| value.get("$node"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| WdlError::Decompile(format!("toggle missing `{name}` target")))
+        };
+        let on = arm_target("on")?;
+        let off = arm_target("off")?;
+
+        let merge = self
+            .find_merge(&[on.clone(), off.clone()])
+            .or_else(|| stop.map(str::to_string));
+        let merge_ref = merge.as_deref();
+
+        self.line(&format!(
+            "{}toggle {} {{",
+            self.block_id_prefix(node),
+            self.expr(&value)?
+        ));
+        self.indent += 1;
+        for (label, target) in [("on", &on), ("off", &off)] {
+            self.line(&format!("{label} -> {{"));
+            self.indent += 1;
+            self.emit_region(target, merge_ref)?;
+            self.indent -= 1;
+            self.line("}");
+        }
+        self.indent -= 1;
+
+        Ok(self.close_block_line("}", merge, stop))
+    }
+
+    fn emit_split(
+        &mut self,
+        node: &WorkflowNode,
+        stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
+        let key = node.parameters.get("key").cloned().unwrap_or(Value::Null);
+        let buckets = node
+            .parameters
+            .get("buckets")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let default = node
+            .parameters
+            .get("default")
+            .and_then(|value| value.get("$node"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+
+        let mut merge_inputs: Vec<String> = buckets
+            .iter()
+            .filter_map(|bucket| bucket.pointer("/target/$node").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        if let Some(default) = &default {
+            merge_inputs.push(default.clone());
+        }
+        let merge = self
+            .find_merge(&merge_inputs)
+            .or_else(|| stop.map(str::to_string));
+        let merge_ref = merge.as_deref();
+
+        self.line(&format!(
+            "{}split on {} {{",
+            self.block_id_prefix(node),
+            self.expr(&key)?
+        ));
+        self.indent += 1;
+        for bucket in &buckets {
+            let weight = bucket
+                .get("weight")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| WdlError::Decompile("percentage bucket missing weight".into()))?;
+            let target = bucket
+                .pointer("/target/$node")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("percentage bucket missing target".into()))?;
+            self.line(&format!("{weight}% -> {{"));
+            self.indent += 1;
+            self.emit_region(target, merge_ref)?;
+            self.indent -= 1;
+            self.line("}");
+        }
+        if let Some(default) = &default
+            && merge_ref != Some(default.as_str())
+            && !self.visited.contains(default)
+        {
+            self.line("else -> {");
+            self.indent += 1;
+            self.emit_region(default, merge_ref)?;
+            self.indent -= 1;
+            self.line("}");
+        }
+        self.indent -= 1;
+
+        Ok(self.close_block_line("}", merge, stop))
+    }
+
     fn emit_map(
         &mut self,
         node: &WorkflowNode,
@@ -2320,6 +2430,8 @@ fn is_generated_control_id(node: &WorkflowNode) -> bool {
         WorkflowNodeKind::Parallel => &["parallel"],
         WorkflowNodeKind::Race => &["race"],
         WorkflowNodeKind::Switch => &["switch"],
+        WorkflowNodeKind::Toggle => &["toggle"],
+        WorkflowNodeKind::Percentage => &["percentage"],
         WorkflowNodeKind::Try => &["try"],
         _ => return true,
     };

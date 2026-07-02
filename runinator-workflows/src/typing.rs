@@ -18,7 +18,8 @@ use crate::{
     },
     parameters::{
         parse_join_parameters, parse_map_parameters, parse_parallel_parameters,
-        parse_race_parameters, parse_switch_parameters, parse_try_parameters,
+        parse_percentage_parameters, parse_race_parameters, parse_switch_parameters,
+        parse_toggle_parameters, parse_try_parameters,
     },
     types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef},
 };
@@ -233,6 +234,16 @@ fn validate_node_types(
             for case in params.cases {
                 validate_condition_types(&case.condition, context)?;
             }
+            Ok(())
+        }
+        WorkflowNodeKind::Toggle => {
+            let params = parse_toggle_parameters(node)?;
+            infer_value_type(&params.value, context)?;
+            Ok(())
+        }
+        WorkflowNodeKind::Percentage => {
+            let params = parse_percentage_parameters(node)?;
+            infer_value_type(&params.key, context)?;
             Ok(())
         }
         WorkflowNodeKind::Loop => {

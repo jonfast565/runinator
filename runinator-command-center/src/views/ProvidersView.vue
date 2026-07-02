@@ -11,8 +11,9 @@
         </div>
         <div v-if="providers.error" class="providers-error">{{ providers.error }}</div>
         <div v-if="!providers.providers.length" class="empty-state">No providers registered.</div>
+        <div v-else-if="!filteredProviders.length" class="empty-state">No providers match "{{ app.searchQuery }}".</div>
         <div class="providers-tree">
-          <div v-for="provider in providers.providers" :key="provider.name" class="providers-group">
+          <div v-for="provider in filteredProviders" :key="provider.name" class="providers-group">
             <button
               type="button"
               class="providers-group-head"
@@ -130,11 +131,24 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import { useProvidersStore } from "../stores/providers";
+import { useAppStore } from "../stores/app";
 import type { RuninatorType } from "../types/models";
 
 const providers = useProvidersStore();
+const app = useAppStore();
 const selectedProvider = ref("");
 const selectedAction = ref("");
+
+// filter the provider tree by the global search box (matches provider or action name).
+const filteredProviders = computed(() => {
+  const query = app.normalizedSearch;
+  if (!query) return providers.providers;
+  return providers.providers.filter(
+    (provider) =>
+      provider.name.toLowerCase().includes(query) ||
+      provider.actions.some((action) => action.function_name.toLowerCase().includes(query))
+  );
+});
 
 const currentProvider = computed(() => providers.providers.find((provider) => provider.name === selectedProvider.value) ?? null);
 const currentAction = computed(() => {

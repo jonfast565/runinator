@@ -167,6 +167,94 @@ pub(super) async fn process_switch_node<T: DatabaseImpl>(
     let context = runtime_context(db, workflow_run, node_runs).await;
     let target = runinator_workflows::evaluate_switch(&params, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
+    finish_route(
+        db,
+        workflow_run,
+        node,
+        &node_run,
+        target,
+        node_runs,
+        "switch_evaluated",
+        "Switch did not match a target",
+    )
+    .await
+}
+
+pub(super) async fn process_toggle_node<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = db
+        .create_workflow_node_run(
+            workflow_run.id,
+            node.id.clone(),
+            node.parameters.clone().into(),
+        )
+        .await?;
+    let params = runinator_workflows::parse_toggle_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let context = runtime_context(db, workflow_run, node_runs).await;
+    // a toggle always yields a target, so it never blocks the run.
+    let target = runinator_workflows::evaluate_toggle(&params, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    finish_route(
+        db,
+        workflow_run,
+        node,
+        &node_run,
+        Some(target),
+        node_runs,
+        "toggle_evaluated",
+        "Toggle did not resolve a target",
+    )
+    .await
+}
+
+pub(super) async fn process_percentage_node<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = db
+        .create_workflow_node_run(
+            workflow_run.id,
+            node.id.clone(),
+            node.parameters.clone().into(),
+        )
+        .await?;
+    let params = runinator_workflows::parse_percentage_parameters(node)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let context = runtime_context(db, workflow_run, node_runs).await;
+    let target = runinator_workflows::evaluate_percentage(&params, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    finish_route(
+        db,
+        workflow_run,
+        node,
+        &node_run,
+        target,
+        node_runs,
+        "percentage_evaluated",
+        "Percentage did not match a bucket",
+    )
+    .await
+}
+
+// record the router node run's chosen target and route the run: `Some` drives the run to the target
+// (Running), `None` blocks the node and follows its failure transition. shared by switch/toggle/percentage.
+async fn finish_route<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    node: &WorkflowNode,
+    node_run: &WorkflowNodeRun,
+    target: Option<String>,
+    node_runs: &[WorkflowNodeRun],
+    reason: &str,
+    no_match: &str,
+) -> Result<(), SendableError> {
     let output = SwitchOutput {
         target: target.clone(),
     }
@@ -182,7 +270,7 @@ pub(super) async fn process_switch_node<T: DatabaseImpl>(
         None,
         Some(output),
         None,
-        Some("switch_evaluated".into()),
+        Some(reason.into()),
         None,
     )
     .await?;
@@ -202,10 +290,10 @@ pub(super) async fn process_switch_node<T: DatabaseImpl>(
                 db,
                 workflow_run,
                 node,
-                &node_run,
+                node_run,
                 WorkflowStatus::Blocked,
                 None,
-                Some("Switch did not match a target".into()),
+                Some(no_match.into()),
                 node_runs,
             )
             .await?;
@@ -218,6 +306,8 @@ pub(super) struct StartHandler;
 pub(super) struct EndHandler;
 pub(super) struct ConditionHandler;
 pub(super) struct SwitchHandler;
+pub(super) struct ToggleHandler;
+pub(super) struct PercentageHandler;
 pub(super) struct ConfigHandler;
 
 impl<T: DatabaseImpl> NodeHandler<T> for StartHandler {
@@ -282,6 +372,36 @@ impl<T: DatabaseImpl> NodeHandler<T> for SwitchHandler {
     {
         async move {
             process_switch_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            Ok(ReadyNodeDisposition::Complete)
+        }
+    }
+}
+
+impl<T: DatabaseImpl> NodeHandler<T> for ToggleHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a NodeHandlerContext<'a, T>,
+    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_toggle_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            Ok(ReadyNodeDisposition::Complete)
+        }
+    }
+}
+
+impl<T: DatabaseImpl> NodeHandler<T> for PercentageHandler {
+    fn process<'a>(
+        &'a self,
+        ctx: &'a NodeHandlerContext<'a, T>,
+    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    where
+        T: 'a,
+    {
+        async move {
+            process_percentage_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

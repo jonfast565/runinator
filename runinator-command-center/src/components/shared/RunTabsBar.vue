@@ -59,8 +59,8 @@ function statusClass(runId: string): string {
   gap: 4px;
   padding: 4px 6px 0;
   overflow-x: auto;
-  border-bottom: 1px solid #d4dde7;
-  background: #f4f6fa;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
 }
 
 .run-tab {
@@ -73,7 +73,7 @@ function statusClass(runId: string): string {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
   background: transparent;
-  color: #475569;
+  color: var(--text-subtle);
   cursor: pointer;
   font-size: 12px;
   white-space: nowrap;
@@ -81,13 +81,13 @@ function statusClass(runId: string): string {
 }
 
 .run-tab:hover {
-  background: #eef2f6;
+  background: var(--surface-muted);
 }
 
 .run-tab.active {
-  background: #ffffff;
-  border-color: #d4dde7;
-  color: #17202a;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
   position: relative;
   bottom: -1px;
 }
@@ -101,24 +101,24 @@ function statusClass(runId: string): string {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #c4ccd6;
+  background: var(--border-strong);
   flex: 0 0 auto;
 }
 
 .run-tab-dot.ok {
-  background: #16a34a;
+  background: var(--success-fg);
 }
 
 .run-tab-dot.fail {
-  background: #dc2626;
+  background: var(--danger-solid);
 }
 
 .run-tab-dot.warn {
-  background: #d68d2b;
+  background: var(--warn-solid);
 }
 
 .run-tab-dot.live {
-  background: #2563eb;
+  background: var(--accent);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
 }
 

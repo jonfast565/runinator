@@ -36,6 +36,8 @@ export const workflowNodeKinds: WorkflowNodeKind[] = [
   "condition",
   "wait",
   "switch",
+  "toggle",
+  "percentage",
   "parallel",
   "join",
   "try",
@@ -71,6 +73,8 @@ export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo
   wait: { icon: "clock", description: "Pauses the run for a fixed delay or until a time." },
   condition: { icon: "branch", description: "Routes down a branch based on a boolean expression." },
   switch: { icon: "switch", description: "Routes to one of several cases by matching a value." },
+  toggle: { icon: "toggle", description: "A light switch: routes to on or off by a value's truthiness." },
+  percentage: { icon: "percentage", description: "Weighted rollout: routes to a bucket by a stable hash of a key." },
   approval: { icon: "approve", description: "Halts until a human approves or rejects." },
   gate: { icon: "shield", description: "Blocks until an automated/policy check or manual gate opens." },
   signal: { icon: "bell", description: "Pauses until a named external signal is delivered to the run." },
@@ -288,6 +292,17 @@ export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSeman
     });
     options.push({ id: "control:cases:new", label: "New switch case", description: "Add a switch case route" });
     options.push({ id: "control:default", label: "Switch default", description: "Set the default switch route" });
+  }
+  if (kind === "toggle") {
+    options.push({ id: "control:on", label: "Toggle on", description: "Node routed to when the value is truthy" });
+    options.push({ id: "control:off", label: "Toggle off", description: "Node routed to when the value is falsy" });
+  }
+  if (kind === "percentage") {
+    const buckets = Array.isArray(parameters.buckets) ? parameters.buckets : [];
+    buckets.forEach((_, index) => {
+      options.push({ id: `control:buckets:${index}`, label: `Bucket ${index + 1}`, description: "Update an existing percentage bucket target" });
+    });
+    options.push({ id: "control:default", label: "Percentage default", description: "Fallback route when no bucket matches" });
   }
   if (kind === "parallel" || kind === "race") {
     const branches = Array.isArray(parameters.branches) ? parameters.branches : [];
@@ -665,6 +680,10 @@ function writeWorkflowEdgeDraft(
       switchCase[draft.matchKind] = parsed.matchValue ?? true;
       applyOptionalLabel(switchCase, draft.label);
       node.parameters.cases[index] = switchCase;
+    } else if (parameterKey === "buckets") {
+      // preserve the bucket's weight; only its target is edited from the canvas.
+      const previous = isRecord(node.parameters.buckets[index]) ? node.parameters.buckets[index] : {};
+      node.parameters.buckets[index] = { ...previous, target: nodeRef(draft.target) };
     } else {
       node.parameters[parameterKey][index] = nodeRef(draft.target);
     }
@@ -917,6 +936,12 @@ export function createWorkflowNode(kind: WorkflowNodeKind, nodes: JsonRecord[]):
       break;
     case "switch":
       node.parameters = { value: valueRef("params", ["mode"]), cases: [], default: nodeRef("end") };
+      break;
+    case "toggle":
+      node.parameters = { value: valueRef("config", ["flags", "enabled"]), on: nodeRef("end"), off: nodeRef("end") };
+      break;
+    case "percentage":
+      node.parameters = { key: valueRef("input", ["user_id"]), buckets: [], default: nodeRef("end") };
       break;
     case "parallel":
     case "race":
@@ -1358,6 +1383,16 @@ function parameterLayoutEdges(node: JsonRecord, source: string, nodeIds: Set<str
       pushLayoutEdge(edges, source, nodeRefId(parameters.default), nodeIds);
       return edges;
     }
+    case "toggle":
+      pushLayoutEdge(edges, source, nodeRefId(parameters.on), nodeIds);
+      pushLayoutEdge(edges, source, nodeRefId(parameters.off), nodeIds);
+      return edges;
+    case "percentage": {
+      const buckets = Array.isArray(parameters.buckets) ? parameters.buckets : [];
+      for (const item of buckets.filter(isRecord)) pushLayoutEdge(edges, source, nodeRefId(item.target), nodeIds);
+      pushLayoutEdge(edges, source, nodeRefId(parameters.default), nodeIds);
+      return edges;
+    }
     case "parallel":
     case "race":
       for (const target of nodeRefArray(parameters.branches)) pushLayoutEdge(edges, source, target, nodeIds);
@@ -1533,6 +1568,24 @@ function controlFlowTargetValues(node: JsonRecord): Array<{ target: string; labe
       if (defaultTarget) targets.push({ target: defaultTarget, label: "default", parameterKey: "default" });
       return targets;
     }
+    case "toggle": {
+      const targets: Array<{ target: string; label: string; parameterKey?: string; parameterIndex?: number }> = [];
+      const on = nodeRefId(parameters.on);
+      if (on) targets.push({ target: on, label: "on", parameterKey: "on" });
+      const off = nodeRefId(parameters.off);
+      if (off) targets.push({ target: off, label: "off", parameterKey: "off" });
+      return targets;
+    }
+    case "percentage": {
+      const buckets = Array.isArray(parameters.buckets) ? parameters.buckets : [];
+      const targets: Array<{ target: string; label: string; parameterKey?: string; parameterIndex?: number }> = buckets
+        .filter(isRecord)
+        .map((item, index) => ({ target: nodeRefId(item.target), label: `${Number(item.weight ?? 0)}%`, parameterKey: "buckets", parameterIndex: index }))
+        .filter((item): item is { target: string; label: string; parameterKey: string; parameterIndex: number } => Boolean(item.target));
+      const percentageDefault = nodeRefId(parameters.default);
+      if (percentageDefault) targets.push({ target: percentageDefault, label: "default", parameterKey: "default" });
+      return targets;
+    }
     case "parallel":
       return nodeRefArray(parameters.branches).map((target, parameterIndex) => ({ target, label: "branch", parameterKey: "branches", parameterIndex }));
     case "join":
@@ -1568,7 +1621,7 @@ function nodeRefArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(nodeRefId).filter((item): item is string => Boolean(item)) : [];
 }
 
-export function valueRef(source: "params" | "prev" | "workflow", path: Array<string | number>): JsonRecord {
+export function valueRef(source: "params" | "prev" | "workflow" | "config" | "input", path: Array<string | number>): JsonRecord {
   return { "$ref": { [source]: path } };
 }
 
@@ -1602,6 +1655,17 @@ function pushControlFlowIssues(issues: WorkflowValidationIssue[], node: JsonReco
   if (kind === "switch") {
     const cases = Array.isArray(parameters.cases) ? parameters.cases : [];
     cases.forEach((item: JsonRecord, index: number) => pushNodeRefIssue(issues, nodeIds, nodeId, parameterSemanticKey("cases", index), item?.target, true));
+    pushNodeRefIssue(issues, nodeIds, nodeId, "default", parameters.default, false);
+    return;
+  }
+  if (kind === "toggle") {
+    pushNodeRefIssue(issues, nodeIds, nodeId, "on", parameters.on, true);
+    pushNodeRefIssue(issues, nodeIds, nodeId, "off", parameters.off, true);
+    return;
+  }
+  if (kind === "percentage") {
+    const buckets = Array.isArray(parameters.buckets) ? parameters.buckets : [];
+    buckets.forEach((item: JsonRecord, index: number) => pushNodeRefIssue(issues, nodeIds, nodeId, parameterSemanticKey("buckets", index), item?.target, true));
     pushNodeRefIssue(issues, nodeIds, nodeId, "default", parameters.default, false);
     return;
   }
@@ -1825,6 +1889,12 @@ function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): stri
     case "switch": {
       const count = Array.isArray(parameters.cases) ? parameters.cases.length : 0;
       return `Switch on ${describeValue(parameters.value) || "value"} (${count} case${count === 1 ? "" : "s"})`;
+    }
+    case "toggle":
+      return `Toggle on ${describeValue(parameters.value) || "value"}`;
+    case "percentage": {
+      const count = Array.isArray(parameters.buckets) ? parameters.buckets.length : 0;
+      return `Split on ${describeValue(parameters.key) || "key"} (${count} bucket${count === 1 ? "" : "s"})`;
     }
     case "wait": {
       const until = node.wait?.until_status;

@@ -153,6 +153,8 @@ stmt_body = {
   | while_stmt
   | until_stmt
   | match_stmt
+  | toggle_stmt
+  | split_stmt
   | parallel_stmt
   | try_stmt
   | race_stmt
@@ -361,6 +363,15 @@ match_arm     = { !("else" ~ "->") ~ match_head ~ "->" ~ arm_body }
 match_head    = { ("when" ~ cond) | expr }
 match_default = { "else" ~ "->" ~ arm_body }
 arm_body      = { block | stmt }
+
+// a literal light switch: the subject's truthiness routes to the `on` or `off` arm.
+toggle_stmt   = { "toggle" ~ expr ~ "{" ~ (toggle_on ~ toggle_off | toggle_off ~ toggle_on) ~ "}" }
+toggle_on     = { "on" ~ "->" ~ arm_body }
+toggle_off    = { "off" ~ "->" ~ arm_body }
+
+// a weighted percentage split, hash-bucketed on the subject key; `else` names the default arm.
+split_stmt    = { "split" ~ "on" ~ expr ~ "{" ~ split_arm+ ~ match_default? ~ "}" }
+split_arm     = { integer ~ "%" ~ "->" ~ arm_body }
 
 try_stmt   = { "try" ~ block ~ try_catch? ~ try_finally? }
 try_catch  = { "catch" ~ block }

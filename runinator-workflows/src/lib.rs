@@ -33,10 +33,11 @@ pub use expressions::{
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
-    evaluate_switch, parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
-    parse_join_parameters, parse_loop_items, parse_map_parameters, parse_output_parameters,
-    parse_parallel_parameters, parse_race_parameters, parse_signal_parameters,
-    parse_switch_parameters, parse_try_parameters, parse_wait_parameters,
+    evaluate_percentage, evaluate_switch, evaluate_toggle, parse_approval_parameters,
+    parse_gate_parameters, parse_input_parameters, parse_join_parameters, parse_loop_items,
+    parse_map_parameters, parse_output_parameters, parse_parallel_parameters,
+    parse_percentage_parameters, parse_race_parameters, parse_signal_parameters,
+    parse_switch_parameters, parse_toggle_parameters, parse_try_parameters, parse_wait_parameters,
 };
 pub use refs::expand_workflow_refs;
 pub use run_state::{
@@ -45,8 +46,9 @@ pub use run_state::{
 pub use types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
     JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
-    RaceParameters, SignalParameters, SwitchCase, SwitchParameters, TryParameters, WaitParameters,
-    WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
+    PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
+    SwitchParameters, ToggleParameters, TryParameters, WaitParameters, WorkflowExpression,
+    WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
 };
 pub use typing::{WorkflowType, validate_workflow_types};
 pub use validation::{

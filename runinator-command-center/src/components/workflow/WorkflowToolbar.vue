@@ -1,8 +1,12 @@
 <template>
   <div ref="toolbarRef" class="workflow-toolbar">
     <div class="workflow-title">
-      <strong>{{ workflows.workflowDraft.name }}</strong>
-      <span>v{{ workflows.workflowDraft.version }} · concurrency {{ workflows.workflowConcurrency }}</span>
+      <strong>
+        {{ workflows.workflowDraft.name }}
+        <span v-if="workflows.isDirty" class="unsaved-dot" title="Unsaved changes" aria-hidden="true"></span>
+      </strong>
+      <span v-if="workflows.isDirty" class="unsaved-label">Unsaved changes</span>
+      <span v-else>v{{ workflows.workflowDraft.version }} · concurrency {{ workflows.workflowConcurrency }}</span>
     </div>
     <div class="workflow-actions">
       <button class="btn" @click="workflows.openWorkflowSettings">
@@ -62,9 +66,9 @@
           </button>
         </div>
       </div>
-      <button class="btn" @click="workflows.saveSelectedWorkflow">
+      <button class="btn" :class="{ 'btn-primary': workflows.isDirty }" @click="workflows.saveSelectedWorkflow">
         <Icon name="save" />
-        <span>Save</span>
+        <span>{{ workflows.isDirty ? "Save changes" : "Save" }}</span>
       </button>
       <div class="toolbar-menu">
         <button
@@ -203,6 +207,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .workflow-actions {
   align-items: center;
+}
+
+.unsaved-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--warn-solid);
+  vertical-align: middle;
+}
+
+.unsaved-label {
+  color: var(--warning-fg);
+  font-weight: 600;
 }
 
 .toolbar-menu {

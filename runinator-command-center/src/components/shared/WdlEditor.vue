@@ -387,11 +387,11 @@ function shouldStartCompletion(update: ViewUpdate): boolean {
 }
 
 .wdl-diagnostics tbody tr.error {
-  box-shadow: inset 3px 0 #dc2626;
+  box-shadow: inset 3px 0 var(--danger-solid);
 }
 
 .wdl-diagnostics tbody tr.warning {
-  box-shadow: inset 3px 0 #d97706;
+  box-shadow: inset 3px 0 var(--warn-solid);
 }
 
 .wdl-diagnostics td:nth-child(2) {

@@ -241,6 +241,8 @@ fn workflow_action_rejects_task_metadata_shape() {
 fn workflow_node_kind_accepts_rich_control_flow_nodes() {
     for (kind, expected) in [
         ("switch", WorkflowNodeKind::Switch),
+        ("toggle", WorkflowNodeKind::Toggle),
+        ("percentage", WorkflowNodeKind::Percentage),
         ("parallel", WorkflowNodeKind::Parallel),
         ("join", WorkflowNodeKind::Join),
         ("try", WorkflowNodeKind::Try),

@@ -253,6 +253,8 @@ impl PureIntrinsics {
             "parse_json",
             "base64_encode",
             "base64_decode",
+            "hash",
+            "hash_percent",
             // logic / comparison.
             "eq",
             "ne",
@@ -518,6 +520,20 @@ impl PureIntrinsics {
                 .pure(),
             unary_string("base64_encode"),
             unary_string("base64_decode"),
+            ActionMetadata::new(
+                "hash",
+                "stable non-negative 63-bit hash of any value (deterministic across processes)",
+            )
+            .with_parameters(vec![ParameterMetadata::required("a", RuninatorType::Any)])
+            .with_results(vec![ResultMetadata::new("result", RuninatorType::Integer)])
+            .pure(),
+            ActionMetadata::new(
+                "hash_percent",
+                "stable hash bucket of any value in 0..=99 (for percentage rollouts)",
+            )
+            .with_parameters(vec![ParameterMetadata::required("a", RuninatorType::Any)])
+            .with_results(vec![ResultMetadata::new("result", RuninatorType::Integer)])
+            .pure(),
             // logic / comparison.
             any_predicate("eq"),
             any_predicate("ne"),
@@ -726,7 +742,7 @@ pub fn intrinsic_module(leaf: &str) -> Option<&'static str> {
         | "unique" | "flatten" | "slice" | "first" | "last" | "append" | "range" | "map"
         | "filter" | "find" | "any" | "all" | "reduce" | "sort_by" | "flat_map" => "collections",
         "merge" | "pick" | "omit" | "entries" | "from_entries" => "objects",
-        "parse_json" | "base64_encode" | "base64_decode" => "encoding",
+        "parse_json" | "base64_encode" | "base64_decode" | "hash" | "hash_percent" => "encoding",
         "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "not" | "and" | "or" | "default" => "logic",
         "format_date" | "parse_date" | "add_duration" | "date_diff" => "dates",
         "regex_match" | "regex_replace" | "regex_extract" => "regex",
@@ -760,7 +776,9 @@ pub fn intrinsic_arity(name: &str) -> Option<(usize, usize)> {
         "len" | "keys" | "lower" | "upper" | "floor" | "ceil" | "round" | "parse_int"
         | "parse_float" => (1, 1),
         // strings.
-        "trim" | "base64_encode" | "base64_decode" | "parse_json" => (1, 1),
+        "trim" | "base64_encode" | "base64_decode" | "parse_json" | "hash" | "hash_percent" => {
+            (1, 1)
+        }
         "split" | "join" | "starts_with" | "ends_with" => (2, 2),
         "replace" => (3, 3),
         "substring" => (2, 3),
@@ -842,6 +860,8 @@ pub fn call_pure(name: &str, args: &[Value]) -> Result<Value, WorkflowValidation
         "parse_json" => intrinsic_parse_json(args),
         "base64_encode" => intrinsic_base64_encode(args),
         "base64_decode" => intrinsic_base64_decode(args),
+        "hash" => intrinsic_hash(args),
+        "hash_percent" => intrinsic_hash_percent(args),
         // logic / comparison.
         "eq" => Ok(Value::Bool(arg(name, args, 0)? == arg(name, args, 1)?)),
         "ne" => Ok(Value::Bool(arg(name, args, 0)? != arg(name, args, 1)?)),
@@ -1419,6 +1439,37 @@ fn intrinsic_base64_decode(args: &[Value]) -> Result<Value, WorkflowValidationEr
     String::from_utf8(bytes)
         .map(Value::String)
         .map_err(|e| err("base64_decode", e.to_string()))
+}
+
+// canonicalize a value to the bytes hashed by `hash`/`hash_percent`: strings hash their raw
+// contents, every other value hashes its json form. this keeps a bare string key and its json
+// spelling distinct only where json quoting differs, and is stable across processes.
+fn hash_bytes(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+// fnv-1a 64-bit over `text`, folded to a non-negative 63-bit integer. hand-rolled so the result is
+// stable across processes and releases (unlike std's DefaultHasher), with no extra dependency.
+fn fnv1a_63(text: &str) -> i64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash & i64::MAX as u64) as i64
+}
+
+fn intrinsic_hash(args: &[Value]) -> Result<Value, WorkflowValidationError> {
+    let value = arg("hash", args, 0)?;
+    Ok(Value::from(fnv1a_63(&hash_bytes(&value))))
+}
+
+fn intrinsic_hash_percent(args: &[Value]) -> Result<Value, WorkflowValidationError> {
+    let value = arg("hash_percent", args, 0)?;
+    Ok(Value::from(fnv1a_63(&hash_bytes(&value)) % 100))
 }
 
 // parse an RFC 3339 timestamp; `now`-style strings produced by the std library round-trip here.

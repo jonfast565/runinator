@@ -196,6 +196,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     switch_value_json: pretty(valueRef("params", ["mode"])),
     switch_cases: [] as SwitchCaseEditor[],
     switch_default: "",
+    toggle_value_json: pretty(valueRef("config", ["flags", "enabled"])),
+    toggle_on: "",
+    toggle_off: "",
+    percentage_key_json: pretty(valueRef("input", ["user_id"])),
+    percentage_buckets: [] as Array<{ weight: number; target: string }>,
+    percentage_default: "",
     parallel_branches: [] as string[],
     join_wait_for: [] as string[],
     join_mode: "all" as BranchPolicyName,
@@ -214,6 +220,37 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     config_metadata_json: "{}",
     subflow_id: "",
     subflow_parameters_json: "{}",
+    assert_assertions: [] as Array<{ name: string; condition_json: string; message: string }>,
+    transform_bindings_json: "{}",
+    audit_action_json: pretty("workflow.audit"),
+    audit_actor_json: "",
+    audit_target_json: "",
+    audit_reason_json: "",
+    checkpoint_name: "",
+    mutex_name: "",
+    mutex_poll_interval: 30,
+    throttle_name: "",
+    throttle_max_per_window: 10,
+    throttle_window_seconds: 60,
+    throttle_poll_interval: 30,
+    await_run_ids_json: pretty(valueRef("params", ["run_ids"])),
+    await_mode: "all" as "all" | "any",
+    await_poll_interval: 30,
+    debounce_name: "",
+    debounce_delay_seconds: 30,
+    debounce_trigger_key_json: "",
+    collect_name: "",
+    collect_max: 10,
+    barrier_name: "",
+    barrier_count: 2,
+    barrier_poll_interval: 30,
+    circuit_name: "",
+    circuit_threshold: 5,
+    circuit_window_seconds: 60,
+    circuit_cooldown_seconds: 60,
+    event_source_type: "*",
+    event_source_filter_json: "",
+    event_source_max: 0,
     locked: false,
     skipped: false,
     max_attempts: 1,
@@ -1207,6 +1244,35 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       if (stepEditor.switch_default) next.parameters.default = nodeRef(stepEditor.switch_default);
       else delete next.parameters.default;
     }
+    if (next.kind === "toggle") {
+      const value = parseStepJson("Toggle value", stepEditor.toggle_value_json);
+      if (!value.ok) return false;
+      if (!stepEditor.toggle_on || !stepEditor.toggle_off) {
+        setStepEditorError("Toggle needs both an on and an off target");
+        return false;
+      }
+      next.parameters = { ...parameters, value: value.value, on: nodeRef(stepEditor.toggle_on), off: nodeRef(stepEditor.toggle_off) };
+    }
+    if (next.kind === "percentage") {
+      const key = parseStepJson("Percentage key", stepEditor.percentage_key_json);
+      if (!key.ok) return false;
+      const buckets: JsonRecord[] = [];
+      for (const [bucketIndex, bucket] of stepEditor.percentage_buckets.entries()) {
+        if (!bucket.target) {
+          setStepEditorError(`Bucket ${bucketIndex + 1} needs a target`);
+          return false;
+        }
+        const weight = Math.trunc(Number(bucket.weight));
+        if (!Number.isFinite(weight) || weight <= 0) {
+          setStepEditorError(`Bucket ${bucketIndex + 1} needs a weight greater than zero`);
+          return false;
+        }
+        buckets.push({ weight, target: nodeRef(bucket.target) });
+      }
+      next.parameters = { ...parameters, key: key.value, buckets };
+      if (stepEditor.percentage_default) next.parameters.default = nodeRef(stepEditor.percentage_default);
+      else delete next.parameters.default;
+    }
     if (next.kind === "parallel") {
       next.parameters = {
         ...parameters,
@@ -1288,6 +1354,131 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     } else {
       delete next.subflow_id;
     }
+    if (next.kind === "assert") {
+      const assertions: JsonRecord[] = [];
+      for (const [assertIndex, assertion] of stepEditor.assert_assertions.entries()) {
+        const condition = parseStepJson(`Assertion ${assertIndex + 1} condition`, assertion.condition_json);
+        if (!condition.ok) return false;
+        const serialized: JsonRecord = { condition: condition.value };
+        if (assertion.name.trim()) serialized.name = assertion.name.trim();
+        if (assertion.message.trim()) serialized.message = assertion.message.trim();
+        assertions.push(serialized);
+      }
+      next.parameters = { ...parameters, assertions };
+    }
+    if (next.kind === "transform") {
+      const bindings = parseRequiredObject(stepEditor.transform_bindings_json);
+      if (!bindings) {
+        setStepEditorError("Transform bindings must be a JSON object");
+        return false;
+      }
+      next.parameters = { ...parameters, bindings };
+    }
+    if (next.kind === "audit") {
+      const action = parseStepJson("Audit action", stepEditor.audit_action_json);
+      if (!action.ok) return false;
+      next.parameters = { ...parameters, action: action.value };
+      for (const [field, text] of [
+        ["actor", stepEditor.audit_actor_json],
+        ["target", stepEditor.audit_target_json],
+        ["reason", stepEditor.audit_reason_json]
+      ] as const) {
+        const parsed = parseOptionalExpr(`Audit ${field}`, text);
+        if (!parsed.ok) return false;
+        if (parsed.value === undefined) delete next.parameters[field];
+        else next.parameters[field] = parsed.value;
+      }
+    }
+    if (next.kind === "checkpoint") {
+      if (!stepEditor.checkpoint_name.trim()) {
+        setStepEditorError("Checkpoint needs a name");
+        return false;
+      }
+      next.parameters = { ...parameters, name: stepEditor.checkpoint_name.trim() };
+    }
+    if (next.kind === "mutex") {
+      if (!stepEditor.mutex_name.trim()) {
+        setStepEditorError("Mutex needs a name");
+        return false;
+      }
+      next.parameters = { ...parameters, name: stepEditor.mutex_name.trim(), poll_interval_seconds: Math.max(1, Number(stepEditor.mutex_poll_interval ?? 30)) };
+    }
+    if (next.kind === "throttle") {
+      if (!stepEditor.throttle_name.trim()) {
+        setStepEditorError("Throttle needs a name");
+        return false;
+      }
+      next.parameters = {
+        ...parameters,
+        name: stepEditor.throttle_name.trim(),
+        max_per_window: Math.max(1, Number(stepEditor.throttle_max_per_window ?? 1)),
+        window_seconds: Math.max(1, Number(stepEditor.throttle_window_seconds ?? 1)),
+        poll_interval_seconds: Math.max(1, Number(stepEditor.throttle_poll_interval ?? 30))
+      };
+    }
+    if (next.kind === "await_run") {
+      const runIds = parseStepJson("Await run ids", stepEditor.await_run_ids_json);
+      if (!runIds.ok) return false;
+      next.parameters = {
+        ...parameters,
+        run_ids: runIds.value,
+        mode: stepEditor.await_mode === "any" ? "any" : "all",
+        poll_interval_seconds: Math.max(1, Number(stepEditor.await_poll_interval ?? 30))
+      };
+    }
+    if (next.kind === "debounce") {
+      if (!stepEditor.debounce_name.trim()) {
+        setStepEditorError("Debounce needs a name");
+        return false;
+      }
+      next.parameters = { ...parameters, name: stepEditor.debounce_name.trim(), delay_seconds: Math.max(1, Number(stepEditor.debounce_delay_seconds ?? 1)) };
+      const triggerKey = parseOptionalExpr("Debounce trigger key", stepEditor.debounce_trigger_key_json);
+      if (!triggerKey.ok) return false;
+      if (triggerKey.value === undefined) delete next.parameters.trigger_key;
+      else next.parameters.trigger_key = triggerKey.value;
+    }
+    if (next.kind === "collect") {
+      if (!stepEditor.collect_name.trim()) {
+        setStepEditorError("Collect needs a name");
+        return false;
+      }
+      next.parameters = { ...parameters, name: stepEditor.collect_name.trim(), max: Math.max(1, Number(stepEditor.collect_max ?? 1)) };
+    }
+    if (next.kind === "barrier") {
+      if (!stepEditor.barrier_name.trim()) {
+        setStepEditorError("Barrier needs a name");
+        return false;
+      }
+      next.parameters = {
+        ...parameters,
+        name: stepEditor.barrier_name.trim(),
+        count: Math.max(1, Number(stepEditor.barrier_count ?? 1)),
+        poll_interval_seconds: Math.max(1, Number(stepEditor.barrier_poll_interval ?? 30))
+      };
+    }
+    if (next.kind === "circuit_breaker") {
+      if (!stepEditor.circuit_name.trim()) {
+        setStepEditorError("Circuit breaker needs a name");
+        return false;
+      }
+      next.parameters = {
+        ...parameters,
+        name: stepEditor.circuit_name.trim(),
+        threshold: Math.max(1, Number(stepEditor.circuit_threshold ?? 1)),
+        window_seconds: Math.max(1, Number(stepEditor.circuit_window_seconds ?? 1)),
+        cooldown_seconds: Math.max(0, Number(stepEditor.circuit_cooldown_seconds ?? 0))
+      };
+    }
+    if (next.kind === "event_source") {
+      next.parameters = { ...parameters, event_type: stepEditor.event_source_type.trim() || "*" };
+      const filter = parseOptionalExpr("Event source filter", stepEditor.event_source_filter_json);
+      if (!filter.ok) return false;
+      if (filter.value === undefined) delete next.parameters.filter;
+      else next.parameters.filter = filter.value;
+      const max = Math.trunc(Number(stepEditor.event_source_max ?? 0));
+      if (Number.isFinite(max) && max > 0) next.parameters.max = max;
+      else delete next.parameters.max;
+    }
     nodes[index] = next;
     if (selectedStepId.value !== next.id) {
       renameLayoutNode(selectedStepId.value, next.id);
@@ -1333,6 +1524,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       ? node.parameters.cases.map(switchCaseEditor)
       : [];
     stepEditor.switch_default = nodeRefId(node.parameters?.default) ?? "";
+    stepEditor.toggle_value_json = pretty(node.parameters?.value ?? valueRef("config", ["flags", "enabled"]));
+    stepEditor.toggle_on = nodeRefId(node.parameters?.on) ?? "";
+    stepEditor.toggle_off = nodeRefId(node.parameters?.off) ?? "";
+    stepEditor.percentage_key_json = pretty(node.parameters?.key ?? valueRef("input", ["user_id"]));
+    stepEditor.percentage_buckets = Array.isArray(node.parameters?.buckets)
+      ? node.parameters.buckets.map((bucket: unknown) => {
+          const record = (bucket && typeof bucket === "object" ? bucket : {}) as JsonRecord;
+          return { weight: Number(record.weight ?? 0), target: nodeRefId(record.target) ?? "" };
+        })
+      : [];
+    stepEditor.percentage_default = nodeRefId(node.parameters?.default) ?? "";
     stepEditor.parallel_branches = nodeRefArray(node.parameters?.branches);
     stepEditor.join_wait_for = nodeRefArray(node.parameters?.wait_for);
     stepEditor.join_mode = branchPolicyName(node.parameters?.mode, "all");
@@ -1351,6 +1553,46 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditor.config_metadata_json = stepEditorJson(node.parameters?.metadata ?? {});
     stepEditor.subflow_id = String(node.subflow_id ?? "");
     stepEditor.subflow_parameters_json = pretty(node.parameters ?? {});
+    stepEditor.assert_assertions = Array.isArray(node.parameters?.assertions)
+      ? node.parameters.assertions.map((assertion: unknown) => {
+          const record = (assertion && typeof assertion === "object" ? assertion : {}) as JsonRecord;
+          return {
+            name: String(record.name ?? ""),
+            condition_json: pretty(record.condition ?? true),
+            message: String(record.message ?? "")
+          };
+        })
+      : [];
+    stepEditor.transform_bindings_json = pretty(node.parameters?.bindings ?? {});
+    stepEditor.audit_action_json = stepEditorJson(node.parameters?.action ?? "workflow.audit");
+    stepEditor.audit_actor_json = optionalExprJson(node.parameters?.actor);
+    stepEditor.audit_target_json = optionalExprJson(node.parameters?.target);
+    stepEditor.audit_reason_json = optionalExprJson(node.parameters?.reason);
+    stepEditor.checkpoint_name = String(node.parameters?.name ?? "");
+    stepEditor.mutex_name = String(node.parameters?.name ?? "");
+    stepEditor.mutex_poll_interval = Number(node.parameters?.poll_interval_seconds ?? 30);
+    stepEditor.throttle_name = String(node.parameters?.name ?? "");
+    stepEditor.throttle_max_per_window = Number(node.parameters?.max_per_window ?? 10);
+    stepEditor.throttle_window_seconds = Number(node.parameters?.window_seconds ?? 60);
+    stepEditor.throttle_poll_interval = Number(node.parameters?.poll_interval_seconds ?? 30);
+    stepEditor.await_run_ids_json = pretty(node.parameters?.run_ids ?? valueRef("params", ["run_ids"]));
+    stepEditor.await_mode = node.parameters?.mode === "any" ? "any" : "all";
+    stepEditor.await_poll_interval = Number(node.parameters?.poll_interval_seconds ?? 30);
+    stepEditor.debounce_name = String(node.parameters?.name ?? "");
+    stepEditor.debounce_delay_seconds = Number(node.parameters?.delay_seconds ?? 30);
+    stepEditor.debounce_trigger_key_json = optionalExprJson(node.parameters?.trigger_key);
+    stepEditor.collect_name = String(node.parameters?.name ?? "");
+    stepEditor.collect_max = Number(node.parameters?.max ?? 10);
+    stepEditor.barrier_name = String(node.parameters?.name ?? "");
+    stepEditor.barrier_count = Number(node.parameters?.count ?? 2);
+    stepEditor.barrier_poll_interval = Number(node.parameters?.poll_interval_seconds ?? 30);
+    stepEditor.circuit_name = String(node.parameters?.name ?? "");
+    stepEditor.circuit_threshold = Number(node.parameters?.threshold ?? 5);
+    stepEditor.circuit_window_seconds = Number(node.parameters?.window_seconds ?? 60);
+    stepEditor.circuit_cooldown_seconds = Number(node.parameters?.cooldown_seconds ?? 60);
+    stepEditor.event_source_type = String(node.parameters?.event_type ?? "*");
+    stepEditor.event_source_filter_json = optionalExprJson(node.parameters?.filter);
+    stepEditor.event_source_max = Number(node.parameters?.max ?? 0);
     stepEditor.locked = isLockedWorkflowNode(node);
     stepEditor.skipped = node.skipped === true;
     stepEditor.max_attempts = Number(node.retry?.max_attempts ?? 1);
@@ -1871,6 +2113,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     markWorkflowDirty();
   }
 
+  function addAssertionEditor() {
+    stepEditor.assert_assertions.push({ name: "", condition_json: pretty({ value: valueRef("params", ["value"]), equals: true }), message: "" });
+    markWorkflowDirty();
+  }
+
+  function removeAssertionEditor(index: number) {
+    stepEditor.assert_assertions.splice(index, 1);
+    markWorkflowDirty();
+  }
+
+  function addPercentageBucketEditor() {
+    stepEditor.percentage_buckets.push({ weight: 50, target: "" });
+    markWorkflowDirty();
+  }
+
+  function removePercentageBucketEditor(index: number) {
+    stepEditor.percentage_buckets.splice(index, 1);
+    markWorkflowDirty();
+  }
+
   function addNodeRefEditor(list: string[]) {
     list.push("");
     markWorkflowDirty();
@@ -2105,6 +2367,18 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   function stepEditorJson(value: unknown): string {
     return JSON.stringify(value === undefined ? null : value, null, 2);
+  }
+
+  // an optional expression parameter renders as an empty editor when absent so it stays omitted.
+  function optionalExprJson(value: unknown): string {
+    return value === undefined || value === null ? "" : pretty(value);
+  }
+
+  // parse an optional expression editor: blank means omit, otherwise it must be valid json.
+  function parseOptionalExpr(label: string, text: string): { ok: true; value: any | undefined } | { ok: false } {
+    if (text.trim() === "") return { ok: true, value: undefined };
+    const parsed = parseStepJson(label, text);
+    return parsed.ok ? { ok: true, value: parsed.value } : { ok: false };
   }
 
   function isJsonObject(value: unknown): value is JsonRecord {
@@ -2353,8 +2627,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     ensureWorkflowNodes,
     addConditionBranchEditor,
     removeConditionBranchEditor,
+    addAssertionEditor,
+    removeAssertionEditor,
     addSwitchCaseEditor,
     removeSwitchCaseEditor,
+    addPercentageBucketEditor,
+    removePercentageBucketEditor,
     addNodeRefEditor,
     removeNodeRefEditor,
     openStepEditor,

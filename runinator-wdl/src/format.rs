@@ -903,6 +903,14 @@ impl Formatter {
     }
 
     fn match_stmt(&mut self, match_stmt: &MatchStmt) -> String {
+        match match_stmt.mode {
+            SwitchMode::Cases => self.match_cases(match_stmt),
+            SwitchMode::Toggle => self.toggle_stmt(match_stmt),
+            SwitchMode::Percentage => self.split_stmt(match_stmt),
+        }
+    }
+
+    fn match_cases(&mut self, match_stmt: &MatchStmt) -> String {
         let mut out = String::new();
         out.push_str(&format!("match {} {{\n", format_expr(&match_stmt.subject)));
         self.indent += 1;
@@ -920,11 +928,26 @@ impl Formatter {
             self.push_indent(&mut out);
             out.push_str("}\n");
         }
-        if let Some(body) = &match_stmt.default {
+        self.push_default_arm(&mut out, match_stmt.default.as_ref());
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        out
+    }
+
+    fn toggle_stmt(&mut self, match_stmt: &MatchStmt) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("toggle {} {{\n", format_expr(&match_stmt.subject)));
+        self.indent += 1;
+        // render `on` before `off` regardless of source order.
+        for want in [true, false] {
+            let Some(arm) = match_stmt.arms.iter().find(|arm| arm.toggle == Some(want)) else {
+                continue;
+            };
             self.push_indent(&mut out);
-            out.push_str("else -> {\n");
+            out.push_str(if want { "on -> {\n" } else { "off -> {\n" });
             self.indent += 1;
-            self.push_block_into(&mut out, body);
+            self.push_block_into(&mut out, &arm.body);
             self.indent -= 1;
             self.push_indent(&mut out);
             out.push_str("}\n");
@@ -933,6 +956,42 @@ impl Formatter {
         self.push_indent(&mut out);
         out.push('}');
         out
+    }
+
+    fn split_stmt(&mut self, match_stmt: &MatchStmt) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "split on {} {{\n",
+            format_expr(&match_stmt.subject)
+        ));
+        self.indent += 1;
+        for arm in &match_stmt.arms {
+            self.push_indent(&mut out);
+            out.push_str(&format!("{}% -> {{\n", arm.weight.unwrap_or_default()));
+            self.indent += 1;
+            self.push_block_into(&mut out, &arm.body);
+            self.indent -= 1;
+            self.push_indent(&mut out);
+            out.push_str("}\n");
+        }
+        self.push_default_arm(&mut out, match_stmt.default.as_ref());
+        self.indent -= 1;
+        self.push_indent(&mut out);
+        out.push('}');
+        out
+    }
+
+    fn push_default_arm(&mut self, out: &mut String, default: Option<&Block>) {
+        let Some(body) = default else {
+            return;
+        };
+        self.push_indent(out);
+        out.push_str("else -> {\n");
+        self.indent += 1;
+        self.push_block_into(out, body);
+        self.indent -= 1;
+        self.push_indent(out);
+        out.push_str("}\n");
     }
 
     fn parallel(&mut self, parallel: &ParallelStmt) -> String {

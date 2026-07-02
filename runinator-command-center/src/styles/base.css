@@ -61,6 +61,14 @@
   --workflow-node-border: #34495e;
   --workflow-node-text: #2c3e50;
 
+  /* spacing scale (use instead of ad-hoc px paddings/gaps to keep rhythm consistent) */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+
   /* radii */
   --radius-sm: 4px;
   --radius: 6px;

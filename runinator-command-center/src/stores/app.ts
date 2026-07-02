@@ -11,33 +11,33 @@ export const navSections: NavSection[] = [
     label: "Workspace",
     items: [
       { tab: "Dev", label: "Dev", icon: "debug", desktopOnly: true },
-      { tab: "Workflows", label: "Workflows", icon: "workflow" },
-      { tab: "Runs", label: "Runs", icon: "runs" },
-      { tab: "Providers", label: "Providers", icon: "box" },
-      { tab: "Replicas", label: "Replicas", icon: "list" }
+      { tab: "Workflows", label: "Workflows", icon: "workflow", searchPlaceholder: "Search workflows" },
+      { tab: "Runs", label: "Runs", icon: "runs", searchPlaceholder: "Search runs" },
+      { tab: "Providers", label: "Providers", icon: "box", searchPlaceholder: "Search providers" },
+      { tab: "Replicas", label: "Replicas", icon: "list", searchPlaceholder: "Search replicas" }
     ]
   },
   {
     label: "Inbox",
     items: [
-      { tab: "Approvals", label: "Approvals", icon: "approve", endpoint: "approvals" },
-      { tab: "Notifications", label: "Notifications", icon: "bell", endpoint: "notifications" }
+      { tab: "Approvals", label: "Approvals", icon: "approve", endpoint: "approvals", searchPlaceholder: "Search approvals" },
+      { tab: "Notifications", label: "Notifications", icon: "bell", endpoint: "notifications", searchPlaceholder: "Search notifications" }
     ]
   },
   {
     label: "Data",
     items: [
-      { tab: "Artifacts", label: "Artifacts", icon: "box", endpoint: "artifacts" },
-      { tab: "ExternalItems", label: "External Items", icon: "tag", endpoint: "external_items" },
-      { tab: "Events", label: "Events", icon: "flag", endpoint: "automation_events" }
+      { tab: "Artifacts", label: "Artifacts", icon: "box", endpoint: "artifacts", searchPlaceholder: "Search artifacts" },
+      { tab: "ExternalItems", label: "External Items", icon: "tag", endpoint: "external_items", searchPlaceholder: "Search external items" },
+      { tab: "Events", label: "Events", icon: "flag", endpoint: "automation_events", searchPlaceholder: "Search events" }
     ]
   },
   {
     label: "Other",
     items: [
-      { tab: "Gates", label: "Gates", icon: "gate" },
-      { tab: "Configs", label: "Configs", icon: "settings" },
-      { tab: "Secrets", label: "Secrets", icon: "key" }
+      { tab: "Gates", label: "Gates", icon: "gate", searchPlaceholder: "Search gates" },
+      { tab: "Configs", label: "Configs", icon: "settings", searchPlaceholder: "Search configs" },
+      { tab: "Secrets", label: "Secrets", icon: "key", searchPlaceholder: "Search secrets" }
     ]
   },
   {
@@ -51,7 +51,7 @@ export const navSections: NavSection[] = [
     label: "Admin",
     items: [
       { tab: "AdminSettings", label: "Settings", icon: "settings", adminOnly: true },
-      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true },
+      { tab: "Permissions", label: "Permissions", icon: "shield", adminOnly: true, searchPlaceholder: "Search users & teams" },
       { tab: "DeadLetters", label: "Dead Letters", icon: "flag", adminOnly: true },
       { tab: "AuditLog", label: "Audit Log", icon: "list", adminOnly: true }
     ]
@@ -96,6 +96,26 @@ export function isResourceTab(tab: AppTab): boolean {
 }
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 
+// transient feedback toasts. "loading"/"info" render neutral, never success-green.
+export type ToastKind = "info" | "loading" | "success" | "error";
+
+export interface Toast {
+  id: number;
+  kind: ToastKind;
+  text: string;
+}
+
+// how long each kind stays before auto-dismissing (null = sticky until replaced/dismissed).
+const TOAST_TIMEOUTS: Record<ToastKind, number | null> = {
+  info: 5000,
+  loading: null,
+  success: 5000,
+  error: 8000
+};
+
+// cap the visible stack so a burst of operations can't bury the screen.
+const MAX_TOASTS = 4;
+
 const SIDEBAR_COLLAPSED_KEY = "command-center.sidebar.collapsed";
 const DEFAULT_TAB_KEY = "command-center.defaultTab";
 
@@ -132,7 +152,10 @@ export const useAppStore = defineStore("app", () => {
   const eventStreamState = ref<EventStreamState>("disconnected");
   const replicaCounts = ref<ReplicaCounts>({ workers: 0, wakers: 0, webservices: 0 });
   const replicas = ref<ReplicaRecord[]>([]);
+  const toasts = ref<Toast[]>([]);
   let statusTimer = 0;
+  let toastSeq = 0;
+  const toastTimers = new Map<number, number>();
 
   const normalizedSearch = computed(() => searchQuery.value.trim().toLowerCase());
   const lastRefreshText = computed(() => (lastRefreshAt.value ? lastRefreshAt.value.toLocaleTimeString() : "-"));
@@ -170,18 +193,49 @@ export const useAppStore = defineStore("app", () => {
     }
   }
 
+  // push a transient toast onto the stack; returns its id so callers can dismiss it early.
+  function pushToast(kind: ToastKind, text: string): number {
+    const id = ++toastSeq;
+    toasts.value = [...toasts.value, { id, kind, text }].slice(-MAX_TOASTS);
+    const timeout = TOAST_TIMEOUTS[kind];
+    if (timeout !== null) {
+      toastTimers.set(
+        id,
+        window.setTimeout(() => dismissToast(id), timeout)
+      );
+    }
+    return id;
+  }
+
+  function dismissToast(id: number) {
+    toasts.value = toasts.value.filter((toast) => toast.id !== id);
+    const timer = toastTimers.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      toastTimers.delete(id);
+    }
+  }
+
+  function clearToasts() {
+    for (const timer of toastTimers.values()) window.clearTimeout(timer);
+    toastTimers.clear();
+    toasts.value = [];
+  }
+
   function setStatus(text: string) {
     statusText.value = text;
     errorText.value = "";
     lastRefreshAt.value = new Date();
     window.clearTimeout(statusTimer);
     statusTimer = window.setTimeout(() => (statusText.value = ""), 5000);
+    pushToast("success", text);
   }
 
   function setError(text: string) {
     errorText.value = text;
     statusText.value = "";
     initialLoading.value = false;
+    pushToast("error", text);
   }
 
   function markBackendReachable() {
@@ -233,6 +287,7 @@ export const useAppStore = defineStore("app", () => {
     loading.value = true;
     opLabel.value = label;
     errorText.value = "";
+    const toastId = pushToast("loading", `${label}...`);
     try {
       const result = await operation();
       markBackendReachable();
@@ -243,11 +298,13 @@ export const useAppStore = defineStore("app", () => {
     } finally {
       loading.value = false;
       opLabel.value = "";
+      dismissToast(toastId);
     }
   }
 
   function dispose() {
     window.clearTimeout(statusTimer);
+    clearToasts();
   }
 
   return {
@@ -266,6 +323,7 @@ export const useAppStore = defineStore("app", () => {
     eventStreamState,
     replicaCounts,
     replicas,
+    toasts,
     normalizedSearch,
     lastRefreshText,
     statusLine,
@@ -279,6 +337,9 @@ export const useAppStore = defineStore("app", () => {
     hasReplicaState,
     setStatus,
     setError,
+    pushToast,
+    dismissToast,
+    clearToasts,
     markBackendReachable,
     setServiceUrl,
     setEventStreamState,

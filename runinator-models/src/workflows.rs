@@ -463,6 +463,10 @@ pub enum WorkflowNodeKind {
     Wait,
     Condition,
     Switch,
+    /// route to `on` or `off` based on the truthiness of a single value (a literal light switch).
+    Toggle,
+    /// route to one of several weighted buckets by a stable hash of a key (percentage rollouts).
+    Percentage,
     Approval,
     Gate,
     Signal,

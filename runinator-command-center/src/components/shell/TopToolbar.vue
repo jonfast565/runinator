@@ -4,8 +4,8 @@
       <h1>{{ headingFor(app.activeTab) }}</h1>
       <span>{{ activeSubtitle }}</span>
     </div>
-    <div class="toolbar-search">
-      <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" placeholder="Search" />
+    <div v-if="searchPlaceholder" class="toolbar-search">
+      <input id="global-search" v-model="app.searchQuery" :disabled="app.serviceBlocked" :placeholder="searchPlaceholder" />
     </div>
     <div class="actions">
       <select
@@ -78,6 +78,9 @@ function onSwitchOrg(event: Event) {
 function headingFor(tab: AppTab): string {
   return navItemForTab(tab)?.label ?? String(tab);
 }
+
+// only show the global search box on tabs whose list actually consumes app.searchQuery.
+const searchPlaceholder = computed(() => navItemForTab(app.activeTab)?.searchPlaceholder ?? "");
 
 const activeSubtitle = computed(() => {
   switch (app.activeTab) {

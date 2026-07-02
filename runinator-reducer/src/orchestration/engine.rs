@@ -173,6 +173,8 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         WorkflowNodeKind::Wait => wait::WaitHandler.process(&ctx).await?,
         WorkflowNodeKind::Condition => basic::ConditionHandler.process(&ctx).await?,
         WorkflowNodeKind::Switch => basic::SwitchHandler.process(&ctx).await?,
+        WorkflowNodeKind::Toggle => basic::ToggleHandler.process(&ctx).await?,
+        WorkflowNodeKind::Percentage => basic::PercentageHandler.process(&ctx).await?,
         WorkflowNodeKind::Output => output::OutputHandler.process(&ctx).await?,
         WorkflowNodeKind::Input => input::InputHandler.process(&ctx).await?,
         WorkflowNodeKind::Config => basic::ConfigHandler.process(&ctx).await?,

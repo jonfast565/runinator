@@ -29,8 +29,13 @@
             </tr>
           </thead>
           <tbody>
+            <tr v-if="!filteredArtifacts.length">
+              <td colspan="8" class="empty-cell">
+                {{ store.artifacts.length ? `No artifacts match "${app.searchQuery}".` : "No artifacts yet." }}
+              </td>
+            </tr>
             <tr
-              v-for="artifact in store.artifacts"
+              v-for="artifact in filteredArtifacts"
               :key="artifact.id"
               :class="{ selected: store.selectedArtifactId === artifact.id }"
               @click="store.selectedArtifactId = artifact.id"
@@ -59,15 +64,27 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import { useArtifactsStore } from "../stores/artifacts";
+import { useAppStore } from "../stores/app";
 import type { RunArtifact } from "../types/models";
 import { formatDate } from "../utils/format";
 
 const store = useArtifactsStore();
+const app = useAppStore();
 const loading = ref(false);
+
+// filter artifacts by the global search box (matches name, run id, mime type, or uri).
+const filteredArtifacts = computed(() => {
+  const query = app.normalizedSearch;
+  if (!query) return store.artifacts;
+  return store.artifacts.filter((artifact) =>
+    [artifact.name, String(artifact.run_id ?? ""), artifact.mime_type, artifact.uri]
+      .some((value) => String(value ?? "").toLowerCase().includes(query))
+  );
+});
 
 async function refresh() {
   loading.value = true;
@@ -116,5 +133,11 @@ onMounted(refresh);
 
 .row-actions {
   text-align: right;
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 14px;
 }
 </style>

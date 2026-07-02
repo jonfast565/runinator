@@ -7,6 +7,10 @@
       </button>
     </header>
     <div ref="editorContainer" class="json-editor-container"></div>
+    <p v-if="!readonly && parseError" class="json-editor-error" role="alert">
+      <Icon name="alert" :size="12" />
+      <span>{{ parseError }}</span>
+    </p>
   </section>
 </template>
 
@@ -19,6 +23,7 @@ import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { shouldStartJsonCompletion, jsonCompletionSource } from '../../utils/json-completion';
 import { osCodeMirrorTheme } from '../../utils/codemirror-theme';
+import Icon from './Icon.vue';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -37,6 +42,22 @@ let view: EditorView | null = null;
 let disposeEditorTheme: (() => void) | null = null;
 const title = props.title;
 const copied = ref(false);
+const parseError = ref("");
+
+// surface invalid JSON inline instead of silently emitting it (only caught later on save).
+function validate(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    parseError.value = "";
+    return;
+  }
+  try {
+    JSON.parse(trimmed);
+    parseError.value = "";
+  } catch (err) {
+    parseError.value = err instanceof Error ? err.message : "Invalid JSON";
+  }
+}
 
 async function copy() {
   try {
@@ -63,7 +84,9 @@ onMounted(() => {
       EditorView.editable.of(!props.readonly),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          emit('update:modelValue', update.state.doc.toString());
+          const text = update.state.doc.toString();
+          emit('update:modelValue', text);
+          if (!props.readonly) validate(text);
         }
         if (!props.readonly && shouldStartJsonCompletion(update)) startCompletion(update.view);
       }),
@@ -79,6 +102,7 @@ onMounted(() => {
     parent: editorContainer.value,
   });
   disposeEditorTheme = editorTheme.install(view);
+  if (!props.readonly) validate(props.modelValue);
 });
 
 watch(() => props.modelValue, (newValue) => {
@@ -87,6 +111,7 @@ watch(() => props.modelValue, (newValue) => {
       changes: { from: 0, to: view.state.doc.length, insert: newValue }
     });
   }
+  if (!props.readonly) validate(newValue);
 });
 
 onBeforeUnmount(() => {
@@ -146,6 +171,18 @@ onBeforeUnmount(() => {
   width: 100%;
   border-top: 1px solid var(--border-subtle);
   overflow: hidden;
+}
+
+.json-editor-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 9px;
+  border-top: 1px solid var(--danger-bg);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: 11px;
 }
 
 :deep(.cm-editor) {

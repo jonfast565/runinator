@@ -16,9 +16,13 @@
         </div>
       </div>
 
-      <div v-if="!rows.length" class="empty-state">
-        No dead-lettered messages. Failed broker deliveries that exhaust their retries appear here.
-      </div>
+      <EmptyState
+        v-if="!rows.length"
+        compact
+        icon="flag"
+        title="No dead-lettered messages"
+        description="Failed broker deliveries that exhaust their retries appear here."
+      />
 
       <div v-else class="dlq-table-wrap">
         <table class="dlq-table">
@@ -56,6 +60,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
 import { listDeadLetters } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
 import { useOrgsStore } from "../stores/orgs";

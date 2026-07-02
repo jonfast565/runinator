@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--accent, #3498db);
+  background: var(--accent);
   color: #ffffff;
   font-size: 11px;
   font-weight: 600;
@@ -135,10 +135,10 @@ onBeforeUnmount(() => {
   display: grid;
   min-width: 200px;
   padding: 4px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
 }
 
 .user-info {
@@ -146,18 +146,18 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 2px;
   padding: 8px 8px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .user-info-name {
   font-weight: 600;
   font-size: 13px;
-  color: #17202a;
+  color: var(--text);
 }
 
 .user-info-email {
   font-size: 12px;
-  color: #64748b;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -168,8 +168,8 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -182,11 +182,11 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   border-color: transparent;
   background: transparent;
-  color: #17202a;
+  color: var(--text);
   font-size: 12px;
 }
 
 .user-menu-item:hover:not(:disabled) {
-  background: #f1f5f9;
+  background: var(--surface-hover);
 }
 </style>

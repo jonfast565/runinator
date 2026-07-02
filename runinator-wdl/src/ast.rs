@@ -497,9 +497,19 @@ pub struct WhileStmt {
     pub body: Block,
 }
 
+/// which router a `match`-family statement lowers to: `switch` cases, a `toggle` on/off, or a
+/// `percentage` weighted split. carried on `MatchStmt` so all three reuse the same arm plumbing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchMode {
+    Cases,
+    Toggle,
+    Percentage,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchStmt {
     pub subject: Expr,
+    pub mode: SwitchMode,
     pub arms: Vec<MatchArm>,
     pub default: Option<Block>,
 }
@@ -509,6 +519,10 @@ pub struct MatchArm {
     /// `Some(expr)` means an equality case; `None` (with `cond`) means a `when` case.
     pub equals: Option<Expr>,
     pub when: Option<Cond>,
+    /// percentage-mode weight for this arm (the `N` in `N% -> …`).
+    pub weight: Option<i64>,
+    /// toggle-mode branch: `Some(true)` is the `on` arm, `Some(false)` the `off` arm.
+    pub toggle: Option<bool>,
     pub body: Block,
 }
 

@@ -17,36 +17,26 @@
         </div>
       </div>
 
-      <div v-if="!rows.length" class="empty-state">
-        No audit entries. Logins and authorization denials are recorded here.
-      </div>
-
-      <div v-else class="audit-table-wrap">
-        <table class="audit-table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Action</th>
-              <th>Outcome</th>
-              <th>Actor</th>
-              <th>Resource</th>
-              <th>Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="String(row.id)">
-              <td>{{ formatDate(row.created_at as string) }}</td>
-              <td class="mono">{{ row.action }}</td>
-              <td>
-                <span class="badge" :class="`badge-${row.outcome}`">{{ row.outcome }}</span>
-              </td>
-              <td class="mono">{{ row.actor_id || row.actor_kind || "-" }}</td>
-              <td class="mono">{{ resourceLabel(row) }}</td>
-              <td class="audit-detail">{{ row.detail || "-" }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        :columns="columns"
+        :rows="rows"
+        row-key="id"
+        :page-size="50"
+        initial-sort-key="created_at"
+        initial-sort-dir="desc"
+        empty-icon="list"
+        empty-title="No audit entries"
+        empty-description="Logins and authorization denials are recorded here."
+      >
+        <template #cell-created_at="{ row }">{{ formatDate(row.created_at as string) }}</template>
+        <template #cell-action="{ row }"><span class="mono">{{ row.action }}</span></template>
+        <template #cell-outcome="{ row }">
+          <span class="badge" :class="`badge-${row.outcome}`">{{ row.outcome }}</span>
+        </template>
+        <template #cell-actor="{ row }"><span class="mono">{{ row.actor_id || row.actor_kind || "-" }}</span></template>
+        <template #cell-resource="{ row }"><span class="mono">{{ resourceLabel(row) }}</span></template>
+        <template #cell-detail="{ row }"><span class="audit-detail">{{ row.detail || "-" }}</span></template>
+      </DataTable>
     </div>
   </section>
 </template>
@@ -54,6 +44,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import { listAuditLog } from "../api/commandCenterApi";
 import { useAppStore } from "../stores/app";
 import { useOrgsStore } from "../stores/orgs";
@@ -65,6 +56,15 @@ const orgs = useOrgsStore();
 const loading = ref(false);
 const rows = ref<JsonRecord[]>([]);
 const action = ref("");
+
+const columns: DataTableColumn<JsonRecord>[] = [
+  { key: "created_at", label: "Time", sortable: true },
+  { key: "action", label: "Action", sortable: true },
+  { key: "outcome", label: "Outcome", sortable: true },
+  { key: "actor", label: "Actor", sortable: true, value: (row) => (row.actor_id || row.actor_kind || "-") as string },
+  { key: "resource", label: "Resource", value: (row) => resourceLabel(row) },
+  { key: "detail", label: "Detail" }
+];
 
 function resourceLabel(row: JsonRecord): string {
   if (!row.resource_type) return "-";
@@ -98,26 +98,6 @@ watch(() => orgs.activeOrgId, refresh);
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.audit-table-wrap {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
-
-.audit-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.audit-table th,
-.audit-table td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
 }
 
 .badge {

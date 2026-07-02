@@ -28,7 +28,8 @@ const DECL_KW = new Set([
 ]);
 // control-flow statements and block headers.
 const CONTROL_KW = new Set([
-  "if", "else", "for", "while", "until", "match", "when", "parallel", "race", "try", "catch",
+  "if", "else", "for", "while", "until", "match", "when", "toggle", "split", "on", "off",
+  "parallel", "race", "try", "catch",
   "finally", "map", "branch", "join", "wait", "emit", "output", "yield", "approve", "fail",
   "subflow", "compute", "return", "goto", "edges", "gate", "signal",
   "watch", "compensate",

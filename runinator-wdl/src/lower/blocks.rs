@@ -169,6 +169,20 @@ impl Lowerer {
         id: &str,
         cont: &str,
     ) -> Result<(), WdlError> {
+        match match_stmt.mode {
+            SwitchMode::Cases => self.lower_switch_cases(match_stmt, stmt, id, cont),
+            SwitchMode::Toggle => self.lower_toggle(match_stmt, stmt, id, cont),
+            SwitchMode::Percentage => self.lower_percentage(match_stmt, stmt, id, cont),
+        }
+    }
+
+    fn lower_switch_cases(
+        &mut self,
+        match_stmt: &MatchStmt,
+        stmt: &Stmt,
+        id: &str,
+        cont: &str,
+    ) -> Result<(), WdlError> {
         let value = self.lower_expr(&match_stmt.subject)?;
         let mut cases = Vec::new();
         for arm in &match_stmt.arms {
@@ -197,6 +211,72 @@ impl Lowerer {
         let mut fields = vec![("parameters", Value::Object(params))];
         self.apply_annotations(&mut fields, stmt);
         self.push(node(id, "switch", fields));
+        Ok(())
+    }
+
+    fn lower_toggle(
+        &mut self,
+        match_stmt: &MatchStmt,
+        stmt: &Stmt,
+        id: &str,
+        cont: &str,
+    ) -> Result<(), WdlError> {
+        let value = self.lower_expr(&match_stmt.subject)?;
+        let arm_target = |lowerer: &mut Self, want: bool| -> Result<Value, WdlError> {
+            let arm = match_stmt
+                .arms
+                .iter()
+                .find(|arm| arm.toggle == Some(want))
+                .ok_or_else(|| WdlError::lower("toggle requires an `on` and an `off` arm"))?;
+            let entry = lowerer.lower_block(&arm.body, cont)?;
+            Ok(node_ref(&entry))
+        };
+        let on = arm_target(self, true)?;
+        let off = arm_target(self, false)?;
+
+        let mut params = Map::new();
+        params.insert("value".into(), value);
+        params.insert("on".into(), on);
+        params.insert("off".into(), off);
+
+        let mut fields = vec![("parameters", Value::Object(params))];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "toggle", fields));
+        Ok(())
+    }
+
+    fn lower_percentage(
+        &mut self,
+        match_stmt: &MatchStmt,
+        stmt: &Stmt,
+        id: &str,
+        cont: &str,
+    ) -> Result<(), WdlError> {
+        let key = self.lower_expr(&match_stmt.subject)?;
+        let mut buckets = Vec::new();
+        for arm in &match_stmt.arms {
+            let weight = arm
+                .weight
+                .ok_or_else(|| WdlError::lower("split arm needs a percentage weight"))?;
+            let entry = self.lower_block(&arm.body, cont)?;
+            let mut bucket = Map::new();
+            bucket.insert("weight".into(), Value::from(weight));
+            bucket.insert("target".into(), node_ref(&entry));
+            buckets.push(Value::Object(bucket));
+        }
+        let default_entry = match &match_stmt.default {
+            Some(block) => self.lower_block(block, cont)?,
+            None => cont.to_string(),
+        };
+
+        let mut params = Map::new();
+        params.insert("key".into(), key);
+        params.insert("buckets".into(), Value::Array(buckets));
+        params.insert("default".into(), node_ref(&default_entry));
+
+        let mut fields = vec![("parameters", Value::Object(params))];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "percentage", fields));
         Ok(())
     }
 

@@ -241,6 +241,15 @@
       <path d="M4 12h16" />
       <path d="M4 17h6l4 3h6" />
     </template>
+    <template v-else-if="name === 'toggle'">
+      <rect x="3" y="8" width="18" height="8" rx="4" />
+      <circle cx="16" cy="12" r="2.4" />
+    </template>
+    <template v-else-if="name === 'percentage'">
+      <line x1="19" y1="5" x2="5" y2="19" />
+      <circle cx="7.5" cy="7.5" r="2.5" />
+      <circle cx="16.5" cy="16.5" r="2.5" />
+    </template>
     <template v-else-if="name === 'loop'">
       <path d="M21 12a9 9 0 1 1-3-6.7" />
       <polyline points="21,3 21,8 16,8" />
@@ -301,7 +310,7 @@ export type IconName =
   | "approve" | "reject" | "arrow-up" | "arrow-down" | "chevron-left" | "chevron-right"
   | "workflow" | "runs" | "list" | "key" | "box" | "message" | "gate"
   | "gear" | "flag" | "tag" | "cursor" | "skip" | "circle" | "dot" | "breakpoint"
-  | "bolt" | "clock" | "hourglass" | "branch" | "switch" | "loop" | "parallel" | "join"
+  | "bolt" | "clock" | "hourglass" | "branch" | "switch" | "toggle" | "percentage" | "loop" | "parallel" | "join"
   | "shield" | "user" | "grid" | "race" | "emit" | "output";
 
 const props = withDefaults(

@@ -278,9 +278,17 @@ describe("workflow graph utils", () => {
     const conditionNode = createWorkflowNode("condition", nodes);
     expect(conditionNode.transitions?.branches).toHaveLength(1);
     expect(createWorkflowNode("action", nodes)).toMatchObject({ kind: "action", action: { provider: "", function: "" }, retry: { max_attempts: 1 } });
-    for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "parallel", "join", "try", "map", "race", "output", "input", "subflow"] as const) {
+    for (const kind of ["action", "approval", "loop", "condition", "wait", "switch", "toggle", "percentage", "parallel", "join", "try", "map", "race", "output", "input", "subflow"] as const) {
       expect(createWorkflowNode(kind, nodes)).toMatchObject({ kind, retry: { max_attempts: 1 } });
     }
+    expect(createWorkflowNode("toggle", nodes)).toMatchObject({
+      kind: "toggle",
+      parameters: { on: { "$node": "end" }, off: { "$node": "end" } }
+    });
+    expect(createWorkflowNode("percentage", nodes)).toMatchObject({
+      kind: "percentage",
+      parameters: { buckets: [], default: { "$node": "end" } }
+    });
   });
 
   it("creates workflow trigger drafts with kind-specific defaults", () => {

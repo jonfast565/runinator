@@ -212,26 +212,26 @@ function cronExpressionsFor(workflow: WorkflowDefinition): string[] {
   font-weight: 700;
 }
 .pd-pill.ok {
-  background: #e8f7ef;
-  color: #11653b;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 .pd-pill.warn {
-  background: #fff4cc;
-  color: #8a5a00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 .pd-pill.muted {
-  background: #eef2f7;
-  color: #4b5663;
+  background: var(--surface-muted);
+  color: var(--text-subtle);
 }
 .pd-empty,
 .pd-none {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .pd-section h4 {
   margin: 4px 0 4px;
   font-size: 12px;
-  color: #344255;
+  color: var(--text-subtle);
 }
 .pd-list {
   list-style: none;
@@ -259,26 +259,26 @@ function cronExpressionsFor(workflow: WorkflowDefinition): string[] {
   letter-spacing: 0.03em;
 }
 .pd-tag.added {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 .pd-tag.changed {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 .pd-tag.unchanged {
-  background: #eef2f7;
-  color: #66717e;
+  background: var(--surface-muted);
+  color: var(--text-muted);
 }
 .pd-name {
   font-weight: 600;
-  color: #17202b;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pd-detail {
-  color: #66717e;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;

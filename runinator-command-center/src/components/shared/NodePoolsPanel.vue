@@ -152,10 +152,13 @@ onMounted(refresh);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  flex: 0 1 auto;
-  max-height: min(360px, 42vh);
-  min-height: 0;
+  flex: 0 0 auto;
+  height: min(360px, 42vh);
+  min-height: 140px;
   padding: 1rem;
+  /* let operators drag the pane taller to see more node groups at once. */
+  resize: vertical;
+  overflow: auto;
 }
 .node-pools-hint {
   margin: 0;

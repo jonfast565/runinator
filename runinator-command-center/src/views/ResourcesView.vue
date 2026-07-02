@@ -49,6 +49,11 @@
               </tr>
             </thead>
             <tbody>
+              <tr v-if="!resourcesStore.filteredResourceRecords.length">
+                <td :colspan="endpoint === 'approvals' ? 7 : 6" class="empty-cell">
+                  {{ resourcesStore.resourceRecords.length ? `No records match “${app.searchQuery}”.` : `No ${title.toLowerCase()} yet.` }}
+                </td>
+              </tr>
               <tr
                 v-for="record in resourcesStore.filteredResourceRecords"
                 :key="String(record.id ?? JSON.stringify(record))"
@@ -91,6 +96,7 @@ import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../stores/resources";
 import { useOrgsStore } from "../stores/orgs";
+import { useAppStore } from "../stores/app";
 import { formatDate, pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
@@ -101,6 +107,7 @@ const props = withDefaults(
 
 const resourcesStore = useResourcesStore();
 const orgs = useOrgsStore();
+const app = useAppStore();
 
 const title = computed(() => props.title || labelFor(props.endpoint));
 
@@ -133,6 +140,12 @@ watch(() => orgs.activeOrgId, refresh);
 
 tr.resolved td {
   opacity: 0.55;
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 14px;
 }
 
 .resolver-cell {

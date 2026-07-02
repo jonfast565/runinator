@@ -117,7 +117,7 @@ function lineClass(line: Line): string {
 .log-filter-input {
   flex: 1;
   padding: 3px 8px;
-  border: 1px solid #ccd4dd;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 11px;
 }
@@ -125,14 +125,14 @@ function lineClass(line: Line): string {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #475569;
+  color: var(--text-subtle);
   cursor: pointer;
 }
 .log-tail-indicator {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
   font-weight: 600;
@@ -141,13 +141,13 @@ function lineClass(line: Line): string {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #cbd5e1;
+  background: var(--border-strong);
 }
 .log-tail-indicator.live {
-  color: #16a34a;
+  color: var(--success-fg);
 }
 .log-tail-indicator.live .dot {
-  background: #22c55e;
+  background: var(--success-fg);
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -158,8 +158,9 @@ function lineClass(line: Line): string {
   flex: 1;
   font-size: 11px;
   font-family: "SFMono-Regular", Consolas, monospace;
-  background: #0f172a;
-  color: #e2e8f0;
+  /* fixed dark terminal surface; stays dark in both themes. */
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
   padding: 8px;
   margin: 0;
   border-radius: 4px;
@@ -178,7 +179,7 @@ function lineClass(line: Line): string {
 }
 .log-hint {
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-faint);
   margin: 4px 0 0;
 }
 </style>

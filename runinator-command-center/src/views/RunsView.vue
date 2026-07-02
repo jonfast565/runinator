@@ -26,7 +26,14 @@
               <strong>{{ selectedRunLabel }}</strong>
             </div>
           </div>
-          <div class="table-scroll runs-table-scroll">
+          <EmptyState
+            v-if="!workflows.recentWorkflowRuns.length"
+            compact
+            :icon="app.searchQuery ? 'search' : 'runs'"
+            :title="app.searchQuery ? 'No matches' : 'No runs yet'"
+            :description="app.searchQuery ? `No runs match “${app.searchQuery}”.` : 'Runs appear here once a workflow is executed. Run one from the Workflows tab.'"
+          />
+          <div v-else class="table-scroll runs-table-scroll">
             <RunTable
               :runs="workflows.recentWorkflowRuns"
               :selected-run-id="workflows.selectedWorkflowRunId"
@@ -153,6 +160,7 @@ import {
   fetchWorkflowRunArtifacts
 } from "../api/commandCenterApi";
 import { isTauriRuntime } from "../api/tauriRuntime";
+import EmptyState from "../components/shared/EmptyState.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";

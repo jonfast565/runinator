@@ -35,6 +35,7 @@ import { wsBaseUrl } from "./api/httpRuntime";
 import { isTauriRuntime, listenTauri } from "./api/tauriRuntime";
 import AppShell from "./components/shell/AppShell.vue";
 import { useEventStream } from "./composables/useEventStream";
+import { useUrlSync } from "./composables/useUrlSync";
 import { endpointForTab, isResourceTab, useAppStore } from "./stores/app";
 import { useAuthStore } from "./stores/auth";
 import LoginView from "./views/LoginView.vue";
@@ -86,6 +87,8 @@ const tasks = useTasksStore();
 // initialize early so the theme data-theme attribute is set before first render.
 useDisplayPreferencesStore();
 useEventStream();
+// keep the URL hash in sync with the active tab + selected workflow/run (deep links, back/forward).
+useUrlSync();
 
 let unlistenUrl: (() => void) | undefined;
 let unlistenError: (() => void) | undefined;
@@ -170,6 +173,8 @@ watch(
 watch(
   () => app.activeTab,
   (tab) => {
+    // reset the shared search box so a query typed on one tab doesn't silently filter the next.
+    app.searchQuery = "";
     if (tab === "Workflows" && !workflows.isDirty) workflows.refreshWorkflows();
     if (tab === "Runs") workflows.fetchRecentWorkflowRuns();
     if (tab === "Replicas") app.refreshReplicas().catch(() => {});

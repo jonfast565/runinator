@@ -92,6 +92,28 @@ pub struct SwitchParameters {
     pub default: Option<WorkflowNodeRef>,
 }
 
+/// a literal light switch: `value` truthiness routes to `on`, otherwise `off`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToggleParameters {
+    pub value: Value,
+    pub on: WorkflowNodeRef,
+    pub off: WorkflowNodeRef,
+}
+
+/// a weighted, hash-bucketed router: `hash(key) % total_weight` selects a bucket. sticky per key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PercentageParameters {
+    pub key: Value,
+    pub buckets: Vec<PercentageBucket>,
+    pub default: Option<WorkflowNodeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PercentageBucket {
+    pub weight: i64,
+    pub target: WorkflowNodeRef,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParallelParameters {
     pub branches: Vec<WorkflowNodeRef>,

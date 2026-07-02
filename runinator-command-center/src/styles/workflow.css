@@ -413,6 +413,9 @@
 }
 
 .workflow-wdl-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin: 0;
   padding: 8px 10px;
   border: 1px solid var(--warning-bg);
@@ -420,6 +423,20 @@
   background: var(--warning-bg);
   color: var(--warning-fg);
   font-size: 12px;
+}
+
+.workflow-wdl-error-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.workflow-wdl-error-body {
+  display: grid;
+  gap: 3px;
+}
+
+.workflow-wdl-error-hint {
+  opacity: 0.85;
 }
 
 .workflow-run-graph-panel {

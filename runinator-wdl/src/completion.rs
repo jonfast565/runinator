@@ -338,6 +338,20 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
         (
+            "toggle",
+            "keyword",
+            "toggle on/off switch",
+            "toggle ${value} {\n    on -> {\n        ${}\n    }\n    off -> {\n        ${}\n    }\n}",
+            true,
+        ),
+        (
+            "split",
+            "keyword",
+            "percentage split",
+            "split on ${key} {\n    ${50}% -> {\n        ${}\n    }\n    else -> {\n        ${}\n    }\n}",
+            true,
+        ),
+        (
             "parallel",
             "keyword",
             "parallel branches",

@@ -90,6 +90,8 @@ is not blindly re-run). Defaults preserve the historical behavior (exponential 1
 | `fail "msg"` | fail |
 | `if / else if / else` | condition |
 | `match subj { "x" -> {} when c -> {} else -> {} }` | switch |
+| `toggle <value> { on -> {} off -> {} }` (light switch: truthy → `on`, else `off`) | toggle |
+| `split on <key> { 30% -> {} 70% -> {} else -> {} }` (weighted rollout, sticky per key via `hash(key)`) | percentage |
 | `for x in coll limit N { }` | loop |
 | `map x in coll concurrency K { }` | map |
 | `parallel { branch {} branch {} } join all` | parallel + join |
@@ -191,7 +193,9 @@ semantic error, and any compute block that calls it dispatches to a worker (`std
 Names are qualified, not flat. There are three namespace roots:
 
 - **`std`** — the builtin standard library, organized into modules: `std.math`, `std.strings`,
-  `std.collections`, `std.objects`, `std.encoding`, `std.logic`, `std.dates`, `std.regex`, and the
+  `std.collections`, `std.objects`, `std.encoding` (incl. `hash`/`hash_percent` — pure, stable,
+  process-independent hashes for deterministic bucketing/percentage rollouts), `std.logic`,
+  `std.dates`, `std.regex`, and the
   effectful `std.exec`. A **prefix** intrinsic call must be fully qualified — `std.math.add(a, b)`,
   not `add(a, b)` — though the fluent/method form (`a.add(b)`) needs no prefix. The `std.` prefix is
   surface-only: the compiled graph and runtime dispatch use the bare leaf, so already-stored
@@ -509,7 +513,7 @@ likewise takes WDL `source` text, compiled client-side, rather than a JSON bundl
 ## Decompiler scope
 
 JSON → WDL recovers the full structured feature set — linear sequences, `for` loops,
-`if/else`, `match`, `parallel`/`join`, `race`, `map`, `try/catch/finally`, and all leaf
-node kinds — verified by compile → decompile → compile round-trip tests. Arbitrary
+`if/else`, `match`, `toggle`, `split`, `parallel`/`join`, `race`, `map`, `try/catch/finally`,
+and all leaf node kinds — verified by compile → decompile → compile round-trip tests. Arbitrary
 hand-written graphs with irreducible control flow (cross-block gotos that don't match a
 structured shape) are not guaranteed to decompile.

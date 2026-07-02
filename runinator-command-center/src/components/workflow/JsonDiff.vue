@@ -102,9 +102,9 @@ function formatValue(v: any): string {
 
 <style scoped>
 .json-diff {
-  border: 1px solid #d8e2ec;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--surface-subtle);
   padding: 6px 10px;
   font-size: 11px;
   margin-bottom: 8px;
@@ -117,12 +117,12 @@ function formatValue(v: any): string {
 .json-diff summary {
   cursor: pointer;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-subtle);
   user-select: none;
 }
 .json-diff-empty {
   padding: 8px 0;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-style: italic;
 }
 .json-diff-table {
@@ -134,35 +134,35 @@ function formatValue(v: any): string {
 .json-diff-table th,
 .json-diff-table td {
   padding: 4px 8px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-subtle);
   text-align: left;
   vertical-align: top;
   word-break: break-all;
 }
 .json-diff-table th {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   font-weight: 600;
 }
 .path {
   font-weight: 500;
-  color: #1e293b;
+  color: var(--text);
   white-space: nowrap;
 }
 .added .cell-after {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 .removed .cell-before {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 .changed .cell-before {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 .changed .cell-after {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 </style>

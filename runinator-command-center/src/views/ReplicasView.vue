@@ -121,7 +121,7 @@
 
           <div class="replicas-section">
             <h3>Attributes</h3>
-            <pre class="replicas-pre">{{ pretty(selectedReplica.attributes ?? {}) }}</pre>
+            <JsonEditor class="replicas-attributes" :model-value="pretty(selectedReplica.attributes ?? {})" readonly title="" />
           </div>
         </template>
 
@@ -135,6 +135,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import JsonEditor from "../components/shared/JsonEditor.vue";
 import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";
@@ -446,16 +447,8 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
-.replicas-pre {
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  padding: 12px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
+.replicas-attributes {
+  max-height: 360px;
 }
 
 @media (max-width: 900px) {

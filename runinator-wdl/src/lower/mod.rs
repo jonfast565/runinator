@@ -1514,7 +1514,11 @@ fn control_prefix(kind: &StmtKind) -> &'static str {
         StmtKind::If(_) => "if",
         StmtKind::For(_) => "for_loop",
         StmtKind::While(_) => "while_loop",
-        StmtKind::Match(_) => "switch",
+        StmtKind::Match(match_stmt) => match match_stmt.mode {
+            SwitchMode::Cases => "switch",
+            SwitchMode::Toggle => "toggle",
+            SwitchMode::Percentage => "percentage",
+        },
         StmtKind::Parallel(_) => "parallel",
         StmtKind::Try(_) => "try",
         StmtKind::Race(_) => "race",

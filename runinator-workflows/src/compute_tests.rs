@@ -159,6 +159,60 @@ fn len_and_keys_intrinsics() {
 }
 
 #[test]
+fn hash_is_deterministic_and_non_negative() {
+    let first = PureIntrinsics.call_for_test("hash", &[json!("user-42")]);
+    let again = PureIntrinsics.call_for_test("hash", &[json!("user-42")]);
+    assert_eq!(
+        first, again,
+        "hash must be deterministic for the same input"
+    );
+    assert!(
+        first.as_i64().is_some_and(|value| value >= 0),
+        "hash must be a non-negative integer"
+    );
+    // distinct inputs should (overwhelmingly) hash differently.
+    assert_ne!(
+        first,
+        PureIntrinsics.call_for_test("hash", &[json!("user-43")])
+    );
+    // non-string values hash their json form without erroring.
+    assert!(
+        PureIntrinsics
+            .call_for_test("hash", &[json!({ "id": 7 })])
+            .as_i64()
+            .is_some()
+    );
+}
+
+#[test]
+fn hash_percent_stays_within_bucket_range() {
+    for id in 0..500 {
+        let bucket = PureIntrinsics.call_for_test("hash_percent", &[json!(format!("user-{id}"))]);
+        let bucket = bucket.as_i64().expect("hash_percent returns an integer");
+        assert!(
+            (0..=99).contains(&bucket),
+            "hash_percent {bucket} out of 0..=99"
+        );
+    }
+    // sticky: the same key always lands in the same bucket.
+    assert_eq!(
+        PureIntrinsics.call_for_test("hash_percent", &[json!("sticky")]),
+        PureIntrinsics.call_for_test("hash_percent", &[json!("sticky")])
+    );
+}
+
+#[test]
+fn hash_percent_folds_in_a_declarative_condition() {
+    // a percentage rollout gate: `hash_percent(input.user) < 30`.
+    let condition = json!({
+        "value": { "$call": "hash_percent", "args": [{ "$ref": { "input": ["user"] } }] },
+        "less_than": 100
+    });
+    let context = json!({ "input": { "user": "abc" } });
+    assert!(crate::conditions::evaluate_condition(&condition, &context).unwrap());
+}
+
+#[test]
 fn signatures_cover_every_name() {
     let names: Vec<&str> = PureIntrinsics::signatures()
         .iter()

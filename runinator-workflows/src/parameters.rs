@@ -3,15 +3,16 @@ use runinator_models::workflows::{
     WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus, WorkflowWaitSeconds,
 };
 
+use crate::compute::call_pure;
 use crate::conditions::{evaluate_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
-use crate::expressions::parse_value_ref;
+use crate::expressions::{parse_value_ref, resolve_value_refs};
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
     JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
-    RaceParameters, SignalParameters, SwitchCase, SwitchParameters, TryParameters, WaitParameters,
-    WorkflowValueRef,
+    PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
+    SwitchParameters, ToggleParameters, TryParameters, WaitParameters, WorkflowValueRef,
 };
 use runinator_models::orchestration::GateKind;
 
@@ -62,6 +63,74 @@ pub fn parse_switch_parameters(
     Ok(SwitchParameters {
         value,
         cases,
+        default,
+    })
+}
+
+pub fn parse_toggle_parameters(
+    node: &WorkflowNode,
+) -> Result<ToggleParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let value = object
+        .get("value")
+        .cloned()
+        .ok_or_else(|| invalid_parameters(node, "toggle.value is required"))?;
+    let on = required_node_ref(object.get("on"), node, "toggle.on")?;
+    let off = required_node_ref(object.get("off"), node, "toggle.off")?;
+    Ok(ToggleParameters { value, on, off })
+}
+
+pub fn parse_percentage_parameters(
+    node: &WorkflowNode,
+) -> Result<PercentageParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let key = object
+        .get("key")
+        .cloned()
+        .ok_or_else(|| invalid_parameters(node, "percentage.key is required"))?;
+    let entries = object
+        .get("buckets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_parameters(node, "percentage.buckets must be an array"))?;
+    if entries.is_empty() {
+        return Err(invalid_parameters(
+            node,
+            "percentage.buckets cannot be empty",
+        ));
+    }
+    let buckets = entries
+        .iter()
+        .map(|bucket| {
+            let bucket_object = bucket
+                .as_object()
+                .ok_or_else(|| invalid_parameters(node, "percentage bucket must be an object"))?;
+            let weight = bucket_object
+                .get("weight")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    invalid_parameters(node, "percentage bucket weight must be an integer")
+                })?;
+            if weight <= 0 {
+                return Err(invalid_parameters(
+                    node,
+                    "percentage bucket weight must be greater than zero",
+                ));
+            }
+            let target = required_node_ref(
+                bucket_object.get("target"),
+                node,
+                "percentage bucket target",
+            )?;
+            Ok(PercentageBucket { weight, target })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let default = object
+        .get("default")
+        .map(|value| parse_node_ref_value(value, Some(node), "percentage.default"))
+        .transpose()?;
+    Ok(PercentageParameters {
+        key,
+        buckets,
         default,
     })
 }
@@ -307,6 +376,51 @@ pub fn evaluate_switch(
         .map(|target| target.as_str().to_string()))
 }
 
+/// evaluate a toggle node: `value` truthiness (same rule as conditions) routes to `on` else `off`.
+/// always yields a target, so a toggle never blocks a run.
+pub fn evaluate_toggle(
+    toggle: &ToggleParameters,
+    context: &Value,
+) -> Result<String, WorkflowValidationError> {
+    let mut condition = Map::new();
+    condition.insert(COND_VALUE.into(), toggle.value.clone());
+    let target = if evaluate_condition(&Value::Object(condition), context)? {
+        &toggle.on
+    } else {
+        &toggle.off
+    };
+    Ok(target.as_str().to_string())
+}
+
+/// evaluate a percentage node: `hash(key) % total_weight` selects a bucket by cumulative weight.
+/// a null key, a non-positive total, or no matching bucket falls back to `default` (`None` blocks).
+pub fn evaluate_percentage(
+    percentage: &PercentageParameters,
+    context: &Value,
+) -> Result<Option<String>, WorkflowValidationError> {
+    let default = || {
+        percentage
+            .default
+            .as_ref()
+            .map(|target| target.as_str().to_string())
+    };
+    let key = resolve_value_refs(&percentage.key, context)?;
+    let total: i64 = percentage.buckets.iter().map(|bucket| bucket.weight).sum();
+    if key.is_null() || total <= 0 {
+        return Ok(default());
+    }
+    let hashed = call_pure("hash", &[key])?.as_i64().unwrap_or(0);
+    let slot = hashed % total;
+    let mut cumulative = 0;
+    for bucket in &percentage.buckets {
+        cumulative += bucket.weight;
+        if slot < cumulative {
+            return Ok(Some(bucket.target.as_str().to_string()));
+        }
+    }
+    Ok(default())
+}
+
 pub(crate) fn validate_control_node_parameters(
     node: &WorkflowNode,
 ) -> Result<(), WorkflowValidationError> {
@@ -316,6 +430,12 @@ pub(crate) fn validate_control_node_parameters(
             for case in params.cases {
                 validate_condition(&case.condition)?;
             }
+        }
+        WorkflowNodeKind::Toggle => {
+            parse_toggle_parameters(node)?;
+        }
+        WorkflowNodeKind::Percentage => {
+            parse_percentage_parameters(node)?;
         }
         WorkflowNodeKind::Parallel => {
             parse_parallel_parameters(node)?;
@@ -351,6 +471,16 @@ pub(crate) fn parameter_targets(
         WorkflowNodeKind::Switch => {
             let params = parse_switch_parameters(node)?;
             targets.extend(params.cases.into_iter().map(|case| case.target));
+            targets.extend(params.default);
+        }
+        WorkflowNodeKind::Toggle => {
+            let params = parse_toggle_parameters(node)?;
+            targets.push(params.on);
+            targets.push(params.off);
+        }
+        WorkflowNodeKind::Percentage => {
+            let params = parse_percentage_parameters(node)?;
+            targets.extend(params.buckets.into_iter().map(|bucket| bucket.target));
             targets.extend(params.default);
         }
         WorkflowNodeKind::Parallel => {

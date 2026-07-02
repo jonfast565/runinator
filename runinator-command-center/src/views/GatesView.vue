@@ -40,6 +40,11 @@
                 </tr>
               </thead>
               <tbody>
+                <tr v-if="!gates.filteredGates.length">
+                  <td colspan="5" class="empty-cell">
+                    {{ gates.gates.length ? `No gates match “${app.searchQuery}”.` : "No gates are currently blocking a workflow." }}
+                  </td>
+                </tr>
                 <tr
                   v-for="gate in gates.filteredGates"
                   :key="String(gate.id ?? JSON.stringify(gate))"
@@ -79,11 +84,13 @@ import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useGatesStore } from "../stores/gates";
 import { useOrgsStore } from "../stores/orgs";
+import { useAppStore } from "../stores/app";
 import { pretty } from "../utils/format";
 import { isBadStatus, isGoodStatus } from "../utils/status";
 
 const gates = useGatesStore();
 const orgs = useOrgsStore();
+const app = useAppStore();
 const reason = ref("");
 
 async function resolve(action: "open" | "close") {
@@ -110,6 +117,12 @@ watch(() => orgs.activeOrgId, refresh);
 .gate-run-cell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 14px;
 }
 
 .gate-reason {

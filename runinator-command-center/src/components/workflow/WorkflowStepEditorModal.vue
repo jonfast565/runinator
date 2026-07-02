@@ -6,10 +6,9 @@
           <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>
           <span>{{ workflows.selectedStepId || "New step" }}</span>
         </div>
-        <div class="modal-header-actions">
-          <button type="submit" class="primary">Apply Step</button>
-          <button type="button" @click="workflows.closeStepEditor">Close</button>
-        </div>
+        <button type="button" class="btn-close" aria-label="Close" @click="workflows.closeStepEditor">
+          <Icon name="close" :size="16" />
+        </button>
       </header>
 
       <section class="form-section">
@@ -234,6 +233,65 @@
         <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
+      <section v-if="workflows.stepEditor.kind === 'toggle'" class="form-section">
+        <h3>Toggle</h3>
+        <p class="form-hint">A light switch: routes to <strong>on</strong> when the value is truthy, otherwise <strong>off</strong>.</p>
+        <div class="form-field">
+          <span class="form-field-label">Value</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.toggle_value_json" :context="expressionContext" title="Toggle value" />
+        </div>
+        <label>
+          On (truthy)
+          <select v-model="workflows.stepEditor.toggle_on">
+            <option value="">(none)</option>
+            <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
+          </select>
+        </label>
+        <label>
+          Off (falsy)
+          <select v-model="workflows.stepEditor.toggle_off">
+            <option value="">(none)</option>
+            <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
+          </select>
+        </label>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'percentage'" class="form-section">
+        <h3>Percentage</h3>
+        <p class="form-hint">Weighted rollout, deterministic and sticky per key: <code>hash(key) % total</code> picks a bucket.</p>
+        <div class="form-field">
+          <span class="form-field-label">Key</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.percentage_key_json" :context="expressionContext" title="Percentage key" />
+        </div>
+        <div v-for="(bucket, index) in workflows.stepEditor.percentage_buckets" :key="index" class="condition-branch-row">
+          <label>
+            Weight
+            <input v-model.number="bucket.weight" type="number" min="1" />
+          </label>
+          <span class="form-field-label">{{ bucketShare(index) }}</span>
+          <label>
+            Target
+            <select v-model="bucket.target">
+              <option value="">(none)</option>
+              <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
+            </select>
+          </label>
+          <button type="button" @click="workflows.removePercentageBucketEditor(index)">Remove</button>
+        </div>
+        <button type="button" @click="workflows.addPercentageBucketEditor">Add Bucket</button>
+        <label>
+          Default (no match)
+          <select v-model="workflows.stepEditor.percentage_default">
+            <option value="">(none)</option>
+            <option v-for="node in targetNodes" :key="node.id" :value="node.id">{{ node.id }}</option>
+          </select>
+        </label>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
       <section v-if="workflows.stepEditor.kind === 'parallel'" class="form-section">
         <h3>Parallel</h3>
         <div v-for="(_, index) in workflows.stepEditor.parallel_branches" :key="index" class="condition-branch-row">
@@ -414,6 +472,175 @@
         <AdvancedWdlParameters v-model="workflows.stepEditor.subflow_parameters_json" :context="expressionContext" title="Raw WDL parameters" />
       </section>
 
+      <section v-if="workflows.stepEditor.kind === 'assert'" class="form-section">
+        <h3>Assertions</h3>
+        <p class="form-hint">Each assertion is evaluated against the run context; the node fails with a structured violation list if any is false.</p>
+        <div v-for="(assertion, index) in workflows.stepEditor.assert_assertions" :key="index" class="assertion-row">
+          <div class="assertion-row-head">
+            <label>Name <input v-model="assertion.name" placeholder="unnamed" /></label>
+            <button type="button" @click="workflows.removeAssertionEditor(index)">Remove</button>
+          </div>
+          <div class="form-field">
+            <span class="form-field-label">Condition (must be true)</span>
+            <ExpressionJsonEditor v-model="assertion.condition_json" :context="expressionContext" title="Assertion condition" />
+          </div>
+          <label>Message <input v-model="assertion.message" placeholder="Assertion failed" /></label>
+        </div>
+        <button type="button" @click="workflows.addAssertionEditor">Add Assertion</button>
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'transform'" class="form-section">
+        <h3>Transform</h3>
+        <p class="form-hint">Each binding resolves an expression into the run context under its name. No side effects.</p>
+        <KeyValueObjectEditor v-model="transformBindings" title="Bindings" empty-label="No bindings configured." :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'audit'" class="form-section">
+        <h3>Audit</h3>
+        <p class="form-hint">Appends a tamper-evident audit record to the workflow log.</p>
+        <div class="form-field">
+          <span class="form-field-label">Action</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.audit_action_json" :context="expressionContext" title="Audit action" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Actor (optional)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.audit_actor_json" :context="expressionContext" title="Audit actor" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Target (optional)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.audit_target_json" :context="expressionContext" title="Audit target" />
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Reason (optional)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.audit_reason_json" :context="expressionContext" title="Audit reason" />
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Metadata &amp; Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'checkpoint'" class="form-section">
+        <h3>Checkpoint</h3>
+        <p class="form-hint">Snapshots run state at a named point; enables rollback via the control-plane API.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.checkpoint_name" placeholder="checkpoint name" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'mutex'" class="form-section">
+        <h3>Mutex</h3>
+        <p class="form-hint">Acquires a named distributed lock; parks until it is available. Set a node timeout to bound the wait.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.mutex_name" placeholder="lock name" /></label>
+          <label>Poll Interval (seconds) <input v-model.number="workflows.stepEditor.mutex_poll_interval" type="number" min="1" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'throttle'" class="form-section">
+        <h3>Throttle</h3>
+        <p class="form-hint">Enforces a cross-run rate limit; parks until a token is available in the rolling window.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.throttle_name" placeholder="limiter name" /></label>
+          <label>Max Per Window <input v-model.number="workflows.stepEditor.throttle_max_per_window" type="number" min="1" /></label>
+          <label>Window (seconds) <input v-model.number="workflows.stepEditor.throttle_window_seconds" type="number" min="1" /></label>
+          <label>Poll Interval (seconds) <input v-model.number="workflows.stepEditor.throttle_poll_interval" type="number" min="1" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'await_run'" class="form-section">
+        <h3>Await Run</h3>
+        <p class="form-hint">Waits for one or more independently-started runs to reach a terminal state.</p>
+        <div class="form-field">
+          <span class="form-field-label">Run IDs (array of UUIDs or an expression)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.await_run_ids_json" :context="expressionContext" title="Await run ids" />
+        </div>
+        <div class="form-grid">
+          <label>
+            Mode
+            <select v-model="workflows.stepEditor.await_mode">
+              <option value="all">all</option>
+              <option value="any">any</option>
+            </select>
+          </label>
+          <label>Poll Interval (seconds) <input v-model.number="workflows.stepEditor.await_poll_interval" type="number" min="1" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'debounce'" class="form-section">
+        <h3>Debounce</h3>
+        <p class="form-hint">Parks for a trailing delay that resets when re-triggered; collapses event bursts.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.debounce_name" placeholder="debounce name" /></label>
+          <label>Delay (seconds) <input v-model.number="workflows.stepEditor.debounce_delay_seconds" type="number" min="1" /></label>
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Trigger Key (optional)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.debounce_trigger_key_json" :context="expressionContext" title="Debounce trigger key" />
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'collect'" class="form-section">
+        <h3>Collect</h3>
+        <p class="form-hint">Accumulates externally-delivered items until the count threshold is met. Set a node timeout to bound the wait.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.collect_name" placeholder="collector name" /></label>
+          <label>Max Items <input v-model.number="workflows.stepEditor.collect_max" type="number" min="1" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'barrier'" class="form-section">
+        <h3>Barrier</h3>
+        <p class="form-hint">Parks until N runs reach this named barrier; the last arrival releases all waiters.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.barrier_name" placeholder="barrier name" /></label>
+          <label>Count <input v-model.number="workflows.stepEditor.barrier_count" type="number" min="1" /></label>
+          <label>Poll Interval (seconds) <input v-model.number="workflows.stepEditor.barrier_poll_interval" type="number" min="1" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'circuit_breaker'" class="form-section">
+        <h3>Circuit Breaker</h3>
+        <p class="form-hint">Tracks failure rates across runs; fast-fails via <code>on_failure</code> when tripped, then recovers after the cooldown.</p>
+        <div class="form-grid">
+          <label>Name <input v-model="workflows.stepEditor.circuit_name" placeholder="breaker name" /></label>
+          <label>Threshold (failures) <input v-model.number="workflows.stepEditor.circuit_threshold" type="number" min="1" /></label>
+          <label>Window (seconds) <input v-model.number="workflows.stepEditor.circuit_window_seconds" type="number" min="1" /></label>
+          <label>Cooldown (seconds) <input v-model.number="workflows.stepEditor.circuit_cooldown_seconds" type="number" min="0" /></label>
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
+      <section v-if="workflows.stepEditor.kind === 'event_source'" class="form-section">
+        <h3>Event Source</h3>
+        <p class="form-hint">Subscribes to a named event stream and drives the body subgraph on each matching event. Use <code>*</code> to match any type.</p>
+        <div class="form-grid">
+          <label>Event Type <input v-model="workflows.stepEditor.event_source_type" placeholder="*" /></label>
+          <label>Max Events (0 = unlimited) <input v-model.number="workflows.stepEditor.event_source_max" type="number" min="0" /></label>
+        </div>
+        <div class="form-field">
+          <span class="form-field-label">Filter (optional)</span>
+          <ExpressionJsonEditor v-model="workflows.stepEditor.event_source_filter_json" :context="expressionContext" title="Event source filter" />
+        </div>
+        <KeyValueObjectEditor v-model="additionalParameters" title="Additional Parameters" :expression-context="expressionContext" />
+        <AdvancedWdlParameters v-model="workflows.stepEditor.parameters_json" :context="expressionContext" title="Raw WDL parameters" />
+      </section>
+
       <section class="form-section">
         <h3>Transitions</h3>
         <div class="transition-grid">
@@ -434,8 +661,8 @@
 
       <p v-if="workflows.stepEditorError" class="error">{{ workflows.stepEditorError }}</p>
       <div class="modal-actions">
-        <button type="button" @click="workflows.closeStepEditor">Cancel</button>
-        <button type="submit">Apply Step</button>
+        <button type="button" class="btn" @click="workflows.closeStepEditor">Cancel</button>
+        <button type="submit" class="btn btn-primary">Apply Step</button>
       </div>
     </form>
   </div>
@@ -455,6 +682,7 @@ import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflo
 import { workflowNodeKindLabel } from "../../utils/workflows";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
+import Icon from "../shared/Icon.vue";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
@@ -501,6 +729,30 @@ const reservedParameterKeys = computed(() => {
       return new Set(["prompt"]);
     case "config":
       return new Set(["name", "metadata"]);
+    case "assert":
+      return new Set(["assertions"]);
+    case "transform":
+      return new Set(["bindings"]);
+    case "audit":
+      return new Set(["action", "actor", "target", "reason"]);
+    case "checkpoint":
+      return new Set(["name"]);
+    case "mutex":
+      return new Set(["name", "poll_interval_seconds"]);
+    case "throttle":
+      return new Set(["name", "max_per_window", "window_seconds", "poll_interval_seconds"]);
+    case "await_run":
+      return new Set(["run_ids", "mode", "poll_interval_seconds"]);
+    case "debounce":
+      return new Set(["name", "delay_seconds", "trigger_key"]);
+    case "collect":
+      return new Set(["name", "max"]);
+    case "barrier":
+      return new Set(["name", "count", "poll_interval_seconds"]);
+    case "circuit_breaker":
+      return new Set(["name", "threshold", "window_seconds", "cooldown_seconds"]);
+    case "event_source":
+      return new Set(["event_type", "filter", "max"]);
     default:
       return new Set<string>();
   }
@@ -527,6 +779,14 @@ const targetNodes = computed(() => {
   const nodes: any[] = workflows.workflowDraft.definition?.nodes ?? [];
   return nodes.filter((node) => node.id !== workflows.selectedStepId);
 });
+// the effective traffic share of a percentage bucket = its weight over the total of all weights.
+function bucketShare(index: number): string {
+  const buckets = workflows.stepEditor.percentage_buckets;
+  const total = buckets.reduce((sum, bucket) => sum + (Number(bucket.weight) || 0), 0);
+  const weight = Number(buckets[index]?.weight) || 0;
+  if (total <= 0) return "—";
+  return `${Math.round((weight / total) * 100)}%`;
+}
 const expressionContext = computed(() => ({
   workflowInputType: workflows.workflowDraft.input_type ?? null,
   nodes: workflows.workflowDraft.definition?.nodes ?? [],
@@ -571,6 +831,12 @@ const outputDataObject = computed({
   get: () => parseObject(workflows.stepEditor.output_data_json, {}),
   set: (value) => {
     workflows.stepEditor.output_data_json = pretty(value);
+  }
+});
+const transformBindings = computed({
+  get: () => parseObject(workflows.stepEditor.transform_bindings_json, {}),
+  set: (value) => {
+    workflows.stepEditor.transform_bindings_json = pretty(value);
   }
 });
 const outputDataIsObject = computed(() => {
@@ -640,23 +906,12 @@ function onSubflowNameChange(event: Event) {
 
 .modal-header span,
 .result-metadata {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
-.modal-header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: start;
-}
-
-.modal-header-actions .primary {
-  background: #17202a;
-  color: #ffffff;
-}
-
 .hint {
-  color: #66717e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -682,6 +937,27 @@ function onSubflowNameChange(event: Event) {
   grid-template-columns: minmax(0, 1fr) 180px auto;
   gap: 8px;
   align-items: end;
+}
+
+.assertion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.assertion-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.assertion-row-head label {
+  flex: 1;
 }
 
 .result-metadata {

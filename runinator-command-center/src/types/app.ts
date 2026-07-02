@@ -33,6 +33,9 @@ export interface NavItem {
   desktopOnly?: boolean;
   // only available to admins, or to auth-disabled stacks where every caller is an admin.
   adminOnly?: boolean;
+  // placeholder for the global search box; when set the tab's list consumes app.searchQuery.
+  // when unset the search box is hidden for this tab so it is never a dead control.
+  searchPlaceholder?: string;
 }
 
 export interface NavSection {
