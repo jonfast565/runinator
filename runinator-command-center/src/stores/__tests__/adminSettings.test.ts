@@ -3,8 +3,8 @@ import { createPinia, setActivePinia } from "pinia";
 import { navSections } from "../app";
 import { useAdminSettingsStore } from "../adminSettings";
 
-vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+vi.mock("../../core/api/commandCenterApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/api/commandCenterApi")>()),
   fetchCredentials: vi.fn(),
   fetchForeignLanguageRuntime: vi.fn(),
   saveForeignLanguageRuntime: vi.fn(),
@@ -14,7 +14,7 @@ import {
   fetchCredentials,
   fetchForeignLanguageRuntime,
   saveForeignLanguageRuntime,
-} from "../../api/commandCenterApi";
+} from "../../core/api/commandCenterApi";
 
 describe("admin settings store", () => {
   beforeEach(() => {

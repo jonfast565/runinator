@@ -43,7 +43,7 @@ export interface GraphEdgePathOptions {
 
 /** Fields read by portable edge editor helpers; compatible with Vue Flow edges. */
 export interface GraphEdgeLike {
-  id: string;
+  id?: string;
   source: string;
   target: string;
   sourceHandle?: string | null;
@@ -52,6 +52,7 @@ export interface GraphEdgeLike {
 }
 
 export interface GraphEdgeModel extends GraphEdgeLike {
+  id: string;
   type: string;
   label?: string;
   data: WorkflowEditorEdgeData;

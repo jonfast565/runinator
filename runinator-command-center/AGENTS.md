@@ -20,7 +20,7 @@ The frontend is split for Flutter migration:
 
 - `core/domain/` — wire models (`models/`, `json.ts`)
 - `core/api/` — `commandCenterApi`, `httpRuntime`, injected `CommandRuntime`
-- `core/services/` — application logic (`AuthService`, `AppService`, `ResourcesService`, …)
+- `core/services/` — application logic (`AuthService`, `AppService`, `ResourcesService`, `GatesService`, `ArtifactsService`, `NotificationsService`, `SecretsService`, `ProvidersService`, `OrgsService`, `AdminSettingsService`, `DisplayPreferencesService`, `LocalWorkerService`, `PermissionsService`, `WorkflowCatalogService`, `WorkflowEditorService`, `WorkflowRunService`)
 - `core/realtime/` — WebSocket clients and event routing
 - `core/navigation/` — tabs, nav config, breakpoints, URL sync helpers
 - `core/workflow/` — workflow graph domain logic
@@ -44,7 +44,7 @@ The frontend is split for Flutter migration:
 - API facade: `src/core/api/commandCenterApi.ts`, runtime bootstrap in `src/main.ts`
 - Services registry: `src/core/services/index.ts`
 - Pinia adapters: `src/ui/adapters/pinia/`
-- Workflow graph: `src/core/workflow/`, canvas `src/ui/components/workflow/WorkflowCanvas.vue`
+- Workflow graph: `src/core/workflow/`, services `src/core/services/workflows/`, canvas `src/ui/components/workflow/WorkflowCanvas.vue`
 - View manifests: `src/ui/views/*.manifest.ts`
 - Rust/Tauri commands: `src-tauri/src/`
 

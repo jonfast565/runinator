@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { usePermissionsStore } from "../permissions";
 
-vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+vi.mock("../../core/api/commandCenterApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/api/commandCenterApi")>()),
   addTeamMember: vi.fn(),
   createApiKey: vi.fn(),
   listApiKeys: vi.fn(),
@@ -27,7 +27,7 @@ import {
   revokeApiKey,
   rotateApiKey,
   updateApiKey,
-} from "../../api/commandCenterApi";
+} from "../../core/api/commandCenterApi";
 
 describe("permissions store", () => {
   beforeEach(() => {

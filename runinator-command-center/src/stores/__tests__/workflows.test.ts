@@ -9,8 +9,8 @@ import type {
   WorkflowTrigger,
 } from "../../types/models";
 
-vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+vi.mock("../../core/api/commandCenterApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/api/commandCenterApi")>()),
   closeGate: vi.fn(),
   compileWdl: vi.fn(),
   fetchGates: vi.fn(),
@@ -32,7 +32,7 @@ import {
   openGate,
   patchWorkflowRunDebug,
   saveWorkflowWdl,
-} from "../../api/commandCenterApi";
+} from "../../core/api/commandCenterApi";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 const RUN_ID = "00000000-0000-0000-0000-000000000070";
@@ -42,12 +42,17 @@ const TRIGGER_ID = "00000000-0000-0000-0000-000000000012";
 describe("workflow run detail state", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    useWorkflowsStore().clearServiceState({ discardDraft: true });
     vi.stubGlobal("window", {
       clearTimeout: () => undefined,
-      setTimeout: () => 0,
+      setTimeout: (fn: () => void) => {
+        fn();
+        return 0;
+      },
     });
     vi.clearAllMocks();
     vi.mocked(fetchGates).mockResolvedValue([]);
+    vi.mocked(decompileToWdl).mockResolvedValue("workflow stub { start -> end }");
   });
 
   it("does not let older HTTP fetches overwrite a WebSocket push", async () => {

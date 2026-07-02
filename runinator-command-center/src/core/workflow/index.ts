@@ -888,7 +888,7 @@ export function moveWorkflowEdgeEditorDraft(
 function defaultWorkflowEdgeEditorDraft(edge: GraphEdgeLike, optionId: string): WorkflowEdgeEditorDraft {
   const data = edge.data as WorkflowEditorEdgeData | undefined;
   return {
-    edgeId: edge.id,
+    edgeId: edge.id ?? "",
     source: edge.source,
     target: edge.target,
     optionId,
