@@ -324,6 +324,7 @@ import type {
   WorkflowNodeRun,
   WorkflowRunDetail,
 } from "../types/models";
+import { workflowInputType } from "../types/models";
 
 const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlp";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
@@ -370,9 +371,10 @@ const watchedFiles = computed(() => inspectResult.value?.files ?? []);
 const availableWorkflows = computed(() => inspectResult.value?.workflows ?? workflows.workflows);
 const selectedIsWdl = computed(() => selectedFilePath.value.endsWith(".wdl"));
 const selectedIsJson = computed(() => selectedFilePath.value.endsWith(".json"));
-const runWorkflowInputType = computed<RuninatorType>(
-  () => resolveRunWorkflow()?.input_type ?? { type: "any" },
-);
+const runWorkflowInputType = computed((): RuninatorType => {
+  const workflow = resolveRunWorkflow();
+  return workflow ? (workflowInputType(workflow) ?? { type: "any" }) : { type: "any" };
+});
 const runWorkflowKey = computed(() => runWorkflowRef.value || "none");
 const canSaveSource = computed(
   () => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,

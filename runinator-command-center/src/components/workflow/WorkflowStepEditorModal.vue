@@ -1273,13 +1273,15 @@ import { computed, onMounted, ref } from "vue";
 import { useProvidersStore } from "../../stores/providers";
 import { buildInputSkeleton, useWorkflowsStore } from "../../stores/workflows";
 import { pretty } from "../../utils/format";
+import type { JsonRecord } from "../../types/models";
+import { workflowInputType } from "../../types/models";
 import { parseObject } from "../../utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../utils/workflow-references";
-import { asArray, isRecord, workflowNodeKindLabel } from "../../utils/workflows";
+import { asArray, isRecord, recordArray, workflowNodeKindLabel } from "../../utils/workflows";
 import { displayValue } from "../../utils/values";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
@@ -1415,8 +1417,8 @@ function bucketShare(index: number): string {
 }
 
 const expressionContext = computed(() => ({
-  workflowInputType: workflows.workflowDraft.input_type,
-  nodes: asArray(workflows.workflowDraft.definition.nodes).filter(isRecord),
+  workflowInputType: workflowInputType(workflows.workflowDraft),
+  nodes: recordArray(workflows.workflowDraft.definition.nodes),
   currentNodeId: workflows.selectedStepId,
   providers: providersStore.providers,
   // a loaded run's data lets the editor preview resolved values against real outputs.
@@ -1447,7 +1449,7 @@ const selectedSubflowMissing = computed(() => {
 // the child workflow's declared input schema drives the typed parameter form.
 const selectedSubflowInputType = computed(() => {
   const workflow = workflows.workflows.find((w) => w.id === workflows.stepEditor.subflow_id);
-  return workflow?.input_type ?? null;
+  return workflow ? workflowInputType(workflow) : null;
 });
 
 const subflowParameters = computed({
@@ -1484,11 +1486,11 @@ function onSubflowParametersChange(value: unknown) {
   workflows.stepEditor.subflow_parameters_json = pretty(object);
 }
 
-function omitKeys(value: Record<string, unknown>, keys: Set<string>): Record<string, unknown> {
+function omitKeys(value: JsonRecord, keys: Set<string>): JsonRecord {
   return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.has(key)));
 }
 
-function pickKeys(value: Record<string, unknown>, keys: Set<string>): Record<string, unknown> {
+function pickKeys(value: JsonRecord, keys: Set<string>): JsonRecord {
   return Object.fromEntries(Object.entries(value).filter(([key]) => keys.has(key)));
 }
 
@@ -1539,7 +1541,7 @@ function onSubflowNameChange(event: Event) {
 
   // seed declared fields when no parameters are set yet, so the form renders pre-populated.
   if (Object.keys(subflowParameters.value).length === 0) {
-    onSubflowParametersChange(buildInputSkeleton(workflow.input_type));
+    onSubflowParametersChange(buildInputSkeleton(workflowInputType(workflow) ?? { type: "any" }));
   }
 }
 </script>

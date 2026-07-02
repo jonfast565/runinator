@@ -1,4 +1,5 @@
 import type { JsonRecord } from "../types/models";
+import { asJsonValue } from "../types/json";
 
 export interface RenameObjectKeyResult {
   value: JsonRecord;
@@ -50,7 +51,7 @@ export function setObjectValue(record: JsonRecord, key: string, value: unknown):
     return record;
   }
 
-  return { ...record, [key]: value };
+  return { ...record, [key]: asJsonValue(value) };
 }
 
 export function removeObjectKey(record: JsonRecord, key: string): JsonRecord {

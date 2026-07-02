@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, shallowRef } from "vue";
 import { closeGate, deleteGate, fetchGates, openGate } from "../api/commandCenterApi";
 import type { GateRecord } from "../types/models";
 import { useAppStore } from "./app";
@@ -7,22 +7,37 @@ import { useAppStore } from "./app";
 // dedicated store for the gates view. unlike the generic resources store, gates carry their own
 // open/close actions (a gate blocks a workflow node until it is opened).
 export const useGatesStore = defineStore("gates", () => {
-  const gates = ref<GateRecord[]>([]);
-  const selectedGate = ref<GateRecord | null>(null);
+  const gates = shallowRef<GateRecord[]>([]);
+  const selectedGate = shallowRef<GateRecord | null>(null);
   const app = useAppStore();
 
-  const filteredGates = computed(() => {
+  const filteredGates = computed((): GateRecord[] => {
     const query = app.normalizedSearch;
 
     if (!query) {
       return gates.value;
     }
 
-    return gates.value.filter((gate) =>
-      [gate.id, gate.kind, gate.status, gate.label, gate.node_id, gate.workflow_run_id]
+    const matches: GateRecord[] = [];
+
+    for (const gate of gates.value) {
+      const haystack = [
+        gate.id,
+        gate.kind,
+        gate.status,
+        gate.label,
+        gate.node_id,
+        gate.workflow_run_id,
+      ]
         .filter((value) => value !== undefined && value !== null)
-        .some((value) => value.toLowerCase().includes(query)),
-    );
+        .map((value) => (typeof value === "string" ? value : String(value)).toLowerCase());
+
+      if (haystack.some((value) => value.includes(query))) {
+        matches.push(gate);
+      }
+    }
+
+    return matches;
   });
 
   // a gate is resolvable from the ui only while it is still pending/closed.

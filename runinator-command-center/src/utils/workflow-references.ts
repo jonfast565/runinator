@@ -1,5 +1,6 @@
 import type {
   JsonRecord,
+  JsonValue,
   ProviderMetadata,
   RuninatorType,
   WorkflowRunDetail,
@@ -182,7 +183,7 @@ export function buildSampleContext(
   }
 
   const steps: JsonRecord = {};
-  let prev: unknown = null;
+  let prev: JsonValue | null = null;
 
   for (const node of detail.nodes) {
     if (node.output_json === undefined || node.output_json === null) {

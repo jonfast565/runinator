@@ -73,6 +73,7 @@ import type { WorkflowExpressionEditorContext } from "../../utils/workflow-expre
 import { isWorkflowExpressionValue } from "../../utils/workflow-expression-completion";
 import { parseSecretRef, secretRef, secretRefLabel } from "../../utils/secrets";
 import { isBlankValue, displayValue } from "../../utils/values";
+import { asJsonValue } from "../../types/json";
 import { useSecretsStore } from "../../stores/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
 
@@ -122,7 +123,7 @@ const errors = computed(() => {
 });
 
 function setValue(name: string, value: unknown) {
-  emit("update:modelValue", { ...props.modelValue, [name]: value });
+  emit("update:modelValue", { ...props.modelValue, [name]: asJsonValue(value) });
 }
 
 function parameterValue(name: string): unknown {

@@ -5,6 +5,7 @@ import {
   applyWorkflowInlineNodeEdit,
   applyWorkflowEdgeEditorDraft,
   applyWorkflowEdgeSemantic,
+  asRecord,
   autoArrangeWorkflowLayout,
   buildGraphEdges,
   buildGraphNodes,
@@ -19,6 +20,7 @@ import {
   setWorkflowEdgeLabelOffset,
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
+  recordArray,
   workflowEdgeEditorDraft,
   workflowEdgeOptionId,
   workflowEdgeSemanticOptions,
@@ -402,7 +404,7 @@ describe("workflow graph utils", () => {
       transitions: { on_success: { $node: "end" }, on_reject: { $node: "end" } },
     });
     const conditionNode = createWorkflowNode("condition", nodes);
-    expect(conditionNode.transitions?.branches).toHaveLength(1);
+    expect(recordArray(asRecord(conditionNode.transitions).branches)).toHaveLength(1);
     expect(createWorkflowNode("action", nodes)).toMatchObject({
       kind: "action",
       action: { provider: "", function: "" },

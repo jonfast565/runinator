@@ -1,11 +1,11 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, shallowRef } from "vue";
 import { fetchProviders as fetchProvidersApi } from "../api/commandCenterApi";
 import { errorMessage } from "../utils/format";
 import type { ProviderMetadata } from "../types/models";
 
 export const useProvidersStore = defineStore("providers", () => {
-  const providers = ref<ProviderMetadata[]>([]);
+  const providers = shallowRef<ProviderMetadata[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
   // drives the providers view selection; set by deep links such as the run-timeline quick action.

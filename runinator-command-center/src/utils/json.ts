@@ -1,11 +1,10 @@
-import type { JsonRecord } from "../types/models";
+import type { JsonRecord, JsonValue } from "../types/json";
+import { asJsonRecord, isJsonObject } from "../types/json";
 
 export function parseObject(text: string, fallback: JsonRecord): JsonRecord {
   try {
-    const value: unknown = JSON.parse(text || "{}");
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as JsonRecord)
-      : fallback;
+    const value: JsonValue = JSON.parse(text || "{}") as JsonValue;
+    return isJsonObject(value) ? value : fallback;
   } catch {
     return fallback;
   }
@@ -13,10 +12,10 @@ export function parseObject(text: string, fallback: JsonRecord): JsonRecord {
 
 export function parseRequiredObject(text: string): JsonRecord | null {
   try {
-    const value: unknown = JSON.parse(text || "{}");
+    const value: JsonValue = JSON.parse(text || "{}") as JsonValue;
 
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return value as JsonRecord;
+    if (isJsonObject(value)) {
+      return value;
     }
   } catch {
     // surfaced by caller.
@@ -25,9 +24,9 @@ export function parseRequiredObject(text: string): JsonRecord | null {
   return null;
 }
 
-export function parseRequiredJson(text: string): unknown {
+export function parseRequiredJson(text: string): JsonValue | null {
   try {
-    return JSON.parse(text || "null");
+    return JSON.parse(text || "null") as JsonValue;
   } catch {
     // surfaced by caller.
   }
@@ -38,3 +37,10 @@ export function parseRequiredJson(text: string): unknown {
 export function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
+
+// legacy alias used by a few call sites.
+export function parseObjectRecord(text: string, fallback: JsonRecord): JsonRecord {
+  return parseObject(text, fallback);
+}
+
+export { asJsonRecord as asJsonObject };

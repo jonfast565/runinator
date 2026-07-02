@@ -24,6 +24,9 @@ import type {
   ProviderMetadata,
   ActionResultMetadata,
 } from "../../types/models";
+import { asJsonRecord, asJsonValue } from "../../types/json";
+import { isJsonRecord } from "../../types/json";
+import { coerceDebugFrame } from "../../types/models/workflow-state";
 import type { IconName } from "../../types/icons";
 import { statusClassForNode } from "../status";
 import { displayValue, isBlankValue } from "../values";
@@ -200,10 +203,8 @@ export function buildGraphNodes(
   const detailNodes = detail?.nodes ?? [];
   const runByNode = new Map(detailNodes.map((run) => [run.node_id, run]));
   const executionCounts = workflowRunExecutionCounts(detailNodes);
-  const debug = asRecord(detail?.run.state?.debug);
-  const breakpointSet = new Set<string>(
-    asArray(debug.breakpoints).filter((v): v is string => typeof v === "string"),
-  );
+  const debug = coerceDebugFrame(detail?.run.state?.debug);
+  const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
   return nodes.map((node: JsonRecord, index: number) => {
     const id = displayValue(node.id) || `step_${String(index + 1)}`;
     const layoutPosition = layout[id] ?? fallbackLayout[id];
@@ -650,11 +651,9 @@ export function validateWorkflowIssues(
       pushNodeRefIssue(issues, nodeIds, nodeId, key, transitions[key], false);
     }
 
-    if (Array.isArray(transitions.branches)) {
-      transitions.branches.forEach((branch: JsonRecord, index: number) => {
-        pushNodeRefIssue(issues, nodeIds, nodeId, `branches.${String(index)}`, branch.target, true);
-      });
-    }
+    recordArray(transitions.branches).forEach((branch, index) => {
+      pushNodeRefIssue(issues, nodeIds, nodeId, `branches.${String(index)}`, branch.target, true);
+    });
 
     pushControlFlowIssues(issues, node, nodeIds, nodeId);
     pushConnectivityIssues(issues, node, nodeId);
@@ -662,18 +661,16 @@ export function validateWorkflowIssues(
     pushExpressionIssues(issues, node.wait, nodeIds, nodeId, `${nodeId}.wait`);
     pushExpressionIssues(issues, node.condition, nodeIds, nodeId, `${nodeId}.condition`);
 
-    if (Array.isArray(transitions.branches)) {
-      transitions.branches.forEach((branch: JsonRecord, index: number) => {
-        pushExpressionIssues(
-          issues,
-          branch.when,
-          nodeIds,
-          nodeId,
-          `${nodeId}.transitions.branches[${String(index)}].when`,
-          `branches.${String(index)}`,
-        );
-      });
-    }
+    recordArray(transitions.branches).forEach((branch, index) => {
+      pushExpressionIssues(
+        issues,
+        branch.when,
+        nodeIds,
+        nodeId,
+        `${nodeId}.transitions.branches[${String(index)}].when`,
+        `branches.${String(index)}`,
+      );
+    });
 
     pushProviderIssues(issues, node, providers, nodeId);
   }
@@ -1065,7 +1062,7 @@ function writeWorkflowEdgeDraft(
         ),
       );
 
-      switchCase[draft.matchKind] = parsed.matchValue ?? true;
+      switchCase[draft.matchKind] = asJsonValue(parsed.matchValue ?? true);
       applyOptionalLabel(switchCase, draft.label);
       list[index] = switchCase;
     } else if (parameterKey === "buckets") {
@@ -1423,11 +1420,9 @@ export function autoArrangeWorkflowEdgeHandles(
       setHandles(source, key, nodeRefId(transitions[key]));
     }
 
-    if (Array.isArray(transitions.branches)) {
-      transitions.branches.forEach((branch: JsonRecord, index: number) => {
-        setHandles(source, `branches.${String(index)}`, nodeRefId(branch.target));
-      });
-    }
+    recordArray(transitions.branches).forEach((branch, index) => {
+      setHandles(source, `branches.${String(index)}`, nodeRefId(branch.target));
+    });
 
     for (const { target, parameterKey, parameterIndex } of controlFlowTargetValues(node)) {
       setHandles(source, parameterSemanticKey(parameterKey, parameterIndex), target);
@@ -1640,13 +1635,13 @@ export function setWorkflowEdgeHandles(
   const nextOffset = labelOffset === undefined ? previousOffset : normalizeLabelOffset(labelOffset);
   const previousAnchor = normalizeLabelAnchor(asRecord(edgeHandles[key]).labelAnchor);
   const nextAnchor = labelAnchor === undefined ? previousAnchor : normalizeLabelAnchor(labelAnchor);
-  edgeHandles[key] = {
+  edgeHandles[key] = asJsonValue({
     sourceHandle: normalizeConnectionHandle(sourceHandle),
     targetHandle: normalizeConnectionHandle(targetHandle),
     edgeStyle: normalizeWorkflowEdgeStyle(edgeStyle),
     ...(nextOffset ? { labelOffset: nextOffset } : {}),
     ...(nextAnchor ? { labelAnchor: nextAnchor } : {}),
-  };
+  });
 }
 
 export function removeWorkflowEdgeHandles(
@@ -1901,8 +1896,8 @@ export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: str
     }
 
     if (Array.isArray(transitions.branches)) {
-      transitions.branches = transitions.branches.filter(
-        (branch: JsonRecord) => nodeRefId(branch.target) !== nodeId,
+      transitions.branches = recordArray(transitions.branches).filter(
+        (branch) => nodeRefId(branch.target) !== nodeId,
       );
     }
 
@@ -2141,25 +2136,26 @@ function cloneRecord(value: JsonRecord): JsonRecord {
 }
 
 export function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+  return isJsonRecord(value);
 }
 
 // coerce unknown json into a mutable record/array so in-place graph edits stay
 // type-safe. returns the same reference when the value already matches, so
 // reassigning the coerced value back onto its parent preserves mutation.
 export function asRecord(value: unknown): JsonRecord {
-  return isRecord(value) ? value : {};
+  return asJsonRecord(value);
 }
 
-export function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? (value as unknown[]) : [];
-}
-
-// coerce unknown json into an array of records, dropping non-object entries.
-// workflow node/branch/case/bucket lists are always object arrays, so this is a
-// no-op on valid data while giving callers a typed JsonRecord[] to iterate.
 export function recordArray(value: unknown): JsonRecord[] {
-  return asArray(value).filter(isRecord);
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(isRecord);
+}
+
+export function asArray(value: unknown): JsonRecord[] {
+  return recordArray(value);
 }
 
 function graphEdge(

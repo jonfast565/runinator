@@ -292,10 +292,11 @@ import type {
   WorkflowEdgeEditorDraft,
   WorkflowEdgeSemanticOption,
 } from "../../types/models";
+import { workflowInputType } from "../../types/models";
 import { useWorkflowsStore } from "../../stores/workflows";
 import { useProvidersStore } from "../../stores/providers";
 import { useSecretsStore } from "../../stores/secrets";
-import { asArray, isRecord, optionIdForSourceHandle } from "../../utils/workflows";
+import { optionIdForSourceHandle, recordArray } from "../../utils/workflows";
 import { buildSampleContext } from "../../utils/workflow-references";
 import { displayValue } from "../../utils/values";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
@@ -337,15 +338,14 @@ const edgeStyleOptions = [
   { value: "square", label: "Square" },
 ];
 const workflowNodeIds = computed(() => {
-  const nodes = workflows.workflowDraft.definition.nodes;
-  return Array.isArray(nodes)
-    ? nodes.map((node: JsonRecord) => displayValue(node.id)).filter(Boolean)
-    : [];
+  return recordArray(workflows.workflowDraft.definition.nodes)
+    .map((node) => displayValue(node.id))
+    .filter(Boolean);
 });
 // references in scope for the edge's condition/match expressions, anchored at the edge source node.
 const edgeExpressionContext = computed(() => ({
-  workflowInputType: workflows.workflowDraft.input_type,
-  nodes: asArray(workflows.workflowDraft.definition.nodes).filter(isRecord),
+  workflowInputType: workflowInputType(workflows.workflowDraft),
+  nodes: recordArray(workflows.workflowDraft.definition.nodes),
   currentNodeId: edgeEditor.value?.source ?? "",
   providers: providersStore.providers,
   sampleContext: buildSampleContext(workflows.workflowRunDetail),

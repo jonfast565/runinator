@@ -1,11 +1,13 @@
 import type {
   JsonRecord,
+  JsonValue,
   RuninatorType,
   WorkflowDefinition,
   WorkflowEdgeEditorDraft,
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "../../types/models";
+import { asJsonValue } from "../../types/json";
 import { pretty } from "../../utils/format";
 import { displayValue, isBlankValue } from "../../utils/values";
 import { asArray, asRecord, nodeRef, nodeRefId, valueRef } from "../../utils/workflows";
@@ -110,7 +112,7 @@ export function buildInputSkeleton(ty: RuninatorType | null): JsonRecord {
   return skeleton;
 }
 
-function defaultValueForInputType(ty: RuninatorType): unknown {
+function defaultValueForInputType(ty: RuninatorType): JsonValue {
   switch (ty.type) {
     case "string":
       return "";
@@ -129,7 +131,7 @@ function defaultValueForInputType(ty: RuninatorType): unknown {
     case "map":
       return {};
     case "struct":
-      return buildInputSkeleton(ty);
+      return asJsonValue(buildInputSkeleton(ty));
     case "union":
       return ty.variants.length ? defaultValueForInputType(ty.variants[0]) : null;
     default:

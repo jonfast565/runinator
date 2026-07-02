@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSSRApp, h } from "vue";
 import { renderToString } from "vue/server-renderer";
+import type { JsonRecord } from "../../../types/models";
 import KeyValueObjectEditor from "../KeyValueObjectEditor.vue";
 import {
   removeObjectKey,
@@ -39,7 +40,7 @@ describe("KeyValueObjectEditor", () => {
   });
 
   it("adds, renames, updates, and removes rows without losing sibling values", () => {
-    let value: Record<string, unknown> = { message: "hello", retries: 1 };
+    let value: JsonRecord = { message: "hello", retries: 1 };
     const key = uniqueObjectKey(value);
 
     value = setObjectValue(value, key, null);

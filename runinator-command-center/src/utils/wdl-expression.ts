@@ -1,3 +1,5 @@
+import type { JsonValue } from "../types/json";
+import { asJsonValue } from "../types/json";
 import type { JsonRecord } from "../types/models";
 
 type TokenKind = "ident" | "string" | "number" | "op" | "punct" | "eof";
@@ -68,7 +70,7 @@ export function expressionJsonToWdl(value: unknown): string {
   return `{ ${entries.join(", ")} }`;
 }
 
-export function parseWdlExpression(source: string): unknown {
+export function parseWdlExpression(source: string): JsonValue {
   const parser = new Parser(tokenize(source));
   const value = parser.parseExpression();
   parser.expect("eof");
@@ -231,7 +233,7 @@ class Parser {
 
   constructor(private readonly tokens: Token[]) {}
 
-  parseExpression(): unknown {
+  parseExpression(): JsonValue {
     return this.parseCoalesce();
   }
 
@@ -246,7 +248,7 @@ class Parser {
     return token;
   }
 
-  private parseCoalesce(): unknown {
+  private parseCoalesce(): JsonValue {
     const parts = [this.parseConcat()];
 
     while (this.match("op", "??")) {
@@ -256,7 +258,7 @@ class Parser {
     return parts.length === 1 ? parts[0] : { $coalesce: parts };
   }
 
-  private parseConcat(): unknown {
+  private parseConcat(): JsonValue {
     const parts = [this.parsePrimary()];
 
     while (this.match("op", "++")) {
@@ -266,7 +268,7 @@ class Parser {
     return parts.length === 1 ? parts[0] : { $concat: parts };
   }
 
-  private parsePrimary(): unknown {
+  private parsePrimary(): JsonValue {
     const token = this.peek();
 
     if (this.match("punct", "(")) {
@@ -285,7 +287,7 @@ class Parser {
 
     if (token.kind === "string") {
       this.index += 1;
-      return JSON.parse(token.text);
+      return asJsonValue(JSON.parse(token.text));
     }
 
     if (token.kind === "number") {
@@ -302,7 +304,7 @@ class Parser {
     throw new Error("Expected expression");
   }
 
-  private parseIdentPrimary(): unknown {
+  private parseIdentPrimary(): JsonValue {
     const head = this.expect("ident").text;
 
     if (head === "true") {
@@ -332,7 +334,7 @@ class Parser {
     return lowerPath(path);
   }
 
-  private parseObject(): JsonRecord {
+  private parseObject(): JsonValue {
     const record: JsonRecord = {};
 
     while (!this.match("punct", "}")) {
@@ -345,7 +347,7 @@ class Parser {
         key = this.expect("ident").text;
       }
 
-      let value: unknown;
+      let value: JsonValue;
 
       if (this.match("punct", ":")) {
         value = this.parseExpression();
@@ -363,11 +365,11 @@ class Parser {
       break;
     }
 
-    return record;
+    return asJsonValue(record);
   }
 
-  private parseArray(): unknown[] {
-    const items: unknown[] = [];
+  private parseArray(): JsonValue[] {
+    const items: JsonValue[] = [];
 
     while (!this.match("punct", "]")) {
       items.push(this.parseExpression());
@@ -410,7 +412,7 @@ class Parser {
   }
 }
 
-function lowerPath(path: string[]): unknown {
+function lowerPath(path: string[]): JsonValue {
   const [head, ...rest] = path;
 
   if (head === "params" || head === "prev" || head === "config") {

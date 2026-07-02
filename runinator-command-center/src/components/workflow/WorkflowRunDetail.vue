@@ -220,7 +220,8 @@ import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../utils/format";
 import { displayValue } from "../../utils/values";
 import { computed, nextTick, ref } from "vue";
-import type { ActionResultMetadata, WorkflowNodeRun } from "../../types/models";
+import type { ActionResultMetadata, DebugFrame, WorkflowNodeRun } from "../../types/models";
+import { coerceDebugFrame } from "../../types/models/workflow-state";
 import {
   asArray,
   isRecord,
@@ -357,20 +358,14 @@ const selectedNodeOutput = computed<Record<string, unknown> | null>(() => {
   const output = node?.output_json;
 
   if (output && typeof output === "object" && !Array.isArray(output)) {
-    return output as Record<string, unknown>;
+    return output;
   }
 
   return null;
 });
 
-const debugState = computed<Record<string, unknown> | null>(() => {
-  const debug = workflows.workflowRunDetail?.run.state?.debug;
-
-  if (debug && typeof debug === "object" && !Array.isArray(debug)) {
-    return debug as Record<string, unknown>;
-  }
-
-  return null;
+const debugState = computed<DebugFrame | null>(() => {
+  return coerceDebugFrame(workflows.workflowRunDetail?.run.state?.debug) ?? null;
 });
 
 const inputJsonText = computed(() => pretty(debugState.value?.input_json ?? {}));
