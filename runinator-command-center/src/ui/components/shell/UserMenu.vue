@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "../shared/Icon.vue";
-import { useAuthStore } from "../../../stores/auth";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 
 const auth = useAuthStore();
 const menuRef = ref<HTMLElement | null>(null);

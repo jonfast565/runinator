@@ -87,9 +87,9 @@ import {
   type NodeBackendInfo,
   type ProvisionedGroup,
 } from "../../../core/services";
-import { useAppStore } from "../../../stores/app";
-import { useAuthStore } from "../../../stores/auth";
-import { errorMessage } from "../../../utils/format";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { errorMessage } from "../../../core/utils/format";
 
 const app = useAppStore();
 const auth = useAuthStore();

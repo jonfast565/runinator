@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useWorkflowRunStream } from "../useWorkflowRunStream";
-import { setHttpAuthToken } from "../../../api/httpRuntime";
-import { useAppStore } from "../../../stores/app";
-import { useAuthStore } from "../../../stores/auth";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import type { WorkflowRunDetail } from "../../../types/models";
+import { setHttpAuthToken } from "../../../core/api/httpRuntime";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import type { WorkflowRunDetail } from "../../../core/domain/models";
 
 const RUN_ID = "00000000-0000-0000-0000-000000000042";
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";

@@ -183,12 +183,12 @@ import JsonEditor from "../components/shared/JsonEditor.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
-import { useAppStore } from "../../stores/app";
-import { useProvidersStore } from "../../stores/providers";
-import { useSecretsStore } from "../../stores/secrets";
-import type { CredentialSummary, SettingKind } from "../../types/models";
-import { secretKey, settingRef } from "../../utils/secrets";
-import { buildSettingsTree } from "../../utils/settings-tree";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useProvidersStore } from "../../ui/adapters/pinia/providers";
+import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
+import type { CredentialSummary, SettingKind } from "../../core/domain/models";
+import { secretKey, settingRef } from "../../core/utils/secrets";
+import { buildSettingsTree } from "../../core/utils/settings-tree";
 
 const props = defineProps<{
   settingKind: SettingKind;

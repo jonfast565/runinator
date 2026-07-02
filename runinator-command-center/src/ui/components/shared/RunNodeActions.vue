@@ -57,7 +57,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import Icon from "./Icon.vue";
-import type { RunSummary, WorkflowNodeRun } from "../../../types/models";
+import type { RunSummary, WorkflowNodeRun } from "../../../core/domain/models";
 
 export type RunNodeActionType = "replay-run" | "replay-from" | "open-editor" | "open-provider";
 

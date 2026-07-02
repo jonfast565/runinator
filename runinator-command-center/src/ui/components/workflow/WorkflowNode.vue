@@ -210,18 +210,18 @@
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
 import { computed, ref, watch } from "vue";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { useResourcesStore } from "../../../stores/resources";
-import { useAppStore } from "../../../stores/app";
-import { isApprovalWaitingStatus, type ApprovalAction } from "../../../utils/approvals";
-import { isInputWaitingStatus } from "../../../utils/inputs";
-import { statusClassForNode } from "../../../utils/status";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { isApprovalWaitingStatus, type ApprovalAction } from "../../../core/utils/approvals";
+import { isInputWaitingStatus } from "../../../core/utils/inputs";
+import { statusClassForNode } from "../../../core/utils/status";
 import {
   workflowNodeKindIcon,
   workflowNodeKindDescription,
   workflowNodeKindLabel,
-} from "../../../utils/workflows";
-import { displayValue } from "../../../utils/values";
+} from "../../../core/workflow";
+import { displayValue } from "../../../core/utils/values";
 import { workflowRunExtrasService } from "../../../core/services";
 import type {
   GateRecord,
@@ -229,7 +229,7 @@ import type {
   WorkflowSemanticHandle,
   WorkflowValidationIssue,
   WorkflowValidationSeverity,
-} from "../../../types/models";
+} from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
 

@@ -95,7 +95,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useWorkflowsStore } from "../../../stores/workflows";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import Icon from "../shared/Icon.vue";
 import DebugJsonModal from "./DebugJsonModal.vue";
 

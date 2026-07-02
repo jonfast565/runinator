@@ -132,8 +132,8 @@ import {
   type OrgUsage,
   type RateCard,
 } from "../../core/services";
-import { useAppStore } from "../../stores/app";
-import { useOrgsStore } from "../../stores/orgs";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 
 const HOURS_PER_MONTH = 730;
 

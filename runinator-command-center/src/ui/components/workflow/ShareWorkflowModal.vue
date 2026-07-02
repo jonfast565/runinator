@@ -64,7 +64,7 @@ import { onMounted, ref } from "vue";
 import { workflowSharingService } from "../../../core/services";
 import Modal from "../shared/Modal.vue";
 import Button from "../shared/Button.vue";
-import type { JsonRecord } from "../../../types/models";
+import type { JsonRecord } from "../../../core/domain/models";
 
 const props = defineProps<{ workflowId: string }>();
 const emit = defineEmits<{ close: [] }>();

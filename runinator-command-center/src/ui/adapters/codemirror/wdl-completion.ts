@@ -11,7 +11,7 @@ import type {
   WdlCompletionRequest,
   WdlCompletionResponse,
   WdlSettingRef,
-} from "../../../types/models";
+} from "../../../core/domain/models";
 import { wdlCompletion } from "./codemirror-lang-wdl";
 
 export function wdlProviderCompletionSource(

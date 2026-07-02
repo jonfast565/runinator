@@ -1270,19 +1270,19 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useProvidersStore } from "../../../stores/providers";
-import { buildInputSkeleton, useWorkflowsStore } from "../../../stores/workflows";
-import { pretty } from "../../../utils/format";
-import type { JsonRecord } from "../../../types/models";
-import { workflowInputType } from "../../../types/models";
-import { parseObject } from "../../../utils/json";
+import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
+import { buildInputSkeleton, useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { pretty } from "../../../core/utils/format";
+import type { JsonRecord } from "../../../core/domain/models";
+import { workflowInputType } from "../../../core/domain/models";
+import { parseObject } from "../../../core/utils/json";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
-import { buildSampleContext, workflowReferenceGroups } from "../../../utils/workflow-references";
-import { asArray, isRecord, recordArray, workflowNodeKindLabel } from "../../../utils/workflows";
-import { displayValue } from "../../../utils/values";
+import { buildSampleContext, workflowReferenceGroups } from "../../../core/utils/workflow-references";
+import { asArray, isRecord, recordArray, workflowNodeKindLabel } from "../../../core/workflow";
+import { displayValue } from "../../../core/utils/values";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
 import Icon from "../shared/Icon.vue";

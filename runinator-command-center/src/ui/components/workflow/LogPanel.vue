@@ -36,7 +36,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import type { RunChunk } from "../../../types/models";
+import type { RunChunk } from "../../../core/domain/models";
 
 const props = defineProps<{
   chunks: RunChunk[];

@@ -1,8 +1,8 @@
 import { nextTick, onScopeDispose, watch } from "vue";
-import { tabs, useAppStore } from "../../stores/app";
-import { useWorkflowsStore } from "../../stores/workflows";
-import { formatRoute, parseRoute } from "../../utils/url-sync";
-import type { AppTab } from "../../types/app";
+import { tabs, useAppStore } from "../../ui/adapters/pinia/app";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { formatRoute, parseRoute } from "../../core/utils/url-sync";
+import type { AppTab } from "../../core/navigation/app";
 
 // keeps the URL hash in sync with the active tab and the selected workflow/run so views are
 // deep-linkable (#/Runs/<id>, #/Workflows/<id>) and browser back/forward works. a lightweight

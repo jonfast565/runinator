@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useAppStore } from "../../../stores/app";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useSupervisorStatus } from "../../composables/useSupervisorStatus";
 import type { SupervisorProcessSnapshot } from "../../../core/api/commandCenterApi";
 

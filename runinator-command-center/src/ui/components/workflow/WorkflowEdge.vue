@@ -40,8 +40,8 @@ import {
   getStraightPath,
   useVueFlow,
 } from "@vue-flow/core";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import type { WorkflowEditorEdgeData } from "../../../types/models";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import type { WorkflowEditorEdgeData } from "../../../core/domain/models";
 
 // vue flow passes the resolved edge geometry to custom edge components.
 const props = defineProps<{

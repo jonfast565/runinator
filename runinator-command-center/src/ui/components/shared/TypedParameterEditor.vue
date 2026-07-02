@@ -68,13 +68,13 @@ import type {
   CredentialSummary,
   JsonRecord,
   RuninatorType,
-} from "../../../types/models";
-import type { WorkflowExpressionEditorContext } from "../../../utils/workflow-expression-completion";
-import { isWorkflowExpressionValue } from "../../../utils/workflow-expression-completion";
-import { parseSecretRef, secretRef, secretRefLabel } from "../../../utils/secrets";
-import { isBlankValue, displayValue } from "../../../utils/values";
-import { asJsonValue } from "../../../types/json";
-import { useSecretsStore } from "../../../stores/secrets";
+} from "../../../core/domain/models";
+import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { isWorkflowExpressionValue } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { parseSecretRef, secretRef, secretRefLabel } from "../../../core/utils/secrets";
+import { isBlankValue, displayValue } from "../../../core/utils/values";
+import { asJsonValue } from "../../../core/domain/json";
+import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
 
 const props = defineProps<{

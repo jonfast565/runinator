@@ -15,7 +15,7 @@
 
 <script setup lang="ts">
 import Icon from "../shared/Icon.vue";
-import { useAppStore } from "../../../stores/app";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 
 const app = useAppStore();
 </script>

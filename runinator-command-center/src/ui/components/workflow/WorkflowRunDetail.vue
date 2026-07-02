@@ -205,9 +205,9 @@
 </template>
 
 <script setup lang="ts">
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { useProvidersStore } from "../../../stores/providers";
-import { useAppStore } from "../../../stores/app";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
@@ -217,17 +217,17 @@ import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
-import { formatDate, pretty } from "../../../utils/format";
-import { displayValue } from "../../../utils/values";
+import { formatDate, pretty } from "../../../core/utils/format";
+import { displayValue } from "../../../core/utils/values";
 import { computed, nextTick, ref } from "vue";
-import type { ActionResultMetadata, DebugFrame, WorkflowNodeRun } from "../../../types/models";
-import { coerceDebugFrame } from "../../../types/models/workflow-state";
+import type { ActionResultMetadata, DebugFrame, WorkflowNodeRun } from "../../../core/domain/models";
+import { coerceDebugFrame } from "../../../core/domain/models/workflow-state";
 import {
   asArray,
   isRecord,
   workflowNodeActionConfig,
   workflowNodeResultMetadata,
-} from "../../../utils/workflows";
+} from "../../../core/workflow";
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();

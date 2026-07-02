@@ -159,9 +159,9 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { useProvidersStore } from "../../../stores/providers";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import type { JsonRecord, RuninatorType } from "../../../types/models";
+import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
 import {
   asArray,
   asRecord,
@@ -169,8 +169,8 @@ import {
   nodeRefId,
   workflowNodeActionConfig,
   workflowNodeActionInputs,
-} from "../../../utils/workflows";
-import { displayValue } from "../../../utils/values";
+} from "../../../core/workflow";
+import { displayValue } from "../../../core/utils/values";
 
 interface DetailItem {
   label: string;

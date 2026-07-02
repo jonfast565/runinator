@@ -304,18 +304,18 @@ import RunNodeActions, { type RunNodeActionType } from "../components/shared/Run
 import RunTimeline from "../components/shared/RunTimeline.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import WdlEditor from "../components/shared/WdlEditor.vue";
-import { useProvidersStore } from "../../stores/providers";
-import { useSecretsStore } from "../../stores/secrets";
-import { useWorkflowsStore } from "../../stores/workflows";
-import { displayValue } from "../../utils/values";
+import { useProvidersStore } from "../../ui/adapters/pinia/providers";
+import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { displayValue } from "../../core/utils/values";
 import type {
   DevPackFile,
   DevPackInspectResult,
   RuninatorType,
   WorkflowNodeRun,
   WorkflowRunDetail,
-} from "../../types/models";
-import { workflowInputType } from "../../types/models";
+} from "../../core/domain/models";
+import { workflowInputType } from "../../core/domain/models";
 
 const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlp";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);

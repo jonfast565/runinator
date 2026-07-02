@@ -49,8 +49,8 @@
 import { computed, ref, onMounted, watch, onBeforeUnmount } from "vue";
 import { getTextEditorHostFactory } from "../../../core/platform";
 import type { TextEditorDiagnostic } from "../../../core/platform/text-editor";
-import { useAppStore } from "../../../stores/app";
-import type { CredentialSummary, ProviderMetadata, WdlSettingRef } from "../../../types/models";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
+import type { CredentialSummary, ProviderMetadata, WdlSettingRef } from "../../../core/domain/models";
 import type { CodeMirrorHostOptions } from "../../adapters/codemirror/text-editor-host";
 
 const props = defineProps<{

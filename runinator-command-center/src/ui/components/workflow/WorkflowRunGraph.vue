@@ -34,7 +34,7 @@
 <script setup lang="ts">
 import { nextTick, watch } from "vue";
 import { VueFlow, useVueFlow, type NodeMouseEvent } from "@vue-flow/core";
-import { useWorkflowsStore } from "../../../stores/workflows";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import StatusBadge from "../shared/StatusBadge.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";

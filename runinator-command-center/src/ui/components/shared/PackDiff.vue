@@ -63,7 +63,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { DevPackInspectResult, SettingKind, WorkflowDefinition } from "../../../types/models";
+import type { DevPackInspectResult, SettingKind, WorkflowDefinition } from "../../../core/domain/models";
 
 type DiffStatus = "added" | "changed" | "unchanged";
 

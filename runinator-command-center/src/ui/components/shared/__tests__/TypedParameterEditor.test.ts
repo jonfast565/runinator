@@ -4,8 +4,8 @@ import { renderToString } from "vue/server-renderer";
 import { createPinia } from "pinia";
 import TypedParameterEditor from "../TypedParameterEditor.vue";
 import TypedValueEditor from "../TypedValueEditor.vue";
-import type { ActionParameterMetadata } from "../../../../types/models";
-import { isWorkflowExpressionValue } from "../../../../utils/workflow-expression-completion";
+import type { ActionParameterMetadata } from "../../../../core/domain/models";
+import { isWorkflowExpressionValue } from "../../../../ui/adapters/codemirror/workflow-expression-completion";
 
 describe("TypedParameterEditor", () => {
   it("renders a direct WDL-lowered expression value as an expression editor", async () => {

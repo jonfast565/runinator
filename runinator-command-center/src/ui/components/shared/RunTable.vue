@@ -35,9 +35,9 @@
 </template>
 
 <script setup lang="ts">
-import type { RunSummary } from "../../../types/models";
-import { formatDate } from "../../../utils/format";
-import { isBadStatus, isGoodStatus } from "../../../utils/status";
+import type { RunSummary } from "../../../core/domain/models";
+import { formatDate } from "../../../core/utils/format";
+import { isBadStatus, isGoodStatus } from "../../../core/utils/status";
 import StatusBadge from "./StatusBadge.vue";
 
 const props = defineProps<{

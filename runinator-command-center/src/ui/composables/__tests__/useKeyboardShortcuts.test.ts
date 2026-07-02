@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useKeyboardShortcuts } from "../useKeyboardShortcuts";
-import { useWorkflowsStore } from "../../../stores/workflows";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 
 describe("useKeyboardShortcuts", () => {
   beforeEach(() => {

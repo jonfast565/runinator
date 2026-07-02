@@ -153,12 +153,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import Icon from "../components/shared/Icon.vue";
-import { useAdminSettingsStore } from "../../stores/adminSettings";
+import { useAdminSettingsStore } from "../../ui/adapters/pinia/adminSettings";
 import {
   DEFAULT_TAB_OPTIONS,
   useDisplayPreferencesStore,
   type AppTheme,
-} from "../../stores/displayPreferences";
+} from "../../ui/adapters/pinia/displayPreferences";
 
 const settings = useAdminSettingsStore();
 const prefs = useDisplayPreferencesStore();

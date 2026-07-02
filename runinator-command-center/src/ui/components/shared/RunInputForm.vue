@@ -63,8 +63,8 @@
 import { computed, ref, watch } from "vue";
 import JsonEditor from "./JsonEditor.vue";
 import TypedValueEditor from "./TypedValueEditor.vue";
-import { pretty } from "../../../utils/format";
-import type { RuninatorType } from "../../../types/models";
+import { pretty } from "../../../core/utils/format";
+import type { RuninatorType } from "../../../core/domain/models";
 
 interface RunInputPreset {
   name: string;

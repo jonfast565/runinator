@@ -46,7 +46,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
-import { useLocalWorkerStore } from "../../../stores/localWorker";
+import { useLocalWorkerStore } from "../../../ui/adapters/pinia/localWorker";
 
 const store = useLocalWorkerStore();
 const brokerUrl = ref("http://127.0.0.1:8088/");

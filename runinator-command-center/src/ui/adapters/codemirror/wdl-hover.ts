@@ -5,7 +5,7 @@ import type {
   WdlHoverRequest,
   WdlHoverResponse,
   WdlSettingRef,
-} from "../../../types/models";
+} from "../../../core/domain/models";
 import { utf16OffsetToUtf8ByteOffset, utf8ByteOffsetToUtf16Offset } from "./wdl-completion";
 
 export function wdlHoverTooltip(

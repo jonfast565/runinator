@@ -11,10 +11,10 @@ import type {
   TextEditorHostFactory,
 } from "../../../core/platform/text-editor";
 import { wdlLanguageService } from "../../../core/services";
-import type { CredentialSummary, ProviderMetadata, WdlDiagnostic, WdlSettingRef } from "../../../types/models";
-import { osCodeMirrorTheme } from "../../../utils/codemirror-theme";
-import { wdl } from "../../../utils/codemirror-lang-wdl";
-import { jsonCompletionSource, shouldStartJsonCompletion } from "../../../utils/json-completion";
+import type { CredentialSummary, ProviderMetadata, WdlDiagnostic, WdlSettingRef } from "../../../core/domain/models";
+import { osCodeMirrorTheme } from "./codemirror-theme";
+import { wdl } from "./codemirror-lang-wdl";
+import { jsonCompletionSource, shouldStartJsonCompletion } from "./json-completion";
 import { wdlProviderCompletionSource } from "./wdl-completion";
 import { wdlHoverTooltip } from "./wdl-hover";
 

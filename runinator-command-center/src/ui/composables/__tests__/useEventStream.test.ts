@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useEventStream } from "../useEventStream";
-import { setHttpAuthToken } from "../../../api/httpRuntime";
-import { useAppStore } from "../../../stores/app";
-import { useAuthStore } from "../../../stores/auth";
-import { useResourcesStore } from "../../../stores/resources";
+import { setHttpAuthToken } from "../../../core/api/httpRuntime";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 
 class MockWebSocket {
   static sockets: MockWebSocket[] = [];

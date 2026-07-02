@@ -110,11 +110,11 @@ import Icon from "../components/shared/Icon.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
-import { useGatesStore } from "../../stores/gates";
-import { useOrgsStore } from "../../stores/orgs";
-import { useAppStore } from "../../stores/app";
-import { pretty } from "../../utils/format";
-import { isBadStatus, isGoodStatus } from "../../utils/status";
+import { useGatesStore } from "../../ui/adapters/pinia/gates";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { pretty } from "../../core/utils/format";
+import { isBadStatus, isGoodStatus } from "../../core/utils/status";
 
 const gates = useGatesStore();
 const orgs = useOrgsStore();

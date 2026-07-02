@@ -1,10 +1,10 @@
 import { onBeforeUnmount, watch } from "vue";
-import { endpointForTab, isResourceTab, useAppStore } from "../../stores/app";
-import { useArtifactsStore } from "../../stores/artifacts";
-import { useAuthStore } from "../../stores/auth";
-import { useNotificationsStore } from "../../stores/notifications";
-import { useResourcesStore } from "../../stores/resources";
-import { useWorkflowsStore } from "../../stores/workflows";
+import { endpointForTab, isResourceTab, useAppStore } from "../../ui/adapters/pinia/app";
+import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
+import { useAuthStore } from "../../ui/adapters/pinia/auth";
+import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
+import { useResourcesStore } from "../../ui/adapters/pinia/resources";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { createEventStreamRouter } from "../../core/realtime/event-router";
 import { EventStreamClient } from "../../core/realtime/event-stream-client";
 

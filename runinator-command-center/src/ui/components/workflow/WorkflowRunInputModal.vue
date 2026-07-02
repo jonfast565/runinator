@@ -43,8 +43,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import type { JsonRecord, RuninatorType } from "../../../types/models";
-import { useWorkflowsStore } from "../../../stores/workflows";
+import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import RunInputForm from "../shared/RunInputForm.vue";
 
 const workflows = useWorkflowsStore();

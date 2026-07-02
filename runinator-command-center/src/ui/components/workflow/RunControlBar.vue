@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { useWorkflowsStore } from "../../../stores/workflows";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import Icon from "../shared/Icon.vue";
 
 const workflows = useWorkflowsStore();

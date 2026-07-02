@@ -46,9 +46,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import Icon from "./Icon.vue";
-import { secretKey, settingRef } from "../../../utils/secrets";
-import type { CredentialSummary } from "../../../types/models";
-import type { SettingsTreeNode as TreeNode } from "../../../utils/settings-tree";
+import { secretKey, settingRef } from "../../../core/utils/secrets";
+import type { CredentialSummary } from "../../../core/domain/models";
+import type { SettingsTreeNode as TreeNode } from "../../../core/utils/settings-tree";
 
 defineOptions({ name: "SettingsTreeNode" });
 

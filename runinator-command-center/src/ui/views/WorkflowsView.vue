@@ -139,9 +139,9 @@ import Icon from "../components/shared/Icon.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
-import { useWorkflowsStore } from "../../stores/workflows";
-import { useOrgsStore } from "../../stores/orgs";
-import { useAppStore } from "../../stores/app";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useAppStore } from "../../ui/adapters/pinia/app";
 
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();

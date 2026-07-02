@@ -177,9 +177,9 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../../types/models";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { workflowNodeKindInfo, workflowNodeKindLabel } from "../../../utils/workflows";
+import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../../core/domain/models";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { workflowNodeKindInfo, workflowNodeKindLabel } from "../../../core/workflow";
 import Icon from "../shared/Icon.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 import ShareWorkflowModal from "./ShareWorkflowModal.vue";

@@ -55,11 +55,11 @@ import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import { auditLogService } from "../../core/services";
-import { useAppStore } from "../../stores/app";
-import { useOrgsStore } from "../../stores/orgs";
-import type { JsonRecord } from "../../types/models";
-import { displayValue } from "../../utils/values";
-import { formatDate } from "../../utils/format";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import type { JsonRecord } from "../../core/domain/models";
+import { displayValue } from "../../core/utils/values";
+import { formatDate } from "../../core/utils/format";
 
 const app = useAppStore();
 const orgs = useOrgsStore();

@@ -207,10 +207,10 @@ import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
-import { useAppStore } from "../../stores/app";
-import { useWorkflowsStore } from "../../stores/workflows";
-import type { RunArtifact, WorkflowRunArtifact } from "../../types/models";
-import { formatDate, pretty } from "../../utils/format";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import type { RunArtifact, WorkflowRunArtifact } from "../../core/domain/models";
+import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();

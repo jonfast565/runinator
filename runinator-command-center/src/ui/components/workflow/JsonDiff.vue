@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { displayValue } from "../../../utils/values";
+import { displayValue } from "../../../core/utils/values";
 
 const props = defineProps<{
   before: unknown;

@@ -1,19 +1,13 @@
 import { computed, onScopeDispose, ref } from "vue";
+import {
+  BREAKPOINTS,
+  breakpointCustomProperties,
+  type ViewportMode,
+} from "../../core/navigation/breakpoints";
 
-// single source of truth for responsive breakpoints. keep these pixel values in sync with the
-// `@media` literals in styles/*.css; layout logic in JS and CSS must agree on where mobile begins.
-export const BREAKPOINTS = {
-  // stack split panes, narrower sidebar.
-  tablet: 1180,
-  // drawer nav, master-detail toggle, single-column forms.
-  mobile: 760,
-  // extra-tight toolbars, card tables.
-  compact: 480,
-} as const;
+export { BREAKPOINTS };
+export type Viewport = ViewportMode;
 
-export type Viewport = "desktop" | "tablet" | "mobile" | "compact";
-
-// shared reactive state so every consumer observes the same matchMedia results (one listener set).
 let tabletMq: MediaQueryList | null = null;
 let mobileMq: MediaQueryList | null = null;
 let compactMq: MediaQueryList | null = null;
@@ -22,7 +16,7 @@ const isMobile = ref(false);
 const isCompact = ref(false);
 let refCount = 0;
 
-function viewportName(): Viewport {
+function viewportName(): ViewportMode {
   if (isCompact.value) {
     return "compact";
   }
@@ -38,14 +32,16 @@ function viewportName(): Viewport {
   return "desktop";
 }
 
-// mirror the active viewport onto the document so CSS can key off `[data-viewport]` when a plain
-// media query is not enough (e.g. rules that also depend on component-driven state).
 function syncDocument() {
   if (typeof document === "undefined") {
     return;
   }
 
   document.documentElement.dataset.viewport = viewportName();
+
+  for (const [name, value] of Object.entries(breakpointCustomProperties())) {
+    document.documentElement.style.setProperty(name, value);
+  }
 }
 
 function update() {
@@ -78,8 +74,6 @@ function teardownListeners() {
   compactMq = null;
 }
 
-// reactive viewport info. `tablet`/`mobile`/`compact` are cumulative: a compact screen is also
-// mobile and tablet, matching the cascade of `max-width` media queries.
 export function useBreakpoint() {
   ensureListeners();
   refCount += 1;

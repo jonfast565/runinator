@@ -37,11 +37,11 @@
 
 <script setup lang="ts">
 import Icon from "../shared/Icon.vue";
-import { navSections, useAppStore } from "../../../stores/app";
-import { useResourcesStore } from "../../../stores/resources";
-import { useSecretsStore } from "../../../stores/secrets";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import type { AppTab } from "../../../types/app";
+import { navSections, useAppStore } from "../../../ui/adapters/pinia/app";
+import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
+import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import type { AppTab } from "../../../core/navigation/app";
 import { computed } from "vue";
 
 const app = useAppStore();

@@ -1,10 +1,10 @@
 import { onBeforeUnmount, watch } from "vue";
-import { useAppStore } from "../../stores/app";
-import { useAuthStore } from "../../stores/auth";
-import { useWorkflowsStore } from "../../stores/workflows";
-import type { WorkflowRunDetail } from "../../types/models";
-import { isTerminalWorkflowRunStatus } from "../../utils/status";
-import { buildWebSocketUrl } from "../../utils/websocket";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../ui/adapters/pinia/auth";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import type { WorkflowRunDetail } from "../../core/domain/models";
+import { isTerminalWorkflowRunStatus } from "../../core/utils/status";
+import { buildWebSocketUrl } from "../../core/utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 

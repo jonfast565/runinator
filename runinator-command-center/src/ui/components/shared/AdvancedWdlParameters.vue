@@ -12,7 +12,7 @@
 
 <script setup lang="ts">
 import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
-import type { WorkflowExpressionEditorContext } from "../../../utils/workflow-expression-completion";
+import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 
 // a single collapsible wrapper for the raw-wdl value editors in the step dialog, so every node kind
 // shares one "advanced" disclosure instead of repeating the markup inline. it shares the same

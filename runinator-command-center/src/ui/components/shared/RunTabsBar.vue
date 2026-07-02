@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import Icon from "./Icon.vue";
-import { useWorkflowsStore } from "../../../stores/workflows";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 
 const workflows = useWorkflowsStore();
 

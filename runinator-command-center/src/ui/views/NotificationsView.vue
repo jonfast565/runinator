@@ -70,10 +70,10 @@
 import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
-import { useNotificationsStore } from "../../stores/notifications";
-import { useAppStore } from "../../stores/app";
-import type { Notification } from "../../types/models";
-import { formatDate } from "../../utils/format";
+import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import type { Notification } from "../../core/domain/models";
+import { formatDate } from "../../core/utils/format";
 
 const store = useNotificationsStore();
 const app = useAppStore();

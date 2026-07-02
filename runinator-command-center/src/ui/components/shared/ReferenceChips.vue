@@ -34,8 +34,8 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import type { ReferenceGroup, WorkflowReference } from "../../../utils/workflow-references";
-import { useExpressionInsertTarget } from "../../../utils/expression-insert-target";
+import type { ReferenceGroup, WorkflowReference } from "../../../core/utils/workflow-references";
+import { useExpressionInsertTarget } from "../../../ui/adapters/codemirror/expression-insert-target";
 
 defineProps<{
   groups: ReferenceGroup[];

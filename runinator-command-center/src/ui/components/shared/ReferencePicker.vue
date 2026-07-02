@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { ReferenceGroup } from "../../../utils/workflow-references";
+import type { ReferenceGroup } from "../../../core/utils/workflow-references";
 
 const props = defineProps<{
   groups: ReferenceGroup[];

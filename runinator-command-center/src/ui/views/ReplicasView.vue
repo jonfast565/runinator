@@ -188,9 +188,9 @@ import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";
 import { replicaSamplesService } from "../../core/services";
 import type { ReplicaSample } from "../../core/services";
-import { useAppStore } from "../../stores/app";
-import type { ReplicaKind } from "../../types/models";
-import { formatDate, pretty } from "../../utils/format";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import type { ReplicaKind } from "../../core/domain/models";
+import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
 const loading = ref(false);

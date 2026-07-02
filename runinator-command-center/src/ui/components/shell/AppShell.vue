@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { useAppStore } from "../../../stores/app";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useKeyboardShortcuts } from "../../composables/useKeyboardShortcuts";
 import OutageBanner from "./OutageBanner.vue";
 import SidebarNav from "./SidebarNav.vue";

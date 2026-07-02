@@ -77,11 +77,11 @@ import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
-import { useOrgsStore } from "../../stores/orgs";
-import { useResourcesStore } from "../../stores/resources";
-import type { JsonRecord } from "../../types/models";
-import { pretty } from "../../utils/format";
-import { displayValue } from "../../utils/values";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useResourcesStore } from "../../ui/adapters/pinia/resources";
+import type { JsonRecord } from "../../core/domain/models";
+import { pretty } from "../../core/utils/format";
+import { displayValue } from "../../core/utils/values";
 
 const resourcesStore = useResourcesStore();
 const orgs = useOrgsStore();

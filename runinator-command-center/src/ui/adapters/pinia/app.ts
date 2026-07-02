@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
 import { authService } from "../../../core/services";
-import { isTauriRuntime } from "../../../api/tauriRuntime";
+import { isTauriRuntime } from "../../../ui/adapters/tauri/runtime";
 import {
   endpointForTab,
   isResourceTab,

@@ -64,10 +64,10 @@ import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import { deadLettersService } from "../../core/services";
-import { useAppStore } from "../../stores/app";
-import { useOrgsStore } from "../../stores/orgs";
-import type { JsonRecord } from "../../types/models";
-import { formatDate, pretty } from "../../utils/format";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import type { JsonRecord } from "../../core/domain/models";
+import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
 const orgs = useOrgsStore();

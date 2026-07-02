@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import Icon, { type IconName } from "../shared/Icon.vue";
-import { useAppStore, type ToastKind } from "../../../stores/app";
+import { useAppStore, type ToastKind } from "../../../ui/adapters/pinia/app";
 
 const app = useAppStore();
 

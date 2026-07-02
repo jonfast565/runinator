@@ -19,7 +19,7 @@ import { computed, ref, watch } from "vue";
 import Icon, { type IconName } from "./Icon.vue";
 import EmptyState from "./EmptyState.vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
-import { displayValue } from "../../../utils/values";
+import { displayValue } from "../../../core/utils/values";
 
 // dual-mode table. with `columns` it renders a sortable/paginated/selectable table; without
 // columns it stays a plain scroll wrapper so existing hand-written <table> slots keep working.

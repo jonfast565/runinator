@@ -600,11 +600,11 @@
 import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
-import { permissionLevels, usePermissionsStore } from "../../stores/permissions";
-import { useAppStore } from "../../stores/app";
-import { useWorkflowsStore } from "../../stores/workflows";
-import type { ApiKey, PrincipalType, Team, User } from "../../types/models";
-import { formatDate } from "../../utils/format";
+import { permissionLevels, usePermissionsStore } from "../../ui/adapters/pinia/permissions";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import type { ApiKey, PrincipalType, Team, User } from "../../core/domain/models";
+import { formatDate } from "../../core/utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();

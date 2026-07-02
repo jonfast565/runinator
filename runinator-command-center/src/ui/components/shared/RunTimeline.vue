@@ -103,9 +103,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { workflowRunExtrasService } from "../../../core/services";
-import { statusBadgeClass } from "../../../utils/status";
-import { formatErrorMessage } from "../../../utils/format";
-import type { WorkflowNodeRun, WorkflowRunDetail } from "../../../types/models";
+import { statusBadgeClass } from "../../../core/utils/status";
+import { formatErrorMessage } from "../../../core/utils/format";
+import type { WorkflowNodeRun, WorkflowRunDetail } from "../../../core/domain/models";
 
 const props = defineProps<{
   detail: WorkflowRunDetail | null;

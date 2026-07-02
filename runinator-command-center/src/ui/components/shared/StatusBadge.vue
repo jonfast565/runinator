@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { statusBadgeClass } from "../../../utils/status";
+import { statusBadgeClass } from "../../../core/utils/status";
 
 const props = defineProps<{
   status?: string | boolean | null;

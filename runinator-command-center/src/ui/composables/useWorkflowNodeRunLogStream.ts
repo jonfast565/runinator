@@ -1,8 +1,8 @@
 import { onBeforeUnmount, ref, watch, type Ref } from "vue";
-import { useAppStore } from "../../stores/app";
-import { useAuthStore } from "../../stores/auth";
-import type { RunChunk } from "../../types/models";
-import { buildWebSocketUrl } from "../../utils/websocket";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../ui/adapters/pinia/auth";
+import type { RunChunk } from "../../core/domain/models";
+import { buildWebSocketUrl } from "../../core/utils/websocket";
 
 const RECONNECT_DELAY = 3000;
 

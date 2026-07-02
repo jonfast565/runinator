@@ -43,9 +43,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { evaluatePointer, type PointerResult } from "../../../utils/json-pointer";
-import { displayValue } from "../../../utils/values";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { evaluatePointer, type PointerResult } from "../../../core/utils/json-pointer";
+import { displayValue } from "../../../core/utils/values";
 
 const workflows = useWorkflowsStore();
 const draft = ref("");

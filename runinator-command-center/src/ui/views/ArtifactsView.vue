@@ -53,10 +53,10 @@
 import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
-import { useArtifactsStore } from "../../stores/artifacts";
-import { useAppStore } from "../../stores/app";
-import type { RunArtifact } from "../../types/models";
-import { formatDate } from "../../utils/format";
+import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import type { RunArtifact } from "../../core/domain/models";
+import { formatDate } from "../../core/utils/format";
 
 // low-priority columns collapse on mobile scroll mode; on phones the table becomes cards instead.
 const columns: DataTableColumn<RunArtifact>[] = [

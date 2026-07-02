@@ -46,15 +46,15 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from "vue";
-import type { JsonRecord, RuninatorType } from "../../../types/models";
-import type { WorkflowExpressionEditorContext } from "../../../utils/workflow-expression-completion";
-import { isWorkflowExpressionValue } from "../../../utils/workflow-expression-completion";
+import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
+import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { isWorkflowExpressionValue } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 import {
   removeObjectKey,
   renameObjectKey,
   setObjectValue,
   uniqueObjectKey,
-} from "../../../utils/key-value-object";
+} from "../../../core/utils/key-value-object";
 import Icon from "./Icon.vue";
 import TypedValueEditor from "./TypedValueEditor.vue";
 

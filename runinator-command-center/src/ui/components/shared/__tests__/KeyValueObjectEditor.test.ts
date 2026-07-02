@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createSSRApp, h } from "vue";
 import { renderToString } from "vue/server-renderer";
-import type { JsonRecord } from "../../../../types/models";
+import type { JsonRecord } from "../../../../core/domain/models";
 import KeyValueObjectEditor from "../KeyValueObjectEditor.vue";
 import {
   removeObjectKey,
   renameObjectKey,
   setObjectValue,
   uniqueObjectKey,
-} from "../../../../utils/key-value-object";
+} from "../../../../core/utils/key-value-object";
 
 describe("KeyValueObjectEditor", () => {
   it("renders scalar, object, and WDL expression values as editable rows", async () => {

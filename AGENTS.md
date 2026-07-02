@@ -16,13 +16,33 @@ Primary runtime flow:
 
 There is also a Tauri `runinator-command-center` client. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
 
-#### Command center layering (`runinator-command-center`)
+### Command center layering (`runinator-command-center`)
 
-- `src/core/` holds framework-neutral logic: API clients, services, platform interfaces, and workflow graph models. It must not import Vue, Pinia, CodeMirror, Vue Flow, or Tauri.
-- `src/ui/` holds Vue components, Pinia adapters, and UI-specific adapters (CodeMirror `TextEditorHost`, Vue Flow graph builder, browser/Tauri `PlatformAdapter`).
-- Bootstrap (`src/bootstrap.ts`) selects the browser vs Tauri platform adapter and registers the CodeMirror text-editor factory before the app mounts.
-- Views and components call service singletons from `core/services/index.ts`, not `commandCenterApi` directly. Pinia stores mirror service state.
-- Platform I/O (auth storage, dialogs, artifact transport, service discovery) flows through `PlatformAdapter` in `core/platform/`.
+Layout:
+
+- `src/core/` — portable domain logic: `domain/`, `api/`, `services/`, `realtime/`, `navigation/`, `workflow/`, `utils/`, `platform/`. Must not import Vue, Pinia, Vue Flow, CodeMirror, Tauri, or `ui/`.
+- `src/ui/` — Vue presentation: `views/`, `components/`, `composables/`, `adapters/` (pinia, vue-flow, codemirror, browser, tauri).
+- Bootstrap (`src/bootstrap.ts`) selects the platform adapter and registers the CodeMirror text-editor factory before the app mounts.
+
+Import conventions (Phase 5 — shims removed):
+
+- Pinia stores: `ui/adapters/pinia/*`
+- Wire models: `core/domain/models`
+- Navigation types: `core/navigation/app`
+- Pure helpers: `core/utils/*`
+- CodeMirror adapters: `ui/adapters/codemirror/*`
+- Services (from views/components): `core/services` singletons exported by `core/services/index.ts`
+
+Each view has a co-located `*.manifest.ts` under `ui/views/` listing service/stream dependencies for Flutter migration.
+
+Verification:
+
+```bash
+cd runinator-command-center
+npm test
+npm run build
+npm run lint
+```
 
 ## Crate Boundaries
 

@@ -213,9 +213,9 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { useOrgsStore } from "../../../stores/orgs";
-import { useAppStore } from "../../../stores/app";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
+import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { workflowSharingService } from "../../../core/services";
 import JsonEditor from "../shared/JsonEditor.vue";
 

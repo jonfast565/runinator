@@ -198,10 +198,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { JsonRecord, RuninatorField, RuninatorType } from "../../../types/models";
-import { pretty } from "../../../utils/format";
-import type { WorkflowExpressionEditorContext } from "../../../utils/workflow-expression-completion";
-import { isWorkflowExpressionValue } from "../../../utils/workflow-expression-completion";
+import type { JsonRecord, RuninatorField, RuninatorType } from "../../../core/domain/models";
+import { pretty } from "../../../core/utils/format";
+import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { isWorkflowExpressionValue } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
 
 defineOptions({ name: "TypedValueEditor" });

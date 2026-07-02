@@ -130,11 +130,11 @@ import Icon from "../components/shared/Icon.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
-import { useResourcesStore } from "../../stores/resources";
-import { useOrgsStore } from "../../stores/orgs";
-import { useAppStore } from "../../stores/app";
-import { formatDate, pretty } from "../../utils/format";
-import { isBadStatus, isGoodStatus } from "../../utils/status";
+import { useResourcesStore } from "../../ui/adapters/pinia/resources";
+import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import { formatDate, pretty } from "../../core/utils/format";
+import { isBadStatus, isGoodStatus } from "../../core/utils/status";
 
 const props = withDefaults(defineProps<{ endpoint?: string; title?: string }>(), {
   endpoint: "external_items",

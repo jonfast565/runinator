@@ -308,9 +308,9 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { IconName } from "../../../types/icons";
+import type { IconName } from "../../../core/domain/icons";
 
-export type { IconName } from "../../../types/icons";
+export type { IconName } from "../../../core/domain/icons";
 
 const props = withDefaults(
   defineProps<{ name: IconName; size?: number | string; strokeWidth?: number | string }>(),

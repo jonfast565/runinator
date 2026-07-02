@@ -68,13 +68,13 @@ import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
-import { navItemForTab, useAppStore } from "../../../stores/app";
-import { useAuthStore } from "../../../stores/auth";
-import { useResourcesStore } from "../../../stores/resources";
-import { useOrgsStore } from "../../../stores/orgs";
-import { useSecretsStore } from "../../../stores/secrets";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import type { AppTab } from "../../../types/app";
+import { navItemForTab, useAppStore } from "../../../ui/adapters/pinia/app";
+import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
+import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
+import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import type { AppTab } from "../../../core/navigation/app";
 
 defineEmits<{ refresh: [] }>();
 

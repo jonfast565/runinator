@@ -171,9 +171,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
-import { useProvidersStore } from "../../stores/providers";
-import { useAppStore } from "../../stores/app";
-import type { RuninatorType } from "../../types/models";
+import { useProvidersStore } from "../../ui/adapters/pinia/providers";
+import { useAppStore } from "../../ui/adapters/pinia/app";
+import type { RuninatorType } from "../../core/domain/models";
 
 const providers = useProvidersStore();
 const app = useAppStore();

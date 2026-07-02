@@ -295,14 +295,14 @@ import type {
   JsonRecord,
   WorkflowEdgeEditorDraft,
   WorkflowEdgeSemanticOption,
-} from "../../../types/models";
-import { workflowInputType } from "../../../types/models";
-import { useWorkflowsStore } from "../../../stores/workflows";
-import { useProvidersStore } from "../../../stores/providers";
-import { useSecretsStore } from "../../../stores/secrets";
-import { optionIdForSourceHandle, recordArray } from "../../../utils/workflows";
-import { buildSampleContext } from "../../../utils/workflow-references";
-import { displayValue } from "../../../utils/values";
+} from "../../../core/domain/models";
+import { workflowInputType } from "../../../core/domain/models";
+import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
+import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
+import { optionIdForSourceHandle, recordArray } from "../../../core/workflow";
+import { buildSampleContext } from "../../../core/utils/workflow-references";
+import { displayValue } from "../../../core/utils/values";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import Icon from "../shared/Icon.vue";
 import SplitPane from "../shared/SplitPane.vue";

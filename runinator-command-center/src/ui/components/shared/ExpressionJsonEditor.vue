@@ -39,17 +39,17 @@ import { completionKeymap, startCompletion } from "@codemirror/autocomplete";
 import { EditorState, Prec } from "@codemirror/state";
 import { keymap, type ViewUpdate } from "@codemirror/view";
 import { EditorView, basicSetup } from "codemirror";
-import type { WorkflowExpressionEditorContext } from "../../../utils/workflow-expression-completion";
-import { workflowExpressionCompletionSource } from "../../../utils/workflow-expression-completion";
-import { workflowReferenceGroups } from "../../../utils/workflow-references";
+import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { workflowExpressionCompletionSource } from "../../../ui/adapters/codemirror/workflow-expression-completion";
+import { workflowReferenceGroups } from "../../../core/utils/workflow-references";
 import {
   clearExpressionInsertTarget,
   setExpressionInsertTarget,
-} from "../../../utils/expression-insert-target";
-import { wdl } from "../../../utils/codemirror-lang-wdl";
-import { osCodeMirrorTheme } from "../../../utils/codemirror-theme";
-import { pretty } from "../../../utils/format";
-import { expressionJsonToWdl, parseWdlExpression } from "../../../utils/wdl-expression";
+} from "../../../ui/adapters/codemirror/expression-insert-target";
+import { wdl } from "../../../ui/adapters/codemirror/codemirror-lang-wdl";
+import { osCodeMirrorTheme } from "../../../ui/adapters/codemirror/codemirror-theme";
+import { pretty } from "../../../core/utils/format";
+import { expressionJsonToWdl, parseWdlExpression } from "../../../core/utils/wdl-expression";
 import { expressionService } from "../../../core/services";
 import ReferencePicker from "./ReferencePicker.vue";
 
