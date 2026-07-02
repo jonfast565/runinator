@@ -6,29 +6,57 @@ Guidance for agents working in `runinator-command-center`.
 
 `runinator-command-center` is the Tauri/Vue client. Keep UI state, graph editing, workflow run inspection, and API interaction here. Do not change runtime crate behavior from the UI unless the user explicitly asks for a cross-runtime feature.
 
+## Layer Boundaries
+
+The frontend is split for Flutter migration:
+
+| Layer | Path | Rules |
+| --- | --- | --- |
+| **core/** | `src/core/` | Framework-agnostic TypeScript. No imports from `vue`, `pinia`, `@vue-flow/*`, `@codemirror/*`, `@tauri-apps/*`, or `src/ui/**`. |
+| **ui/** | `src/ui/` | Vue presentation: views, components, composables, adapters. Discarded during Flutter migration. |
+| **stores shims** | `src/stores/` | Re-export Pinia adapters from `src/ui/adapters/pinia/` for backward-compatible imports. |
+
+### core/ layout
+
+- `core/domain/` — wire models (`models/`, `json.ts`)
+- `core/api/` — `commandCenterApi`, `httpRuntime`, injected `CommandRuntime`
+- `core/services/` — application logic (`AuthService`, `AppService`, `ResourcesService`, …)
+- `core/realtime/` — WebSocket clients and event routing
+- `core/navigation/` — tabs, nav config, breakpoints, URL sync helpers
+- `core/workflow/` — workflow graph domain logic
+- `core/utils/` — pure helpers
+- `core/platform/` — platform adapter interfaces
+
+### ui/ layout
+
+- `ui/views/` — screen components (+ `*.manifest.ts` per view for AI migration)
+- `ui/components/` — shell, shared, workflow widgets
+- `ui/composables/` — thin Vue lifecycle glue over core clients
+- `ui/adapters/pinia/` — Pinia stores mirroring core services
+- `ui/adapters/vue-flow/` — graph canvas adapter
+- `ui/adapters/codemirror/` — editor extensions
+- `ui/adapters/browser/` — DOM file/download helpers, HTTP runtime
+- `ui/adapters/tauri/` — desktop invoke bridge
+
 ## Where To Start
 
-- App shell and navigation: `src/App.vue`, `src/components/shell/`.
-- API facade/runtime selection: `src/api/`.
-- Workflow store facade: `src/stores/workflows/index.ts`.
-- Workflow store helper/default logic: `src/stores/workflows/helpers.ts`.
-- Workflow graph utilities: `src/utils/workflows/index.ts`.
-- Workflow canvas/editor components: `src/components/workflow/`.
-- Main workflow screen: `src/views/WorkflowsView.vue`.
-- Run views and shared tables: `src/views/RunsView.vue`, `src/components/shared/`.
-- Rust/Tauri commands: `src-tauri/src/`.
+- App shell: `src/App.vue`, `src/ui/components/shell/`
+- API facade: `src/core/api/commandCenterApi.ts`, runtime bootstrap in `src/main.ts`
+- Services registry: `src/core/services/index.ts`
+- Pinia adapters: `src/ui/adapters/pinia/`
+- Workflow graph: `src/core/workflow/`, canvas `src/ui/components/workflow/WorkflowCanvas.vue`
+- View manifests: `src/ui/views/*.manifest.ts`
+- Rust/Tauri commands: `src-tauri/src/`
 
 ## Boundaries
 
-- Keep generated model compatibility with API payloads in `src/types/models.ts`.
-- Prefer pure utilities in `src/utils/` and store orchestration in `src/stores/`.
-- Keep graph editing behavior in `src/utils/workflows/` when it is data transformation, and in components only when it is presentation or interaction state.
-- Do not duplicate backend workflow validation rules by hand if the web service already validates them; client-side validation should be fast feedback.
-- Do not commit `dist/`, Tauri build output, or generated icon artifacts unless the task explicitly changes those assets.
+- Keep model compatibility with API payloads in `src/core/domain/models/`.
+- Put business logic in `src/core/services/` or pure `src/core/utils/`; Pinia adapters stay thin.
+- Graph transforms belong in `src/core/workflow/`; Vue Flow rendering in `src/ui/adapters/vue-flow/`.
+- Browser-only helpers live in `src/ui/adapters/browser/files.ts`.
+- Do not duplicate backend validation rules; client validation is fast feedback only.
 
 ## Verification
-
-Use:
 
 ```bash
 pnpm --dir runinator-command-center lint
@@ -37,13 +65,6 @@ pnpm --dir runinator-command-center test -- --run
 pnpm --dir runinator-command-center build
 ```
 
-`lint` (ESLint) and `format:check` (Prettier) are the gate. Hard errors: braces on every
-`if`/`for`, blank-line separation around braced constructs, Prettier formatting, and the
-type-safety core — `no-explicit-any` and the `no-unsafe-*` family. Source is fully typed
-(`JsonRecord = Record<string, unknown>`); model JSON is read through the `asRecord` /
-`asArray` / `recordArray` coercers in `utils/workflows`, not `any`. Test files relax the
-any/unsafe family since fixtures poke at internals. The remaining type-checked rules
-(`no-unnecessary-condition`, `restrict-template-expressions`, etc.) stay warnings and do
-not fail the gate. Run `lint:fix` and `format` to auto-apply fixes.
+`core/**` is guarded by ESLint `no-restricted-imports` against Vue/Pinia/Vue Flow/CodeMirror/Tauri/ui imports.
 
-For visual changes, run the app and verify the affected workflow on desktop-sized and narrow viewports.
+For visual changes, verify affected flows on desktop-sized and narrow viewports.

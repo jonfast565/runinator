@@ -1,0 +1,180 @@
+import { writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const viewsDir = join(dirname(fileURLToPath(import.meta.url)), "../src/ui/views");
+
+const viewManifests = {
+  LoginView: {
+    screen: "LoginView",
+    tab: null,
+    services: ["AuthService"],
+    streams: [],
+    components: [],
+    actions: ["signIn"],
+  },
+  WorkflowsView: {
+    screen: "WorkflowsView",
+    tab: "Workflows",
+    services: [
+      "WorkflowCatalogService",
+      "WorkflowEditorService",
+      "AppService",
+      "ProvidersService",
+      "SecretsService",
+    ],
+    streams: [],
+    components: ["WorkflowCanvas", "WorkflowToolbar", "WorkflowInspector"],
+    actions: ["saveWorkflow", "importWorkflow", "createRun"],
+  },
+  RunsView: {
+    screen: "RunsView",
+    tab: "Runs",
+    services: ["WorkflowRunService", "AppService"],
+    streams: ["WorkflowRunStreamClient", "NodeRunLogStreamClient"],
+    components: ["RunTable", "WorkflowRunDetail", "LogPanel", "RunTimeline"],
+    actions: ["selectRun", "cancelRun", "retryRun", "approveNode"],
+  },
+  ProvidersView: {
+    screen: "ProvidersView",
+    tab: "Providers",
+    services: ["ProvidersService", "AppService"],
+    streams: [],
+    components: ["DataTable"],
+    actions: ["fetchProviders"],
+  },
+  ReplicasView: {
+    screen: "ReplicasView",
+    tab: "Replicas",
+    services: ["AppService", "LocalWorkerService"],
+    streams: [],
+    components: ["Sparkline", "LocalWorkerPanel", "NodePoolsPanel"],
+    actions: ["refreshReplicas"],
+  },
+  ApprovalsView: {
+    screen: "ApprovalsView",
+    tab: "Approvals",
+    services: ["ResourcesService", "AppService"],
+    streams: ["EventStreamClient"],
+    components: ["ResourcesView", "DataTable"],
+    actions: ["resolveApproval"],
+  },
+  ArtifactsView: {
+    screen: "ArtifactsView",
+    tab: "Artifacts",
+    services: ["ArtifactsService", "AppService"],
+    streams: ["EventStreamClient"],
+    components: ["DataTable"],
+    actions: ["refreshArtifacts", "uploadArtifact", "downloadArtifact"],
+  },
+  NotificationsView: {
+    screen: "NotificationsView",
+    tab: "Notifications",
+    services: ["NotificationsService", "AppService"],
+    streams: ["EventStreamClient"],
+    components: ["DataTable"],
+    actions: ["markRead", "markAllRead", "deleteNotification"],
+  },
+  EventsView: {
+    screen: "EventsView",
+    tab: "Events",
+    services: ["ResourcesService", "OrgsService"],
+    streams: ["EventStreamClient"],
+    components: ["DataTable", "SplitPane"],
+    actions: ["deleteSelected"],
+  },
+  ExternalItemsView: {
+    screen: "ExternalItemsView",
+    tab: "ExternalItems",
+    services: ["ResourcesService"],
+    streams: ["EventStreamClient"],
+    components: ["ResourcesView"],
+    actions: ["refreshResources"],
+  },
+  GatesView: {
+    screen: "GatesView",
+    tab: "Gates",
+    services: ["GatesService", "AppService"],
+    streams: [],
+    components: ["DataTable"],
+    actions: ["refreshGates", "resolveSelected", "removeSelected"],
+  },
+  SecretsView: {
+    screen: "SecretsView",
+    tab: "Secrets",
+    services: ["SecretsService", "AppService"],
+    streams: [],
+    components: ["SettingsTreeNode", "TypedValueEditor"],
+    actions: ["refreshSecrets", "saveDraft", "deleteSelectedSecret"],
+  },
+  OrganizationView: {
+    screen: "OrganizationView",
+    tab: "Organization",
+    services: ["OrgsService", "AppService"],
+    streams: [],
+    components: [],
+    actions: ["refresh", "create", "setActive"],
+  },
+  OrgResourcesView: {
+    screen: "OrgResourcesView",
+    tab: "OrgResources",
+    services: ["OrgsService"],
+    streams: [],
+    components: [],
+    actions: [],
+  },
+  AdminSettingsView: {
+    screen: "AdminSettingsView",
+    tab: "AdminSettings",
+    services: ["AdminSettingsService", "AppService"],
+    streams: [],
+    components: ["SettingsTreeNode"],
+    actions: ["refresh", "saveLanguage"],
+  },
+  PermissionsView: {
+    screen: "PermissionsView",
+    tab: "Permissions",
+    services: ["PermissionsService", "AppService"],
+    streams: [],
+    components: ["DataTable"],
+    actions: ["createUser", "createTeam", "createApiKey"],
+  },
+  DeadLettersView: {
+    screen: "DeadLettersView",
+    tab: "DeadLetters",
+    services: ["AppService", "OrgsService"],
+    streams: [],
+    components: ["EmptyState"],
+    actions: ["listDeadLetters"],
+  },
+  AuditLogView: {
+    screen: "AuditLogView",
+    tab: "AuditLog",
+    services: ["AppService", "OrgsService"],
+    streams: [],
+    components: [],
+    actions: ["fetchAuditLog"],
+  },
+  DevView: {
+    screen: "DevView",
+    tab: "Dev",
+    services: ["AppService", "LocalWorkerService"],
+    streams: [],
+    components: ["PackDiff", "WdlEditor"],
+    actions: ["inspectDevPack", "applyDevPack"],
+  },
+  ResourcesView: {
+    screen: "ResourcesView",
+    tab: null,
+    services: ["ResourcesService", "AppService"],
+    streams: ["EventStreamClient"],
+    components: ["DataTable", "SplitPane", "MobileBackBar"],
+    actions: ["refreshResources", "resolveApproval", "deleteSelected"],
+  },
+};
+
+for (const [name, manifest] of Object.entries(viewManifests)) {
+  const content = `export const ${name}Manifest = ${JSON.stringify(manifest, null, 2)} as const;\n`;
+  writeFileSync(join(viewsDir, `${name}.manifest.ts`), content);
+  console.log("wrote", name);
+}

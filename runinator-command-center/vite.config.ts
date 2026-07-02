@@ -7,6 +7,9 @@ const WS_WS_TARGET = WS_DEV_TARGET.replace(/^http/, "ws");
 export default defineConfig({
   plugins: [vue()],
   clearScreen: false,
+  test: {
+    setupFiles: ["./src/test-setup.ts"],
+  },
   server: {
     port: 5173,
     strictPort: true,

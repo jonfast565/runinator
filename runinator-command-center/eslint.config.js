@@ -44,6 +44,7 @@ export default tseslint.config(
       "src-tauri/**",
       "public/**",
       "coverage/**",
+      "scripts/**",
       "*.config.*",
       "*.cjs",
     ],
@@ -82,7 +83,7 @@ export default tseslint.config(
   // shared primitives are intentionally single-word design-system components
   // (Button, Icon, Modal, Sparkline); the multi-word rule doesn't apply to them.
   {
-    files: ["src/components/shared/**/*.vue"],
+    files: ["src/ui/components/shared/**/*.vue", "src/components/shared/**/*.vue"],
     rules: {
       "vue/multi-word-component-names": "off",
     },
@@ -91,6 +92,34 @@ export default tseslint.config(
   // prettier must come after everything else to disable formatting rules that
   // would otherwise fight the formatter.
   prettier,
+
+  {
+    files: ["src/core/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["vue", "pinia", "@vue-flow/*", "@codemirror/*", "@tauri-apps/*"],
+              message: "core/ must not import Vue, Pinia, Vue Flow, CodeMirror, or Tauri.",
+            },
+            {
+              group: ["**/ui/**"],
+              message: "core/ must not import from ui/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/core/**/__tests__/**/*.ts"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
 
   // downgrade the type-checked family to warnings (visibility, not a gate).
   {

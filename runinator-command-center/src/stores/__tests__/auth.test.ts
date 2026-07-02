@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { authService } from "../../core/services";
 import { useAuthStore } from "../auth";
 
-vi.mock("../../api/commandCenterApi", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/commandCenterApi")>()),
+vi.mock("../../core/api/commandCenterApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/api/commandCenterApi")>()),
   fetchAuthConfig: vi.fn(),
   fetchAuthMe: vi.fn(),
   login: vi.fn(),
@@ -17,7 +18,7 @@ import {
   fetchAuthMe,
   refreshSession,
   setAccessToken,
-} from "../../api/commandCenterApi";
+} from "../../core/api/commandCenterApi";
 
 function storageMock(seed: Record<string, string> = {}) {
   const data = new Map(Object.entries(seed));
@@ -35,6 +36,7 @@ function storageMock(seed: Record<string, string> = {}) {
 describe("auth store", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    authService.resetForTests();
     vi.clearAllMocks();
   });
 

@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { appService } from "../../core/services";
 import { useAppStore } from "../app";
 
 describe("feedback toasts", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    // no-op timers so auto-dismiss never fires during the test.
     vi.stubGlobal("window", {
       clearTimeout: () => undefined,
       setTimeout: () => 0,
     });
+    appService.resetForTests();
   });
 
   it("setStatus pushes a success toast and keeps statusText intact", () => {
