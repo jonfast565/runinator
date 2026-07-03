@@ -6,6 +6,7 @@
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../platform/downloads.dart' show downloadBlob, downloadTextFile;
 import '../workflow/workflow_helpers.dart' show workflowNodeKinds, directTransitionKeys;
 import 'app_service.dart';
 import 'providers_service.dart';
@@ -42,6 +43,8 @@ class WorkflowsNotifier extends _$WorkflowsNotifier {
         app: ref.watch(appProvider.notifier),
         getProviders: () => ref.read(providersProvider).providers,
         refreshResources: () => ref.read(resourcesProvider.notifier).refreshResources(),
+        downloadTextFile: downloadTextFile,
+        downloadBlob: downloadBlob,
       ),
       internal: WorkflowServicesInternal(),
       getState: () => current,

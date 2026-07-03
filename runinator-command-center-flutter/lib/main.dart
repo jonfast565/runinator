@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api/http_runtime.dart';
+import 'core/platform/downloads.dart';
 import 'core/platform/index.dart';
+import 'ui/adapters/browser_files.dart' as browser_files;
 import 'ui/adapters/storage.dart';
 import 'ui/adapters/web_platform_adapter.dart';
 import 'ui/command_center_app.dart';
@@ -28,6 +30,10 @@ Future<void> bootstrap() async {
     ),
   );
   setTextEditorHostFactory(FlutterTextEditorHostFactory());
+  setDownloadHandlers(
+    downloadTextFile: browser_files.downloadTextFile,
+    downloadBlob: browser_files.downloadBlob,
+  );
 }
 
 void main() async {

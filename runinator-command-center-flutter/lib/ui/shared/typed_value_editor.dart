@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/domain/json.dart';
 import '../../core/domain/models/index.dart';
 import '../../core/utils/wdl_expression.dart';
+import '../../core/utils/workflow_references.dart';
 import 'code_editor.dart';
+import 'expression_json_editor.dart';
 
-class TypedValueEditor extends StatefulWidget {
+class TypedValueEditor extends ConsumerWidget {
   const TypedValueEditor({
     super.key,
     required this.value,
@@ -13,6 +16,7 @@ class TypedValueEditor extends StatefulWidget {
     required this.onChanged,
     this.placeholder,
     this.allowExpressions = true,
+    this.expressionContext,
   });
 
   final JsonValue value;
@@ -20,12 +24,55 @@ class TypedValueEditor extends StatefulWidget {
   final ValueChanged<JsonValue> onChanged;
   final String? placeholder;
   final bool allowExpressions;
+  final WorkflowExpressionEditorContext? expressionContext;
 
   @override
-  State<TypedValueEditor> createState() => _TypedValueEditorState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (allowExpressions && isWorkflowExpressionValue(value)) {
+      return ExpressionJsonEditor(
+        value: value?.toString() ?? '{}',
+        context: expressionContext,
+        onChanged: (text) {
+          try {
+            onChanged(parseJsonValue(text));
+          } catch (_) {}
+        },
+      );
+    }
+
+    return _TypedValueEditorBody(
+      value: value,
+      ty: ty,
+      onChanged: onChanged,
+      placeholder: placeholder,
+      allowExpressions: allowExpressions,
+      expressionContext: expressionContext,
+    );
+  }
 }
 
-class _TypedValueEditorState extends State<TypedValueEditor> {
+class _TypedValueEditorBody extends StatefulWidget {
+  const _TypedValueEditorBody({
+    required this.value,
+    required this.ty,
+    required this.onChanged,
+    this.placeholder,
+    required this.allowExpressions,
+    this.expressionContext,
+  });
+
+  final JsonValue value;
+  final RuninatorType ty;
+  final ValueChanged<JsonValue> onChanged;
+  final String? placeholder;
+  final bool allowExpressions;
+  final WorkflowExpressionEditorContext? expressionContext;
+
+  @override
+  State<_TypedValueEditorBody> createState() => _TypedValueEditorBodyState();
+}
+
+class _TypedValueEditorBodyState extends State<_TypedValueEditorBody> {
   var _expressionMode = false;
 
   @override
@@ -64,8 +111,9 @@ class _TypedValueEditorState extends State<TypedValueEditor> {
           ),
           const SizedBox(height: 8),
           if (_expressionMode)
-            JsonEditor(
+            ExpressionJsonEditor(
               value: widget.value?.toString() ?? '{}',
+              context: widget.expressionContext,
               onChanged: (text) {
                 try {
                   widget.onChanged(parseJsonValue(text));
@@ -121,6 +169,7 @@ class _TypedValueEditorState extends State<TypedValueEditor> {
                     TypedValueEditor(
                       value: (widget.value is Map ? (widget.value as Map)[entry.key] : null) as JsonValue?,
                       ty: entry.value.ty,
+                      expressionContext: widget.expressionContext,
                       onChanged: (next) {
                         final map = widget.value is Map ? Map<String, Object?>.from(widget.value as Map) : <String, Object?>{};
                         map[entry.key] = next;
@@ -143,28 +192,22 @@ class _TypedValueEditorState extends State<TypedValueEditor> {
         );
     }
   }
-
-  String encodeJsonPretty(JsonValue? value) {
-    if (value == null) return 'null';
-    if (value is String) return '"$value"';
-    if (value is Map || value is List) return value.toString();
-    return value.toString();
-  }
-
-  JsonValue parseJsonValue(String text) {
-    final trimmed = text.trim();
-    if (trimmed == 'null') return null;
-    if (trimmed == 'true') return true;
-    if (trimmed == 'false') return false;
-    if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.substring(1, trimmed.length - 1);
-    final numVal = num.tryParse(trimmed);
-    if (numVal != null) return numVal;
-    return trimmed;
-  }
 }
 
 String encodeJsonPretty(JsonValue? value) {
   if (value == null) return 'null';
   if (value is String) return '"$value"';
+  if (value is Map || value is List) return value.toString();
   return value.toString();
+}
+
+JsonValue parseJsonValue(String text) {
+  final trimmed = text.trim();
+  if (trimmed == 'null') return null;
+  if (trimmed == 'true') return true;
+  if (trimmed == 'false') return false;
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.substring(1, trimmed.length - 1);
+  final numVal = num.tryParse(trimmed);
+  if (numVal != null) return numVal;
+  return trimmed;
 }

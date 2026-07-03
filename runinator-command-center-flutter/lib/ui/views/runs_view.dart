@@ -3,11 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/domain/icons.dart';
 import '../../core/domain/models/index.dart';
+import '../../core/realtime/workflow_node_log_stream_client.dart';
+import '../../core/realtime/workflow_run_stream_client.dart';
 import '../../core/services/app_service.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/services/workflow_run_extras_service.dart';
 import '../../core/services/workflows/state.dart';
 import '../../core/services/workflows_service.dart';
 import '../../core/utils/format.dart';
+import '../../core/utils/status.dart';
 import '../../core/workflow/workflow_helpers.dart';
 import '../shared/cc_widgets.dart';
 import '../shared/code_editor.dart';
@@ -16,6 +20,7 @@ import '../theme/app_theme.dart';
 import '../workflow/debug_control_bar.dart';
 import '../workflow/log_panel.dart';
 import '../workflow/run_tabs_bar.dart';
+import '../workflow/run_timeline.dart';
 import '../workflow/watch_expressions_panel.dart';
 import '../workflow/workflow_graph_canvas.dart';
 
@@ -27,11 +32,34 @@ class RunsView extends ConsumerStatefulWidget {
 }
 
 class _RunsViewState extends ConsumerState<RunsView> {
-  List<RunChunk> _nodeChunks = const [];
+  late final WorkflowRunStreamClient _runStream;
+  late final WorkflowNodeLogStreamClient _logStream;
   List<RunArtifact> _nodeArtifacts = const [];
   List<WorkflowRunArtifact> _runArtifacts = const [];
-  var _loadingLogs = false;
   var _loadingArtifacts = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final notifier = ref.read(workflowsProvider.notifier);
+    _runStream = WorkflowRunStreamClient(
+      getServiceUrl: () => ref.read(appProvider).serviceUrl,
+      getServiceKnown: () => ref.read(appProvider).serviceUrl != null,
+      getOpenRunIds: () => ref.read(workflowsProvider).openRunIds,
+      onDetail: notifier.runs.setWorkflowRunDetail,
+    );
+    _logStream = WorkflowNodeLogStreamClient(
+      getServiceUrl: () => ref.read(appProvider).serviceUrl,
+      getServiceKnown: () => ref.read(appProvider).serviceUrl != null,
+    );
+  }
+
+  @override
+  void dispose() {
+    _runStream.dispose();
+    _logStream.dispose();
+    super.dispose();
+  }
 
   WorkflowNodeRun? _selectedNode(WorkflowServicesState workflows) {
     final nodeId = workflows.selectedWorkflowRunNodeId;
@@ -41,30 +69,25 @@ class _RunsViewState extends ConsumerState<RunsView> {
     return null;
   }
 
-  Future<void> _loadNodeData(String? nodeRunId) async {
+  String _workflowName(WorkflowsNotifier notifier, String? workflowId) {
+    if (workflowId == null) return '';
+    for (final workflow in notifier.host.state.workflows) {
+      if (workflow.id == workflowId) return workflow.name;
+    }
+    return workflowId;
+  }
+
+  Future<void> _loadNodeArtifacts(String? nodeRunId) async {
     if (nodeRunId == null || nodeRunId.isEmpty) {
-      setState(() {
-        _nodeChunks = const [];
-        _nodeArtifacts = const [];
-      });
+      setState(() => _nodeArtifacts = const []);
       return;
     }
 
-    setState(() => _loadingLogs = true);
     try {
-      final extras = ref.read(workflowRunExtrasServiceProvider);
-      final results = await Future.wait([
-        extras.fetchNodeRunChunks(nodeRunId),
-        extras.fetchNodeRunArtifacts(nodeRunId),
-      ]);
-      if (mounted) {
-        setState(() {
-          _nodeChunks = results[0] as List<RunChunk>;
-          _nodeArtifacts = results[1] as List<RunArtifact>;
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _loadingLogs = false);
+      final artifacts = await ref.read(workflowRunExtrasServiceProvider).fetchNodeRunArtifacts(nodeRunId);
+      if (mounted) setState(() => _nodeArtifacts = artifacts);
+    } catch (_) {
+      if (mounted) setState(() => _nodeArtifacts = const []);
     }
   }
 
@@ -82,8 +105,28 @@ class _RunsViewState extends ConsumerState<RunsView> {
     }
   }
 
+  void _syncStreams() {
+    _runStream.sync();
+    final nodeRunId = ref.read(workflowsProvider).selectedWorkflowNodeRunId;
+    if (nodeRunId != null && nodeRunId.isNotEmpty) {
+      _logStream.connect(nodeRunId);
+    } else {
+      _logStream.disconnect(clearChunks: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen(workflowsProvider.select((s) => s.openRunIds), (_, __) => _runStream.sync());
+    ref.listen(appProvider.select((s) => s.serviceUrl), (_, __) => _runStream.reconnectAll());
+    ref.listen(authProvider.select((s) => s.accessTokenRevision), (_, __) {
+      _runStream.reconnectAll();
+      final nodeRunId = ref.read(workflowsProvider).selectedWorkflowNodeRunId;
+      if (nodeRunId != null && nodeRunId.isNotEmpty) {
+        _logStream.connect(nodeRunId);
+      }
+    });
+
     final workflows = ref.watch(workflowsProvider);
     final notifier = ref.read(workflowsProvider.notifier);
     final query = ref.read(appProvider.notifier).normalizedSearch;
@@ -91,6 +134,7 @@ class _RunsViewState extends ConsumerState<RunsView> {
     final filtered = query.isEmpty
         ? runs
         : runs.where((run) => [run.id, run.name, run.workflowId, run.status].any((v) => v?.toLowerCase().contains(query) ?? false)).toList();
+    final activeCount = filtered.where((run) => run.status != null && !isTerminalWorkflowRunStatus(run.status)).length;
 
     final detail = workflows.workflowRunDetail;
     final workflow = notifier.host.getWorkflowRunWorkflow() ?? workflows.workflowDraft;
@@ -101,17 +145,29 @@ class _RunsViewState extends ConsumerState<RunsView> {
       providers: notifier.host.getProviders(),
     );
 
-    final nodeRunId = workflows.selectedWorkflowNodeRunId;
     ref.listen(workflowsProvider.select((s) => s.selectedWorkflowNodeRunId), (prev, next) {
-      if (prev != next) _loadNodeData(next);
+      if (prev != next) {
+        if (next != null && next.isNotEmpty) {
+          _logStream.connect(next);
+          _loadNodeArtifacts(next);
+        } else {
+          _logStream.disconnect(clearChunks: true);
+          setState(() => _nodeArtifacts = const []);
+        }
+      }
     });
     ref.listen(workflowsProvider.select((s) => s.selectedWorkflowRunId), (prev, next) {
       if (prev != next) _loadRunArtifacts(next);
     });
 
-    if (nodeRunId != null && nodeRunId.isNotEmpty && _nodeChunks.isEmpty && !_loadingLogs) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadNodeData(nodeRunId));
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _runStream.sync();
+      final nodeRunId = workflows.selectedWorkflowNodeRunId;
+      if (nodeRunId != null && nodeRunId.isNotEmpty && _logStream.chunks.isEmpty) {
+        _logStream.connect(nodeRunId);
+      }
+    });
+
     if (workflows.selectedWorkflowRunId != null && _runArtifacts.isEmpty && !_loadingArtifacts) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _loadRunArtifacts(workflows.selectedWorkflowRunId));
     }
@@ -131,6 +187,13 @@ class _RunsViewState extends ConsumerState<RunsView> {
                   CcButton(icon: IconName.refresh, label: 'Refresh', dense: true, onPressed: () => notifier.runs.fetchRecentWorkflowRuns()),
                 ],
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: Text(
+                  '${filtered.length} visible · $activeCount active',
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
+              ),
               Expanded(
                 child: filtered.isEmpty
                     ? EmptyState(message: query.isEmpty ? 'No runs yet.' : 'No runs match "$query".')
@@ -142,7 +205,10 @@ class _RunsViewState extends ConsumerState<RunsView> {
                           return ListTile(
                             selected: selected,
                             title: Text(run.name ?? run.id ?? 'Run', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                            subtitle: Text('${run.status ?? 'unknown'} · ${run.workflowId ?? ''}', style: const TextStyle(fontSize: 11)),
+                            subtitle: Text(
+                              '${run.status ?? 'unknown'} · ${_workflowName(notifier, run.workflowId)}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
                             trailing: StatusBadge(run.status),
                             onTap: () => notifier.runs.selectWorkflowRun(run),
                           );
@@ -200,7 +266,7 @@ class _RunsViewState extends ConsumerState<RunsView> {
                               const TabBar(
                                 isScrollable: true,
                                 tabs: [
-                                  Tab(text: 'Output'),
+                                  Tab(text: 'Timeline'),
                                   Tab(text: 'Logs'),
                                   Tab(text: 'Watch'),
                                   Tab(text: 'Artifacts'),
@@ -209,33 +275,23 @@ class _RunsViewState extends ConsumerState<RunsView> {
                               Expanded(
                                 child: TabBarView(
                                   children: [
-                                    SingleChildScrollView(
+                                    Padding(
                                       padding: const EdgeInsets.all(12),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text('Status: ${detail.run.status ?? 'unknown'}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                                          if (detail.run.startedAt != null)
-                                            Text('Started: ${detail.run.startedAt}', style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                                          const SizedBox(height: 12),
-                                          SizedBox(
-                                            height: 240,
-                                            child: JsonEditor(value: pretty(detail.run.outputJson), onChanged: (_) {}, readOnly: true),
-                                          ),
-                                          if (_selectedNode(workflows) != null) ...[
-                                            const SizedBox(height: 16),
-                                            Text('Node: ${_selectedNode(workflows)!.nodeId}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                                            SizedBox(
-                                              height: 160,
-                                              child: JsonEditor(value: pretty(_selectedNode(workflows)!.outputJson), onChanged: (_) {}, readOnly: true),
-                                            ),
-                                          ],
-                                        ],
+                                      child: RunTimeline(
+                                        detail: detail,
+                                        selectedNodeId: workflows.selectedWorkflowRunNodeId,
+                                        autoExpandFailed: true,
+                                        filterable: true,
+                                        onSelect: (nodeId) {
+                                          notifier.runs.selectWorkflowRunNode(nodeId);
+                                          notifier.runs.updateSelectedWorkflowNodeDetail();
+                                        },
                                       ),
                                     ),
-                                    _loadingLogs
-                                        ? const Center(child: CircularProgressIndicator())
-                                        : LogPanel(chunks: _nodeChunks),
+                                    LogPanel(
+                                      chunks: _logStream.chunks,
+                                      lastChunkAt: _logStream.lastChunkAt,
+                                    ),
                                     const SingleChildScrollView(padding: EdgeInsets.all(12), child: WatchExpressionsPanel()),
                                     _ArtifactsPanel(
                                       loading: _loadingArtifacts,

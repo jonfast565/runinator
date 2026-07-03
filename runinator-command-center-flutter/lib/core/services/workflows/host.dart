@@ -139,6 +139,20 @@ class WorkflowServiceHost {
         .toList();
   }
 
+  List<WorkflowDefinition> getScopedWorkflows({required String scopeFilter, String? activeOrgId}) {
+    final list = getFilteredWorkflows();
+
+    if (scopeFilter == 'global') {
+      return list.where((workflow) => workflow.orgId == null || workflow.orgId!.isEmpty).toList();
+    }
+
+    if (scopeFilter == 'org' && activeOrgId != null && activeOrgId.isNotEmpty) {
+      return list.where((workflow) => workflow.orgId == activeOrgId).toList();
+    }
+
+    return list;
+  }
+
   Map<String, String> getSubflowNames() => {
         for (final w in state.workflows)
           if (w.id != null) w.id!: w.name,
