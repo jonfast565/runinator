@@ -34,6 +34,12 @@ class DevPackService {
 
   Future<TaskResponse> cancelRun(String runId) =>
       _app.runOperation('Canceling workflow run', () => api.cancelWorkflowRun(runId));
+
+  Future<WorkflowRunCreated> replayRun(String workflowRunId, {String? fromStepId}) =>
+      _app.runOperation(
+        'Replaying workflow run',
+        () => api.replayWorkflowRun(workflowRunId, fromStepId: fromStepId),
+      );
 }
 
 @riverpod

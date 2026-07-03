@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/domain/icons.dart';
 import '../../core/domain/models/index.dart';
+import '../../core/services/providers_service.dart';
+import '../../core/services/secrets_service.dart';
 import '../../core/services/wdl_language_service.dart';
-import '../../core/services/workflows_service.dart';
+import '../adapters/wdl_text_utils.dart';
+import '../shared/cc_widgets.dart';
 import '../shared/code_editor.dart';
 import '../theme/app_theme.dart';
-import '../shared/cc_widgets.dart';
 
 class WdlEditorPanel extends ConsumerStatefulWidget {
   const WdlEditorPanel({
@@ -63,6 +65,43 @@ class _WdlEditorPanelState extends ConsumerState<WdlEditorPanel> {
     }
   }
 
+  Future<List<WdlCompletionSuggestion>> _complete(int cursor, String source) async {
+    final providers = ref.read(providersProvider).providers;
+    final settings = settingRefsFromCredentials(ref.read(secretsProvider).secrets);
+    final service = ref.read(wdlLanguageServiceProvider);
+    try {
+      final response = await service.complete(WdlCompletionRequest(
+        source: source,
+        cursorByte: utf16OffsetToUtf8ByteOffset(source, cursor),
+        providers: providers,
+        settings: settings,
+      ));
+      return response.items
+          .map((item) => WdlCompletionSuggestion(label: item.label, insertText: item.insertText, detail: item.detail))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<WdlHoverInfo?> _hover(int cursor, String source) async {
+    final providers = ref.read(providersProvider).providers;
+    final settings = settingRefsFromCredentials(ref.read(secretsProvider).secrets);
+    final service = ref.read(wdlLanguageServiceProvider);
+    try {
+      final response = await service.hover(WdlHoverRequest(
+        source: source,
+        cursorByte: utf16OffsetToUtf8ByteOffset(source, cursor),
+        providers: providers,
+        settings: settings,
+      ));
+      if (response == null) return null;
+      return WdlHoverInfo(title: response.title, documentation: response.documentation);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final errorCount = _diagnostics.where((d) => d.severity == WdlDiagnosticSeverity.error).length;
@@ -95,6 +134,8 @@ class _WdlEditorPanelState extends ConsumerState<WdlEditorPanel> {
           child: WdlEditor(
             value: widget.value,
             readOnly: widget.readOnly,
+            onComplete: _complete,
+            onHover: _hover,
             onChanged: (value) {
               widget.onChanged(value);
               _scheduleAnalyze(value);

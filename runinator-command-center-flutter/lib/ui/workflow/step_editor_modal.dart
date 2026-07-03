@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/domain/models/index.dart';
-import '../../core/services/providers_service.dart';
 import '../../core/services/workflows_service.dart';
 import '../../core/workflow/workflow_helpers.dart';
 import '../shared/cc_widgets.dart';
-import '../shared/code_editor.dart';
 import '../theme/app_theme.dart';
+import 'step_editor_sections.dart';
 
 class StepEditorModal extends ConsumerWidget {
   const StepEditorModal({super.key});
@@ -21,21 +19,20 @@ class StepEditorModal extends ConsumerWidget {
     final host = notifier.host;
     final editor = notifier.editor;
     final step = workflows.stepEditor;
-    final providers = ref.watch(providersProvider).providers;
 
     void touch(VoidCallback mutate) {
       mutate();
       host.notify();
     }
 
-    final currentProvider = providers.where((p) => p.name == step.actionName).firstOrNull;
-    final actions = currentProvider?.actions ?? const <ActionMetadata>[];
+    final nodeIds = host.ensureWorkflowNodes().map((n) => n['id']?.toString() ?? '').where((id) => id.isNotEmpty).toList();
+    final ctx = StepEditorSectionContext(ref: ref, notifier: notifier, host: host, editor: editor, step: step, touch: touch, nodeIds: nodeIds);
 
     return Material(
       color: Colors.black54,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820, maxHeight: 720),
+          constraints: const BoxConstraints(maxWidth: 860, maxHeight: 760),
           child: Card(
             margin: const EdgeInsets.all(16),
             child: Column(
@@ -86,7 +83,7 @@ class StepEditorModal extends ConsumerWidget {
                               const SizedBox(height: 8),
                               DropdownButtonFormField<String>(
                                 decoration: const InputDecoration(labelText: 'Node Kind'),
-                                value: step.kind,
+                                initialValue: step.kind,
                                 items: [
                                   const DropdownMenuItem(value: 'start', child: Text('start')),
                                   for (final kind in notifier.nodeKinds)
@@ -131,140 +128,8 @@ class StepEditorModal extends ConsumerWidget {
                             ],
                           ),
                         ),
-                        if (step.kind == 'action') ...[
-                          _Section(
-                            title: 'Action',
-                            child: Column(
-                              children: [
-                                DropdownButtonFormField<String>(
-                                  decoration: const InputDecoration(labelText: 'Provider'),
-                                  value: step.actionName.isEmpty ? null : step.actionName,
-                                  items: [
-                                    for (final provider in providers)
-                                      DropdownMenuItem(value: provider.name, child: Text(provider.name)),
-                                  ],
-                                  onChanged: (v) => touch(() {
-                                    step.actionName = v ?? '';
-                                    step.actionFunction = '';
-                                  }),
-                                ),
-                                const SizedBox(height: 8),
-                                DropdownButtonFormField<String>(
-                                  decoration: const InputDecoration(labelText: 'Function'),
-                                  value: step.actionFunction.isEmpty ? null : step.actionFunction,
-                                  items: [
-                                    for (final action in actions)
-                                      DropdownMenuItem(value: action.functionName, child: Text(action.functionName)),
-                                  ],
-                                  onChanged: (v) => touch(() => step.actionFunction = v ?? ''),
-                                ),
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  height: 160,
-                                  child: JsonEditor(
-                                    value: step.parametersJson,
-                                    onChanged: (v) => touch(() => step.parametersJson = v),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                        if (step.kind == 'approval')
-                          _Section(
-                            title: 'Approval',
-                            child: Column(
-                              children: [
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Approval type'),
-                                  controller: TextEditingController(text: step.approvalType),
-                                  onChanged: (v) => touch(() => step.approvalType = v),
-                                ),
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Prompt'),
-                                  maxLines: 3,
-                                  controller: TextEditingController(text: step.approvalPrompt),
-                                  onChanged: (v) => touch(() => step.approvalPrompt = v),
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (step.kind == 'gate')
-                          _Section(
-                            title: 'Gate',
-                            child: Column(
-                              children: [
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Kind'),
-                                  controller: TextEditingController(text: step.gateKind),
-                                  onChanged: (v) => touch(() => step.gateKind = v),
-                                ),
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Label'),
-                                  controller: TextEditingController(text: step.gateLabel),
-                                  onChanged: (v) => touch(() => step.gateLabel = v),
-                                ),
-                                SizedBox(
-                                  height: 100,
-                                  child: JsonEditor(
-                                    value: step.gateWhenJson,
-                                    onChanged: (v) => touch(() => step.gateWhenJson = v),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (step.kind == 'wait')
-                          _Section(
-                            title: 'Wait',
-                            child: Column(
-                              children: [
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Seconds'),
-                                  keyboardType: TextInputType.number,
-                                  controller: TextEditingController(text: step.waitSeconds.toString()),
-                                  onChanged: (v) => touch(() => step.waitSeconds = num.tryParse(v) ?? step.waitSeconds),
-                                ),
-                                SizedBox(
-                                  height: 100,
-                                  child: JsonEditor(
-                                    value: step.waitJson,
-                                    onChanged: (v) => touch(() => step.waitJson = v),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (step.kind == 'subflow')
-                          _Section(
-                            title: 'Subflow',
-                            child: Column(
-                              children: [
-                                TextField(
-                                  decoration: const InputDecoration(labelText: 'Subflow ID'),
-                                  controller: TextEditingController(text: step.subflowId),
-                                  onChanged: (v) => touch(() => step.subflowId = v),
-                                ),
-                                SizedBox(
-                                  height: 120,
-                                  child: JsonEditor(
-                                    value: step.subflowParametersJson,
-                                    onChanged: (v) => touch(() => step.subflowParametersJson = v),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        _Section(
-                          title: 'Transitions',
-                          child: SizedBox(
-                            height: 120,
-                            child: JsonEditor(
-                              value: step.transitionsJson,
-                              onChanged: (v) => touch(() => step.transitionsJson = v),
-                            ),
-                          ),
-                        ),
+                        ...buildStepKindSections(ctx),
+                        buildTransitionsSection(ctx),
                         if (workflows.stepEditorError.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
@@ -280,11 +145,7 @@ class StepEditorModal extends ConsumerWidget {
                     spacing: 8,
                     children: [
                       CcButton(label: 'Cancel', onPressed: () => editor.closeStepEditor()),
-                      CcButton(
-                        label: 'Apply Step',
-                        variant: CcButtonVariant.primary,
-                        onPressed: () => editor.submitStepEditor(),
-                      ),
+                      CcButton(label: 'Apply Step', variant: CcButtonVariant.primary, onPressed: () => editor.submitStepEditor()),
                     ],
                   ),
                 ),
@@ -299,7 +160,6 @@ class StepEditorModal extends ConsumerWidget {
 
 class _Section extends StatelessWidget {
   const _Section({required this.title, required this.child});
-
   final String title;
   final Widget child;
 

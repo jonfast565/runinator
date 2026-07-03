@@ -5,6 +5,7 @@ import '../../core/domain/icons.dart';
 import '../../core/domain/models/index.dart';
 import '../../core/services/app_service.dart';
 import '../../core/services/workflow_run_extras_service.dart';
+import '../../core/services/workflows/state.dart';
 import '../../core/services/workflows_service.dart';
 import '../../core/utils/format.dart';
 import '../../core/workflow/workflow_helpers.dart';
@@ -12,6 +13,7 @@ import '../shared/cc_widgets.dart';
 import '../shared/code_editor.dart';
 import '../shared/split_pane.dart';
 import '../theme/app_theme.dart';
+import '../workflow/debug_control_bar.dart';
 import '../workflow/log_panel.dart';
 import '../workflow/run_tabs_bar.dart';
 import '../workflow/watch_expressions_panel.dart';
@@ -26,20 +28,57 @@ class RunsView extends ConsumerStatefulWidget {
 
 class _RunsViewState extends ConsumerState<RunsView> {
   List<RunChunk> _nodeChunks = const [];
+  List<RunArtifact> _nodeArtifacts = const [];
+  List<WorkflowRunArtifact> _runArtifacts = const [];
   var _loadingLogs = false;
+  var _loadingArtifacts = false;
 
-  Future<void> _loadNodeLogs(String? nodeRunId) async {
+  WorkflowNodeRun? _selectedNode(WorkflowServicesState workflows) {
+    final nodeId = workflows.selectedWorkflowRunNodeId;
+    for (final node in workflows.workflowRunDetail?.nodes ?? const <WorkflowNodeRun>[]) {
+      if (node.nodeId == nodeId) return node;
+    }
+    return null;
+  }
+
+  Future<void> _loadNodeData(String? nodeRunId) async {
     if (nodeRunId == null || nodeRunId.isEmpty) {
-      setState(() => _nodeChunks = const []);
+      setState(() {
+        _nodeChunks = const [];
+        _nodeArtifacts = const [];
+      });
       return;
     }
 
     setState(() => _loadingLogs = true);
     try {
-      final chunks = await ref.read(workflowRunExtrasServiceProvider).fetchNodeRunChunks(nodeRunId);
-      if (mounted) setState(() => _nodeChunks = chunks);
+      final extras = ref.read(workflowRunExtrasServiceProvider);
+      final results = await Future.wait([
+        extras.fetchNodeRunChunks(nodeRunId),
+        extras.fetchNodeRunArtifacts(nodeRunId),
+      ]);
+      if (mounted) {
+        setState(() {
+          _nodeChunks = results[0] as List<RunChunk>;
+          _nodeArtifacts = results[1] as List<RunArtifact>;
+        });
+      }
     } finally {
       if (mounted) setState(() => _loadingLogs = false);
+    }
+  }
+
+  Future<void> _loadRunArtifacts(String? runId) async {
+    if (runId == null || runId.isEmpty) {
+      setState(() => _runArtifacts = const []);
+      return;
+    }
+    setState(() => _loadingArtifacts = true);
+    try {
+      final artifacts = await ref.read(workflowRunExtrasServiceProvider).fetchRunArtifacts(runId);
+      if (mounted) setState(() => _runArtifacts = artifacts);
+    } finally {
+      if (mounted) setState(() => _loadingArtifacts = false);
     }
   }
 
@@ -64,13 +103,17 @@ class _RunsViewState extends ConsumerState<RunsView> {
 
     final nodeRunId = workflows.selectedWorkflowNodeRunId;
     ref.listen(workflowsProvider.select((s) => s.selectedWorkflowNodeRunId), (prev, next) {
-      if (prev != next) {
-        _loadNodeLogs(next);
-      }
+      if (prev != next) _loadNodeData(next);
+    });
+    ref.listen(workflowsProvider.select((s) => s.selectedWorkflowRunId), (prev, next) {
+      if (prev != next) _loadRunArtifacts(next);
     });
 
     if (nodeRunId != null && nodeRunId.isNotEmpty && _nodeChunks.isEmpty && !_loadingLogs) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadNodeLogs(nodeRunId));
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadNodeData(nodeRunId));
+    }
+    if (workflows.selectedWorkflowRunId != null && _runArtifacts.isEmpty && !_loadingArtifacts) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadRunArtifacts(workflows.selectedWorkflowRunId));
     }
 
     return Padding(
@@ -126,12 +169,11 @@ class _RunsViewState extends ConsumerState<RunsView> {
                             actions: [
                               if (notifier.host.canCancelWorkflowRun())
                                 CcButton(icon: IconName.stop, label: 'Cancel', variant: CcButtonVariant.danger, dense: true, onPressed: () => notifier.runs.cancelSelectedWorkflowRun()),
-                              if (notifier.host.canStepWorkflowRun())
-                                CcButton(icon: IconName.step, label: 'Step', dense: true, onPressed: () => notifier.runs.stepSelectedWorkflowRun()),
-                              if (notifier.host.canContinueWorkflowRun())
-                                CcButton(icon: IconName.continue_, label: 'Continue', variant: CcButtonVariant.primary, dense: true, onPressed: () => notifier.runs.continueSelectedWorkflowRun()),
                             ],
                           ),
+                          if (notifier.host.isDebugRun()) ...[
+                            const Padding(padding: EdgeInsets.fromLTRB(12, 0, 12, 8), child: DebugControlBar()),
+                          ],
                           Expanded(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -151,15 +193,17 @@ class _RunsViewState extends ConsumerState<RunsView> {
                       ),
                       second: PanelCard(
                         child: DefaultTabController(
-                          length: 3,
+                          length: 4,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               const TabBar(
+                                isScrollable: true,
                                 tabs: [
                                   Tab(text: 'Output'),
                                   Tab(text: 'Logs'),
                                   Tab(text: 'Watch'),
+                                  Tab(text: 'Artifacts'),
                                 ],
                               ),
                               Expanded(
@@ -175,9 +219,17 @@ class _RunsViewState extends ConsumerState<RunsView> {
                                             Text('Started: ${detail.run.startedAt}', style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
                                           const SizedBox(height: 12),
                                           SizedBox(
-                                            height: 280,
+                                            height: 240,
                                             child: JsonEditor(value: pretty(detail.run.outputJson), onChanged: (_) {}, readOnly: true),
                                           ),
+                                          if (_selectedNode(workflows) != null) ...[
+                                            const SizedBox(height: 16),
+                                            Text('Node: ${_selectedNode(workflows)!.nodeId}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                            SizedBox(
+                                              height: 160,
+                                              child: JsonEditor(value: pretty(_selectedNode(workflows)!.outputJson), onChanged: (_) {}, readOnly: true),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     ),
@@ -185,6 +237,12 @@ class _RunsViewState extends ConsumerState<RunsView> {
                                         ? const Center(child: CircularProgressIndicator())
                                         : LogPanel(chunks: _nodeChunks),
                                     const SingleChildScrollView(padding: EdgeInsets.all(12), child: WatchExpressionsPanel()),
+                                    _ArtifactsPanel(
+                                      loading: _loadingArtifacts,
+                                      nodeArtifacts: _nodeArtifacts,
+                                      runArtifacts: _runArtifacts,
+                                      onDownload: (id, name) => ref.read(workflowRunExtrasServiceProvider).downloadArtifact(id, name),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -197,6 +255,49 @@ class _RunsViewState extends ConsumerState<RunsView> {
                 ],
               ),
       ),
+    );
+  }
+}
+
+class _ArtifactsPanel extends StatelessWidget {
+  const _ArtifactsPanel({
+    required this.loading,
+    required this.nodeArtifacts,
+    required this.runArtifacts,
+    required this.onDownload,
+  });
+
+  final bool loading;
+  final List<RunArtifact> nodeArtifacts;
+  final List<WorkflowRunArtifact> runArtifacts;
+  final Future<void> Function(String id, String name) onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Center(child: CircularProgressIndicator());
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const Text('Node artifacts', style: TextStyle(fontWeight: FontWeight.w700)),
+        if (nodeArtifacts.isEmpty) const Text('No node artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+        for (final item in nodeArtifacts)
+          ListTile(
+            dense: true,
+            title: Text(item.name),
+            subtitle: Text(item.mimeType),
+            trailing: IconButton(icon: const Icon(Icons.download, size: 16), onPressed: () => onDownload(item.id, item.name)),
+          ),
+        const SizedBox(height: 16),
+        const Text('Run artifacts', style: TextStyle(fontWeight: FontWeight.w700)),
+        if (runArtifacts.isEmpty) const Text('No run artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+        for (final item in runArtifacts)
+          ListTile(
+            dense: true,
+            title: Text(item.name),
+            subtitle: Text(item.nodeId),
+            trailing: IconButton(icon: const Icon(Icons.download, size: 16), onPressed: () => onDownload(item.artifactId, item.name)),
+          ),
+      ],
     );
   }
 }
