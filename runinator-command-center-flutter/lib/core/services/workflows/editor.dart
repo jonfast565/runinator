@@ -1344,6 +1344,10 @@ class WorkflowEditorService implements WorkflowEditorPeer {
     return GraphPosition(x: (totalX / positioned.length).roundToDouble(), y: (totalY / positioned.length).roundToDouble());
   }
 
+  void setGraphNodePosition(String nodeId, GraphPosition position) => _setGraphNodePosition(nodeId, position);
+
+  void dismissStepEditorForCanvasEdit() => _dismissStepEditorForCanvasEdit();
+
   void _setGraphNodePosition(String nodeId, GraphPosition position) {
     final definition = _host.state.workflowDraft.definition;
     final ui = asRecord(definition['ui']);

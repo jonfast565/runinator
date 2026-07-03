@@ -45,6 +45,15 @@ dependencies:
   # core/ port: WebSocket client for the ported realtime layer.
   web_socket_channel: ^3.0.3
 
+  # ui: widget bindings for riverpod providers.
+  flutter_riverpod: ^3.3.2
+
+  # ui: persistent preferences (theme, nav, auth tokens on web).
+  shared_preferences: ^2.5.3
+
+  # ui: artifact upload file picker.
+  file_picker: ^10.1.9
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

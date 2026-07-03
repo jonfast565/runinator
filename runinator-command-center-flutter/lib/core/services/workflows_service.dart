@@ -63,4 +63,6 @@ class WorkflowsNotifier extends _$WorkflowsNotifier {
   List<String> get nodeKinds => workflowNodeKinds;
 
   List<String> get directTransitions => directTransitionKeys;
+
+  WorkflowServiceHost get host => _host;
 }

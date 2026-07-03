@@ -8,7 +8,7 @@
 
 import '../domain/json.dart';
 import '../domain/models/index.dart';
-import 'command_runtime.dart';
+import '../api/command_runtime.dart';
 import 'http_runtime.dart' show setHttpAuthToken;
 
 /// referenced by core/platform/types.dart's ArtifactTransport; the desktop-only
@@ -1018,6 +1018,42 @@ Future<OrgQuota> fetchOrgQuota(String orgId) async =>
 
 Future<OrgUsage> fetchOrgUsage(String orgId) async =>
     OrgUsage.fromJson((await command('fetch_org_usage', {'orgId': orgId})) as Map<String, Object?>);
+
+// --- dev pack (tauri desktop only) ---
+
+void _requireTauriDevPack() {
+  if (!isTauriRuntime()) {
+    throw StateError('Dev pack file access is only available in the Tauri desktop app.');
+  }
+}
+
+Future<DevPackInspectResult> inspectDevPack(String path, [bool skipSettings = false]) async {
+  _requireTauriDevPack();
+  return DevPackInspectResult.fromJson(
+    (await command('inspect_dev_pack', {'path': path, 'skipSettings': skipSettings})) as Map<String, Object?>,
+  );
+}
+
+Future<DevPackTextFile> readDevPackFile(String path) async {
+  _requireTauriDevPack();
+  return DevPackTextFile.fromJson(
+    (await command('read_dev_pack_file', {'path': path})) as Map<String, Object?>,
+  );
+}
+
+Future<DevPackTextFile> writeDevPackFile(String path, String content) async {
+  _requireTauriDevPack();
+  return DevPackTextFile.fromJson(
+    (await command('write_dev_pack_file', {'path': path, 'content': content})) as Map<String, Object?>,
+  );
+}
+
+Future<DevPackApplyResult> applyDevPack(String path, [bool skipSettings = false]) async {
+  _requireTauriDevPack();
+  return DevPackApplyResult.fromJson(
+    (await command('apply_dev_pack', {'path': path, 'skipSettings': skipSettings})) as Map<String, Object?>,
+  );
+}
 
 // --- credentials / config-and-secrets store ---
 
