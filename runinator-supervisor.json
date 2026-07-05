@@ -148,7 +148,7 @@
         "http://127.0.0.1:8080/",
         "workflows",
         "apply",
-        "packs/creds-sync"
+        "packs/creds-sync/creds-sync.wdlp"
       ],
       "restart_on_failure": false
     }
