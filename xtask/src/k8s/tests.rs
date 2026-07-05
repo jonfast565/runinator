@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::images::{image_tag, versioned_image_tag};
-use super::kustomize::{
-    add_component, overlay_has_image, set_overlay_images, split_image_reference,
-};
+use super::kustomize::{add_component, set_overlay_images, split_image_reference};
 use super::yaml_docs::{
     filter_out_statefulsets, parse_documents, rollout_target, select_by_names, workload_kind,
 };
@@ -105,17 +103,6 @@ fn set_overlay_images_errors_on_an_image_the_kustomization_does_not_declare() {
     let mut image_map = HashMap::new();
     image_map.insert("runinator-does-not-exist".to_string(), "x:y".to_string());
     assert!(set_overlay_images(&dir, &image_map).is_err());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn overlay_has_image_matches_declared_names_only() {
-    let dir = temp_dir("has-image");
-    std::fs::write(dir.join("kustomization.yaml"), FIXTURE_KUSTOMIZATION).unwrap();
-
-    assert!(overlay_has_image(&dir, "runinator-ws"));
-    assert!(!overlay_has_image(&dir, "runinator-command-center-flutter"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

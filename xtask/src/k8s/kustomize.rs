@@ -69,19 +69,6 @@ pub fn render_overlay_copy(workspace_root: &Path, overlay_path: &Path) -> Result
     Ok(rendered_k8s_root.join(relative_overlay))
 }
 
-/// true if `overlay_path`'s kustomization declares an `images:` entry named `image_name`.
-pub fn overlay_has_image(overlay_path: &Path, image_name: &str) -> bool {
-    let kustomization_path = overlay_path.join("kustomization.yaml");
-    let Ok(content) = std::fs::read_to_string(&kustomization_path) else {
-        return false;
-    };
-    let pattern = format!(r"^\s*-\s+name:\s+{}\s*$", regex::escape(image_name));
-    let Ok(re) = Regex::new(&pattern) else {
-        return false;
-    };
-    content.lines().any(|line| re.is_match(line))
-}
-
 /// rewrites each `images:` entry in `overlay_path`'s kustomization to point at the built tag in
 /// `image_map` (name -> full `name:tag` reference), replacing any existing `newName`/`newTag`
 /// override lines that followed it. errors if `image_map` names an image the kustomization lacks.

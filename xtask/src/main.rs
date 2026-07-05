@@ -264,24 +264,13 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
             .command_center_only
             .then_some(vec!["runinator-command-center"]);
 
-        // the flutter command center is a local-overlay-only testing deployment; skip building it
-        // for overlays (e.g. prod) whose kustomization does not declare that image.
-        let manifest_is_overlay = manifest_path.is_dir();
-        let overlay_has_flutter_image = manifest_is_overlay
-            && k8s::kustomize::overlay_has_image(
-                &manifest_path,
-                "runinator-command-center-flutter",
-            );
-        let exclude_names: Option<Vec<&str>> =
-            (!overlay_has_flutter_image).then_some(vec!["runinator-command-center-flutter"]);
-
         println!("==> Building container images (tag: {image_tag})");
         Some(k8s::images::build_container_images(
             workspace_root,
             image_repository.as_deref(),
             &image_tag,
             include_names.as_deref(),
-            exclude_names.as_deref(),
+            None,
             should_push,
         )?)
     };

@@ -59,12 +59,6 @@ const IMAGES: &[ImageSpec] = &[
         target: None,
         context: "runinator-command-center",
     },
-    ImageSpec {
-        name: "runinator-command-center-flutter",
-        dockerfile: "runinator-command-center-flutter/Dockerfile",
-        target: None,
-        context: "runinator-command-center-flutter",
-    },
 ];
 
 pub fn image_tag(name: &str, repository: Option<&str>, tag: &str) -> String {

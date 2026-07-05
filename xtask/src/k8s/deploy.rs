@@ -271,14 +271,6 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
     ] {
         rollout_targets.push(yaml_docs::rollout_target(&docs, name, fallback_kind));
     }
-    // only present in the local overlay; skip the rollout check when it's not deployed (e.g. prod).
-    if yaml_docs::workload_kind(&docs, "runinator-command-center-flutter").is_some() {
-        rollout_targets.push(yaml_docs::rollout_target(
-            &docs,
-            "runinator-command-center-flutter",
-            "Deployment",
-        ));
-    }
 
     run_rollout_checks(options.workspace_root, &ctx_args, &rollout_targets);
 

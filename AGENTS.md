@@ -33,8 +33,6 @@ Import conventions (Phase 5 — shims removed):
 - CodeMirror adapters: `ui/adapters/codemirror/*`
 - Services (from views/components): `core/services` singletons exported by `core/services/index.ts`
 
-Each view has a co-located `*.manifest.ts` under `ui/views/` listing service/stream dependencies for Flutter migration.
-
 Verification:
 
 ```bash

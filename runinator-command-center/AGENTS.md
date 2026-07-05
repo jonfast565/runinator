@@ -8,12 +8,12 @@ Guidance for agents working in `runinator-command-center`.
 
 ## Layer Boundaries
 
-The frontend is split for Flutter migration:
+The frontend is split into a framework-agnostic core and a Vue presentation layer:
 
 | Layer | Path | Rules |
 | --- | --- | --- |
 | **core/** | `src/core/` | Framework-agnostic TypeScript. No imports from `vue`, `pinia`, `@vue-flow/*`, `@codemirror/*`, `@tauri-apps/*`, or `src/ui/**`. |
-| **ui/** | `src/ui/` | Vue presentation: views, components, composables, adapters. Discarded during Flutter migration. |
+| **ui/** | `src/ui/` | Vue presentation: views, components, composables, adapters. |
 | **stores shims** | `src/stores/` | Re-export Pinia adapters from `src/ui/adapters/pinia/` for backward-compatible imports. |
 
 ### core/ layout
@@ -29,7 +29,7 @@ The frontend is split for Flutter migration:
 
 ### ui/ layout
 
-- `ui/views/` — screen components (+ `*.manifest.ts` per view for AI migration)
+- `ui/views/` — screen components
 - `ui/components/` — shell, shared, workflow widgets
 - `ui/composables/` — thin Vue lifecycle glue over core clients
 - `ui/adapters/pinia/` — Pinia stores mirroring core services
@@ -45,7 +45,6 @@ The frontend is split for Flutter migration:
 - Services registry: `src/core/services/index.ts`
 - Pinia adapters: `src/ui/adapters/pinia/`
 - Workflow graph: `src/core/workflow/`, services `src/core/services/workflows/`, canvas `src/ui/components/workflow/WorkflowCanvas.vue`
-- View manifests: `src/ui/views/*.manifest.ts`
 - Rust/Tauri commands: `src-tauri/src/`
 
 ## Boundaries
