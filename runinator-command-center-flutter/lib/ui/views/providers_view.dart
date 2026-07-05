@@ -49,6 +49,12 @@ class _ProvidersViewState extends ConsumerState<ProvidersView> {
       padding: const EdgeInsets.all(12),
       child: SplitPane(
         initialFirstFraction: 0.32,
+        mobileShowSecond: currentProvider != null && currentAction != null,
+        mobileBackTitle: currentProvider?.name,
+        onMobileBack: () => setState(() {
+          _selectedProvider = null;
+          _selectedAction = null;
+        }),
         first: PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -101,7 +107,7 @@ class _ProvidersViewState extends ConsumerState<ProvidersView> {
                       Text('${currentProvider.name}.${currentAction.functionName}', style: Theme.of(context).textTheme.titleMedium),
                       if (currentAction.description != null) ...[
                         const SizedBox(height: 8),
-                        Text(currentAction.description!, style: const TextStyle(color: AppColors.textMuted)),
+                        Text(currentAction.description!, style: TextStyle(color: AppColors.textMuted)),
                       ],
                       const SizedBox(height: 16),
                       const Text('Parameters', style: TextStyle(fontWeight: FontWeight.w700)),

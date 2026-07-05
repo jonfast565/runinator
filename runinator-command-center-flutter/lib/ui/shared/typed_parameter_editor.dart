@@ -9,6 +9,7 @@ import '../../core/services/secrets_service.dart';
 import '../../core/utils/format.dart';
 import '../../core/utils/json_utils.dart';
 import '../../core/utils/secrets.dart';
+import '../../core/utils/workflow_references.dart';
 import 'code_editor.dart';
 import 'typed_value_editor.dart';
 
@@ -19,12 +20,14 @@ class TypedParameterEditor extends ConsumerWidget {
     required this.value,
     required this.onChanged,
     this.credentialScopes = const [],
+    this.expressionContext,
   });
 
   final List<ActionParameterMetadata> parameters;
   final JsonRecord value;
   final ValueChanged<JsonRecord> onChanged;
   final List<String> credentialScopes;
+  final WorkflowExpressionEditorContext? expressionContext;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -61,6 +64,7 @@ class TypedParameterEditor extends ConsumerWidget {
               value: value[parameter.name],
               ty: parameter.ty,
               placeholder: parameter.label ?? parameter.name,
+              expressionContext: expressionContext,
               onChanged: (next) => _setValue(parameter.name, next),
             ),
           const SizedBox(height: 12),
@@ -77,12 +81,20 @@ class TypedParameterEditor extends ConsumerWidget {
 }
 
 class KeyValueObjectEditor extends StatefulWidget {
-  const KeyValueObjectEditor({super.key, required this.title, required this.value, required this.onChanged, this.emptyLabel = 'No entries.'});
+  const KeyValueObjectEditor({
+    super.key,
+    required this.title,
+    required this.value,
+    required this.onChanged,
+    this.emptyLabel = 'No entries.',
+    this.expressionContext,
+  });
 
   final String title;
   final JsonRecord value;
   final ValueChanged<JsonRecord> onChanged;
   final String emptyLabel;
+  final WorkflowExpressionEditorContext? expressionContext;
 
   @override
   State<KeyValueObjectEditor> createState() => _KeyValueObjectEditorState();
@@ -120,9 +132,11 @@ class _KeyValueObjectEditorState extends State<KeyValueObjectEditor> {
               const SizedBox(width: 8),
               Expanded(
                 flex: 3,
-                child: TextField(
-                  decoration: const InputDecoration(labelText: 'Value', isDense: true),
-                  controller: TextEditingController(text: entry.value?.toString() ?? ''),
+                child: TypedValueEditor(
+                  value: entry.value,
+                  ty: const RuninatorTypeAny(),
+                  placeholder: 'Value',
+                  expressionContext: widget.expressionContext,
                   onChanged: (v) => widget.onChanged({...widget.value, entry.key: v}),
                 ),
               ),

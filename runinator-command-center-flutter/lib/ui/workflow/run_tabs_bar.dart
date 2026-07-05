@@ -17,7 +17,7 @@ class RunTabsBar extends ConsumerWidget {
     if (workflows.openRunIds.isEmpty) return const SizedBox.shrink();
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surfaceSubtle,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
@@ -100,9 +100,9 @@ class _RunTab extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
             border: Border(
-              top: const BorderSide(color: AppColors.border),
-              left: const BorderSide(color: AppColors.border),
-              right: const BorderSide(color: AppColors.border),
+              top: BorderSide(color: AppColors.border),
+              left: BorderSide(color: AppColors.border),
+              right: BorderSide(color: AppColors.border),
               bottom: active ? BorderSide(color: AppColors.surface, width: 2) : BorderSide.none,
             ),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),

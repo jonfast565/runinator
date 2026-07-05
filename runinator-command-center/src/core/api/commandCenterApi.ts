@@ -753,34 +753,6 @@ export async function fetchOrgUsage(orgId: string) {
   return command<OrgUsage>("fetch_org_usage", { orgId });
 }
 
-// --- embedded desktop worker (tauri runtime only) ---
-
-export interface LocalWorkerStatus {
-  running: boolean;
-  replica_id: string | null;
-  root: string | null;
-  broker_url: string | null;
-}
-
-export interface LocalWorkerConfig {
-  broker_url: string;
-  sandbox_root: string;
-  allow_write?: boolean;
-  user_id?: string | null;
-}
-
-export async function localWorkerStatus() {
-  return command<LocalWorkerStatus>("local_worker_status");
-}
-
-export async function startLocalWorker(config: LocalWorkerConfig) {
-  return command<LocalWorkerStatus>("start_local_worker", { config });
-}
-
-export async function stopLocalWorker() {
-  return command<LocalWorkerStatus>("stop_local_worker");
-}
-
 export async function fetchCredentials() {
   return command<CredentialSummary[]>("fetch_credentials");
 }

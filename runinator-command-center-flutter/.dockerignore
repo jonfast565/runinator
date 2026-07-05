@@ -1,0 +1,8 @@
+build
+.dart_tool
+.idea
+.git
+.gitignore
+*.iml
+test
+README.md

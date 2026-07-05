@@ -55,7 +55,7 @@ class _ReferencePickerState extends State<ReferencePicker> {
           ),
           const SizedBox(height: 8),
           if (groups.isEmpty)
-            const Text('No references in scope.', style: TextStyle(fontSize: 12, color: AppColors.textMuted))
+            Text('No references in scope.', style: TextStyle(fontSize: 12, color: AppColors.textMuted))
           else
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 180),
@@ -70,8 +70,8 @@ class _ReferencePickerState extends State<ReferencePicker> {
                         onPressed: () => widget.onInsert(ref.insert),
                         child: Row(
                           children: [
-                            Expanded(child: Text(ref.label, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-                            Text(ref.type, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                            Expanded(child: Text(ref.label, style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 12))),
+                            Text(ref.type, style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
                           ],
                         ),
                       ),
@@ -83,7 +83,7 @@ class _ReferencePickerState extends State<ReferencePicker> {
           Wrap(
             spacing: 6,
             children: [
-              const Text('Wrap selection:', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+              Text('Wrap selection:', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
               for (final entry in [
                 ('string', 'string()'),
                 ('json', 'json()'),

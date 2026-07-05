@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/domain/json.dart';
 import '../../core/domain/models/index.dart';
+import '../../core/domain/models/workflow/definition.dart';
 import '../../core/services/providers_service.dart';
+import '../../core/utils/workflow_references.dart';
 import '../../core/services/workflows/editor.dart';
 import '../../core/services/workflows/host.dart';
 import '../../core/services/workflows/state.dart';
@@ -31,6 +33,17 @@ class StepEditorSectionContext {
   final StepEditorState step;
   final void Function(VoidCallback mutate) touch;
   final List<String> nodeIds;
+
+  WorkflowExpressionEditorContext expressionContext(WidgetRef ref) {
+    final workflows = ref.read(workflowsProvider);
+    return WorkflowExpressionEditorContext(
+      workflowInputType: workflowInputType(host.state.workflowDraft),
+      nodes: host.ensureWorkflowNodes(),
+      currentNodeId: step.id.isNotEmpty ? step.id : workflows.selectedStepId,
+      providers: ref.read(providersProvider).providers,
+      sampleContext: buildSampleContext(workflows.workflowRunDetail),
+    );
+  }
 }
 
 List<Widget> buildStepKindSections(StepEditorSectionContext ctx) {
@@ -212,12 +225,14 @@ class _ActionSection extends ConsumerWidget {
               parameters: selectedAction.parameters,
               credentialScopes: currentProvider?.metadata.credentialScopes ?? const [],
               value: params,
+              expressionContext: ctx.expressionContext(ctx.ref),
               onChanged: (next) => ctx.touch(() => writeStepParameters(next, (json) => step.parametersJson = json)),
             )
           else
             KeyValueObjectEditor(
               title: 'Action parameters',
               value: params,
+              expressionContext: ctx.expressionContext(ctx.ref),
               onChanged: (next) => ctx.touch(() => writeStepParameters(next, (json) => step.parametersJson = json)),
             ),
           AdvancedWdlParameters(value: step.parametersJson, onChanged: (v) => ctx.touch(() => step.parametersJson = v)),

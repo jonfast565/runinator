@@ -7,9 +7,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../domain/models/index.dart';
 import '../utils/status.dart';
+import 'reconnect_backoff.dart';
 import 'websocket_url.dart';
-
-const _reconnectDelay = Duration(seconds: 3);
 
 class _RunStreamHandle {
   WebSocketChannel? socket;
@@ -17,6 +16,7 @@ class _RunStreamHandle {
   var connectionId = 0;
   var terminal = false;
   var disposed = false;
+  final backoff = ReconnectBackoff();
 }
 
 typedef WorkflowRunDetailHandler = void Function(WorkflowRunDetail detail);
@@ -97,6 +97,13 @@ class WorkflowRunStreamClient {
     );
     handle.socket = channel;
 
+    channel.ready.then((_) {
+      if (handle.disposed || handle.connectionId != myConnectionId) return;
+      handle.backoff.reset();
+    }).catchError((Object _) {
+      // connection failed to establish; onDone below drives the reconnect.
+    });
+
     channel.stream.listen(
       (data) {
         if (handle.disposed || handle.connectionId != myConnectionId) return;
@@ -125,7 +132,7 @@ class WorkflowRunStreamClient {
         if (handle.terminal) return;
 
         if (getOpenRunIds().contains(runId) && getServiceKnown()) {
-          handle.reconnectTimer = Timer(_reconnectDelay, () => _connect(runId));
+          handle.reconnectTimer = Timer(handle.backoff.next(), () => _connect(runId));
         }
       },
       cancelOnError: true,

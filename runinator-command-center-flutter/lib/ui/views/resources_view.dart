@@ -7,6 +7,7 @@ import '../../core/services/resources_service.dart';
 import '../../core/utils/approvals.dart';
 import '../../core/utils/values.dart';
 import '../shared/cc_widgets.dart';
+import '../shared/confirm.dart';
 import '../shared/code_editor.dart';
 import '../shared/split_pane.dart';
 
@@ -20,7 +21,6 @@ class ResourcesView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final resources = ref.watch(resourcesProvider);
     final notifier = ref.read(resourcesProvider.notifier);
-    final app = ref.watch(appProvider);
     final records = resources.resourceRecords.where((record) {
       if (resources.selectedResourceEndpoint != endpoint) return false;
       if (endpoint == 'approvals' && resources.hideResolved && isResolved(record)) return false;
@@ -31,11 +31,16 @@ class ResourcesView extends ConsumerWidget {
     }).toList();
     final selected = resources.selectedResourceRecord;
     final selectedIndex = selected == null ? null : records.indexWhere((r) => r['id'] == selected['id']);
+    final canDelete = endpoint == 'automation_events' && selected != null;
 
     return Padding(
       padding: const EdgeInsets.all(12),
       child: SplitPane(
+        storageKey: 'command-center.resources.$endpoint.split',
         initialFirstFraction: 0.58,
+        mobileShowSecond: selected != null,
+        mobileBackTitle: title,
+        onMobileBack: () => notifier.setSelectedResourceRecord(null),
         first: PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -50,6 +55,18 @@ class ResourcesView extends ConsumerWidget {
                       label: resources.hideResolved ? 'Show resolved' : 'Hide resolved',
                       dense: true,
                       onPressed: () => notifier.setHideResolved(!resources.hideResolved),
+                    ),
+                  if (canDelete)
+                    CcButton(
+                      icon: IconName.trash,
+                      label: 'Delete',
+                      variant: CcButtonVariant.danger,
+                      dense: true,
+                      onPressed: () async {
+                        final confirm = FlutterConfirmContext(context);
+                        if (!await confirm.confirmAsync('Delete this event record?')) return;
+                        await notifier.deleteSelectedEvent();
+                      },
                     ),
                 ],
               ),
@@ -78,13 +95,23 @@ class ResourcesView extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Row(
+                      children: [
+                        StatusBadge(displayValue(selected['status'])),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(notifier.recordSummary(selected), style: const TextStyle(fontWeight: FontWeight.w600))),
+                      ],
+                    ),
                     if (endpoint == 'approvals' && !isResolved(selected))
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          CcButton(icon: IconName.approve, label: 'Approve', variant: CcButtonVariant.primary, dense: true, onPressed: () => notifier.resolveApproval(ApprovalAction.approve)),
-                          CcButton(icon: IconName.reject, label: 'Reject', variant: CcButtonVariant.danger, dense: true, onPressed: () => notifier.resolveApproval(ApprovalAction.reject)),
-                        ],
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Wrap(
+                          spacing: 8,
+                          children: [
+                            CcButton(icon: IconName.approve, label: 'Approve', variant: CcButtonVariant.primary, dense: true, onPressed: () => notifier.resolveApproval(ApprovalAction.approve)),
+                            CcButton(icon: IconName.reject, label: 'Reject', variant: CcButtonVariant.danger, dense: true, onPressed: () => notifier.resolveApproval(ApprovalAction.reject)),
+                          ],
+                        ),
                       ),
                     Expanded(child: JsonEditor(value: selected.toString(), onChanged: (_) {}, readOnly: true)),
                   ],

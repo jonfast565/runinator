@@ -20,7 +20,7 @@ class OutageBanner extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 'Cannot reach the Runinator backend. Some actions may fail until connectivity is restored.',
                 style: TextStyle(color: AppColors.dangerFg, fontSize: 12),

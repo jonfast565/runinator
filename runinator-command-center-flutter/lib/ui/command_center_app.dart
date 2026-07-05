@@ -74,6 +74,15 @@ class _CommandCenterRootState extends ConsumerState<CommandCenterRoot> {
   var _bootstrapped = false;
   var _urlSyncReady = false;
 
+  // several code paths (server events, timers, tab/org switches) ask for a full
+  // backend refresh independently; without coalescing, a burst of server events
+  // each fire ~9 parallel requests, which is what was tripping the ws rate
+  // limiter. collapse overlapping requests into a single in-flight pass plus at
+  // most one trailing pass to pick up anything that changed meanwhile.
+  Future<void>? _refreshInFlight;
+  var _refreshPending = false;
+  var _refreshPendingWantsProviders = false;
+
   @override
   void initState() {
     super.initState();
@@ -183,7 +192,28 @@ class _CommandCenterRootState extends ConsumerState<CommandCenterRoot> {
     _eventStream!.connect();
   }
 
-  Future<void> _refreshBackendState({required bool refreshProviders}) async {
+  Future<void> _refreshBackendState({required bool refreshProviders}) {
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) {
+      _refreshPending = true;
+      _refreshPendingWantsProviders = _refreshPendingWantsProviders || refreshProviders;
+      return inFlight;
+    }
+
+    final future = _runRefreshBackendState(refreshProviders);
+    _refreshInFlight = future;
+    future.whenComplete(() {
+      _refreshInFlight = null;
+      if (!_refreshPending) return;
+      _refreshPending = false;
+      final wantsProviders = _refreshPendingWantsProviders;
+      _refreshPendingWantsProviders = false;
+      _refreshBackendState(refreshProviders: wantsProviders);
+    });
+    return future;
+  }
+
+  Future<void> _runRefreshBackendState(bool refreshProviders) async {
     await Future.wait([
       ref.read(workflowsProvider.notifier).catalog.refreshWorkflows().catchError((_) {}),
       ref.read(workflowsProvider.notifier).runs.fetchRecentWorkflowRuns().catchError((_) {}),
@@ -241,6 +271,11 @@ class _CommandCenterRootState extends ConsumerState<CommandCenterRoot> {
 
   @override
   Widget build(BuildContext context) {
+    // AppColors' getters read this flag; syncing it here, before any descendant
+    // builds, is what makes AppColors track the resolved theme (including
+    // "system" mode, since Theme.of already resolved that against the platform).
+    AppColors.syncBrightness(Theme.of(context).brightness == Brightness.dark);
+
     ref.listen(authProvider.select((s) => s.authenticated), (prev, next) {
       if (next && ref.read(appProvider).serviceUrl != null) {
         _refreshBackendState(refreshProviders: true);

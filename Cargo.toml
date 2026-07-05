@@ -16,6 +16,7 @@ members = [
     "runinator-waker",
     "runinator-ws",
     "runinator-worker",
+    "runinator-desktop-agent",
     "runinator-ctl",
     "runinator-comm",
     "runinator-api",
@@ -41,5 +42,6 @@ members = [
     "runinator-mcp",
     "runinator-workflows",
     "runinator-wdl",
-    "runinator-e2e"
+    "runinator-e2e",
+    "xtask"
 ]

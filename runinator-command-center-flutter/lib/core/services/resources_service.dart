@@ -222,6 +222,35 @@ class ResourcesNotifier extends _$ResourcesNotifier {
     return null;
   }
 
+  Future<void> deleteSelectedEvent() async {
+    final app = ref.read(appProvider.notifier);
+    final id = nonEmptyString(state.selectedResourceRecord?['id']);
+
+    if (id == null) {
+      app.setError('No record selected');
+      return;
+    }
+
+    if (state.selectedResourceEndpoint != 'automation_events') {
+      return;
+    }
+
+    try {
+      await app.runOperation('Deleting event', () => api.deleteAutomationEvent(id));
+    } catch (error) {
+      app.setError(error.toString());
+      return;
+    }
+
+    state = state.copyWith(
+      resourceRecords: state.resourceRecords.where((record) => record['id'] != id).toList(),
+      selectedResourceRecord: state.resourceRecords.where((record) => record['id'] != id).isNotEmpty
+          ? state.resourceRecords.where((record) => record['id'] != id).first
+          : null,
+    );
+    await refreshResources();
+  }
+
   Future<void> deleteSelected(ConfirmContext confirm) async {
     final app = ref.read(appProvider.notifier);
     final id = nonEmptyString(state.selectedResourceRecord?['id']);

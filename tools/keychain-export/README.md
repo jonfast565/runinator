@@ -24,7 +24,7 @@ swift build -c release
 # binary: .build/release/keychain-export
 ```
 
-It is also compiled by the repo build script on macOS (`build.ps1`), purely to
+It is also compiled by `cargo run -p xtask -- build` on macOS, purely to
 compile-check it — it is not packaged into any container.
 
 ## Usage

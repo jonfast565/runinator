@@ -5,8 +5,7 @@ import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type { WorkflowRunDetail } from "../../core/domain/models";
 import { isTerminalWorkflowRunStatus } from "../../core/utils/status";
 import { buildWebSocketUrl } from "../../core/utils/websocket";
-
-const RECONNECT_DELAY = 3000;
+import { ReconnectBackoff } from "../../core/realtime/reconnect-backoff";
 
 interface RunStreamHandle {
   socket: WebSocket | null;
@@ -14,6 +13,7 @@ interface RunStreamHandle {
   connectionId: number;
   terminal: boolean;
   disposed: boolean;
+  backoff: ReconnectBackoff;
 }
 
 export function useWorkflowRunStream() {
@@ -55,6 +55,7 @@ export function useWorkflowRunStream() {
       connectionId: 0,
       terminal: false,
       disposed: false,
+      backoff: new ReconnectBackoff(),
     };
     sockets.set(runId, handle);
     return handle;
@@ -81,6 +82,7 @@ export function useWorkflowRunStream() {
         return;
       }
 
+      handle.backoff.reset();
       console.info("[command-center] workflow run stream connected", { runId });
     };
 
@@ -128,7 +130,7 @@ export function useWorkflowRunStream() {
       if (workflows.openRunIds.includes(runId) && app.serviceKnown) {
         handle.reconnectTimer = setTimeout(() => {
           connect(runId);
-        }, RECONNECT_DELAY);
+        }, handle.backoff.next());
       }
     };
   }

@@ -51,20 +51,20 @@ or symlink support before applying the overlay.
 The preferred end-to-end command is:
 
 ```sh
-pwsh ./build.ps1 -DeployKube
+cargo run -p xtask -- k8s deploy
 ```
 
 For clusters that cannot see Docker Desktop's local image store, push through a
 registry reachable from the cluster:
 
 ```sh
-pwsh ./build.ps1 -DeployKube -LocalRegistry localhost:5000
+cargo run -p xtask -- k8s deploy --local-registry localhost:5000
 ```
 
 To refresh only the command-center web interface, use:
 
 ```sh
-pwsh ./build.ps1 -DeployKube -CommandCenterOnly
+cargo run -p xtask -- k8s deploy --command-center-only
 ```
 
 Open the Tauri command center against the deployed local cluster with:
@@ -77,6 +77,37 @@ To inspect the raw API docs directly in a browser instead of launching the UI:
 
 ```sh
 bash scripts/port-forward-ws.sh
+```
+
+## Flutter command center (testing)
+
+`runinator-command-center-flutter` is the in-progress Flutter web port. It is
+deployed only by this overlay (`command-center-flutter.yaml`), single-replica,
+with no Ingress, so it never reaches prod and never competes with the Vue
+command center's catch-all `/` route. `xtask k8s deploy` builds and
+deploys it automatically alongside the rest of the stack (it is skipped for
+overlays, like prod, whose `kustomization.yaml` doesn't declare the image). To
+build and load it by hand instead:
+
+```sh
+docker build -t runinator-command-center-flutter:dev runinator-command-center-flutter
+kubectl apply -k deploy/k8s/overlays/local
+```
+
+If your cluster driver can't see Docker Desktop's local image store (k3d,
+kind), import the image first, e.g.:
+
+```sh
+k3d image import runinator-command-center-flutter:dev -c <cluster-name>
+# or: kind load docker-image runinator-command-center-flutter:dev
+```
+
+Its nginx proxies `/api/*` and `/ws/*` to `runinator-ws` exactly like the Vue
+command center, so no extra wiring is needed for it to talk to the backend.
+Reach it with:
+
+```sh
+bash scripts/port-forward-command-center-flutter.sh
 ```
 
 If images are already available and you only need to apply the overlay:

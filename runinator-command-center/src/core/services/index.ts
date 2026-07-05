@@ -9,7 +9,6 @@ import { createProvidersService } from "./providers";
 import { createOrgsService } from "./orgs";
 import { createAdminSettingsService } from "./admin-settings";
 import { createDisplayPreferencesService } from "./display-preferences";
-import { createLocalWorkerService } from "./local-worker";
 import { createPermissionsService } from "./permissions";
 import { createWorkflowServices } from "./workflows";
 import { createWdlLanguageService } from "./wdl-language";
@@ -36,7 +35,6 @@ export const providersService = createProvidersService();
 export const orgsService = createOrgsService(appService, authService);
 export const adminSettingsService = createAdminSettingsService(appService);
 export const displayPreferencesService = createDisplayPreferencesService();
-export const localWorkerService = createLocalWorkerService();
 export const permissionsService = createPermissionsService(appService);
 
 export const workflowServices = createWorkflowServices({
@@ -73,7 +71,6 @@ export type { ProvidersService } from "./providers";
 export type { OrgsService } from "./orgs";
 export type { AdminSettingsService } from "./admin-settings";
 export type { DisplayPreferencesService } from "./display-preferences";
-export type { LocalWorkerService } from "./local-worker";
 export type { PermissionsService } from "./permissions";
 export type { WorkflowServices } from "./workflows";
 export type { WorkflowServiceDeps } from "./workflows/host";

@@ -1,7 +1,7 @@
-# Optional direct external exposure, off by default. Enable via build.ps1 -ExposeDirectIngress, which
-# injects this component into the rendered overlay. Bundles the web-service API/websocket ingress and a
+# Optional direct external exposure, off by default. Enable via `xtask k8s deploy --expose-direct-ingress`,
+# which injects this component into the rendered overlay. Bundles the web-service API/websocket ingress and a
 # debugging-only NodePort to postgres. Never reference this from a base/overlay kustomization directly;
-# the build script controls it so prod stays closed unless explicitly opted in.
+# xtask controls it so prod stays closed unless explicitly opted in.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 

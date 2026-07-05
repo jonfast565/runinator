@@ -51,7 +51,7 @@ class StepEditorModal extends ConsumerWidget {
                               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                             ),
                             Text(workflows.selectedStepId.isEmpty ? 'New step' : workflows.selectedStepId,
-                                style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                                style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
                           ],
                         ),
                       ),
@@ -133,7 +133,7 @@ class StepEditorModal extends ConsumerWidget {
                         if (workflows.stepEditorError.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text(workflows.stepEditorError, style: const TextStyle(color: AppColors.dangerFg)),
+                            child: Text(workflows.stepEditorError, style: TextStyle(color: AppColors.dangerFg)),
                           ),
                       ],
                     ),

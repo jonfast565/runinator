@@ -38,6 +38,11 @@
   --accent-text: #1d4ed8;
   --accent-ring: rgba(31, 111, 235, 0.15);
 
+  /* reserved for "this is happening right now": live streams, running runs, connected replicas.
+     a pulse always means live, not clickable, so it stays distinct from --accent. */
+  --accent-pulse: #11c7b9;
+  --accent-pulse-soft: rgba(17, 199, 185, 0.35);
+
   /* status: solid action colors */
   --danger-solid: #d6402b;
   --danger-solid-hover: #b73522;
@@ -132,6 +137,11 @@
   --accent-soft: #142a46;
   --accent-text: #9cc6ff;
   --accent-ring: rgba(98, 162, 255, 0.22);
+
+  /* reserved for "this is happening right now": live streams, running runs, connected replicas.
+     a pulse always means live, not clickable, so it stays distinct from --accent. */
+  --accent-pulse: #2de0d1;
+  --accent-pulse-soft: rgba(45, 224, 209, 0.35);
 
   /* status: solid action colors */
   --danger-solid: #e45a48;

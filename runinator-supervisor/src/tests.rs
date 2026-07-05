@@ -31,6 +31,8 @@ fn enqueue_then_drain_round_trips_in_order() {
         autostart: true,
         restart_on_failure: true,
         max_restarts_per_minute: 10,
+        command_windows: None,
+        args_windows: None,
     };
 
     enqueue(&dir, &ControlCommand::AddProcess { process }).unwrap();

@@ -211,7 +211,8 @@ class _ExpressionJsonEditorState extends ConsumerState<ExpressionJsonEditor> {
                     ? _previewUnresolved
                     : (_previewError.isNotEmpty ? _previewError : (_previewResult.isEmpty ? '—' : _previewResult)),
                 style: TextStyle(
-                  fontFamily: 'monospace',
+                  fontFamily: kMonoFontFamily,
+                  fontFamilyFallback: kMonoFontFamilyFallback,
                   fontSize: 11,
                   color: _previewError.isNotEmpty ? AppColors.dangerFg : AppColors.textSubtle,
                 ),
@@ -223,13 +224,13 @@ class _ExpressionJsonEditorState extends ConsumerState<ExpressionJsonEditor> {
           tilePadding: EdgeInsets.zero,
           title: const Text('Lowered value', style: TextStyle(fontSize: 12)),
           children: [
-            SelectableText(widget.value, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            SelectableText(widget.value, style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11)),
           ],
         ),
         if (_parseError.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(_parseError, style: const TextStyle(color: AppColors.dangerFg, fontSize: 11)),
+            child: Text(_parseError, style: TextStyle(color: AppColors.dangerFg, fontSize: 11)),
           ),
       ],
     );

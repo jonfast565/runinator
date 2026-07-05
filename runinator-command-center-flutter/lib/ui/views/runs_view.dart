@@ -38,6 +38,11 @@ class _RunsViewState extends ConsumerState<RunsView> {
   List<WorkflowRunArtifact> _runArtifacts = const [];
   var _loadingArtifacts = false;
 
+  // on mobile, the run list and its detail can't share the screen (see SplitPane's
+  // mobileShowSecond); this tracks which one the user asked to see, independent of
+  // which run is selected in the underlying (desktop-shaped) selection state.
+  var _mobileDetailRequested = false;
+
   @override
   void initState() {
     super.initState();
@@ -177,6 +182,9 @@ class _RunsViewState extends ConsumerState<RunsView> {
       child: SplitPane(
         initialFirstFraction: 0.28,
         minFirst: 260,
+        mobileShowSecond: _mobileDetailRequested && detail != null,
+        mobileBackTitle: detail?.run.name ?? detail?.run.id,
+        onMobileBack: () => setState(() => _mobileDetailRequested = false),
         first: PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -191,7 +199,7 @@ class _RunsViewState extends ConsumerState<RunsView> {
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                 child: Text(
                   '${filtered.length} visible · $activeCount active',
-                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
               ),
               Expanded(
@@ -210,7 +218,10 @@ class _RunsViewState extends ConsumerState<RunsView> {
                               style: const TextStyle(fontSize: 11),
                             ),
                             trailing: StatusBadge(run.status),
-                            onTap: () => notifier.runs.selectWorkflowRun(run),
+                            onTap: () {
+                              notifier.runs.selectWorkflowRun(run);
+                              setState(() => _mobileDetailRequested = true);
+                            },
                           );
                         },
                       ),
@@ -248,7 +259,10 @@ class _RunsViewState extends ConsumerState<RunsView> {
                                 edges: buildGraphEdgeModels(workflow),
                                 selectedNodeId: workflows.selectedWorkflowRunNodeId.isEmpty ? null : workflows.selectedWorkflowRunNodeId,
                                 readOnly: true,
-                                onNodeClick: (nodeId) {
+                                onNodeClick: (nodeId, {shiftKey = false}) {
+                                  if (shiftKey && notifier.host.isDebugRun()) {
+                                    notifier.runs.toggleBreakpoint(nodeId);
+                                  }
                                   notifier.runs.selectWorkflowRunNode(nodeId);
                                   notifier.runs.updateSelectedWorkflowNodeDetail();
                                 },
@@ -335,7 +349,7 @@ class _ArtifactsPanel extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       children: [
         const Text('Node artifacts', style: TextStyle(fontWeight: FontWeight.w700)),
-        if (nodeArtifacts.isEmpty) const Text('No node artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+        if (nodeArtifacts.isEmpty) Text('No node artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
         for (final item in nodeArtifacts)
           ListTile(
             dense: true,
@@ -345,7 +359,7 @@ class _ArtifactsPanel extends StatelessWidget {
           ),
         const SizedBox(height: 16),
         const Text('Run artifacts', style: TextStyle(fontWeight: FontWeight.w700)),
-        if (runArtifacts.isEmpty) const Text('No run artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+        if (runArtifacts.isEmpty) Text('No run artifacts.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
         for (final item in runArtifacts)
           ListTile(
             dense: true,

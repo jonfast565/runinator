@@ -5,7 +5,6 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 ## Prerequisites
 
 - Rust toolchain with Cargo.
-- PowerShell 7+ if using `build.ps1`.
 - Docker with Compose if using the local observability helper.
 - kubectl if deploying to Kubernetes or launching the UI against a K8s stack.
 - pnpm if you want to build or run the Tauri `runinator-command-center` app.
@@ -247,31 +246,39 @@ cargo run -p runinator-supervisor -- logs --process web-service --lines 100
 cargo run -p runinator-supervisor -- logs --watch --lines 40
 ```
 
-## PowerShell Local Run
+## Cross-platform Local Run (xtask)
 
-PowerShell can build and run a local artifact layout:
+`xtask` is a plain Rust binary (`cargo run -p xtask -- <subcommand>`) that replaces the
+old PowerShell `build.ps1` — it builds the workspace and starts the same local stack,
+against the same checked-in `runinator-supervisor.json` that `bash scripts/run-local.sh`
+uses, identically on Windows, macOS, or Linux, with no PowerShell or Bash dependency:
 
-```powershell
-./build.ps1 -Mode Local -Run
+```bash
+cargo run -p xtask -- local up
 ```
 
-This publishes binaries under `target/artifacts/`, writes `target/artifacts/runinator-supervisor.local.json`, then starts the stack in the foreground. Runtime state still goes under `~/.runinator/` by default. The default workflow import is `packs/sdlc/sdlc.wdlp`, and any referenced `.wdl` files are copied into `target/artifacts/workflows/` with the manifest. Stop it with `Ctrl+C`.
+This builds the workspace (unless `--skip-build`), makes sure the console plugin is
+copied into `~/.runinator/plugins/` where the worker looks for it by default, then runs
+`runinator-supervisor --config runinator-supervisor.json start --foreground` against the
+`target/debug` binaries in place. There is only one local supervisor config either way you
+start it. Stop it with `Ctrl+C`.
 
-That generated local supervisor config now uses the same bootstrap-admin and
-bootstrap service API-key flow as the checked-in shell path, so turning on
-`RUNINATOR_AUTH_ENABLED=true` does not require hand-editing the artifact config.
+To run that same local stack against MariaDB, select the backend and pass a
+MySQL-compatible URL (these become `RUNINATOR_DATABASE`/`RUNINATOR_DATABASE_URL`
+environment variables for the web-service process, the same convention `bash
+scripts/run-local.sh` documents above):
 
-To run that same local artifact flow against MariaDB, select the backend and
-pass a MySQL-compatible URL:
-
-```powershell
-./build.ps1 -Mode Local -Run `
-  -LocalDatabaseBackend mariadb `
-  -LocalDatabaseUrl 'mysql://runinator:runinator@127.0.0.1:3306/runinator'
+```bash
+cargo run -p xtask -- local up \
+  --database mariadb \
+  --database-url 'mysql://runinator:runinator@127.0.0.1:3306/runinator'
 ```
 
-`-LocalDatabaseBackend postgres` works the same way with a Postgres URL. SQLite
-continues to use `-LocalDatabasePath`.
+`--database postgres` works the same way with a Postgres URL. SQLite continues
+to use `--database-path` (defaults to `~/.runinator/runinator.db`). `cargo run
+-p xtask -- build` on its own just builds the workspace plus the host-only
+credential tools (`tools/keychain-export`, `tools/runinator-secret-sync`)
+without starting anything.
 
 ## Workflow Import
 
@@ -537,37 +544,37 @@ without invalidating live tokens or stranding stored secrets:
 ### Quick start (local cluster)
 
 ```bash
-# Builds the five K8s images, renders a temporary local overlay with matching
+# Builds the eight K8s images, renders a temporary local overlay with matching
 # image tags, applies it, and waits for Postgres, RabbitMQ, and app rollouts.
-pwsh ./build.ps1 -DeployKube
+cargo run -p xtask -- k8s deploy
 ```
 
 The deploy waits up to 10 minutes for the pack-import Job to complete. Override
 that when importing larger workflow packs:
 
 ```bash
-pwsh ./build.ps1 -DeployKube -KubePackImportTimeoutSeconds 900
+cargo run -p xtask -- k8s deploy --pack-import-timeout-secs 900
 ```
 
 The local overlay includes development-only Postgres, RabbitMQ, and app
 Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
-configure a local registry and pass it as `-LocalRegistry localhost:5000` (or
-use `-ImageRepository` for any registry reachable by the cluster).
+configure a local registry and pass it as `--local-registry localhost:5000` (or
+use `--image-repository` for any registry reachable by the cluster).
 
 To redeploy only the web interface, rebuild and apply just the
 `runinator-command-center-web` resources with:
 
 ```bash
-pwsh ./build.ps1 -DeployKube -CommandCenterOnly
+cargo run -p xtask -- k8s deploy --command-center-only
 ```
 
 By default only the command-center is reachable from outside the cluster (it
 proxies `/api` and `/ws` to the web service). To additionally expose the web
 service API/websocket directly and open a debugging-only NodePort to Postgres,
-pass `-KubeExposeDirectIngress`:
+pass `--expose-direct-ingress`:
 
 ```bash
-pwsh ./build.ps1 -DeployKube -KubeExposeDirectIngress
+cargo run -p xtask -- k8s deploy --expose-direct-ingress
 ```
 
 This injects the `deploy/k8s/components/direct-ingress` component at render time
@@ -575,6 +582,9 @@ This injects the `deploy/k8s/components/direct-ingress` component at render time
 It adds a host-based ingress for the web service at `api.runinator.local` and a
 `NodePort` Service reaching Postgres on `<node-ip>:30432`. Leave the flag off for
 any environment where the database must not be externally reachable.
+
+Tear the stack back down with `cargo run -p xtask -- k8s delete` (same
+`--manifest`/`--kube-context`/`--command-center-only` flags apply).
 
 ### Production
 
@@ -584,11 +594,11 @@ Edit `deploy/k8s/overlays/prod/storage-class-patch.yaml` to set your cluster's
 prod overlay:
 
 ```bash
-pwsh ./build.ps1 -DeployKube \
-  -KubeManifest deploy/k8s/overlays/prod \
-  -KubeContext my-prod-context \
-  -ImageRepository registry.example.com/runinator \
-  -ImageTag 1.0.0
+cargo run -p xtask -- k8s deploy \
+  --manifest deploy/k8s/overlays/prod \
+  --kube-context my-prod-context \
+  --image-repository registry.example.com/runinator \
+  --image-tag 1.0.0
 ```
 
 See `deploy/k8s/overlays/{local,prod}/README.md` for details.
@@ -640,6 +650,26 @@ bash scripts/run-k8s.sh ui
 
 The command center checks `RUNINATOR_COMMAND_CENTER_SERVICE_URL`,
 `RUNINATOR_SERVICE_URL`, then `WS_API_BASE_URL` before falling back to gossip.
+It is a pure client and does not execute workflow actions itself; use the
+desktop agent below to run actions on your own machine.
+
+## Desktop Agent
+
+`runinator-desktop-agent` is a standalone binary that runs a machine as a
+sandboxed local-files worker, controlled through a small tray-icon GUI instead
+of a terminal. It shares its runtime with `runinator-worker` (same action
+loop), but only ever runs the local-files provider against a folder you pick,
+registered as an exclusive `desktop`-pool replica so it never picks up general
+workloads.
+
+```bash
+cargo run -p runinator-desktop-agent
+```
+
+The process starts hidden in the tray; click the tray icon (or its "Open"
+menu item) to bring up the control window, fill in the service URL, broker
+URL, and sandbox folder, then start the agent. Closing the window just hides
+it again — use "Exit" from the tray menu to actually quit.
 
 ## Package macOS Backend Apps
 

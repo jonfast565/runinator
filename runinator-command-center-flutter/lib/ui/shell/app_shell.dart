@@ -11,6 +11,7 @@ import '../../core/services/orgs_service.dart';
 import '../shared/cc_widgets.dart';
 import '../theme/app_theme.dart';
 import 'connection_strip.dart';
+import 'keyboard_shortcuts.dart';
 import 'outage_banner.dart';
 import 'toast_host.dart';
 import 'top_toolbar.dart';
@@ -146,42 +147,41 @@ class AppShell extends ConsumerWidget {
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width <= Breakpoints.mobile;
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (_, event) {
-        if (event.logicalKey == LogicalKeyboardKey.escape && app.mobileNavOpen) {
-          ref.read(appProvider.notifier).closeMobileNav();
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Scaffold(
-        body: Row(
-          children: [
-            if (!isMobile || app.mobileNavOpen) const SidebarNav(),
-            if (isMobile && app.mobileNavOpen)
+    return CommandCenterKeyboardShortcuts(
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (_, event) {
+          if (event.logicalKey == LogicalKeyboardKey.escape && app.mobileNavOpen) {
+            ref.read(appProvider.notifier).closeMobileNav();
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Scaffold(
+          // a real Drawer gives edge-swipe-to-open, the standard scrim, and back-gesture
+          // dismissal for free, instead of hand-rolling an overlay + FAB-as-menu-button.
+          drawer: isMobile ? const Drawer(width: 272, child: SidebarNav()) : null,
+          onDrawerChanged: (isOpen) {
+            final notifier = ref.read(appProvider.notifier);
+            isOpen ? notifier.openMobileNav() : notifier.closeMobileNav();
+          },
+          body: Row(
+            children: [
+              if (!isMobile) const SidebarNav(),
               Expanded(
-                child: GestureDetector(onTap: () => ref.read(appProvider.notifier).closeMobileNav(), child: Container(color: Colors.black26)),
+                child: Column(
+                  children: [
+                    const TopToolbar(),
+                    const ConnectionStrip(),
+                    const OutageBanner(),
+                    Expanded(child: child),
+                    if (app.loading)
+                      LinearProgressIndicator(minHeight: 2, color: AppColors.accent, backgroundColor: AppColors.border),
+                  ],
+                ),
               ),
-            Expanded(
-              child: Column(
-                children: [
-                  const TopToolbar(),
-                  const ConnectionStrip(),
-                  const OutageBanner(),
-                  Expanded(child: child),
-                  if (app.loading)
-                    LinearProgressIndicator(minHeight: 2, color: AppColors.accent, backgroundColor: AppColors.border),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
-        floatingActionButton: isMobile
-            ? FloatingActionButton.small(
-                onPressed: () => ref.read(appProvider.notifier).toggleMobileNav(),
-                child: const Icon(Icons.menu),
-              )
-            : null,
       ),
     );
   }

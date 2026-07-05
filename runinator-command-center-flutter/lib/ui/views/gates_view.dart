@@ -33,6 +33,9 @@ class GatesView extends ConsumerWidget {
       padding: const EdgeInsets.all(12),
       child: SplitPane(
         initialFirstFraction: 0.58,
+        mobileShowSecond: selected != null,
+        mobileBackTitle: 'Gates',
+        onMobileBack: () => gates.setSelectedGate(null),
         first: PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

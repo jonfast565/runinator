@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/domain/icons.dart';
 import '../../core/services/workflows_service.dart';
 import '../shared/cc_widgets.dart';
+import '../theme/app_theme.dart';
 
 class WatchExpressionsPanel extends ConsumerStatefulWidget {
   const WatchExpressionsPanel({super.key});
@@ -61,7 +62,7 @@ class _WatchExpressionsPanelState extends ConsumerState<WatchExpressionsPanel> {
         for (final expression in expressions)
           ListTile(
             dense: true,
-            title: Text(expression, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            title: Text(expression, style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11)),
             trailing: IconButton(
               icon: const Icon(Icons.close, size: 14),
               onPressed: () => notifier.runs.removeWatchExpression(expression),

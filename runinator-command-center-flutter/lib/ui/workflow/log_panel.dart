@@ -23,11 +23,11 @@ class LogPanel extends StatelessWidget {
       if (fallbackText.trim().isNotEmpty) {
         return SingleChildScrollView(
           padding: const EdgeInsets.all(8),
-          child: SelectableText(fallbackText, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+          child: SelectableText(fallbackText, style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11)),
         );
       }
 
-      return Center(child: Text(emptyMessage, style: const TextStyle(color: AppColors.textMuted, fontSize: 12)));
+      return Center(child: Text(emptyMessage, style: TextStyle(color: AppColors.textMuted, fontSize: 12)));
     }
 
     return Column(
@@ -36,7 +36,7 @@ class LogPanel extends StatelessWidget {
         if (lastChunkAt > 0)
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-            child: Text('Live · updated ${DateTime.fromMillisecondsSinceEpoch(lastChunkAt).toLocal()}', style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+            child: Text('Live · updated ${DateTime.fromMillisecondsSinceEpoch(lastChunkAt).toLocal()}', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
           ),
         Expanded(
           child: ListView.builder(
@@ -48,7 +48,7 @@ class LogPanel extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: SelectableText(
                   '[${chunk.stream}] ${chunk.content}',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11),
                 ),
               );
             },

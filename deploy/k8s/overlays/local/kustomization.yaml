@@ -6,6 +6,9 @@ namespace: runinator
 resources:
   - ../../base
   - local-secrets.yaml
+  # testing-only deployment of the in-progress flutter web port; lives in this
+  # overlay (not base) so it is not deployed to prod.
+  - command-center-flutter.yaml
 
 # OpenTelemetry collector + Jaeger trace UI, and point the services at the collector. View traces at
 # http://localhost:16686 after `kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686`.
@@ -52,7 +55,7 @@ patches:
         name: runinator-archive-data
         namespace: runinator
 
-# Default image refs are local dev tags. build.ps1 -DeployKube renders matching
+# Default image refs are local dev tags. `xtask k8s deploy` renders matching
 # tags into a copied overlay under target/k8s-render before applying.
 images:
   - name: runinator-ws
@@ -75,4 +78,7 @@ images:
     newTag: dev
   - name: runinator-command-center
     newName: runinator-command-center
+    newTag: dev
+  - name: runinator-command-center-flutter
+    newName: runinator-command-center-flutter
     newTag: dev

@@ -93,7 +93,7 @@ class _FolderTileState extends State<_FolderTile> {
                 CcIcon(IconName.folder, size: 14),
                 const SizedBox(width: 6),
                 Expanded(child: Text(widget.folder.label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12))),
-                Text('${widget.folder.children.length}', style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Text('${widget.folder.children.length}', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
               ],
             ),
           ),
@@ -149,9 +149,9 @@ class _LeafTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(leaf.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    Text(key, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                    Text(key, style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
                     if (preview != null)
-                      Text(preview, style: const TextStyle(fontSize: 11, color: AppColors.textSubtle), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(preview, style: TextStyle(fontSize: 11, color: AppColors.textSubtle), maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),

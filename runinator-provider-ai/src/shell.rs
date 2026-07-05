@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,9 +23,7 @@ pub(crate) fn run_shell_command(
         return Err(CANCELED.bare());
     }
     let input = params.input.unwrap_or_else(|| json!({}));
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&params.command)
+    let mut child = runinator_utilities::shell::shell_command(&params.command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

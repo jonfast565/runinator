@@ -105,6 +105,8 @@ impl SupervisorProvisioner {
             autostart: true,
             restart_on_failure: true,
             max_restarts_per_minute: 10,
+            command_windows: None,
+            args_windows: None,
         })
     }
 

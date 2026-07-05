@@ -204,6 +204,8 @@ fn set_private_permissions(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+// windows has no posix mode bits; restricting the session file to the current user would require
+// acl apis (e.g. SetNamedSecurityInfo), which isn't worth a new dependency for this one call site.
 #[cfg(not(unix))]
 fn set_private_permissions(_path: &PathBuf) -> Result<()> {
     Ok(())

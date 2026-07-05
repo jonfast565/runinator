@@ -59,6 +59,9 @@ class _SecretsViewState extends ConsumerState<SecretsView> {
           padding: const EdgeInsets.all(12),
           child: SplitPane(
             initialFirstFraction: 0.38,
+            mobileShowSecond: selected != null,
+            mobileBackTitle: title,
+            onMobileBack: () => notifier.clearSelection(),
             first: PanelCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

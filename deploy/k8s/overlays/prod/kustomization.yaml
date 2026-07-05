@@ -31,6 +31,9 @@ images:
     newName: REPLACE_REGISTRY/runinator-command-center
     newTag: latest
 
+# note: the flutter command center (deploy/k8s/overlays/local/command-center-flutter.yaml) is a
+# testing-only deployment of the in-progress web port and is wired into overlays/local only, not prod.
+
 patches:
   - path: resources-patch.yaml
   - path: storage-class-patch.yaml

@@ -10,7 +10,7 @@ class WorkflowGraphBridge {
 
   List<GraphEdgeModel> get edges => _workflows.host.buildDraftGraphEdges();
 
-  void onNodeClick(String nodeId) {
+  void onNodeClick(String nodeId, {bool shiftKey = false}) {
     _workflows.editor.dismissStepEditorForCanvasEdit();
     _workflows.host.state.selectedGraphEdgeId = '';
     _workflows.host.state.inlineEditNodeId = '';

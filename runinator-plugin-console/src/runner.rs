@@ -7,7 +7,7 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -66,19 +66,9 @@ fn execute_command(
     timeout_secs: i64,
     events_jsonl_path: &str,
 ) -> Result<c_int, Box<dyn std::error::Error>> {
+    let mut command = runinator_utilities::shell::shell_command(args_str);
     #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", args_str]).creation_flags(0x00000008);
-        cmd
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let mut command = {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", args_str]);
-        cmd
-    };
+    command.creation_flags(0x00000008);
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 

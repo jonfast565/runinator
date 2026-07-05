@@ -16,9 +16,10 @@
       <span class="connection-pill" :class="connectionPillClass">
         {{ connectionPillLabel }}
       </span>
-      <span class="connection-pill stream-state" :class="app.eventStreamState">{{
-        app.eventStreamLabel
-      }}</span>
+      <span class="connection-pill stream-state" :class="app.eventStreamState">
+        <span v-if="app.eventStreamState === 'connected'" class="stream-state-dot"></span>
+        {{ app.eventStreamLabel }}
+      </span>
       <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh"
         >Last refresh: {{ app.lastRefreshText }}</span
       >
@@ -235,12 +236,53 @@ function formatUptime(seconds: number): string {
   white-space: nowrap;
 }
 .stream-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
 }
 
 .stream-state.connected {
   background: var(--success-bg);
   color: var(--success-fg);
+}
+
+/* a pulse means "this is live right now" (actively streaming), distinct from a settled ok state. */
+.stream-state-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-pulse);
+  flex: 0 0 auto;
+}
+
+.stream-state-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: var(--accent-pulse-soft);
+  animation: stream-state-pulse 1.6s ease-out infinite;
+}
+
+@keyframes stream-state-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+
+  70%,
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-state-dot::after {
+    animation: none;
+  }
 }
 
 .stream-state.connecting,

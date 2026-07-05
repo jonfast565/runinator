@@ -45,7 +45,7 @@ if ! command -v kubectl >/dev/null 2>&1; then
 fi
 
 if ! kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" get svc "$service" >/dev/null 2>&1; then
-  echo "Service $namespace/$service not found. Deploy the stack first (e.g. pwsh ./build.ps1 -DeployKube)." >&2
+  echo "Service $namespace/$service not found. Deploy the stack first (e.g. cargo run -p xtask -- k8s deploy)." >&2
   exit 1
 fi
 

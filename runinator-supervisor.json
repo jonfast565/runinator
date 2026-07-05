@@ -13,6 +13,7 @@
     {
       "name": "web-service",
       "command": "bash",
+      "command_windows": "pwsh",
       "env": {
         "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin",
         "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY": "localdev.runinator-local-dev-service-key",
@@ -23,6 +24,29 @@
       },
       "args": [
         "scripts/start-local-web-service.sh",
+        "--port",
+        "8080",
+        "--gossip-bind",
+        "127.0.0.1",
+        "--gossip-port",
+        "5510",
+        "--gossip-targets",
+        "127.0.0.1:5511,127.0.0.1:5512,127.0.0.1:5513",
+        "--announce-address",
+        "127.0.0.1",
+        "--announce-base-path",
+        "/",
+        "--advertise-host",
+        "127.0.0.1",
+        "--broker-backend",
+        "tcp",
+        "--broker-endpoint",
+        "127.0.0.1:7070"
+      ],
+      "args_windows": [
+        "-NoProfile",
+        "-File",
+        "scripts/start-local-web-service.ps1",
         "--port",
         "8080",
         "--gossip-bind",

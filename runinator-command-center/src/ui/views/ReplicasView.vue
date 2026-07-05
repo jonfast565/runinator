@@ -1,6 +1,5 @@
 <template>
   <section class="pane replicas-pane">
-    <LocalWorkerPanel />
     <div class="replicas-layout">
       <aside class="panel replicas-list-panel">
         <div class="panel-toolbar">
@@ -183,7 +182,6 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
-import LocalWorkerPanel from "../components/shared/LocalWorkerPanel.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";
 import { replicaSamplesService } from "../../core/services";

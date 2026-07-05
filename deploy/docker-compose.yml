@@ -1,0 +1,129 @@
+# Minimal non-Kubernetes deployment: a single postgres + broker + ws + waker + worker stack for a
+# plain docker host or single VM. Mirrors the topology in deploy/k8s/base (see ws.yaml/worker.yaml/
+# waker.yaml/postgres.yaml) but swaps rabbitmq for the broker's built-in tcp transport to avoid an
+# extra dependency, since a single-host deployment has no need for rabbitmq's clustering/fan-out.
+#
+# The admin login and service api key below are dev-only defaults (same convention as the local
+# supervisor stack's runinator-supervisor.json); replace them for anything beyond local evaluation.
+#
+# Usage: docker compose -f deploy/docker-compose.yml up --build
+
+name: runinator
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: runinator
+      POSTGRES_PASSWORD: runinator
+      POSTGRES_DB: runinator
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runinator -d runinator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  broker:
+    build:
+      context: ..
+      dockerfile: runinator-broker/Dockerfile
+    ports:
+      - "7070:7070"
+
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: bootstrap
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUNINATOR_AUTH_BOOTSTRAP_ADMIN: "admin:admin"
+      RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY: "localdev.runinator-local-dev-service-key"
+      RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME: "docker-compose"
+    command:
+      - "--database"
+      - "postgres"
+      - "--database-url"
+      - "postgresql://runinator:runinator@postgres:5432/runinator"
+
+  ws:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+      broker:
+        condition: service_started
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      RUNINATOR_AUTH_ENABLED: "true"
+    command:
+      - "--database"
+      - "postgres"
+      - "--database-url"
+      - "postgresql://runinator:runinator@postgres:5432/runinator"
+      - "--port"
+      - "8080"
+      - "--advertise-host"
+      - "ws"
+      - "--disable-gossip"
+      - "--broker-backend"
+      - "tcp"
+      - "--broker-endpoint"
+      - "broker:7070"
+
+  waker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: waker
+    depends_on:
+      - ws
+      - broker
+    environment:
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
+    command:
+      - "--waker-id"
+      - "runinator-waker-compose"
+      - "--broker-backend"
+      - "tcp"
+      - "--broker-endpoint"
+      - "broker:7070"
+      - "--api-base-url"
+      - "http://ws:8080/"
+      - "--advertise-host"
+      - "waker"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: worker
+    depends_on:
+      - ws
+      - broker
+    environment:
+      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
+    command:
+      - "--worker-id"
+      - "runinator-worker-compose"
+      - "--broker-backend"
+      - "tcp"
+      - "--broker-endpoint"
+      - "broker:7070"
+      - "--max-concurrent-actions"
+      - "4"
+      - "--api-base-url"
+      - "http://ws:8080/"
+
+volumes:
+  postgres-data:

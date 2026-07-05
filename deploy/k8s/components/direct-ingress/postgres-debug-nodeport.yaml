@@ -1,7 +1,7 @@
 # Debugging-only direct access to postgres from outside the cluster. This is a separate Service from
 # the headless runinator-postgres used by the StatefulSet (a headless service cannot be a NodePort).
 # It ships only inside the optional direct-ingress component, so the database is exposed solely when
-# build.ps1 -ExposeDirectIngress opts in. Connect on <node-ip>:30432 with local-secrets.yaml creds.
+# `xtask k8s deploy --expose-direct-ingress` opts in. Connect on <node-ip>:30432 with local-secrets.yaml creds.
 apiVersion: v1
 kind: Service
 metadata:

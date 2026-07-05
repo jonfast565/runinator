@@ -181,7 +181,7 @@ class _OrgResourcesViewState extends ConsumerState<OrgResourcesView> {
                   Text('Dedicated node pools', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: 8),
                   if (_groups.isEmpty)
-                    const Text('No dedicated node pools. Scale one below.', style: TextStyle(color: AppColors.textMuted))
+                    Text('No dedicated node pools. Scale one below.', style: TextStyle(color: AppColors.textMuted))
                   else
                     CcDataTable(
                       columns: const ['Backend', 'Kind', 'Desired', 'Rate', 'Monthly'],
@@ -200,7 +200,7 @@ class _OrgResourcesViewState extends ConsumerState<OrgResourcesView> {
                   Text('Node-hours (30d)', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: 8),
                   if (_usage == null || _usage!.nodeHours.isEmpty)
-                    const Text('No usage recorded yet.', style: TextStyle(color: AppColors.textMuted))
+                    Text('No usage recorded yet.', style: TextStyle(color: AppColors.textMuted))
                   else
                     CcDataTable(
                       columns: const ['Kind', 'Node-hours'],
@@ -251,7 +251,7 @@ class _OrgResourcesViewState extends ConsumerState<OrgResourcesView> {
                         ),
                         Text(
                           '≈ ${_fmtCents(_scaleDesired * _rate(_scaleBackend, _scaleKind) * _hoursPerMonth)}/mo',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                         ),
                       ],
                     ),
@@ -277,7 +277,7 @@ class _Stat extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label.toUpperCase(), style: const TextStyle(fontSize: 11, color: AppColors.textMuted, letterSpacing: 0.4)),
+        Text(label.toUpperCase(), style: TextStyle(fontSize: 11, color: AppColors.textMuted, letterSpacing: 0.4)),
         const SizedBox(height: 4),
         Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
       ],

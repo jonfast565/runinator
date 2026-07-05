@@ -124,10 +124,7 @@ pub fn run() {
             crate::commands::download_artifact,
             crate::commands::fetch_notifications,
             crate::commands::mark_notification_read,
-            crate::commands::mark_all_notifications_read,
-            crate::worker::start_local_worker,
-            crate::worker::stop_local_worker,
-            crate::worker::local_worker_status
+            crate::commands::mark_all_notifications_read
         ])
         .run(tauri::generate_context!())
         .expect("failed to run command center");

@@ -228,7 +228,7 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
   Widget build(BuildContext context) {
     final detail = widget.detail;
     if (detail == null) {
-      return const Text('No run selected.', style: TextStyle(color: AppColors.textMuted, fontSize: 13));
+      return Text('No run selected.', style: TextStyle(color: AppColors.textMuted, fontSize: 13));
     }
 
     final visible = _orderedNodes.where((node) => _matchesFilter(node)).toList();
@@ -255,7 +255,7 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
                     Expanded(
                       child: Text(
                         'Failed at ${failure.nodeId}',
-                        style: const TextStyle(color: AppColors.dangerFg, fontWeight: FontWeight.w600, fontSize: 13),
+                        style: TextStyle(color: AppColors.dangerFg, fontWeight: FontWeight.w600, fontSize: 13),
                       ),
                     ),
                     StatusBadge(failure.status),
@@ -270,7 +270,7 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
                   const SizedBox(height: 8),
                   SelectableText(
                     failure.message,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: AppColors.dangerFg),
+                    style: TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11, color: AppColors.dangerFg),
                   ),
                 ],
               ],
@@ -299,7 +299,7 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
         if (visible.isEmpty)
           Text(
             _orderedNodes.isEmpty ? 'No steps recorded yet.' : 'No steps match this filter.',
-            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+            style: TextStyle(color: AppColors.textMuted, fontSize: 13),
           )
         else
           Expanded(
@@ -342,7 +342,7 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                     decoration: BoxDecoration(color: AppColors.accentSoft, borderRadius: BorderRadius.circular(999)),
-                                    child: const Text('active', style: TextStyle(fontSize: 10, color: AppColors.accent)),
+                                    child: Text('active', style: TextStyle(fontSize: 10, color: AppColors.accent)),
                                   ),
                                 if (timing.isNotEmpty) ...[
                                   const SizedBox(width: 8),
@@ -354,28 +354,33 @@ class _RunTimelineState extends ConsumerState<RunTimeline> {
                             if (preview.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(top: 4),
-                                child: Text(preview, style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: AppColors.textSubtle), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                child: Text(
+                                  preview,
+                                  style: TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11, color: AppColors.textSubtle),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             if (selected && widget.nodeActionsBuilder != null)
                               Padding(padding: const EdgeInsets.only(top: 6), child: widget.nodeActionsBuilder!(context, node)),
                             if (expanded) ...[
                               const SizedBox(height: 8),
                               if (node.message != null && node.message!.isNotEmpty && !_failedStatuses.contains(node.status)) ...[
-                                const Text('MESSAGE', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                                Text('MESSAGE', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
                                 Text(formatErrorMessage(node.message) ?? node.message!, style: const TextStyle(fontSize: 12)),
                                 const SizedBox(height: 8),
                               ],
                               if (_outputText(node).isNotEmpty) ...[
-                                const Text('OUTPUT', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
-                                SelectableText(_outputText(node), style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                                Text('OUTPUT', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                                SelectableText(_outputText(node), style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11)),
                                 const SizedBox(height: 8),
                               ],
-                              const Text('LOGS', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                              Text('LOGS', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
                               SelectableText(
                                 _logLoading.contains(node.id)
                                     ? 'Loading logs…'
                                     : (_logCache[node.id]?.isNotEmpty == true ? _logCache[node.id]! : 'No logs for this step.'),
-                                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                                style: const TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 11),
                               ),
                             ],
                           ],

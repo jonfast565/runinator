@@ -10,7 +10,7 @@
 #
 # Assumes images are already built and pushed or visible to the local cluster.
 # For an end-to-end build and deploy, prefer:
-#   pwsh ./build.ps1 -DeployKube
+#   cargo run -p xtask -- k8s deploy
 #
 # Manual local images use the overlay's default dev tag. all rust services share
 # deploy/Dockerfile and are selected with --target; BuildKit caches the common

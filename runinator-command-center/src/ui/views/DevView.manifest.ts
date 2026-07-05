@@ -2,8 +2,7 @@ export const DevViewManifest = {
   "screen": "DevView",
   "tab": "Dev",
   "services": [
-    "AppService",
-    "LocalWorkerService"
+    "AppService"
   ],
   "streams": [],
   "components": [

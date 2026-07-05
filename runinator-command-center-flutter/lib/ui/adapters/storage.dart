@@ -5,6 +5,7 @@ import '../../core/services/app_service.dart';
 import '../../core/services/display_preferences_service.dart';
 import '../../core/services/orgs_service.dart';
 import '../../core/services/workflows/runs.dart';
+import '../shared/split_pane.dart';
 
 class SharedPreferencesStorage implements WatchExpressionStorage {
   SharedPreferencesStorage(this._prefs);
@@ -66,4 +67,11 @@ Future<void> configureStorage(SharedPreferences prefs) async {
   );
 
   setWatchExpressionStorage(storage);
+
+  setSplitPaneStorage(
+    reader: storage.read,
+    writer: (key, value) {
+      storage.write(key, value);
+    },
+  );
 }

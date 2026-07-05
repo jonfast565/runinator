@@ -134,6 +134,16 @@ class _WorkflowEditorShellState extends ConsumerState<WorkflowEditorShell> {
                   if (options.isEmpty) return;
                   _openConnectMenu(sourceId, targetId, options, position);
                 },
+                // dragged from a specific per-parameter handle, so the route is already
+                // known — apply it directly instead of opening the "connect as" picker.
+                onConnectWithOption: (sourceId, targetId, optionId, position) {
+                  _notifier.editor.applyGraphEdgeSemantic(
+                    GraphEdgeLike(source: sourceId, target: targetId),
+                    optionId,
+                  );
+                  _notifier.host.notify();
+                  setState(() {});
+                },
               ),
             ),
             _WorkflowDiagnosticsPanel(issues: issues, onFocus: (nodeId) {
@@ -358,14 +368,14 @@ class _WorkflowCommandBar extends StatelessWidget {
               CcButton(icon: IconName.refresh, label: 'Reverse', dense: true, onPressed: onReverseEdge),
               CcButton(icon: IconName.arrowUp, label: 'Up', dense: true, onPressed: onMoveEdgeUp),
               CcButton(icon: IconName.arrowDown, label: 'Down', dense: true, onPressed: onMoveEdgeDown),
-              if (edgeIssue != null) Text(edgeIssue!, style: const TextStyle(fontSize: 11, color: AppColors.dangerFg)),
+              if (edgeIssue != null) Text(edgeIssue!, style: TextStyle(fontSize: 11, color: AppColors.dangerFg)),
             ] else if (selectedNode != null) ...[
               CcButton(icon: IconName.edit, label: 'Edit', dense: true, onPressed: onEditNode),
               CcButton(icon: IconName.edit, label: 'Duplicate', dense: true, onPressed: onDuplicateNode),
               CcButton(icon: IconName.trash, label: 'Delete', dense: true, variant: CcButtonVariant.danger, onPressed: onDeleteNode),
               CcButton(icon: IconName.plus, label: 'Add node', dense: true, onPressed: onAddConnected),
               CcButton(icon: IconName.grid, label: 'Arrange', dense: true, onPressed: onAutoArrange),
-              if (nodeIssue != null) Text(nodeIssue!, style: const TextStyle(fontSize: 11, color: AppColors.dangerFg)),
+              if (nodeIssue != null) Text(nodeIssue!, style: TextStyle(fontSize: 11, color: AppColors.dangerFg)),
             ],
           ],
         ),
@@ -384,7 +394,7 @@ class _WorkflowDiagnosticsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 120,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(top: BorderSide(color: AppColors.border)),
         color: AppColors.surfaceSubtle,
       ),
@@ -397,7 +407,7 @@ class _WorkflowDiagnosticsPanel extends StatelessWidget {
           ),
           Expanded(
             child: issues.isEmpty
-                ? const Center(child: Text('No workflow issues.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)))
+                ? Center(child: Text('No workflow issues.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)))
                 : ListView.builder(
                     itemCount: issues.length,
                     itemBuilder: (context, index) {

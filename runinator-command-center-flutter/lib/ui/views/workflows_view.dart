@@ -94,7 +94,7 @@ class _WorkflowsViewState extends ConsumerState<WorkflowsView> {
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
                     child: Text(
                       '${filtered.length} visible · ${filtered.where((w) => !w.enabled).length} disabled',
-                      style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                      style: TextStyle(fontSize: 11, color: AppColors.textMuted),
                     ),
                   ),
                   Expanded(
@@ -138,8 +138,8 @@ class _WorkflowsViewState extends ConsumerState<WorkflowsView> {
                                 margin: const EdgeInsets.only(right: 6),
                                 decoration: BoxDecoration(color: AppColors.warningFg, shape: BoxShape.circle),
                               ),
-                              const Padding(
-                                padding: EdgeInsets.only(right: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
                                 child: Text('Unsaved', style: TextStyle(fontSize: 11, color: AppColors.warningFg)),
                               ),
                             ],
@@ -205,7 +205,7 @@ class _WorkflowsViewState extends ConsumerState<WorkflowsView> {
                             margin: const EdgeInsets.all(12),
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(color: AppColors.dangerBg, borderRadius: BorderRadius.circular(6)),
-                            child: Text(workflows.workflowWdlError, style: const TextStyle(color: AppColors.dangerFg, fontSize: 12)),
+                            child: Text(workflows.workflowWdlError, style: TextStyle(color: AppColors.dangerFg, fontSize: 12)),
                           ),
                         Expanded(
                           child: Padding(
@@ -259,7 +259,7 @@ class _StepInspector extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(node['name']?.toString() ?? selectedStepId, style: const TextStyle(fontWeight: FontWeight.w700)),
-                Text('${node['kind']} · $selectedStepId', style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                Text('${node['kind']} · $selectedStepId', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
               ],
             ),
           ),

@@ -3,8 +3,7 @@ import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import type { RunChunk } from "../../core/domain/models";
 import { buildWebSocketUrl } from "../../core/utils/websocket";
-
-const RECONNECT_DELAY = 3000;
+import { ReconnectBackoff } from "../../core/realtime/reconnect-backoff";
 
 export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
   const app = useAppStore();
@@ -14,6 +13,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let connectionId = 0;
+  const backoff = new ReconnectBackoff();
 
   function clearReconnectTimer() {
     if (reconnectTimer === null) {
@@ -44,6 +44,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
       }
 
       clearReconnectTimer();
+      backoff.reset();
       console.info("[command-center] workflow node run log stream connected", { nodeRunId: id });
     };
 
@@ -84,7 +85,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
       if (nodeRunId.value === id && app.serviceKnown) {
         reconnectTimer = setTimeout(() => {
           connect(id);
-        }, RECONNECT_DELAY);
+        }, backoff.next());
       }
     };
   }
@@ -100,6 +101,7 @@ export function useWorkflowNodeRunLogStream(nodeRunId: Ref<string | null>) {
     nodeRunId,
     (id) => {
       disconnect();
+      backoff.reset();
       chunks.value = [];
       lastChunkAt.value = 0;
 

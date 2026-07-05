@@ -2,13 +2,11 @@ export const ReplicasViewManifest = {
   "screen": "ReplicasView",
   "tab": "Replicas",
   "services": [
-    "AppService",
-    "LocalWorkerService"
+    "AppService"
   ],
   "streams": [],
   "components": [
     "Sparkline",
-    "LocalWorkerPanel",
     "NodePoolsPanel"
   ],
   "actions": [

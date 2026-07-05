@@ -137,7 +137,7 @@ run_ui() {
   choose_port
 
   if ! kubectl ${kubectl_args[@]+"${kubectl_args[@]}"} -n "$NAMESPACE" get svc "$WS_SERVICE" >/dev/null 2>&1; then
-    echo "Service $NAMESPACE/$WS_SERVICE not found. Deploy the stack first with pwsh ./build.ps1 -DeployKube." >&2
+    echo "Service $NAMESPACE/$WS_SERVICE not found. Deploy the stack first with cargo run -p xtask -- k8s deploy." >&2
     exit 1
   fi
 

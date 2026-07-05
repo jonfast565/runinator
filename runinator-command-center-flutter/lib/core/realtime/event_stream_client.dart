@@ -13,9 +13,9 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'event_router.dart';
+import 'reconnect_backoff.dart';
 import 'websocket_url.dart';
 
-const Duration _reconnectDelay = Duration(milliseconds: 3000);
 const Duration _fallbackInterval = Duration(milliseconds: 30000);
 const Duration _connectTimeout = Duration(milliseconds: 5000);
 
@@ -48,6 +48,7 @@ class EventStreamClient {
   Timer? _reconnectTimer;
   Timer? _connectTimer;
   int _connectionId = 0;
+  final _backoff = ReconnectBackoff();
 
   void connect() {
     _clearReconnectTimer();
@@ -81,6 +82,7 @@ class EventStreamClient {
       }
 
       _clearConnectTimer();
+      _backoff.reset();
       _options.onStateChange(EventStreamState.connected);
       _stopFallback();
     }).catchError((Object _) {
@@ -109,7 +111,7 @@ class EventStreamClient {
         _startFallback();
 
         if (_options.getServiceKnown()) {
-          _reconnectTimer = Timer(_reconnectDelay, connect);
+          _reconnectTimer = Timer(_backoff.next(), connect);
         }
       },
       onError: (Object _) {
@@ -132,6 +134,7 @@ class EventStreamClient {
     _channel?.sink.close();
     _channel = null;
     _stopFallback();
+    _backoff.reset();
     _options.onStateChange(EventStreamState.disconnected);
   }
 

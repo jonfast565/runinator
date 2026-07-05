@@ -6,9 +6,8 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../domain/models/index.dart';
+import 'reconnect_backoff.dart';
 import 'websocket_url.dart';
-
-const _reconnectDelay = Duration(seconds: 3);
 
 class WorkflowNodeLogStreamClient {
   WorkflowNodeLogStreamClient({
@@ -23,11 +22,15 @@ class WorkflowNodeLogStreamClient {
   Timer? _reconnectTimer;
   var _connectionId = 0;
   String? _activeNodeRunId;
+  final _backoff = ReconnectBackoff();
 
   final chunks = <RunChunk>[];
   var lastChunkAt = 0;
 
   void connect(String nodeRunId) {
+    if (nodeRunId != _activeNodeRunId) {
+      _backoff.reset();
+    }
     disconnect(clearChunks: true);
     _activeNodeRunId = nodeRunId;
 
@@ -41,6 +44,13 @@ class WorkflowNodeLogStreamClient {
       Uri.parse(buildWebSocketUrl(serviceUrl, '/ws/workflow-node-runs/$nodeRunId/stream')),
     );
     _channel = channel;
+
+    channel.ready.then((_) {
+      if (currentConnection != _connectionId) return;
+      _backoff.reset();
+    }).catchError((Object _) {
+      // connection failed to establish; onDone below drives the reconnect.
+    });
 
     channel.stream.listen(
       (data) {
@@ -65,7 +75,7 @@ class WorkflowNodeLogStreamClient {
         final id = _activeNodeRunId;
 
         if (id == nodeRunId && getServiceKnown()) {
-          _reconnectTimer = Timer(_reconnectDelay, () => connect(nodeRunId));
+          _reconnectTimer = Timer(_backoff.next(), () => connect(nodeRunId));
         }
       },
       cancelOnError: true,

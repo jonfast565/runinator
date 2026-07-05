@@ -256,6 +256,7 @@ fn build_processes(
 // turns a single process config into a managed (not yet started) process. shared by the static
 // startup list and the dynamic add-process control command.
 fn build_one_process(process: &ProcessConfig, paths: &Paths) -> ManagedProcess {
+    let process = process.clone().resolve_for_platform();
     let command_raw = Path::new(&process.command);
     let command_path = if command_raw.components().count() > 1 || command_raw.is_absolute() {
         resolve_path(&paths.config_dir, command_raw)
@@ -273,7 +274,7 @@ fn build_one_process(process: &ProcessConfig, paths: &Paths) -> ManagedProcess {
         .join(format!("not-started__{}.log", sanitize_name(&process.name)));
 
     ManagedProcess {
-        config: process.clone(),
+        config: process,
         command_path,
         cwd_path,
         child: None,

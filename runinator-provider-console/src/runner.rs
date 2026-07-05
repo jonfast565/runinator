@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, ExitStatus, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,20 +29,7 @@ pub(crate) fn execute_command(
     let command_text = params.command;
     let started = Instant::now();
 
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", &command_text]);
-        cmd
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let mut command = {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", &command_text]);
-        cmd
-    };
-
+    let mut command = runinator_utilities::shell::shell_command(&command_text);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(to_runtime_error)?;
     let stdout = child

@@ -31,11 +31,15 @@ class ArtifactsView extends ConsumerWidget {
       if (query.isEmpty) return true;
       return [item.id, item.name, item.mimeType].any((v) => displayValue(v).toLowerCase().contains(query));
     }).toList();
+    final selectedArtifact = notifier.selectedArtifact();
 
     return Padding(
       padding: const EdgeInsets.all(12),
       child: SplitPane(
         initialFirstFraction: 0.55,
+        mobileShowSecond: selectedArtifact != null,
+        mobileBackTitle: selectedArtifact?.name,
+        onMobileBack: () => notifier.setSelectedArtifactId(null),
         first: PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

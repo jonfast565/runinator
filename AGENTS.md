@@ -130,7 +130,7 @@ Check these when adding or renaming runtime options:
 - `README.md` and crate-specific README files
 - `runinator-stack.yaml`
 - Dockerfiles for service binaries
-- local scripts such as `build.ps1`
+- the `xtask` crate (`xtask/src/`), which builds/publishes/deploys the workspace
 
 Local development defaults should continue to work with:
 
@@ -140,6 +140,13 @@ cargo run -p runinator-supervisor -- start
 cargo run -p runinator-supervisor -- status
 cargo run -p runinator-supervisor -- stop
 ```
+
+`tools/keychain-export` (Swift, macOS Keychain only) and `tools/runinator-secret-sync`
+(Go, `client-go`) bridge one operator's local credentials (e.g. a Claude Code login)
+into Kubernetes Secrets. They are an optional, macOS-operator-machine bridge for that
+one credential source, not part of the portable runtime — the portable credential
+path is `CredentialStore` (`runinator-auth`), `SecretCipher` (`runinator-utilities`),
+and the settings store's `secret://` references, all of which are OS-agnostic.
 
 ## Error Handling And Async
 

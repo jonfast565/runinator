@@ -1,7 +1,7 @@
 import { buildWebSocketUrl } from "./websocket-url";
 import type { EventStreamRouter, ServerEvent } from "./event-router";
+import { ReconnectBackoff } from "./reconnect-backoff";
 
-const RECONNECT_DELAY = 3000;
 const FALLBACK_INTERVAL = 30000;
 const CONNECT_TIMEOUT = 5000;
 
@@ -21,6 +21,7 @@ export class EventStreamClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectionId = 0;
+  private readonly backoff = new ReconnectBackoff();
 
   constructor(private readonly options: EventStreamClientOptions) {}
 
@@ -53,6 +54,7 @@ export class EventStreamClient {
       }
 
       this.clearConnectTimer();
+      this.backoff.reset();
       this.options.onStateChange("connected");
       this.stopFallback();
     };
@@ -79,7 +81,7 @@ export class EventStreamClient {
       this.startFallback();
 
       if (this.options.getServiceKnown()) {
-        this.reconnectTimer = setTimeout(() => { this.connect(); }, RECONNECT_DELAY);
+        this.reconnectTimer = setTimeout(() => { this.connect(); }, this.backoff.next());
       }
     };
 
@@ -97,6 +99,7 @@ export class EventStreamClient {
     this.connectionId += 1;
     this.clearReconnectTimer();
     this.clearConnectTimer();
+    this.backoff.reset();
     this.ws?.close();
     this.ws = null;
     this.stopFallback();

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/platform/text_editor.dart';
 import '../theme/app_theme.dart';
+import 'wdl_syntax.dart';
 
 class CodeEditor extends StatefulWidget {
   const CodeEditor({
@@ -37,7 +38,10 @@ class _CodeEditorState extends State<CodeEditor> {
   void initState() {
     super.initState();
     _ownsController = widget.controller == null;
-    _controller = widget.controller ?? TextEditingController(text: widget.value);
+    _controller = widget.controller ??
+        (widget.language == TextEditorLanguage.wdl
+            ? WdlEditingController(text: widget.value)
+            : TextEditingController(text: widget.value));
     _focusNode = FocusNode();
     _controller.addListener(_handleControllerChanged);
   }
@@ -66,48 +70,65 @@ class _CodeEditorState extends State<CodeEditor> {
   Widget build(BuildContext context) {
     final lineCount = '\n'.allMatches(_controller.text).length + 1;
     final gutterWidth = (lineCount.toString().length * 8 + 16).toDouble();
+    final codeStyle = TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 13, color: AppColors.textPrimary, height: 1.45);
+
+    final content = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: gutterWidth,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          color: AppColors.surfaceMuted,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var i = 1; i <= lineCount; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8, bottom: 2),
+                  child: Text(
+                    '$i',
+                    style: TextStyle(fontFamily: kMonoFontFamily, fontFamilyFallback: kMonoFontFamilyFallback, fontSize: 12, color: AppColors.textMuted),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            focusNode: _focusNode,
+            readOnly: widget.readOnly,
+            maxLines: null,
+            minLines: widget.minLines,
+            style: codeStyle,
+            cursorColor: AppColors.accent,
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.all(10),
+              isDense: true,
+              filled: false,
+            ),
+            onChanged: widget.onChanged,
+          ),
+        ),
+      ],
+    );
 
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0F1720),
-        borderRadius: BorderRadius.circular(6),
+        color: AppColors.surfaceSubtle,
+        borderRadius: BorderRadius.circular(AppMetrics.radiusSm),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: gutterWidth,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            color: const Color(0xFF111827),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (var i = 1; i <= lineCount; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8, bottom: 2),
-                    child: Text('$i', style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Color(0xFF6B7280))),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              readOnly: widget.readOnly,
-              maxLines: null,
-              minLines: widget.minLines,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: Color(0xFFE5E7EB), height: 1.45),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.all(10),
-                isDense: true,
-              ),
-              onChanged: widget.onChanged,
-            ),
-          ),
-        ],
+      // when the host gives us a bounded height (an Expanded pane, a fixed SizedBox), scroll
+      // internally instead of growing the gutter/text field past that bound.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.hasBoundedHeight) {
+            return SingleChildScrollView(child: content);
+          }
+          return content;
+        },
       ),
     );
   }
@@ -200,7 +221,7 @@ class _WdlSmartEditorState extends State<WdlSmartEditor> {
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.value);
+    _controller = WdlEditingController(text: widget.value);
   }
 
   @override
@@ -242,19 +263,21 @@ class _WdlSmartEditorState extends State<WdlSmartEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CodeEditor(
-          controller: _controller,
-          value: _controller.text,
-          readOnly: widget.readOnly,
-          onChanged: widget.onChanged,
-          language: TextEditorLanguage.wdl,
-          minLines: 16,
-          onSelectionChanged: (_) => _updateHover(),
+        Expanded(
+          child: CodeEditor(
+            controller: _controller,
+            value: _controller.text,
+            readOnly: widget.readOnly,
+            onChanged: widget.onChanged,
+            language: TextEditorLanguage.wdl,
+            minLines: 16,
+            onSelectionChanged: (_) => _updateHover(),
+          ),
         ),
         if (_hover != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text('${_hover!.title}${_hover!.documentation != null ? ' — ${_hover!.documentation}' : ''}', style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            child: Text('${_hover!.title}${_hover!.documentation != null ? ' — ${_hover!.documentation}' : ''}', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
           ),
         if (_suggestions.isNotEmpty)
           Container(
