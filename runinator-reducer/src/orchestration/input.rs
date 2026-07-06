@@ -1,5 +1,5 @@
 use super::context::runtime_context;
-use super::transitions::timed_out;
+use super::transitions::timed_out_since_created;
 use super::transitions::transition_from_node;
 use super::*;
 
@@ -12,7 +12,9 @@ pub(super) async fn process_input_node<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     let latest = latest.filter(|run| run.node_id == node.id);
     if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::InputRequired && timed_out(node, node_run) {
+        if node_run.status == WorkflowStatus::InputRequired
+            && timed_out_since_created(node, node_run)
+        {
             return transitions::time_out(
                 db,
                 workflow_run,

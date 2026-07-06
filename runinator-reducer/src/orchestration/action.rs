@@ -2,7 +2,9 @@ use std::future::Future;
 
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::handler::{NodeHandler, NodeHandlerContext};
-use super::transitions::{arm_node_timeout, retry_or_transition, time_out, timed_out};
+use super::transitions::{
+    arm_node_timeout, retry_or_transition, time_out, timed_out, timed_out_since_created,
+};
 use super::*;
 use runinator_comm::ActionTarget;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
@@ -16,6 +18,10 @@ const LOCAL_PROVIDER: &str = "local";
 const LOCAL_TARGET_POLL_SECONDS: i64 = 5;
 // a replica whose heartbeat is older than this is treated as disconnected; mirrors the ws reaper.
 const REPLICA_STALE_SECONDS: i64 = 30;
+// how often a dispatched action pinned to a label selector or replica rechecks that a matching
+// worker is still live, so a worker dying mid-run fails the node promptly rather than waiting out
+// (or never reaching) its `timeout_seconds` deadline.
+const DISPATCH_LIVENESS_POLL_SECONDS: i64 = 15;
 
 // the routing decision for an action node: dispatch now to a resolved target, or park until the
 // bound worker becomes available.
@@ -109,7 +115,9 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Running {
             // a dispatched action otherwise waits on its worker result indefinitely; honor the
-            // node's timeout so a lost worker or dropped result cannot park the run forever.
+            // node's timeout so a lost worker or dropped result cannot park the run forever. this
+            // is a backstop for a missing/very long timeout_seconds; the liveness check below is
+            // what actually catches a worker dying mid-run in a timely fashion.
             if timed_out(node, node_run) {
                 return time_out(
                     db,
@@ -121,11 +129,33 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
                 )
                 .await;
             }
+            // a pinned target (an explicit label selector, or the session-bound local provider)
+            // has exactly one worker (or worker set) that can ever service it; if that worker just
+            // went stale, no redelivery will ever land, so fail promptly instead of waiting out the
+            // full timeout. a general-pool (`Any`) dispatch is left alone: the broker can and will
+            // redeliver it to any other live worker, so a single dead consumer is not fatal there.
+            match dispatch_target_still_live(db, workflow_run, workflow, action).await? {
+                Some(false) => {
+                    return time_out(
+                        db,
+                        workflow_run,
+                        node,
+                        node_run,
+                        "Worker executing this action disconnected",
+                        node_runs,
+                    )
+                    .await;
+                }
+                Some(true) => arm_dispatch_liveness_poll(db, workflow_run.id, node).await?,
+                None => {}
+            }
             return Ok(());
         }
         // a node parked waiting for its bound desktop worker; honor the timeout, otherwise fall
-        // through to re-resolve the target (the worker may have reconnected) reusing this run.
-        if node_run.status == WorkflowStatus::Waiting && timed_out(node, node_run) {
+        // through to re-resolve the target (the worker may have reconnected) reusing this run. a
+        // parked run never touches `started_at` (only a `Running` transition sets it), so the
+        // deadline is measured from `created_at` instead.
+        if node_run.status == WorkflowStatus::Waiting && timed_out_since_created(node, node_run) {
             return time_out(
                 db,
                 workflow_run,
@@ -173,6 +203,10 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             return park_for_target(db, workflow_run, node, &node_run).await;
         }
     };
+    let is_pinned_target = matches!(
+        target,
+        ActionTarget::Labels { .. } | ActionTarget::Replica { .. }
+    );
     let attempt = node_run.attempt + 1;
     let parameters =
         build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
@@ -211,7 +245,13 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     .await?;
     // no ready node is pending while the run awaits the worker, so a configured timeout must arm
     // its own wake-up to be checked at the deadline.
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, node).await?;
+    // a pinned target's worker can die mid-run with no result ever arriving; re-check its liveness
+    // well before the (possibly long, or unset) node timeout would otherwise catch it.
+    if is_pinned_target {
+        arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
+    }
+    Ok(())
 }
 
 async fn build_node_parameters<T: DatabaseImpl>(
@@ -307,15 +347,7 @@ async fn resolve_action_target<T: DatabaseImpl>(
     workflow: &runinator_models::workflows::WorkflowDefinition,
     action: &WorkflowAction,
 ) -> Result<TargetResolution, SendableError> {
-    // build the effective label selector: the action's explicit labels, plus an `org=<slug>` affinity
-    // label when the owning org has opted into dedicated workers (hybrid: shared pool by default,
-    // dedicated opt-in). org-less or non-dedicated workflows keep running on the shared pool.
-    let mut required_labels = action.required_labels.clone();
-    if let Some(org_id) = workflow.org_id {
-        if let Some(slug) = org_dedicated_worker_slug(db, org_id).await? {
-            required_labels.entry("org".to_string()).or_insert(slug);
-        }
-    }
+    let required_labels = effective_required_labels(db, workflow, action).await?;
     // an explicit label requirement takes precedence over provider-based routing: dispatch to a live
     // worker that carries the labels, otherwise park until one connects (the node timeout fails it).
     if !required_labels.is_empty() {
@@ -335,6 +367,66 @@ async fn resolve_action_target<T: DatabaseImpl>(
         workflow_run.trigger_actor_replica_id,
         replica_live,
     ))
+}
+
+/// the effective label selector for an action: its own `required_labels`, plus an `org=<slug>`
+/// affinity label when the owning org has opted into dedicated workers (hybrid: shared pool by
+/// default, dedicated opt-in). org-less or non-dedicated workflows keep running on the shared pool.
+/// shared by dispatch-time routing and the post-dispatch liveness recheck so both apply identical
+/// policy.
+async fn effective_required_labels<T: DatabaseImpl>(
+    db: &T,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
+    action: &WorkflowAction,
+) -> Result<std::collections::BTreeMap<String, String>, SendableError> {
+    let mut required_labels = action.required_labels.clone();
+    if let Some(org_id) = workflow.org_id {
+        if let Some(slug) = org_dedicated_worker_slug(db, org_id).await? {
+            required_labels.entry("org".to_string()).or_insert(slug);
+        }
+    }
+    Ok(required_labels)
+}
+
+/// whether the worker(s) a dispatched action is pinned to are still live: `Some(true)`/`Some(false)`
+/// for a pinned target (label selector or the session-bound local provider), `None` for a
+/// general-pool dispatch, which has no single worker to go stale (the broker redelivers it instead).
+async fn dispatch_target_still_live<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    workflow: &runinator_models::workflows::WorkflowDefinition,
+    action: &WorkflowAction,
+) -> Result<Option<bool>, SendableError> {
+    let required_labels = effective_required_labels(db, workflow, action).await?;
+    if !required_labels.is_empty() {
+        return Ok(Some(
+            live_worker_matches_labels(db, &required_labels).await?,
+        ));
+    }
+    if action.provider == LOCAL_PROVIDER {
+        if let Some(replica_id) = workflow_run.trigger_actor_replica_id {
+            return Ok(Some(replica_is_live(db, replica_id).await?));
+        }
+    }
+    Ok(None)
+}
+
+/// schedule the next liveness recheck of a dispatched action pinned to a label selector or replica.
+async fn arm_dispatch_liveness_poll<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node: &WorkflowNode,
+) -> Result<(), SendableError> {
+    let poll_at = Utc::now() + chrono::Duration::seconds(DISPATCH_LIVENESS_POLL_SECONDS);
+    let event = NewOrchestrationEvent::new(
+        workflow_run_id,
+        Some(node.id.clone()),
+        "dispatch_liveness_poll",
+        runinator_models::json!({ "node_id": node.id }),
+    );
+    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+        .await?;
+    Ok(())
 }
 
 /// the org's slug when it has a dedicated worker allocation (`desired > 0`), else `None`. used to

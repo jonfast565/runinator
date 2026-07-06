@@ -1,5 +1,7 @@
 use super::context::is_reentry_stale;
-use super::transitions::{arm_node_timeout, time_out, timed_out, transition_from_node};
+use super::transitions::{
+    arm_node_timeout, time_out, timed_out_since_created, transition_from_node,
+};
 use super::*;
 
 /// true when the collect buffer has reached or exceeded the item threshold.
@@ -52,7 +54,7 @@ pub(super) async fn process_collect_node<T: DatabaseImpl>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out(node, node_run) {
+        if timed_out_since_created(node, node_run) {
             // emit whatever was collected before timing out.
             let state = serde_json::from_value::<CollectState>(node_run.state.clone().into()).ok();
             let items = state.map(|s| s.items).unwrap_or_default();

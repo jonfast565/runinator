@@ -1,5 +1,5 @@
 use super::context::is_reentry_stale;
-use super::transitions::{time_out, timed_out, transition_from_node};
+use super::transitions::{time_out, timed_out_since_created, transition_from_node};
 use super::*;
 
 /// true when the debounce deadline has elapsed (i.e. no new trigger has reset it).
@@ -50,7 +50,7 @@ pub(super) async fn process_debounce_node<T: DatabaseImpl>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out(node, node_run) {
+        if timed_out_since_created(node, node_run) {
             time_out(
                 db,
                 workflow_run,

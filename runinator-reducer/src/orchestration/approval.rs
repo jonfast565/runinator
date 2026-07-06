@@ -1,5 +1,7 @@
 use super::context::is_reentry_stale;
-use super::transitions::{arm_node_timeout, time_out, timed_out, transition_from_node};
+use super::transitions::{
+    arm_node_timeout, time_out, timed_out_since_created, transition_from_node,
+};
 use super::*;
 
 pub(super) async fn process_approval_node<T: DatabaseImpl>(
@@ -13,7 +15,9 @@ pub(super) async fn process_approval_node<T: DatabaseImpl>(
     // fresh visit so a new approval is requested instead of transitioning from the stale run.
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::ApprovalRequired && timed_out(node, node_run) {
+        if node_run.status == WorkflowStatus::ApprovalRequired
+            && timed_out_since_created(node, node_run)
+        {
             return time_out(
                 db,
                 workflow_run,

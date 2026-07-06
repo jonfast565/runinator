@@ -13,6 +13,7 @@ use super::event_source::event_type_matches;
 use super::mutex::record_is_held_by_other;
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
+use super::transitions::{timed_out, timed_out_since_created};
 use runinator_comm::ActionTarget;
 use runinator_models::{
     value::Value,
@@ -408,4 +409,20 @@ fn event_source_type_matching() {
     assert!(!event_type_matches(&event, "user.created"));
     // wildcard matches everything.
     assert!(event_type_matches(&event, "*"));
+}
+
+#[test]
+fn timed_out_since_created_catches_a_run_that_never_reached_running() {
+    let node: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "wait",
+        "kind": "signal",
+        "timeout_seconds": 60,
+    }))
+    .expect("node");
+    // a parked run (signal/approval/input/action-park/etc.) never transitions through `Running`,
+    // so the db layer never populates `started_at`. the deadline-from-dispatch check must therefore
+    // be blind to a stale park, while the deadline-from-creation check must still catch it.
+    let run = node_run("wait", "waiting");
+    assert!(!timed_out(&node, &run));
+    assert!(timed_out_since_created(&node, &run));
 }

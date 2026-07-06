@@ -1,5 +1,7 @@
 use super::context::{is_reentry_stale, runtime_context};
-use super::transitions::{arm_node_timeout, time_out, timed_out, transition_from_node};
+use super::transitions::{
+    arm_node_timeout, time_out, timed_out_since_created, transition_from_node,
+};
 use super::*;
 
 /// process a signal node: park the run until a named external signal is delivered. purely
@@ -18,7 +20,7 @@ pub(super) async fn process_signal_node<T: DatabaseImpl>(
     // visit so a new wait is armed instead of transitioning from the stale run.
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
     if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::Waiting && timed_out(node, node_run) {
+        if node_run.status == WorkflowStatus::Waiting && timed_out_since_created(node, node_run) {
             return time_out(
                 db,
                 workflow_run,
