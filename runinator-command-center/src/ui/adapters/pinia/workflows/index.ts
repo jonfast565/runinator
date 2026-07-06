@@ -194,10 +194,13 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       .join(",");
   });
   const subflowNames = mirroredComputed(() => svc.getSubflowNames());
-  const graphNodes = computed((): Node[] =>
+  // workflowDraft is a persistent object mutated in place (Object.assign) rather than replaced,
+  // so plain computed()s over it don't reliably track changes to its nested definition/nodes;
+  // mirroredComputed's state.value read forces recomputation on every workflow-store notify().
+  const graphNodes = mirroredComputed((): Node[] =>
     buildGraphNodes(workflowDraft, null, subflowNames.value, providerCatalog()),
   );
-  const graphEdges = computed((): Edge[] => buildGraphEdges(workflowDraft));
+  const graphEdges = mirroredComputed((): Edge[] => buildGraphEdges(workflowDraft));
   const graphValidationIssues = mirroredComputed((): WorkflowValidationIssue[] => svc.getGraphValidationIssues());
   const workflowRunWorkflow = mirroredComputed((): WorkflowDefinition | null => svc.getWorkflowRunWorkflow());
   const workflowRunGatesByNodeId = computed((): Map<string, GateRecord> => {

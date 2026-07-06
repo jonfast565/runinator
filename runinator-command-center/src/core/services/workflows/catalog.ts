@@ -62,9 +62,14 @@ export function createWorkflowCatalogService(
 
   async function refreshWorkflows() {
     console.info("[command-center] refreshing workflows");
-    host.state.workflows = (await host.ctx
+    // resolve before touching host.state: notify() elsewhere (e.g. a concurrent
+    // fetchRecentWorkflowRuns() in the same Promise.all) can swap the state object out from
+    // under a `host.state.x = await ...` assignment, since the getter is read before the await
+    // resolves; writing into a local first keeps the final assignment on the live object.
+    const fetched = (await host.ctx
       .runOperation("Refreshing workflows", () => fetchWorkflows())
       .catch(() => [])) as WorkflowDefinition[];
+    host.state.workflows = fetched;
 
     if (!host.state.selectedWorkflowId && host.state.workflows.length > 0) {
       host.state.selectedWorkflowId = host.state.workflows[0].id;
@@ -132,10 +137,10 @@ export function createWorkflowCatalogService(
 
     host.state.workflowEditorMode = "graph";
     host.state.isDirty = false;
+    host.notify();
     // the graph derives from the draft; the wdl pane is decompiled, so refresh it for the newly
     // selected workflow since both panes are visible at once.
     return editor.refreshWorkflowWdl();
-    host.notify();
   }
 
   function addWorkflow() {
@@ -147,7 +152,6 @@ export function createWorkflowCatalogService(
 
   function workflowNameForRun(run: RunSummary): string {
     return host.state.workflows.find((workflow) => workflow.id === run.workflow_id)?.name ?? "";
-    host.notify();
   }
 
   async function exportWorkflowWdl(): Promise<void> {
@@ -254,9 +258,10 @@ export function createWorkflowCatalogService(
       return;
     }
 
-    host.state.workflowTriggers = (await host.ctx
+    const triggers = (await host.ctx
       .runOperation("Loading workflow triggers", () => fetchWorkflowTriggers(workflowId))
       .catch(() => [])) as WorkflowTrigger[];
+    host.state.workflowTriggers = triggers;
     host.notify();
   }
 
@@ -403,7 +408,6 @@ export function createWorkflowCatalogService(
     return host.state.workflowTriggers
       .filter((trigger) => trigger.workflow_id === workflowId)
       .map((trigger) => cloneJson(trigger));
-    host.notify();
   }
 
   async function workflowWdlSaveRequest(): Promise<WorkflowWdlSaveRequest> {
@@ -423,7 +427,6 @@ export function createWorkflowCatalogService(
     }
 
     return request;
-    host.notify();
   }
 
   async function saveSelectedWorkflowBundle() {

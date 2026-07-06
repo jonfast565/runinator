@@ -122,6 +122,11 @@ impl DesktopAgentApp {
     // a tag-input for `draft.extra_labels`: existing labels render as removable chips, a text field
     // takes the next `key=value` (committed on Enter or by picking a type-ahead suggestion below it).
     fn label_editor(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("Route work to this machine with a matching .runner(\"...\").")
+                .small()
+                .weak(),
+        );
         ui.horizontal_wrapped(|ui| {
             let mut remove: Option<usize> = None;
             for (index, label) in self.draft.extra_labels.iter().enumerate() {
@@ -211,27 +216,19 @@ impl eframe::App for DesktopAgentApp {
         let (status, busy) = self.snapshot();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Runinator Desktop Agent");
-            ui.label(
-                "Runs this machine as a worker for Runinator workflows: a sandboxed local-files \
-                 provider plus every built-in provider, gated to only the work explicitly pinned \
-                 or labeled to it.",
-            );
-            ui.separator();
-
             ui.horizontal(|ui| {
-                ui.label("Status:");
+                ui.heading("Runinator Desktop Agent");
                 let (text, color) = if status.running {
-                    ("running", egui::Color32::from_rgb(64, 180, 96))
+                    ("● running", egui::Color32::from_rgb(64, 180, 96))
                 } else if busy {
-                    ("working…", egui::Color32::from_rgb(210, 170, 60))
+                    ("● working…", egui::Color32::from_rgb(210, 170, 60))
                 } else {
-                    ("stopped", egui::Color32::GRAY)
+                    ("● stopped", egui::Color32::GRAY)
                 };
                 ui.colored_label(color, text);
             });
+            ui.separator();
 
-            ui.add_space(4.0);
             let has_app = !self.draft.command_center_app_path.trim().is_empty();
             let has_url = !self.draft.command_center_url.trim().is_empty();
             if ui
@@ -247,7 +244,7 @@ impl eframe::App for DesktopAgentApp {
             }
 
             if status.running {
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 if let Some(replica_id) = status.replica_id {
                     ui.label(format!("Replica: {replica_id}"));
                 }
@@ -272,107 +269,135 @@ impl eframe::App for DesktopAgentApp {
                         ui.add(egui::TextEdit::singleline(&mut self.draft.service_url));
                         ui.end_row();
 
-                        ui.label("Command Center App");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.draft.command_center_app_path)
-                                .hint_text("/Applications/Runinator Command Center.app"),
-                        );
-                        ui.end_row();
-
-                        ui.label("Command Center URL");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.draft.command_center_url)
-                                .hint_text("https://runinator.example.com/ (fallback if no app)"),
-                        );
-                        ui.end_row();
-
                         ui.label("Sandbox folder");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.draft.sandbox_root)
                                 .hint_text("/Users/me/runinator-files"),
                         );
                         ui.end_row();
-
-                        ui.label("API key");
-                        ui.add(
-                            egui::TextEdit::singleline(
-                                self.draft.api_key.get_or_insert_with(String::new),
-                            )
-                            .password(true)
-                            .hint_text("optional"),
-                        );
-                        ui.end_row();
-
-                        ui.label("Broker connection");
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(
-                                &mut self.draft.broker_mode,
-                                crate::config::BrokerMode::Relay,
-                                "Via web service (relay)",
-                            );
-                            ui.selectable_value(
-                                &mut self.draft.broker_mode,
-                                crate::config::BrokerMode::Direct,
-                                "Direct",
-                            );
-                        });
-                        ui.end_row();
-
-                        if self.draft.broker_mode == crate::config::BrokerMode::Direct {
-                            ui.label("Broker backend");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.draft.direct_broker_backend)
-                                    .hint_text("tcp | rabbitmq | kafka | http"),
-                            );
-                            ui.end_row();
-
-                            ui.label("Broker endpoint");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.draft.direct_broker_endpoint)
-                                    .hint_text("host:port, or amqp://user:pass@host:port/%2f"),
-                            );
-                            ui.end_row();
-                        }
                     });
 
-                if self.draft.broker_mode == crate::config::BrokerMode::Direct {
-                    ui.label(
-                        egui::RichText::new(
-                            "Connects straight to the broker instead of relaying through the web \
-                             service. Only do this if this machine is actually on the broker's \
-                             trusted network — otherwise leave it on \"Via web service\".",
-                        )
-                        .small()
-                        .weak(),
-                    );
-                }
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.draft.allow_write, "Allow writes and deletes")
+                    .on_hover_text("Off = read-only sandbox");
+                ui.checkbox(&mut self.draft.auto_start, "Start automatically on launch");
 
                 if self.draft.api_key.as_deref().is_some_and(str::is_empty) {
                     self.draft.api_key = None;
                 }
 
-                ui.add_space(6.0);
-                ui.label("Extra labels");
-                ui.label(
-                    egui::RichText::new(
-                        "Beyond the always-on pool=desktop. A workflow node with a matching \
-                         .runner(\"...\") or label requirement (e.g. packs/creds-sync's \
-                         runner=creds-sync) routes to this machine; nothing else changes on the \
-                         agent side per label.",
-                    )
-                    .small()
-                    .weak(),
-                );
-                self.label_editor(ui);
-                ui.add_space(4.0);
-
-                ui.checkbox(&mut self.draft.allow_write, "Allow writes and deletes");
-                ui.checkbox(
-                    &mut self.draft.auto_start,
-                    "Start automatically when this app launches",
-                );
                 ui.add_space(8.0);
+                egui::CollapsingHeader::new("Command center")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        egui::Grid::new("command-center-form")
+                            .num_columns(2)
+                            .spacing([8.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("App");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.draft.command_center_app_path,
+                                    )
+                                    .hint_text("/Applications/Runinator Command Center.app"),
+                                );
+                                ui.end_row();
 
+                                ui.label("URL");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.draft.command_center_url)
+                                        .hint_text("https://runinator.example.com/ (fallback)"),
+                                );
+                                ui.end_row();
+                            });
+                    });
+
+                egui::CollapsingHeader::new("Connection")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        egui::Grid::new("connection-form")
+                            .num_columns(2)
+                            .spacing([8.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("API key");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        self.draft.api_key.get_or_insert_with(String::new),
+                                    )
+                                    .password(true)
+                                    .hint_text("optional"),
+                                );
+                                ui.end_row();
+
+                                ui.label("Broker");
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(
+                                        &mut self.draft.broker_mode,
+                                        crate::config::BrokerMode::Relay,
+                                        "Via web service",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.draft.broker_mode,
+                                        crate::config::BrokerMode::Direct,
+                                        "Direct",
+                                    )
+                                    .on_hover_text(
+                                        "Only if this machine is on the broker's trusted \
+                                         network; otherwise leave it on \"Via web service\".",
+                                    );
+                                });
+                                ui.end_row();
+
+                                if self.draft.broker_mode == crate::config::BrokerMode::Direct {
+                                    ui.label("Backend");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.draft.direct_broker_backend,
+                                        )
+                                        .hint_text("tcp | rabbitmq | kafka | http"),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("Endpoint");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.draft.direct_broker_endpoint,
+                                        )
+                                        .hint_text("host:port, or amqp://user:pass@host:port/%2f"),
+                                    );
+                                    ui.end_row();
+                                }
+                            });
+                    });
+
+                egui::CollapsingHeader::new("Labels")
+                    .default_open(false)
+                    .show(ui, |ui| self.label_editor(ui));
+
+                egui::CollapsingHeader::new("Worker tuning")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        egui::Grid::new("worker-tuning-form")
+                            .num_columns(2)
+                            .spacing([8.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("Max concurrent actions");
+                                ui.add(
+                                    egui::DragValue::new(&mut self.draft.max_concurrent_actions)
+                                        .range(1..=32),
+                                );
+                                ui.end_row();
+
+                                ui.label("Shutdown grace (seconds)");
+                                ui.add(
+                                    egui::DragValue::new(&mut self.draft.shutdown_grace_seconds)
+                                        .range(1..=300),
+                                );
+                                ui.end_row();
+                            });
+                    });
+
+                ui.add_space(8.0);
                 let can_start = !busy && !self.draft.sandbox_root.trim().is_empty();
                 if ui
                     .add_enabled(can_start, egui::Button::new("Start agent"))
@@ -384,18 +409,21 @@ impl eframe::App for DesktopAgentApp {
             }
 
             ui.separator();
-            ui.label("Log");
-            egui::ScrollArea::vertical()
-                .stick_to_bottom(true)
-                .max_height(200.0)
+            egui::CollapsingHeader::new("Log")
+                .default_open(true)
                 .show(ui, |ui| {
-                    let guard = self
-                        .shared
-                        .lock()
-                        .expect("desktop agent state lock poisoned");
-                    for line in guard.logs.iter() {
-                        ui.monospace(line);
-                    }
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            let guard = self
+                                .shared
+                                .lock()
+                                .expect("desktop agent state lock poisoned");
+                            for line in guard.logs.iter() {
+                                ui.monospace(line);
+                            }
+                        });
                 });
         });
     }

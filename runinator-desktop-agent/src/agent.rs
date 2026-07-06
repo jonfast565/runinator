@@ -21,13 +21,14 @@ use std::time::Duration;
 
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_provider,
-    register_replica_session, spawn_replica_heartbeat,
+    register_replica_session, spawn_replica_heartbeat_with_telemetry,
 };
 use runinator_comm::ConsumerProfile;
 use runinator_models::replicas::ReplicaKind;
 use runinator_plugin::provider::Provider;
 use runinator_provider_catalog::{StaticProvider, built_in_providers};
 use runinator_provider_local_files::LocalProvider;
+use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use runinator_worker::{ProviderFactory, WorkerRuntime, parse_labels, start_worker_loop};
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -174,11 +175,11 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
             port: None,
             base_path: None,
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: runinator_models::json!({
+            attributes: attributes_with_host_metadata(&runinator_models::json!({
                 "pool": POOL_LABEL,
                 "exclusive": true,
                 "labels": labels,
-            }),
+            })),
             heartbeat_interval: Duration::from_secs(10),
         },
     )
@@ -270,11 +271,20 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
     });
 
     let shutdown = Arc::new(Notify::new());
-    // heartbeat keeps the replica Live and marks it offline on shutdown.
-    spawn_replica_heartbeat(api_client.clone(), session, shutdown.clone());
+    // heartbeat keeps the replica Live, marks it offline on shutdown, and samples cpu/ram/gpu on
+    // every tick so this replica shows up the same as a standalone cloud worker in the statistics view.
+    let telemetry = Arc::new(TelemetryCollector::new());
+    spawn_replica_heartbeat_with_telemetry(
+        api_client.clone(),
+        session,
+        shutdown.clone(),
+        Some(telemetry),
+    );
 
     let shared_loop = shared.clone();
     let shutdown_loop = shutdown.clone();
+    let max_concurrent_actions = config.max_concurrent_actions.max(1);
+    let shutdown_grace = Duration::from_secs(config.shutdown_grace_seconds.max(1));
     let handle = tokio::spawn(async move {
         run_worker_loop_with_restart(
             &shared_loop,
@@ -284,6 +294,8 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
             replica_id,
             providers,
             shutdown_loop,
+            max_concurrent_actions,
+            shutdown_grace,
         )
         .await;
     });
@@ -317,6 +329,8 @@ async fn run_worker_loop_with_restart(
     replica_id: Uuid,
     providers: ProviderFactory,
     shutdown: Arc<Notify>,
+    max_concurrent_actions: usize,
+    shutdown_grace: Duration,
 ) {
     let mut retry_delay = WORKER_LOOP_RETRY_BASE;
 
@@ -346,8 +360,8 @@ async fn run_worker_loop_with_restart(
             api_client: api_client.clone(),
             replica_id: Some(replica_id),
             providers: providers.clone(),
-            max_concurrent_actions: 2,
-            shutdown_grace: Duration::from_secs(10),
+            max_concurrent_actions,
+            shutdown_grace,
             shutdown: shutdown.clone(),
         };
 

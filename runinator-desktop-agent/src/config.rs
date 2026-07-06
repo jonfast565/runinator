@@ -62,10 +62,26 @@ pub struct AgentConfig {
     /// actively watching (e.g. the box that does hourly `packs/creds-sync` runs).
     #[serde(default)]
     pub auto_start: bool,
+    /// how many actions this replica runs at once; same knob as `runinator-worker`'s
+    /// `--max-concurrent-actions`.
+    #[serde(default = "default_max_concurrent_actions")]
+    pub max_concurrent_actions: usize,
+    /// seconds the worker loop waits for in-flight actions to finish on shutdown before dropping
+    /// them; same knob as `runinator-worker`'s `--shutdown-grace-seconds`.
+    #[serde(default = "default_shutdown_grace_seconds")]
+    pub shutdown_grace_seconds: u64,
 }
 
 fn default_direct_broker_backend() -> String {
     "tcp".to_string()
+}
+
+fn default_max_concurrent_actions() -> usize {
+    2
+}
+
+fn default_shutdown_grace_seconds() -> u64 {
+    10
 }
 
 impl Default for AgentConfig {
@@ -82,6 +98,8 @@ impl Default for AgentConfig {
             command_center_url: String::new(),
             command_center_app_path: String::new(),
             auto_start: false,
+            max_concurrent_actions: default_max_concurrent_actions(),
+            shutdown_grace_seconds: default_shutdown_grace_seconds(),
         }
     }
 }

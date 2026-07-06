@@ -494,9 +494,13 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function fetchWorkflowRunsForSelected(workflowId: string) {
     console.info("[command-center] refreshing workflow runs", { workflowId });
-    host.state.workflowRuns = (await host.ctx
+    // resolve before touching host.state: a concurrent notify() elsewhere can swap the state
+    // object out from under a `host.state.x = await ...` assignment (the getter reads the object
+    // before the await resolves), silently dropping the write onto a detached copy.
+    const runs = (await host.ctx
       .runOperation("Loading workflow runs", () => fetchWorkflowRuns(workflowId))
       .catch(() => [])) as RunSummary[];
+    host.state.workflowRuns = runs;
 
     if (!host.state.workflowRuns.some((run) => run.id === host.state.selectedWorkflowRunId)) {
       host.state.selectedWorkflowRunId = host.state.workflowRuns[0]?.id ?? null;
@@ -506,9 +510,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function fetchRecentWorkflowRuns() {
     console.info("[command-center] refreshing recent workflow runs");
-    host.state.workflowRuns = (await host.ctx
+    const runs = (await host.ctx
       .runOperation("Loading workflow runs", () => fetchWorkflowRuns())
       .catch(() => [])) as RunSummary[];
+    host.state.workflowRuns = runs;
     const previousRunId = host.state.selectedWorkflowRunId;
 
     if (host.state.selectedWorkflowRunId === null && host.state.workflowRuns.length > 0) {
