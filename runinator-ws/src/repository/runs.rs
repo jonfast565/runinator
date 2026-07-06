@@ -132,13 +132,14 @@ async fn fail_driven_ready_node<T: DatabaseImpl>(
     db: &T,
     ready_node: &ReadyNodeRecord,
     driver_id: String,
-    err: &(dyn std::error::Error + Send + Sync),
+    err: &(dyn std::error::Error + Send + Sync + 'static),
 ) -> Result<(), SendableError> {
     log::error!(
-        "Reducer failed for ready node {} (workflow run {}, node {}): {}",
+        "Reducer failed for ready node {} (workflow run {}, node {}) [{}]: {}",
         ready_node.id,
         ready_node.workflow_run_id,
         ready_node.node_id,
+        runinator_models::errors::error_code_or_unknown(err),
         err
     );
     db.update_workflow_run_status(
@@ -208,6 +209,7 @@ pub async fn publish_pending_wakes<T: DatabaseImpl>(
             node.node_id,
             node.ready_at,
             node.source_event_id,
+            Uuid::now_v7(),
         );
         let message = runinator_broker::WakeMessage {
             command,

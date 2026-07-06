@@ -1,6 +1,5 @@
 use std::{env, ffi::OsString, sync::Arc, time::Duration};
 
-use log::{error, info};
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
     spawn_replica_heartbeat_with_telemetry,
@@ -11,6 +10,7 @@ use runinator_models::replicas::ReplicaKind;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use runinator_utilities::startup;
 use tokio::sync::Notify;
+use tracing::{error, info};
 
 use runinator_worker::{
     Config, WorkerRuntime, build_broker, default_provider_factory, errors, load_libraries,
@@ -43,7 +43,7 @@ fn main() -> Result<(), SendableError> {
 }
 
 async fn run(config: Config) -> Result<(), SendableError> {
-    info!("Worker ID: {}", config.worker_id);
+    info!(worker_id = %config.worker_id, "worker starting");
 
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config.broker_config()).await?;
@@ -58,7 +58,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
         result = register_worker_replica_with_retry(&api_client, &config) => result?,
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
-            info!("Shutdown signal received before worker registration completed. Stopping worker...");
+            info!("shutdown signal received before worker registration completed, stopping worker");
             return Ok(());
         }
     };
@@ -88,7 +88,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
-            info!("Shutdown signal received. Stopping worker...");
+            info!("shutdown signal received, stopping worker");
             shutdown.notify_waiters();
         }
         result = &mut worker_task => {
@@ -106,10 +106,10 @@ async fn run(config: Config) -> Result<(), SendableError> {
         Ok(Ok(Err(err))) => return Err(err),
         Ok(Err(err)) if err.is_cancelled() => {}
         Ok(Err(err)) => {
-            error!("Worker task join error: {}", err);
+            error!("worker task join error: {}", err);
         }
         Err(_) => {
-            error!("Worker shutdown grace period elapsed before the loop stopped");
+            error!("worker shutdown grace period elapsed before the loop stopped");
             worker_task.abort();
         }
     }
@@ -149,11 +149,14 @@ fn handle_worker_task_result(
     match result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => {
-            error!("Worker loop terminated with error: {}", err);
+            error!(
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "worker loop terminated with error: {}", err
+            );
             Err(err)
         }
         Err(err) => {
-            error!("Worker task join error: {}", err);
+            error!("worker task join error: {}", err);
             Err(errors::LOOP_JOIN.error(err))
         }
     }
@@ -192,24 +195,24 @@ async fn register_worker_replica_with_retry(
         match register_worker_replica(api_client, config).await {
             Ok(session) => {
                 if attempt > 1 {
-                    info!("Worker replica registered on attempt {}", attempt);
+                    info!(attempt, "worker replica registered");
                 }
                 return Ok(session);
             }
             Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
                 error!(
-                    "Failed to register worker replica after {} attempts, giving up: {}",
-                    attempt, err
+                    attempt,
+                    "failed to register worker replica, giving up: {}", err
                 );
                 return Err(errors::REPLICA_REGISTER.error(err));
             }
             Err(err) => {
                 let backoff = register_backoff(attempt);
                 error!(
-                    "Failed to register worker replica (attempt {}/{}), retrying in {}s: {}",
                     attempt,
-                    REGISTER_MAX_ATTEMPTS,
-                    backoff.as_secs(),
+                    max_attempts = REGISTER_MAX_ATTEMPTS,
+                    retry_in_secs = backoff.as_secs(),
+                    "failed to register worker replica, retrying: {}",
                     err
                 );
                 tokio::time::sleep(backoff).await;

@@ -1,11 +1,12 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use log::{error, info, warn};
 use runinator_broker::Broker;
 use runinator_comm::{ControlCommand, ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::errors::error_code_or_unknown;
 use runinator_models::workflows::WorkflowStatus;
 use tokio::sync::{Notify, broadcast};
+use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -33,16 +34,19 @@ pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
 ) {
-    info!("Wake publisher started");
+    info!("wake publisher started");
     loop {
         if let Err(err) =
             repository::publish_pending_wakes(db.as_ref(), broker.as_ref(), CLAIM_LIMIT).await
         {
-            error!("Wake publisher iteration failed: {}", err);
+            error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "wake publisher iteration failed: {}", err
+            );
         }
         tokio::select! {
             _ = shutdown.notified() => {
-                info!("Wake publisher shutting down");
+                info!("wake publisher shutting down");
                 return;
             }
             _ = tokio::time::sleep(WAKE_PUBLISH_INTERVAL) => {}
@@ -55,26 +59,35 @@ pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
 /// the reducer-facing views derive stale state per fetch; this loop is the durable cleanup that
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
 pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
-    info!("Replica reaper started");
+    info!("replica reaper started");
     loop {
         match repository::reap_inactive_replicas(db.as_ref()).await {
-            Ok(count) if count > 0 => info!("Reaped {} inactive replica(s) to offline", count),
+            Ok(count) if count > 0 => info!(count, "reaped inactive replica(s) to offline"),
             Ok(_) => {}
-            Err(err) => error!("Replica reaper iteration failed: {}", err),
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "replica reaper iteration failed: {}", err
+            ),
         }
         match repository::delete_expired_replicas(db.as_ref()).await {
-            Ok(count) if count > 0 => info!("Purged {} long-stale replica(s)", count),
+            Ok(count) if count > 0 => info!(count, "purged long-stale replica(s)"),
             Ok(_) => {}
-            Err(err) => error!("Replica purge iteration failed: {}", err),
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "replica purge iteration failed: {}", err
+            ),
         }
         match repository::prune_replica_samples(db.as_ref()).await {
-            Ok(count) if count > 0 => info!("Pruned {} expired replica sample(s)", count),
+            Ok(count) if count > 0 => info!(count, "pruned expired replica sample(s)"),
             Ok(_) => {}
-            Err(err) => error!("Replica sample prune iteration failed: {}", err),
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "replica sample prune iteration failed: {}", err
+            ),
         }
         tokio::select! {
             _ = shutdown.notified() => {
-                info!("Replica reaper shutting down");
+                info!("replica reaper shutting down");
                 return;
             }
             _ = tokio::time::sleep(REPLICA_REAP_INTERVAL) => {}
@@ -86,12 +99,13 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
 /// node-hours (and cost) can be integrated over time. sampling the recorded allocations keeps
 /// accounting exact and provisioner-independent; a missed sample only reduces temporal resolution.
 pub(crate) async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
-    info!("Usage sampler started");
+    info!("usage sampler started");
     loop {
         match db.list_all_resource_groups().await {
             Ok(groups) => {
                 let now = chrono::Utc::now();
                 for group in groups {
+                    let org_id = group.org_id;
                     let sample = runinator_models::billing::UsageSample {
                         org_id: group.org_id,
                         backend: group.backend,
@@ -100,15 +114,22 @@ pub(crate) async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc
                         sampled_at: now,
                     };
                     if let Err(err) = db.insert_usage_sample(sample).await {
-                        warn!("Usage sample insert failed: {}", err);
+                        warn!(
+                            org_id = %org_id,
+                            error_code = error_code_or_unknown(err.as_ref()),
+                            "usage sample insert failed: {}", err
+                        );
                     }
                 }
             }
-            Err(err) => error!("Usage sampler iteration failed: {}", err),
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "usage sampler iteration failed: {}", err
+            ),
         }
         tokio::select! {
             _ = shutdown.notified() => {
-                info!("Usage sampler shutting down");
+                info!("usage sampler shutting down");
                 return;
             }
             _ = tokio::time::sleep(USAGE_SAMPLE_INTERVAL) => {}
@@ -123,7 +144,7 @@ pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
     instance_id: String,
     shutdown: Arc<Notify>,
 ) {
-    info!("Trigger firing loop started");
+    info!("trigger firing loop started");
     loop {
         match repository::claim_due_workflow_trigger_firings(
             db.as_ref(),
@@ -134,6 +155,9 @@ pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
         {
             Ok(runs) => {
                 stability::triggers_fired(runs.len() as u64);
+                if !runs.is_empty() {
+                    info!(count = runs.len(), "fired due workflow trigger(s)");
+                }
                 for run in &runs {
                     emit_workflow_run(&events, run.id);
                 }
@@ -141,11 +165,14 @@ pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
                     emit(&events, AppEvent::WorkflowRunActivity);
                 }
             }
-            Err(err) => error!("Trigger firing iteration failed: {}", err),
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "trigger firing iteration failed: {}", err
+            ),
         }
         tokio::select! {
             _ = shutdown.notified() => {
-                info!("Trigger firing loop shutting down");
+                info!("trigger firing loop shutting down");
                 return;
             }
             _ = tokio::time::sleep(TRIGGER_INTERVAL) => {}
@@ -160,7 +187,7 @@ pub(crate) async fn run_action_dispatch_publisher<T: DatabaseImpl>(
     instance_id: String,
     shutdown: Arc<Notify>,
 ) {
-    info!("Action dispatch publisher started");
+    info!("action dispatch publisher started");
     loop {
         if let Err(err) = repository::publish_pending_action_dispatches(
             db.as_ref(),
@@ -171,11 +198,14 @@ pub(crate) async fn run_action_dispatch_publisher<T: DatabaseImpl>(
         )
         .await
         {
-            error!("Action dispatch publisher iteration failed: {}", err);
+            error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "action dispatch publisher iteration failed: {}", err
+            );
         }
         tokio::select! {
             _ = shutdown.notified() => {
-                info!("Action dispatch publisher shutting down");
+                info!("action dispatch publisher shutting down");
                 return;
             }
             _ = tokio::time::sleep(ACTION_DISPATCH_INTERVAL) => {}
@@ -192,87 +222,124 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
     instance_id: String,
     shutdown: Arc<Notify>,
 ) {
-    info!("Ingress consumer started");
+    info!("ingress consumer started");
     let mut attempts = HashMap::<String, u32>::new();
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
-                info!("Ingress consumer shutting down");
+                info!("ingress consumer shutting down");
                 return;
             }
             received = broker.receive_ingress(INGRESS_CONSUMER_ID) => {
                 match received {
                     Ok(delivery) => delivery,
                     Err(err) => {
-                        error!("Failed to receive ingress message: {}", err);
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to receive ingress message: {}", err
+                        );
                         continue;
                     }
                 }
             }
         };
 
-        let key = delivery.dedupe_key.clone();
-        match apply_ingress(
-            db.as_ref(),
-            broker.as_ref(),
-            &events,
-            &instance_id,
-            &delivery.command,
-        )
-        .await
-        {
-            Ok(()) => {
-                stability::ingress_applied();
-                attempts.remove(&key);
-                if let Err(err) = broker
-                    .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
-                    error!("Failed to ack ingress message: {}", err);
-                }
-            }
-            Err(err) => {
-                let count = {
-                    let entry = attempts.entry(key.clone()).or_insert(0);
-                    *entry += 1;
-                    *entry
-                };
-                error!(
-                    "Failed to apply ingress message on attempt {}: {}",
-                    count, err
-                );
-                if count >= MAX_INGRESS_ATTEMPTS {
-                    stability::ingress_dead_lettered();
+        // correlate this delivery's logs with the run/node it targets. `Drive` carries the reducer's
+        // identity; `Control` only carries the run, since it is not node-scoped.
+        let span = match &delivery.command {
+            WsIngressCommand::Drive {
+                workflow_run_id,
+                node_id,
+                trace_id,
+                ..
+            } => tracing::info_span!(
+                "ingress_drive",
+                trace_id = %trace_id,
+                run_id = %workflow_run_id,
+                node_id = %node_id
+            ),
+            WsIngressCommand::Control {
+                workflow_run_id, ..
+            } => tracing::info_span!("ingress_control", run_id = %workflow_run_id),
+        };
+
+        async {
+            let key = delivery.dedupe_key.clone();
+            match apply_ingress(
+                db.as_ref(),
+                broker.as_ref(),
+                &events,
+                &instance_id,
+                &delivery.command,
+            )
+            .await
+            {
+                Ok(()) => {
+                    stability::ingress_applied();
                     attempts.remove(&key);
-                    warn!("Dead-lettering ingress message after {} attempt(s)", count);
-                    crate::audit::persist_dead_letter(
-                        db.as_ref(),
-                        "ingress",
-                        None,
-                        Some(delivery.dedupe_key.clone()),
-                        count,
-                        &err.to_string(),
-                        serde_json::to_value(&delivery.command).unwrap_or_default(),
-                    )
-                    .await;
                     if let Err(err) = broker
                         .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
                         .await
                     {
-                        error!("Failed to ack dead-lettered ingress message: {}", err);
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to ack ingress message: {}", err
+                        );
                     }
-                    continue;
                 }
-                stability::ingress_retried();
-                tokio::time::sleep(INGRESS_RETRY_BACKOFF).await;
-                if let Err(err) = broker
-                    .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
-                    error!("Failed to nack ingress message: {}", err);
+                Err(err) => {
+                    let count = {
+                        let entry = attempts.entry(key.clone()).or_insert(0);
+                        *entry += 1;
+                        *entry
+                    };
+                    error!(
+                        attempt = count,
+                        error_code = error_code_or_unknown(err.as_ref()),
+                        "failed to apply ingress message: {}",
+                        err
+                    );
+                    if count >= MAX_INGRESS_ATTEMPTS {
+                        stability::ingress_dead_lettered();
+                        attempts.remove(&key);
+                        warn!(attempts = count, "dead-lettering ingress message");
+                        crate::audit::persist_dead_letter(
+                            db.as_ref(),
+                            "ingress",
+                            None,
+                            Some(delivery.dedupe_key.clone()),
+                            count,
+                            &err.to_string(),
+                            serde_json::to_value(&delivery.command).unwrap_or_default(),
+                        )
+                        .await;
+                        if let Err(err) = broker
+                            .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                            .await
+                        {
+                            error!(
+                                error_code = error_code_or_unknown(&err),
+                                "failed to ack dead-lettered ingress message: {}", err
+                            );
+                        }
+                        return;
+                    }
+                    stability::ingress_retried();
+                    tokio::time::sleep(INGRESS_RETRY_BACKOFF).await;
+                    if let Err(err) = broker
+                        .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to nack ingress message: {}", err
+                        );
+                    }
                 }
             }
         }
+        .instrument(span)
+        .await;
     }
 }
 
@@ -329,8 +396,10 @@ async fn signal_canceled_executing_node_runs<T: DatabaseImpl>(
         Ok(node_runs) => node_runs,
         Err(err) => {
             warn!(
-                "Failed to load node runs for run {} cancel fan-out: {}",
-                workflow_run_id, err
+                run_id = %workflow_run_id,
+                error_code = error_code_or_unknown(err.as_ref()),
+                "failed to load node runs for cancel fan-out: {}",
+                err
             );
             return;
         }
@@ -341,7 +410,13 @@ async fn signal_canceled_executing_node_runs<T: DatabaseImpl>(
         }
         let command = ControlCommand::for_node_run(workflow_run_id, run.id, ControlKind::Cancel);
         if let Err(err) = broker.publish_control(command).await {
-            warn!("Failed to publish cancel for node run {}: {}", run.id, err);
+            warn!(
+                run_id = %workflow_run_id,
+                node_run_id = %run.id,
+                error_code = error_code_or_unknown(&err),
+                "failed to publish cancel: {}",
+                err
+            );
         }
     }
 }
@@ -355,11 +430,11 @@ pub(crate) async fn run_event_consumer(
     instance_id: String,
     shutdown: Arc<Notify>,
 ) {
-    info!("Event consumer started");
+    info!("event consumer started");
     loop {
         let received = tokio::select! {
             _ = shutdown.notified() => {
-                info!("Event consumer shutting down");
+                info!("event consumer shutting down");
                 return;
             }
             received = broker.receive_event(&instance_id) => received,
@@ -371,7 +446,10 @@ pub(crate) async fn run_event_consumer(
                 let _ = local.send(delivery.event);
             }
             Err(err) => {
-                error!("Failed to receive UI event: {}", err);
+                error!(
+                    error_code = error_code_or_unknown(&err),
+                    "failed to receive UI event: {}", err
+                );
                 tokio::select! {
                     _ = shutdown.notified() => return,
                     _ = tokio::time::sleep(EVENT_CONSUMER_RETRY_BACKOFF) => {}

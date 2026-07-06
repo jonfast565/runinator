@@ -14,12 +14,22 @@ pub(crate) async fn resolve_secret_refs(
         return Ok(parameters);
     }
 
+    tracing::debug!(count = refs.len(), "resolving action secret reference(s)");
     let mut secrets = HashMap::new();
     for secret_ref in refs {
+        // never log the secret value itself; scope/name identify the reference, not its contents.
         let secret = api_client
             .fetch_credential(&secret_ref.scope, &secret_ref.name)
             .await
-            .map_err(|err| -> SendableError { Box::new(err) })?;
+            .map_err(|err| {
+                tracing::warn!(
+                    scope = %secret_ref.scope,
+                    name = %secret_ref.name,
+                    "failed to fetch credential: {}",
+                    err
+                );
+                Box::new(err) as SendableError
+            })?;
         secrets.insert(secret_ref, secret);
     }
 

@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use log::error;
 use runinator_broker::{Broker, BrokerError, ResultMessage};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::value::Value;
@@ -11,6 +10,7 @@ use runinator_models::{
 };
 use runinator_plugin::provider::ProviderEventSink;
 use tokio::{runtime::Handle, task::JoinHandle};
+use tracing::{Instrument, error};
 
 #[derive(Clone)]
 pub struct RunOutputSink {
@@ -69,8 +69,9 @@ impl RunOutputSink {
         for handle in pending {
             if let Err(err) = handle.await {
                 error!(
-                    "Failed to join workflow node run {} output task: {}",
-                    self.command.workflow_node_run_id, err
+                    node_id = %self.command.workflow_node_run_id,
+                    "failed to join workflow node run output task: {}",
+                    err
                 );
                 return Err(BrokerError::Internal(err.to_string()));
             }
@@ -107,14 +108,21 @@ impl RunOutputSink {
         let event = WorkflowResultEvent::chunk(&self.command, NewRunChunk { stream, content });
         let broker = self.broker.clone();
         let state = self.state.clone();
-        let handle = self.handle.spawn(async move {
-            if let Err(err) = publish_event(broker.as_ref(), event).await {
-                error!("Failed to publish workflow result chunk: {}", err);
-                if let Ok(mut state) = state.lock() {
-                    state.errors.push(err.to_string());
+        let node_id = self.command.workflow_node_run_id;
+        // spawned onto the tokio handle, so it does not inherit the caller's ambient span; carry it
+        // explicitly so a failed publish still logs with trace_id/run_id/node_id attached.
+        let span = tracing::Span::current();
+        let handle = self.handle.spawn(
+            async move {
+                if let Err(err) = publish_event(broker.as_ref(), event).await {
+                    error!(node_id = %node_id, "failed to publish workflow result chunk: {}", err);
+                    if let Ok(mut state) = state.lock() {
+                        state.errors.push(err.to_string());
+                    }
                 }
             }
-        });
+            .instrument(span),
+        );
         self.track_pending(handle);
     }
 
@@ -138,14 +146,19 @@ impl RunOutputSink {
         );
         let broker = self.broker.clone();
         let state = self.state.clone();
-        let handle = self.handle.spawn(async move {
-            if let Err(err) = publish_event(broker.as_ref(), event).await {
-                error!("Failed to publish workflow result artifact: {}", err);
-                if let Ok(mut state) = state.lock() {
-                    state.errors.push(err.to_string());
+        let node_id = self.command.workflow_node_run_id;
+        let span = tracing::Span::current();
+        let handle = self.handle.spawn(
+            async move {
+                if let Err(err) = publish_event(broker.as_ref(), event).await {
+                    error!(node_id = %node_id, "failed to publish workflow result artifact: {}", err);
+                    if let Ok(mut state) = state.lock() {
+                        state.errors.push(err.to_string());
+                    }
                 }
             }
-        });
+            .instrument(span),
+        );
         self.track_pending(handle);
     }
 

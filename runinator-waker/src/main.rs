@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{error, info};
 use reqwest::Url;
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
@@ -18,6 +17,7 @@ use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use tokio::sync::Notify;
+use tracing::{error, info};
 
 use runinator_utilities::startup;
 use runinator_waker::{
@@ -30,9 +30,9 @@ async fn main() -> Result<(), SendableError> {
     // held for the process lifetime so otel signals flush on shutdown.
     let _telemetry = startup::startup("Runinator Waker")?;
 
-    info!("Parse waker config");
+    info!("parsing waker config");
     let config = parse_config()?;
-    info!("Waker ID: {}", config.waker_id);
+    info!(waker_id = %config.waker_id, "waker starting");
 
     let broker = build_broker(&config).await?;
     let notify = Arc::new(Notify::new());
@@ -63,7 +63,7 @@ async fn main() -> Result<(), SendableError> {
         result = register_waker_replica_with_retry(&api_client, &service_config) => result?,
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
-            info!("Shutdown signal received before waker registration completed. Shutting down...");
+            info!("shutdown signal received before waker registration completed, shutting down");
             return Ok(());
         }
     };
@@ -86,13 +86,13 @@ async fn main() -> Result<(), SendableError> {
     tokio::signal::ctrl_c()
         .await
         .map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
-    info!("Received shutdown signal. Shutting down...");
+    info!("received shutdown signal, shutting down");
     notify.notify_waiters();
     if let Err(err) = handle.await {
-        error!("Error while shutting down waker: {:?}", err);
+        error!("error while shutting down waker: {:?}", err);
     }
 
-    info!("Waker shutdown complete.");
+    info!("waker shutdown complete");
     Ok(())
 }
 
@@ -123,24 +123,27 @@ async fn register_waker_replica_with_retry(
         match register_replica_session(api_client, service_config.clone()).await {
             Ok(session) => {
                 if attempt > 1 {
-                    info!("Waker replica registered on attempt {}", attempt);
+                    info!(attempt, "waker replica registered");
                 }
                 return Ok(session);
             }
             Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
                 error!(
-                    "Failed to register waker replica after {} attempts, giving up: {}",
-                    attempt, err
+                    attempt,
+                    error_code = runinator_models::errors::error_code_or_unknown(&err),
+                    "failed to register waker replica, giving up: {}",
+                    err
                 );
                 return Err(runinator_waker::errors::REPLICA_REGISTER.error(err));
             }
             Err(err) => {
                 let backoff = register_backoff(attempt);
                 error!(
-                    "Failed to register waker replica (attempt {}/{}), retrying in {}s: {}",
                     attempt,
-                    REGISTER_MAX_ATTEMPTS,
-                    backoff.as_secs(),
+                    max_attempts = REGISTER_MAX_ATTEMPTS,
+                    retry_in_secs = backoff.as_secs(),
+                    error_code = runinator_models::errors::error_code_or_unknown(&err),
+                    "failed to register waker replica, retrying: {}",
                     err
                 );
                 tokio::time::sleep(backoff).await;

@@ -10,6 +10,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
     auth::{AuthContext, Permission},
+    errors::error_code_or_unknown,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest},
 };
 use serde::Deserialize;
@@ -213,7 +214,11 @@ pub(crate) async fn import_acknowledged_workflow_bundle<T: DatabaseImpl>(
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle)))
         }
         Err(err) => {
-            log::error!("Failed to import workflow bundle: {}", err);
+            log::error!(
+                "Failed to import workflow bundle ({}): {}",
+                error_code_or_unknown(err.as_ref()),
+                err
+            );
             api_error(err.to_string())
         }
     }

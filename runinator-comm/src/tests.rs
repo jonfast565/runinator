@@ -17,6 +17,7 @@ fn wake_command_round_trips_with_json_and_dedupes_by_node() {
         "node-a".into(),
         Utc::now(),
         source,
+        Uuid::now_v7(),
     );
     let encoded = command.to_wire().unwrap();
     let decoded = WakeCommand::from_wire(&encoded).unwrap();
@@ -30,7 +31,12 @@ fn wake_command_round_trips_with_json_and_dedupes_by_node() {
 fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
     let ready_node_id = Uuid::now_v7();
     let workflow_run_id = Uuid::now_v7();
-    let drive = WsIngressCommand::drive(ready_node_id, workflow_run_id, "node-a".into());
+    let drive = WsIngressCommand::drive(
+        ready_node_id,
+        workflow_run_id,
+        "node-a".into(),
+        Uuid::now_v7(),
+    );
     let decoded = WsIngressCommand::from_wire(&drive.to_wire().unwrap()).unwrap();
     assert!(matches!(
         decoded,

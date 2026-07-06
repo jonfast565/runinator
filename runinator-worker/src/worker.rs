@@ -1,11 +1,10 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::Utc;
-use log::{error, info, warn};
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, BrokerDelivery, ControlDelivery};
 use runinator_comm::{ConsumerProfile, ControlKind, WireCodec};
-use runinator_models::errors::SendableError;
+use runinator_models::errors::{SendableError, error_code_or_unknown};
 use runinator_models::workflow_state::TaskStatusOutput;
 use runinator_models::workflows::WorkflowStatus;
 use runinator_plugin::{
@@ -15,6 +14,7 @@ use tokio::{
     sync::{Mutex, Notify, Semaphore},
     task::JoinSet,
 };
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::broker::broker_error;
@@ -55,11 +55,11 @@ pub fn load_libraries(paths: &[String]) -> Result<HashMap<String, Plugin>, Senda
     let mut libraries = HashMap::new();
     for path in paths {
         if !std::path::Path::new(path).exists() {
-            info!("Skipping missing plugin path {}", path);
+            info!(path = %path, "skipping missing plugin path");
             continue;
         }
 
-        info!("Loading plugins from {}", path);
+        info!(path = %path, "loading plugins");
         libraries.extend(load_libraries_from_path(path)?);
     }
     print_libs(&libraries);
@@ -95,18 +95,18 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         shutdown.clone(),
     ));
     let mut deliveries = JoinSet::new();
-    info!("Worker processing up to {max_concurrent_actions} concurrent action(s)");
+    info!(max_concurrent_actions, "worker action loop started");
 
     loop {
         let permit = tokio::select! {
             biased;
             _ = shutdown.notified() => {
-                info!("Worker loop shutting down");
+                info!("worker loop shutting down");
                 break;
             }
             Some(result) = deliveries.join_next(), if !deliveries.is_empty() => {
                 if let Err(err) = result {
-                    error!("Worker delivery task join error: {}", err);
+                    error!("worker delivery task join error: {}", err);
                 }
                 continue;
             }
@@ -118,7 +118,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let maybe_delivery = tokio::select! {
             _ = shutdown.notified() => {
                 drop(permit);
-                info!("Worker loop shutting down");
+                info!("worker loop shutting down");
                 break;
             }
             result = broker.receive_for(&profile) => {
@@ -126,6 +126,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
             }
         };
 
+        let trace_id = maybe_delivery.command.trace_id;
+        let run_id = maybe_delivery.command.workflow_run_id;
+        let node_id = maybe_delivery.command.node_id.clone();
         let broker = broker.clone();
         let consumer_id = consumer_id.clone();
         let libraries = Arc::clone(&libraries);
@@ -147,7 +150,14 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
             )
             .await
             {
-                error!("Error processing task: {}", err);
+                error!(
+                    trace_id = %trace_id,
+                    run_id = %run_id,
+                    node_id = %node_id,
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "error processing task: {}",
+                    err
+                );
             }
         });
     }
@@ -157,8 +167,8 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         Ok(()) => {}
         Err(_) => {
             warn!(
-                "Worker shutdown grace period of {} second(s) elapsed; aborting unfinished action tasks",
-                shutdown_grace.as_secs()
+                shutdown_grace_secs = shutdown_grace.as_secs(),
+                "worker shutdown grace period elapsed; aborting unfinished action tasks"
             );
             deliveries.abort_all();
             drain_deliveries(&mut deliveries).await;
@@ -167,9 +177,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
 
     match control_task.await {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => error!("Worker control loop terminated with error: {}", err),
+        Ok(Err(err)) => error!("worker control loop terminated with error: {}", err),
         Err(err) if err.is_cancelled() => {}
-        Err(err) => error!("Worker control task join error: {}", err),
+        Err(err) => error!("worker control task join error: {}", err),
     }
 
     Ok(())
@@ -184,8 +194,8 @@ async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>)
         return;
     }
     warn!(
-        "Canceling {} in-flight action(s) during worker shutdown",
-        actions.len()
+        count = actions.len(),
+        "canceling in-flight action(s) during worker shutdown"
     );
     for action in actions {
         action.token.cancel();
@@ -195,7 +205,7 @@ async fn cancel_in_flight(in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>)
 async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
     while let Some(result) = deliveries.join_next().await {
         if let Err(err) = result {
-            error!("Worker delivery task join error: {}", err);
+            error!("worker delivery task join error: {}", err);
         }
     }
 }
@@ -253,31 +263,32 @@ async fn handle_control_delivery(
             };
             if tokens.is_empty() {
                 info!(
-                    "Cancellation requested for workflow run {} (node run {:?}), but no matching local execution is active",
-                    delivery.command.workflow_run_id, delivery.command.workflow_node_run_id
+                    run_id = %delivery.command.workflow_run_id,
+                    node_id = ?delivery.command.workflow_node_run_id,
+                    "cancellation requested, but no matching local execution is active"
                 );
             } else {
                 for token in &tokens {
                     token.cancel();
                 }
                 info!(
-                    "Cancellation requested for workflow run {} (node run {:?}); canceled {} local execution(s)",
-                    delivery.command.workflow_run_id,
-                    delivery.command.workflow_node_run_id,
-                    tokens.len()
+                    run_id = %delivery.command.workflow_run_id,
+                    node_id = ?delivery.command.workflow_node_run_id,
+                    canceled = tokens.len(),
+                    "cancellation requested; canceled local execution(s)"
                 );
             }
         }
         ControlKind::Pause => {
             info!(
-                "Pause control received for workflow run {}; the web service will stop dispatching at the next boundary",
-                delivery.command.workflow_run_id
+                run_id = %delivery.command.workflow_run_id,
+                "pause control received; the web service will stop dispatching at the next boundary"
             );
         }
         ControlKind::Resume => {
             info!(
-                "Resume control received for workflow run {}; the web service controls dispatch resumption",
-                delivery.command.workflow_run_id
+                run_id = %delivery.command.workflow_run_id,
+                "resume control received; the web service controls dispatch resumption"
             );
         }
     }
@@ -348,8 +359,8 @@ async fn process_delivery(
             Ok(true) => {}
             Ok(false) => {
                 info!(
-                    "Skipping duplicate delivery for node run {}: executor lease held elsewhere",
-                    command.workflow_node_run_id
+                    node_run_id = %command.workflow_node_run_id,
+                    "skipping duplicate delivery: executor lease held elsewhere"
                 );
                 metrics::action_duplicate();
                 in_flight.lock().await.remove(&command.workflow_node_run_id);
@@ -361,8 +372,10 @@ async fn process_delivery(
             }
             // fail-open on a transport error so a transient ws outage cannot wedge execution.
             Err(err) => warn!(
-                "Failed to claim executor replica {} for node run {}: {}",
-                replica_id, command.workflow_node_run_id, err
+                replica_id = %replica_id,
+                node_run_id = %command.workflow_node_run_id,
+                "failed to claim executor: {}",
+                err
             ),
         }
     }
@@ -371,8 +384,9 @@ async fn process_delivery(
         .await
     {
         error!(
-            "Failed to publish workflow node run {} running status: {}",
-            command.workflow_node_run_id, err
+            node_run_id = %command.workflow_node_run_id,
+            "failed to publish running status: {}",
+            err
         );
         in_flight.lock().await.remove(&command.workflow_node_run_id);
         nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
@@ -382,7 +396,12 @@ async fn process_delivery(
         Ok(parameters) => parameters,
         Err(err) => {
             let message = format!("Failed to resolve action secrets: {err}");
-            error!("{}", message);
+            error!(
+                node_run_id = %command.workflow_node_run_id,
+                error_code = error_code_or_unknown(err.as_ref()),
+                "{}",
+                message
+            );
             metrics::secret_resolution_failure();
             let output_json = TaskStatusOutput {
                 success: false,
@@ -399,8 +418,10 @@ async fn process_delivery(
                 .await
             {
                 error!(
-                    "Failed to publish workflow node run {} failed status: {}",
-                    command.workflow_node_run_id, err
+                    node_run_id = %command.workflow_node_run_id,
+                    error_code = error_code_or_unknown(&err),
+                    "failed to publish failed status: {}",
+                    err
                 );
                 in_flight.lock().await.remove(&command.workflow_node_run_id);
                 nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
@@ -450,8 +471,10 @@ async fn process_delivery(
         && let Err(err) = sink.persist_result(execution_result).await
     {
         error!(
-            "Failed to publish workflow node run {} result artifacts: {}",
-            command.workflow_node_run_id, err
+            node_run_id = %command.workflow_node_run_id,
+            error_code = error_code_or_unknown(&err),
+            "failed to publish result artifacts: {}",
+            err
         );
         nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
         return Err(broker_error("publish_result", err));
@@ -460,6 +483,13 @@ async fn process_delivery(
     let provider_message = task_result.message.clone().or_else(|| sink.message());
 
     if task_result.success {
+        info!(
+            node_run_id = %command.workflow_node_run_id,
+            provider = %action.provider,
+            function = %action.function,
+            duration_ms = task_result.duration_ms(),
+            "action completed successfully"
+        );
         sink.emit_log(format!(
             "Action {}.{} completed successfully in {} ms.",
             action.provider,
@@ -493,8 +523,10 @@ async fn process_delivery(
             .await
         {
             error!(
-                "Failed to publish workflow node run {} succeeded status: {}",
-                command.workflow_node_run_id, err
+                node_run_id = %command.workflow_node_run_id,
+                error_code = error_code_or_unknown(&err),
+                "failed to publish succeeded status: {}",
+                err
             );
             nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
             return Err(broker_error("publish_result", err));
@@ -509,6 +541,14 @@ async fn process_delivery(
                 .await;
         }
     } else {
+        warn!(
+            node_run_id = %command.workflow_node_run_id,
+            provider = %action.provider,
+            function = %action.function,
+            duration_ms = task_result.duration_ms(),
+            message = provider_message.as_deref().unwrap_or("No error message"),
+            "action failed"
+        );
         sink.emit_log(format!(
             "Action {}.{} failed after {} ms: {}.",
             action.provider,
@@ -537,8 +577,10 @@ async fn process_delivery(
             .await
         {
             error!(
-                "Failed to publish workflow node run {} terminal status: {}",
-                command.workflow_node_run_id, err
+                node_run_id = %command.workflow_node_run_id,
+                error_code = error_code_or_unknown(&err),
+                "failed to publish terminal status: {}",
+                err
             );
             nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
             return Err(broker_error("publish_result", err));
@@ -552,10 +594,6 @@ async fn process_delivery(
                 )
                 .await;
         }
-        warn!(
-            "Action {}.{} reported failure: {:?}",
-            action.provider, action.function, provider_message
-        );
     }
 
     broker

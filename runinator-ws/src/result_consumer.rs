@@ -1,11 +1,12 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use log::{error, info, warn};
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::errors::error_code_or_unknown;
 #[cfg(test)]
 use runinator_models::errors::{RuntimeError, SendableError};
 use tokio::sync::Notify;
+use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -100,12 +101,12 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
     shutdown: Arc<Notify>,
     policy: ResultConsumerPolicy,
 ) {
-    info!("Workflow result consumer started");
+    info!("workflow result consumer started");
     let mut attempts = HashMap::<Uuid, u32>::new();
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
-                info!("Workflow result consumer shutting down");
+                info!("workflow result consumer shutting down");
                 return;
             }
             result = broker.receive_result(RESULT_CONSUMER_ID) => {
@@ -113,81 +114,99 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                     Ok(delivery) => delivery,
                     Err(err) => {
                         stability::result_receive_error();
-                        error!("Failed to receive workflow result event: {}", err);
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to receive workflow result event: {}", err
+                        );
                         continue;
                     }
                 }
             }
         };
 
-        let node_run_id = delivery.event.workflow_node_run_id;
-        match apply_result_event(db.as_ref(), &delivery.event).await {
-            Ok(applied) => {
-                stability::result_event_applied(applied);
-                attempts.remove(&delivery.event.event_id);
-                emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
-                if let Err(err) = broker
-                    .ack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
-                    error!(
-                        "Failed to ack workflow result event {}: {}",
-                        delivery.event.event_id, err
-                    );
-                }
-            }
-            Err(err) => {
-                let attempt_count = {
-                    let attempt = attempts.entry(delivery.event.event_id).or_insert(0);
-                    *attempt += 1;
-                    *attempt
-                };
-                error!(
-                    "Failed to persist workflow result event {} on attempt {}: {}",
-                    delivery.event.event_id, attempt_count, err
-                );
-                if attempt_count >= policy.max_attempts.max(1) {
-                    stability::result_event_dead_lettered();
+        // re-parent this delivery's processing onto the trace the worker carried the result back on,
+        // so a stuck/failed result apply is correlatable with the dispatch and execution that produced it.
+        let span = tracing::info_span!(
+            "result_event",
+            trace_id = %delivery.event.trace_id,
+            run_id = %delivery.event.workflow_run_id,
+            node_run_id = %delivery.event.workflow_node_run_id,
+            event_id = %delivery.event.event_id,
+        );
+        async {
+            let node_run_id = delivery.event.workflow_node_run_id;
+            match apply_result_event(db.as_ref(), &delivery.event).await {
+                Ok(applied) => {
+                    stability::result_event_applied(applied);
                     attempts.remove(&delivery.event.event_id);
-                    warn!(
-                        "Dead-lettering workflow result event {} after {} attempt(s)",
-                        delivery.event.event_id, attempt_count
-                    );
-                    persist_dead_letter(
-                        db.as_ref(),
-                        "result",
-                        Some(delivery.event.event_id),
-                        Some(delivery.dedupe_key.clone()),
-                        attempt_count,
-                        &err.to_string(),
-                        serde_json::to_value(&delivery.event).unwrap_or_default(),
-                    )
-                    .await;
+                    emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
                     if let Err(err) = broker
                         .ack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
                         .await
                     {
                         error!(
-                            "Failed to ack dead-lettered workflow result event {}: {}",
-                            delivery.event.event_id, err
+                            error_code = error_code_or_unknown(&err),
+                            "failed to ack workflow result event: {}", err
                         );
                     }
-                    continue;
                 }
-
-                stability::result_event_retried();
-                tokio::time::sleep(policy.backoff_for(attempt_count)).await;
-                if let Err(err) = broker
-                    .nack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
-                    .await
-                {
+                Err(err) => {
+                    let attempt_count = {
+                        let attempt = attempts.entry(delivery.event.event_id).or_insert(0);
+                        *attempt += 1;
+                        *attempt
+                    };
                     error!(
-                        "Failed to nack workflow result event {}: {}",
-                        delivery.event.event_id, err
+                        attempt = attempt_count,
+                        error_code = error_code_or_unknown(err.as_ref()),
+                        "failed to persist workflow result event: {}",
+                        err
                     );
+                    if attempt_count >= policy.max_attempts.max(1) {
+                        stability::result_event_dead_lettered();
+                        attempts.remove(&delivery.event.event_id);
+                        warn!(
+                            attempts = attempt_count,
+                            "dead-lettering workflow result event"
+                        );
+                        persist_dead_letter(
+                            db.as_ref(),
+                            "result",
+                            Some(delivery.event.event_id),
+                            Some(delivery.dedupe_key.clone()),
+                            attempt_count,
+                            &err.to_string(),
+                            serde_json::to_value(&delivery.event).unwrap_or_default(),
+                        )
+                        .await;
+                        if let Err(err) = broker
+                            .ack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
+                            .await
+                        {
+                            error!(
+                                error_code = error_code_or_unknown(&err),
+                                "failed to ack dead-lettered workflow result event: {}", err
+                            );
+                        }
+                        return;
+                    }
+
+                    stability::result_event_retried();
+                    tokio::time::sleep(policy.backoff_for(attempt_count)).await;
+                    if let Err(err) = broker
+                        .nack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to nack workflow result event: {}", err
+                        );
+                    }
                 }
             }
         }
+        .instrument(span)
+        .await;
     }
 }
 

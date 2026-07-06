@@ -18,7 +18,6 @@ use tokio::sync::Notify;
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
-use log::{error, info, warn};
 use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
     spawn_replica_heartbeat_with_telemetry,
@@ -32,6 +31,7 @@ use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
 use serde_json::json;
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::{Cli, Config};
@@ -40,17 +40,23 @@ const ARCHIVE_FILE_EXTENSION: &str = "jsonl.gz";
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if std::env::var_os("RUST_LOG").is_none() {
-        unsafe {
-            std::env::set_var("RUST_LOG", "info");
+    // held for the process lifetime so otel signals flush on shutdown. shares the same
+    // RUNINATOR_LOG-driven tracing/file/otel pipeline as ws/worker/waker.
+    let _telemetry = match runinator_utilities::startup::startup("Runinator Archiver") {
+        Ok(guard) => guard,
+        Err(err) => {
+            eprintln!("Archiver startup failed: {err}");
+            return ExitCode::FAILURE;
         }
-    }
-    env_logger::init();
+    };
 
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            error!("Archiver failed: {err}");
+            error!(
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "archiver failed: {err}"
+            );
             ExitCode::FAILURE
         }
     }
@@ -69,7 +75,7 @@ async fn run() -> Result<(), SendableError> {
 async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), SendableError> {
     fs::create_dir_all(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
-    info!("Runinator archiver started as {archiver_id}");
+    info!(archiver_id = %archiver_id, "archiver started");
     let shutdown = Arc::new(Notify::new());
     spawn_liveness(&config, shutdown.clone());
     // registration is optional: only when a web service url is configured does the archiver appear in
@@ -81,14 +87,17 @@ async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), Sen
     };
     loop {
         if let Err(err) = run_once(db.as_ref(), &config, &archiver_id).await {
-            error!("Archiver pass failed: {err}");
+            error!(
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "archiver pass failed: {err}"
+            );
         }
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 if let Err(err) = result {
-                    warn!("Failed to listen for shutdown signal: {err}");
+                    warn!("failed to listen for shutdown signal: {err}");
                 }
-                info!("Runinator archiver shutting down");
+                info!("archiver shutting down");
                 shutdown.notify_waiters();
                 return Ok(());
             }
@@ -124,7 +133,7 @@ async fn register_replica(
     shutdown: Arc<Notify>,
 ) -> Result<Registration, SendableError> {
     let Some(api_base_url) = config.api_base_url.as_deref() else {
-        info!("No web service url configured; running database-only without replica registration");
+        info!("no web service url configured; running database-only without replica registration");
         return Ok(Registration::Disabled);
     };
     let api_client = AsyncApiClient::with_credentials(
@@ -149,9 +158,9 @@ async fn register_replica(
         result = register_archiver_replica_with_retry(&api_client, &service_config) => result?,
         signal = tokio::signal::ctrl_c() => {
             if let Err(err) = signal {
-                warn!("Failed to listen for shutdown signal: {err}");
+                warn!("failed to listen for shutdown signal: {err}");
             }
-            info!("Shutdown signal received before archiver registration completed");
+            info!("shutdown signal received before archiver registration completed");
             return Ok(Registration::Shutdown);
         }
     };
@@ -192,24 +201,27 @@ async fn register_archiver_replica_with_retry(
         match register_replica_session(api_client, service_config.clone()).await {
             Ok(session) => {
                 if attempt > 1 {
-                    info!("Archiver replica registered on attempt {}", attempt);
+                    info!(attempt, "archiver replica registered");
                 }
                 return Ok(session);
             }
             Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
                 error!(
-                    "Failed to register archiver replica after {} attempts, giving up: {}",
-                    attempt, err
+                    attempt,
+                    error_code = runinator_models::errors::error_code_or_unknown(&err),
+                    "failed to register archiver replica, giving up: {}",
+                    err
                 );
                 return Err(errors::REPLICA_REGISTER.error(err));
             }
             Err(err) => {
                 let backoff = register_backoff(attempt);
                 error!(
-                    "Failed to register archiver replica (attempt {}/{}), retrying in {}s: {}",
                     attempt,
-                    REGISTER_MAX_ATTEMPTS,
-                    backoff.as_secs(),
+                    max_attempts = REGISTER_MAX_ATTEMPTS,
+                    retry_in_secs = backoff.as_secs(),
+                    error_code = runinator_models::errors::error_code_or_unknown(&err),
+                    "failed to register archiver replica, retrying: {}",
                     err
                 );
                 tokio::time::sleep(backoff).await;
@@ -237,6 +249,11 @@ async fn run_once<T: DatabaseImpl>(
     let rows = match db.fetch_archive_rows(marks).await {
         Ok(rows) => rows,
         Err(err) => {
+            error!(
+                marks = mark_ids.len(),
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "failed to fetch archive rows: {err}"
+            );
             db.fail_archive_marks(mark_ids, err.to_string()).await?;
             return Err(err);
         }
@@ -246,18 +263,25 @@ async fn run_once<T: DatabaseImpl>(
         return Ok(());
     }
     if config.dry_run {
-        info!("Dry run: would archive {} row(s)", rows.len());
+        info!(rows = rows.len(), "dry run: would archive row(s)");
         db.fail_archive_marks(mark_ids, "dry run; no rows deleted".into())
             .await?;
         return Ok(());
     }
     if let Err(err) = write_archive_jsonl_files(&config.archive_dir, &rows) {
+        error!(
+            rows = rows.len(),
+            error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+            "failed to write archive file(s): {err}"
+        );
         db.fail_archive_marks(mark_ids, err.to_string()).await?;
         return Err(err);
     }
     let archived_mark_ids = rows.iter().map(|row| row.mark_id).collect::<Vec<_>>();
+    let archived_count = archived_mark_ids.len();
     db.delete_archive_rows(rows).await?;
     db.complete_archive_marks(archived_mark_ids).await?;
+    info!(rows = archived_count, "archived row(s)");
     Ok(())
 }
 
@@ -291,7 +315,7 @@ async fn mark_all<T: DatabaseImpl>(db: &T, config: &Config) -> Result<(), Sendab
             .mark_archive_candidates(table, cutoff, config.batch_size)
             .await?;
         if count > 0 {
-            info!("Marked {count} {table} row(s) for archival");
+            info!(table = %table, count, "marked row(s) for archival");
         }
     }
     Ok(())
@@ -331,7 +355,7 @@ fn write_archive_jsonl_files(root: &Path, rows: &[ArchiveRow]) -> Result<(), Sen
         }
         encoder.finish()?;
         fs::rename(&tmp_path, &final_path)?;
-        info!("Wrote archive {}", final_path.display());
+        info!(path = %final_path.display(), table = %table, "wrote archive file");
     }
     Ok(())
 }

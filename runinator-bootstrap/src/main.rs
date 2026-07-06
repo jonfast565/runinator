@@ -1,10 +1,10 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use log::{error, info};
 use runinator_database::{BootstrapOptions, bootstrap_database};
 use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -59,20 +59,23 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if std::env::var_os("RUST_LOG").is_none() {
-        unsafe {
-            std::env::set_var("RUST_LOG", "info");
-        }
+    // shares the same RUNINATOR_LOG-driven tracing pipeline as ws/worker/waker/archiver. the guard is
+    // dropped immediately after startup since this is a one-shot job with no otel signals to flush.
+    if let Err(err) = runinator_utilities::startup::startup("Runinator Bootstrap") {
+        eprintln!("Bootstrap startup failed: {err}");
+        return ExitCode::FAILURE;
     }
-    env_logger::init();
 
     match run().await {
         Ok(()) => {
-            info!("Bootstrap completed successfully.");
+            info!("bootstrap completed successfully");
             ExitCode::SUCCESS
         }
         Err(err) => {
-            error!("Bootstrap failed: {err}");
+            error!(
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "bootstrap failed: {err}"
+            );
             ExitCode::FAILURE
         }
     }

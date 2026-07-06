@@ -23,7 +23,7 @@ worker/waker nodes.
 
 ```bash
 runinator-supervisor process add --name worker-2 --command ./target/debug/runinator-worker \
-  --arg --broker-backend --arg tcp --env RUST_LOG=info
+  --arg --broker-backend --arg tcp --env RUNINATOR_LOG=info
 runinator-supervisor process start worker-2
 runinator-supervisor process stop worker-2
 runinator-supervisor process remove worker-2
@@ -47,7 +47,7 @@ crash-restart policy.
       "args": ["--broker-backend", "tcp", "--broker-endpoint", "127.0.0.1:7070"],
       "cwd": ".",
       "env": {
-        "RUST_LOG": "info"
+        "RUNINATOR_LOG": "info"
       },
       "autostart": true,
       "restart_on_failure": true,

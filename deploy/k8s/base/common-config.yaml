@@ -4,7 +4,7 @@ metadata:
   name: runinator-common
   namespace: runinator
 data:
-  RUST_LOG: "info"
+  RUNINATOR_LOG: "info"
   RUST_BACKTRACE: "1"
   WS_API_BASE_URL: "http://runinator-ws.runinator.svc.cluster.local:8080/"
   POSTGRES_HOST: "runinator-postgres.runinator.svc.cluster.local"

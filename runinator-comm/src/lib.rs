@@ -120,6 +120,11 @@ pub struct WakeCommand {
     pub node_id: String,
     pub ready_at: DateTime<Utc>,
     pub source_event_id: Uuid,
+    /// correlation id minted when this wake is published, carried through the waker into the
+    /// resulting [`WsIngressCommand::Drive`] so a stuck or delayed wake can be traced end to end.
+    /// defaults for backward-compatible deserialization of older messages.
+    #[serde(default = "Uuid::now_v7")]
+    pub trace_id: Uuid,
 }
 
 impl WakeCommand {
@@ -129,6 +134,7 @@ impl WakeCommand {
         node_id: String,
         ready_at: DateTime<Utc>,
         source_event_id: Uuid,
+        trace_id: Uuid,
     ) -> Self {
         Self {
             ready_node_id,
@@ -136,6 +142,7 @@ impl WakeCommand {
             node_id,
             ready_at,
             source_event_id,
+            trace_id,
         }
     }
 
@@ -155,6 +162,10 @@ pub enum WsIngressCommand {
         ready_node_id: Uuid,
         workflow_run_id: Uuid,
         node_id: String,
+        /// carried over from the originating [`WakeCommand::trace_id`]. defaults for
+        /// backward-compatible deserialization of older messages.
+        #[serde(default = "Uuid::now_v7")]
+        trace_id: Uuid,
     },
     /// worker -> ws: a control request raised by an executing action.
     Control {
@@ -164,11 +175,17 @@ pub enum WsIngressCommand {
 }
 
 impl WsIngressCommand {
-    pub fn drive(ready_node_id: Uuid, workflow_run_id: Uuid, node_id: String) -> Self {
+    pub fn drive(
+        ready_node_id: Uuid,
+        workflow_run_id: Uuid,
+        node_id: String,
+        trace_id: Uuid,
+    ) -> Self {
         Self::Drive {
             ready_node_id,
             workflow_run_id,
             node_id,
+            trace_id,
         }
     }
 

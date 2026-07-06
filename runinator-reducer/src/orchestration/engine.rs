@@ -10,11 +10,16 @@ use uuid::Uuid;
 
 const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
 
+#[tracing::instrument(
+    skip_all,
+    fields(run_id = %ready_node.workflow_run_id, node_id = %ready_node.node_id)
+)]
 pub async fn process_ready_node<T: DatabaseImpl>(
     db: &T,
     ready_node: &ReadyNodeRecord,
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let Some(mut workflow_run) = db.fetch_workflow_run(ready_node.workflow_run_id).await? else {
+        tracing::warn!("ready node references a workflow run that no longer exists");
         return Ok(ReadyNodeDisposition::Complete);
     };
     if workflow_run.status == WorkflowStatus::Queued {
@@ -30,7 +35,7 @@ pub async fn process_ready_node<T: DatabaseImpl>(
         workflow_run.active_node_id = Some(ready_node.node_id.clone());
     }
 
-    for _ in 0..MAX_INLINE_WORKFLOW_STEPS {
+    for step in 0..MAX_INLINE_WORKFLOW_STEPS {
         let before = WorkflowProgressKey::from_run(db, workflow_run.id).await?;
         let disposition = process_workflow_run_step(db, workflow_run.clone()).await?;
         let Some(next_run) = db.fetch_workflow_run(workflow_run.id).await? else {
@@ -43,12 +48,24 @@ pub async fn process_ready_node<T: DatabaseImpl>(
             || should_stop_inline_progress(&next_run, &node_runs, awaits_worker)
             || before == after
         {
+            tracing::debug!(
+                inline_steps = step + 1,
+                disposition = ?disposition,
+                active_node_id = ?next_run.active_node_id,
+                status = ?next_run.status,
+                "workflow run step settled"
+            );
             transitions::maybe_wake_subflow_parent(db, &next_run).await?;
             return Ok(disposition);
         }
         workflow_run = next_run;
     }
 
+    tracing::warn!(
+        max_inline_steps = MAX_INLINE_WORKFLOW_STEPS,
+        active_node_id = ?workflow_run.active_node_id,
+        "inline workflow progress limit exhausted; blocking run"
+    );
     db.update_workflow_run_status(
         workflow_run.id,
         WorkflowStatus::Blocked,
@@ -98,6 +115,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
     if let Some(handler) =
         evaluate_watches(db, &workflow, &workflow_run, &node_runs, &active_node_id).await?
     {
+        tracing::info!(active_node_id = %active_node_id, handler = %handler, "watch guard fired");
         let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
         run_state.watch_fired = true;
         db.update_workflow_run_status(
@@ -111,6 +129,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         return Ok(ReadyNodeDisposition::Complete);
     }
     let Some(node) = nodes.iter().find(|node| node.id == active_node_id) else {
+        tracing::error!(active_node_id = %active_node_id, "active workflow node is missing from the graph");
         db.update_workflow_run_status(
             workflow_run.id,
             WorkflowStatus::Failed,
@@ -135,6 +154,12 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
     if reentry_exhausted(node, &node_runs, latest.as_ref()) {
         match node.reentry.on_exhausted.as_ref() {
             Some(target) => {
+                tracing::info!(
+                    node_id = %node.id,
+                    max_visits = node.reentry.max_visits,
+                    target = target.as_str(),
+                    "reentry max_visits exhausted; exiting to on_exhausted target"
+                );
                 db.update_workflow_run_status(
                     workflow_run.id,
                     WorkflowStatus::Running,
@@ -145,6 +170,11 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
                 .await?;
             }
             None => {
+                tracing::warn!(
+                    node_id = %node.id,
+                    max_visits = node.reentry.max_visits,
+                    "reentry max_visits exhausted with no on_exhausted target; blocking node"
+                );
                 transitions::block_node(
                     db,
                     &workflow_run,
@@ -167,6 +197,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         nodes: &nodes,
     };
 
+    tracing::debug!(node_id = %node.id, kind = ?node.kind, "dispatching to node handler");
     let disposition = match &node.kind {
         WorkflowNodeKind::Start => basic::StartHandler.process(&ctx).await?,
         WorkflowNodeKind::Action => action::ActionHandler.process(&ctx).await?,

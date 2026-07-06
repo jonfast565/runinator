@@ -7028,9 +7028,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
- "env_logger",
  "flate2",
- "log",
  "runinator-api",
  "runinator-database",
  "runinator-db-cli",
@@ -7038,6 +7036,7 @@ dependencies = [
  "runinator-utilities",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -7060,12 +7059,12 @@ name = "runinator-bootstrap"
 version = "0.1.0"
 dependencies = [
  "clap",
- "env_logger",
- "log",
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",
+ "runinator-utilities",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -7514,6 +7513,7 @@ dependencies = [
  "runinator-workflows",
  "serde",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 
@@ -7566,7 +7566,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
- "log",
  "opentelemetry",
  "reqwest",
  "runinator-api",
@@ -7575,6 +7574,7 @@ dependencies = [
  "runinator-models",
  "runinator-utilities",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

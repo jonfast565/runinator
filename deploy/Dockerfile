@@ -40,7 +40,7 @@ RUN apk add --no-cache ca-certificates libgcc \
     && addgroup -S runinator \
     && adduser -S -D -G runinator -h /home/runinator runinator
 WORKDIR /home/runinator
-ENV RUST_LOG=info \
+ENV RUNINATOR_LOG=info \
     RUST_BACKTRACE=1
 
 # ---- ws ----

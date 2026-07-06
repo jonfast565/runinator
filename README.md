@@ -445,30 +445,40 @@ It starts `deploy/local-observability/compose.yaml` with:
 - Jaeger at `http://127.0.0.1:16686` for traces.
 - Prometheus at `http://127.0.0.1:9090` scraping the collector's re-exported
   OTLP metrics on `otel-collector:8889` plus collector self-metrics on `:8888`.
+- Loki at `http://127.0.0.1:3100` receiving the collector's logs signal via
+  OTLP, so structured fields the binaries set (`trace_id`, `run_id`,
+  `error_code`, ...) are queryable with LogQL instead of only living in
+  stdout/log files.
+- Grafana at `http://127.0.0.1:3000` (anonymous admin) with Loki, Prometheus,
+  and Jaeger pre-provisioned as datasources — the natural place to query logs
+  and click a `trace_id` through to its Jaeger trace.
 
 After the stack starts, run `bash scripts/run-local.sh smoke-sync` or drive a
-workflow through the UI/CLI, then inspect traces in Jaeger and metrics in
-Prometheus. Use `bash scripts/run-local.sh observability-logs --lines 120` to
-inspect collector/exporter output, and use
-`bash scripts/run-local.sh observability-stop` to stop the local observability
-containers.
+workflow through the UI/CLI, then inspect traces in Jaeger, metrics in
+Prometheus, and logs in Grafana (or `loki`, e.g. via `logcli`). Use
+`bash scripts/run-local.sh observability-logs --lines 120` to inspect
+collector/exporter output, and use `bash scripts/run-local.sh
+observability-stop` to stop the local observability containers.
 
 **In Kubernetes**, the `components/observability` kustomize component deploys an
-OpenTelemetry Collector, Jaeger (trace UI), Prometheus (scrapes the collector), and
-Grafana (dashboards over Prometheus + Jaeger), and points the services at the
-collector. It is enabled in the `local` overlay by default; add
-`../../components/observability` to another overlay's `components:` list to turn it
-on there (and remove it to turn otel back off). After deploying:
+OpenTelemetry Collector, Jaeger (trace UI), Prometheus (scrapes the collector),
+Loki (durable/queryable log store), and Grafana (dashboards over Prometheus +
+Jaeger + Loki), and points the services at the collector. It is enabled in the
+`local` overlay by default; add `../../components/observability` to another
+overlay's `components:` list to turn it on there (and remove it to turn otel
+back off). After deploying:
 
 ```bash
-# dashboards — open Grafana at http://localhost:3000 (anonymous admin; "Runinator
-# Overview" dashboard is provisioned, with Prometheus + Jaeger datasources wired up)
+# dashboards + logs — open Grafana at http://localhost:3000 (anonymous admin; "Runinator
+# Overview" dashboard is provisioned, with Loki + Prometheus + Jaeger datasources wired up)
 bash scripts/port-forward-grafana.sh   # or: kubectl -n runinator port-forward svc/runinator-grafana 3000:3000
 # traces — open the Jaeger UI at http://localhost:16686
 kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686
 # raw metrics — the Prometheus UI / API at http://localhost:9090
 kubectl -n runinator port-forward svc/runinator-prometheus 9090:9090
-# logs (and a copy of every signal) — the collector's debug exporter
+# raw logql — the Loki API at http://localhost:3100
+kubectl -n runinator port-forward svc/runinator-loki 3100:3100
+# a copy of every signal — the collector's debug exporter
 kubectl -n runinator logs deploy/runinator-otel-collector
 ```
 

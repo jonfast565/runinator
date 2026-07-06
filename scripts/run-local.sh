@@ -92,8 +92,10 @@ print_observability_urls() {
 
 Observability:
   OTLP HTTP endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-$LOCAL_OTLP_ENDPOINT}
+  Grafana (logs+dash): http://127.0.0.1:3000/
   Jaeger traces:      http://127.0.0.1:16686/
   Prometheus metrics: http://127.0.0.1:9090/
+  Loki logs (raw):    http://127.0.0.1:3100/
   Collector metrics:  http://127.0.0.1:8888/metrics
   OTLP metrics:       http://127.0.0.1:8889/metrics
 

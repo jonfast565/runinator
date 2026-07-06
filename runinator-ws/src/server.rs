@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use log::info;
 use runinator_broker::Broker;
 use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret, load_jwt_secret_previous};
 use runinator_models::auth::AuthContext;
@@ -16,6 +15,7 @@ use tokio::{
     sync::{Notify, broadcast},
     task::JoinSet,
 };
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::background::{
@@ -50,12 +50,12 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
     let jwt_secret_previous = load_jwt_secret_previous(pool.as_ref()).await?;
     if auth.enabled {
-        log::info!("HTTP API authentication is ENABLED");
+        info!("HTTP API authentication is ENABLED");
     } else {
-        log::warn!("HTTP API authentication is DISABLED");
+        warn!("HTTP API authentication is DISABLED");
     }
     if jwt_secret_previous.is_some() {
-        log::info!("accepting a previous jwt signing secret (key rotation overlap window is open)");
+        info!("accepting a previous jwt signing secret (key rotation overlap window is open)");
     }
     let auth_config = crate::auth::AuthConfig {
         enabled: auth.enabled,
@@ -177,17 +177,17 @@ pub async fn run_webserver<T: DatabaseImpl>(
     background.spawn(run_replica_reaper(pool.clone(), notify.clone()));
     background.spawn(run_usage_sampler(pool.clone(), notify.clone()));
     if rate_limit.enabled {
-        log::info!(
-            "HTTP API rate limiting is ENABLED ({} req/s, burst {})",
-            rate_limit.requests_per_second,
-            rate_limit.burst
+        info!(
+            requests_per_second = rate_limit.requests_per_second,
+            burst = rate_limit.burst,
+            "HTTP API rate limiting is ENABLED"
         );
     }
     let provisioner = Arc::new(runinator_provisioner::build_registry(
         crate::provisioner_config::from_env(),
     ));
     if !provisioner.is_empty() {
-        log::info!("on-demand node provisioning is ENABLED");
+        info!("on-demand node provisioning is ENABLED");
     }
     let app = build_router(pool, bus, broker, provisioner, auth_config, rate_limit);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
@@ -210,7 +210,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         result = server => {
             background.shutdown().await;
             if let Err(err) = result {
-                log::error!("Webserver error: {}", err);
+                error!("webserver error: {}", err);
                 return Err(Box::new(err));
             }
             Ok(())
@@ -221,13 +221,13 @@ pub async fn run_webserver<T: DatabaseImpl>(
             // durable state rather than running on with a silently dead loop.
             match &joined {
                 Err(err) if err.is_panic() => {
-                    log::error!("background orchestration loop panicked; shutting down replica: {err}");
+                    error!("background orchestration loop panicked; shutting down replica: {err}");
                 }
                 Err(err) => {
-                    log::error!("background orchestration loop aborted; shutting down replica: {err}");
+                    error!("background orchestration loop aborted; shutting down replica: {err}");
                 }
                 Ok(()) => {
-                    log::error!("background orchestration loop exited unexpectedly; shutting down replica");
+                    error!("background orchestration loop exited unexpectedly; shutting down replica");
                 }
             }
             crate::stability::record_background_loop_failure();

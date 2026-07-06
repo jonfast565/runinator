@@ -719,22 +719,57 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(axum::middleware::from_fn(trace_propagation_middleware))
 }
 
-/// open a per-request tracing span and re-parent it onto any inbound `traceparent` header so the
-/// server side of a distributed trace links to the caller. a no-op for trace context when otel is
-/// off, leaving an ordinary local span.
+const REQUEST_ID_HEADER: &str = "x-request-id";
+
+/// open a per-request tracing span, re-parent it onto any inbound `traceparent` header so the server
+/// side of a distributed trace links to the caller, and log an access line with status/duration once
+/// the handler completes. a no-op for trace context when otel is off, leaving an ordinary local span;
+/// the request id still works without otel, since it is generated locally rather than derived from a
+/// trace context.
 async fn trace_propagation_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use tracing::Instrument;
 
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    // reuse an inbound request id from a fronting proxy/gateway when present, so this request's logs
+    // line up with that layer's; otherwise mint one so every request is correlatable even with otel off.
+    let request_id = request
+        .headers()
+        .get(REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+
     let span = tracing::info_span!(
         "http_request",
-        method = %request.method(),
-        path = %request.uri().path(),
+        method = %method,
+        path = %path,
+        request_id = %request_id,
     );
     runinator_utilities::telemetry::apply_http_context(&span, request.headers());
-    next.run(request).instrument(span).await
+
+    async move {
+        let started = std::time::Instant::now();
+        let mut response = next.run(request).await;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let status = response.status().as_u16();
+        if status >= 500 {
+            tracing::error!(status, duration_ms, "request completed");
+        } else if status >= 400 {
+            tracing::warn!(status, duration_ms, "request completed");
+        } else {
+            tracing::info!(status, duration_ms, "request completed");
+        }
+        if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
+            response.headers_mut().insert(REQUEST_ID_HEADER, value);
+        }
+        response
+    }
+    .instrument(span)
+    .await
 }
 
 /// turn a recovered handler panic into the standard json error envelope. the panic payload is logged

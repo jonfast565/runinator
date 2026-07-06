@@ -28,7 +28,14 @@ data:
       # metrics -> prometheus text exposition on :8889 for scraping or ad-hoc curl.
       prometheus:
         endpoint: 0.0.0.0:8889
-      # logs (and a copy of everything) -> the collector's own stdout for quick kubectl logs viewing.
+      # logs -> loki's native otlp ingestion endpoint (loki 3.x+), so structured fields like
+      # trace_id/run_id/error_code set by the rust binaries stay queryable via logql in grafana
+      # instead of only living in kubectl logs.
+      otlphttp/loki:
+        endpoint: http://runinator-loki.runinator.svc.cluster.local:3100/otlp
+        tls:
+          insecure: true
+      # a copy of everything -> the collector's own stdout for quick kubectl logs viewing.
       debug:
         verbosity: detailed
     service:
@@ -44,7 +51,7 @@ data:
         logs:
           receivers: [otlp]
           processors: [batch]
-          exporters: [debug]
+          exporters: [otlphttp/loki, debug]
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -20,7 +20,14 @@ exporters:
   # metrics -> prometheus text exposition on :8889, scraped by local prometheus.
   prometheus:
     endpoint: 0.0.0.0:8889
-  # logs and a copy of every signal -> collector stdout.
+  # logs -> loki's native otlp ingestion endpoint (loki 3.x+), so structured fields like trace_id/
+  # run_id/error_code set by the rust binaries stay queryable via logql instead of only living in
+  # stdout/log files. viewable through grafana at http://127.0.0.1:3000 (pre-provisioned datasource).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+  # a copy of every signal -> collector stdout, useful when the backends above are not running.
   debug:
     verbosity: detailed
 
@@ -37,4 +44,4 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlphttp/loki, debug]

@@ -28,8 +28,14 @@ pub fn resolve_provider(
     }
 
     if let Some(plugin) = libraries.get(&action.provider) {
+        tracing::debug!(provider = %action.provider, "resolved provider from a loaded plugin");
         return Ok(Box::new(plugin.clone()));
     }
 
+    tracing::warn!(
+        provider = %action.provider,
+        loaded_plugins = libraries.len(),
+        "provider not found among built-ins or loaded plugins"
+    );
     Err(crate::errors::PROVIDER_NOT_FOUND.error(&action.provider))
 }

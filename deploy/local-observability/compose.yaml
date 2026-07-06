@@ -6,6 +6,7 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:
       - jaeger
+      - loki
     ports:
       - "4317:4317"
       - "4318:4318"
@@ -35,5 +36,33 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
 
+  # durable, queryable (logql) sink for the logs otel signal, so trace_id/run_id/error_code fields
+  # set by the rust binaries are searchable instead of only living in stdout/log files.
+  loki:
+    image: grafana/loki:3.3.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+
+  # single pane of glass over loki (logs), prometheus (metrics), and jaeger (traces); datasources
+  # are pre-provisioned so it is queryable immediately at http://127.0.0.1:3000 (anonymous admin).
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    depends_on:
+      - loki
+      - prometheus
+      - jaeger
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
 volumes:
   prometheus-data:
+  loki-data:

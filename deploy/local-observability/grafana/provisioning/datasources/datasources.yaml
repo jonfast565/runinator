@@ -1,0 +1,28 @@
+# pre-provisions the three local-observability backends so grafana is queryable immediately,
+# with no manual "add datasource" step. trace_id set as a derived field on loki lets a log line
+# jump straight to its jaeger trace.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    jsonData:
+      derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: 'trace_id[=":]+([0-9a-fA-F-]+)'
+          name: trace_id
+          url: "$${__value.raw}"
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686

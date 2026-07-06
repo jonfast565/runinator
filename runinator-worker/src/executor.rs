@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use log::{error, info, warn};
 use runinator_models::providers::ActionMetadata;
 use runinator_models::runs::{ProviderExecutionRequest, RunStatus, TaskExecutionResult};
 use runinator_models::value::Value;
@@ -11,6 +10,7 @@ use runinator_plugin::plugin::Plugin;
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 use runinator_utilities::app_data;
 use tokio::time;
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::provider_repository::{ProviderFactory, resolve_provider};
@@ -56,18 +56,22 @@ pub async fn execute_task(
             let action_metadata = match provider_action_metadata(provider.as_ref(), &action) {
                 Ok(metadata) => metadata,
                 Err(message) => {
-                    error!("{}", message);
+                    error!(provider = %action.provider, function = %action.function, "{}", message);
                     return failed_outcome(started_at, message);
                 }
             };
             if let Err(message) =
                 validate_runtime_parameters(&action_metadata, &action, &request.parameters)
             {
-                error!("{}", message);
+                error!(provider = %action.provider, function = %action.function, "{}", message);
                 return failed_outcome(started_at, message);
             }
             let provider_token = token.clone();
+            // the provider runs on a blocking thread, which does not inherit the ambient tracing
+            // span automatically; enter it explicitly so provider-side log lines keep trace_id/run_id.
+            let exec_span = tracing::Span::current();
             let mut handle = tokio::task::spawn_blocking(move || {
+                let _guard = exec_span.enter();
                 provider.execute_service(request, sink, provider_token)
             });
 
@@ -76,12 +80,14 @@ pub async fn execute_task(
                     Ok(Ok(execution_result)) => {
                         let finished_at = Utc::now();
                         if let Err(message) = validate_execution_result(&action_metadata, &action, &execution_result) {
-                            error!("{}", message);
+                            error!(provider = %action.provider, function = %action.function, "{}", message);
                             return failed_outcome(started_at, message);
                         }
                         info!(
-                            "Action {}.{} completed successfully",
-                            action.provider, action.function
+                            provider = %action.provider,
+                            function = %action.function,
+                            duration_ms = (finished_at - started_at).num_milliseconds(),
+                            "action completed successfully"
                         );
                         let message = execution_result.message.clone();
                         ExecutionOutcome {
@@ -97,8 +103,11 @@ pub async fn execute_task(
                     }
                     Ok(Err(err)) => {
                         error!(
-                            "Provider execution error for action {}.{}: {}",
-                            action.provider, action.function, err
+                            provider = %action.provider,
+                            function = %action.function,
+                            error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                            "provider execution error: {}",
+                            err
                         );
                         ExecutionOutcome {
                             execution_result: None,
@@ -112,7 +121,7 @@ pub async fn execute_task(
                         }
                     }
                     Err(err) => {
-                        error!("Task panicked: {:?}", err);
+                        error!(provider = %action.provider, function = %action.function, "task panicked: {:?}", err);
                         ExecutionOutcome {
                             execution_result: None,
                             status: RunStatus::Failed,
@@ -128,8 +137,10 @@ pub async fn execute_task(
                 _ = time::sleep(Duration::from_secs(timeout)) => {
                     token.cancel();
                     warn!(
-                        "Action {}.{} exceeded timeout of {} seconds",
-                        action.provider, action.function, timeout
+                        provider = %action.provider,
+                        function = %action.function,
+                        timeout_secs = timeout,
+                        "action exceeded timeout"
                     );
                     ExecutionOutcome {
                         execution_result: None,
@@ -143,18 +154,18 @@ pub async fn execute_task(
                     }
                 },
                 _ = wait_for_cancel(token.clone()) => {
-                    warn!(
-                        "Action {}.{} received cancellation",
-                        action.provider, action.function
-                    );
+                    warn!(provider = %action.provider, function = %action.function, "action received cancellation");
                     canceled_outcome(started_at)
                 }
             }
         }
         Err(err) => {
             error!(
-                "Failed to resolve provider for action {}.{}: {}",
-                action.provider, action.function, err
+                provider = %action.provider,
+                function = %action.function,
+                error_code = runinator_models::errors::error_code_or_unknown(err.as_ref()),
+                "failed to resolve provider: {}",
+                err
             );
             failed_outcome(started_at, err.to_string())
         }
@@ -251,8 +262,9 @@ fn build_provider_request(
     let artifact_dir = base_dir.join("artifacts");
     if let Err(err) = fs::create_dir_all(&artifact_dir) {
         warn!(
-            "Failed to create artifact directory {}: {}",
-            artifact_dir.display(),
+            node_id = %workflow_node_run_id,
+            artifact_dir = %artifact_dir.display(),
+            "failed to create artifact directory: {}",
             err
         );
     }

@@ -21,6 +21,17 @@ data:
         uid: jaeger
         access: proxy
         url: http://runinator-jaeger.runinator.svc.cluster.local:16686
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://runinator-loki.runinator.svc.cluster.local:3100
+        jsonData:
+          derivedFields:
+            - datasourceUid: jaeger
+              matcherRegex: 'trace_id[=":]+([0-9a-fA-F-]+)'
+              name: trace_id
+              url: "$${__value.raw}"
 ---
 apiVersion: v1
 kind: ConfigMap

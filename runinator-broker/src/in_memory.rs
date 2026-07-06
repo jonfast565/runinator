@@ -610,6 +610,7 @@ mod tests {
             "node-a".into(),
             Utc::now(),
             Uuid::new_v4(),
+            Uuid::now_v7(),
         );
         broker
             .publish_wake(crate::WakeMessage {
@@ -643,6 +644,7 @@ mod tests {
             Uuid::now_v7(),
             Uuid::now_v7(),
             "node-a".into(),
+            Uuid::now_v7(),
         );
         broker
             .publish_ingress(crate::IngressMessage {
