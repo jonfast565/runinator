@@ -13,9 +13,10 @@ uuid = { version = "1.18", features = ["v4", "serde"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 eframe = "0.29"
 tray-icon = "0.24"
+open = "5"
 
 runinator-api = { path = "../runinator-api" }
-runinator-broker = { path = "../runinator-broker" }
+runinator-broker = { path = "../runinator-broker", features = ["ws"] }
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 runinator-plugin = { path = "../runinator-plugin" }

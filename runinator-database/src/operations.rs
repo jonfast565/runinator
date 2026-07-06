@@ -10,7 +10,7 @@ use runinator_comm::{
 };
 use runinator_models::value::Value;
 use runinator_models::{
-    auth::{ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Team, User},
+    auth::{ApiKey, ApiKeyRecord, AuthContext, AuthSession, Grant, LocalCredential, Team, User},
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -47,7 +47,7 @@ use crate::{
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
-const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at";
+const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 
 trait ArchiveSqlExt: SqlBackend {
@@ -2527,8 +2527,14 @@ where
         &self,
         request: ReplicaRegistrationRequest,
         observed_ip: Option<String>,
+        registered_by: &AuthContext,
     ) -> Result<ReplicaRecord, SendableError> {
         let now = Utc::now().timestamp();
+        // only recorded on the initial insert below (deliberately absent from both conflict-update
+        // clauses), so a later re-registration under a different identity can't reassign ownership.
+        let registered_by_principal_id = registered_by.principal_id;
+        let registered_by_kind = registered_by.kind.as_str();
+        let registered_by_org_id = registered_by.org_id;
         self.pool()
             .execute(
                 sqlx::query(&self.render(
@@ -2559,8 +2565,8 @@ where
                 ],
             );
             sqlx::query(&self.render(&format!(
-                "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-                 VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) {conflict}",
+                "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id)
+                 VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?) {conflict}",
             )))
             .bind(replica_id)
             .bind(request.replica_type.as_str())
@@ -2576,6 +2582,9 @@ where
             .bind(now)
             .bind(now)
             .bind(now)
+            .bind(registered_by_principal_id)
+            .bind(registered_by_kind)
+            .bind(registered_by_org_id)
             .execute(self.pool())
             .await?;
             let row = sqlx::query(&self.render(&format!(
@@ -2589,8 +2598,8 @@ where
         }
 
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at)
-             VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            "INSERT INTO replicas (replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id)
+             VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
              ON CONFLICT(instance_id, runtime_id) DO UPDATE SET replica_type = excluded.replica_type, status = 'live', display_name = excluded.display_name, host = excluded.host, port = excluded.port, base_path = excluded.base_path, observed_ip = excluded.observed_ip, version = excluded.version, attributes = excluded.attributes, last_heartbeat_at = excluded.last_heartbeat_at, last_seen_at = excluded.last_seen_at, offline_at = NULL
              RETURNING {REPLICA_COLUMNS}",
         )))
@@ -2608,6 +2617,9 @@ where
         .bind(now)
         .bind(now)
         .bind(now)
+        .bind(registered_by_principal_id)
+        .bind(registered_by_kind)
+        .bind(registered_by_org_id)
         .fetch_one(self.pool())
         .await?;
         mappers::row_to_replica(&row)
@@ -2739,7 +2751,8 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        registered_by_principal_id, registered_by_kind, registered_by_org_id
                  FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"
             )))
             .bind(stale_before.timestamp())
@@ -2754,7 +2767,8 @@ where
                             WHEN last_heartbeat_at <= ? THEN 'stale'
                             ELSE 'live'
                         END AS status,
-                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        registered_by_principal_id, registered_by_kind, registered_by_org_id
                  FROM replicas ORDER BY replica_type, instance_id, replica_id",
             ))
             .bind(stale_before.timestamp())
@@ -2769,6 +2783,19 @@ where
             replicas.retain(|replica| replica.status == status);
         }
         Ok(replicas)
+    }
+
+    async fn fetch_replica(
+        &self,
+        replica_id: Uuid,
+    ) -> Result<Option<ReplicaRecord>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_COLUMNS} FROM replicas WHERE replica_id = ?",
+        )))
+        .bind(replica_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref().map(mappers::row_to_replica).transpose()
     }
 
     async fn count_running_node_runs_by_executor(&self) -> Result<Vec<(Uuid, i64)>, SendableError> {

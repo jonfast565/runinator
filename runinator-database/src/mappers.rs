@@ -750,6 +750,9 @@ macro_rules! replica_from_row {
             offline_at: $row
                 .get::<Option<i64>, _>("offline_at")
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            registered_by_principal_id: $row.get("registered_by_principal_id"),
+            registered_by_kind: $row.get("registered_by_kind"),
+            registered_by_org_id: $row.get("registered_by_org_id"),
         })
     }};
 }

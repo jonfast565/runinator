@@ -124,8 +124,9 @@ pub fn parse_config() -> Result<Config, SendableError> {
     })
 }
 
-// parse a `k=v,k=v` label string into a map; blank entries and entries without a `=` are skipped.
-fn parse_labels(raw: Option<&str>) -> BTreeMap<String, String> {
+/// parse a `k=v,k=v` label string into a map; blank entries and entries without a `=` are skipped.
+/// shared with `runinator-desktop-agent` so both surfaces accept the same label syntax.
+pub fn parse_labels(raw: Option<&str>) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     let Some(raw) = raw else {
         return labels;

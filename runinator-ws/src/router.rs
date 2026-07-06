@@ -109,7 +109,9 @@ use crate::handlers::{
     },
 };
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
-use crate::websocket::{ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run};
+use crate::websocket::{
+    ws_desktop_worker, ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run,
+};
 
 pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
@@ -134,11 +136,21 @@ pub fn build_router<T: DatabaseImpl>(
         .route("/openapi.json", get(crate::openapi::openapi_json))
         .route("/docs", get(crate::openapi::openapi_docs))
         .route("/ws/events", get(ws_events))
-        .route("/ws/workflow-runs/{id}", get(ws_workflow_run::<T>))
-        .route("/ws/run-stream/{id}", get(ws_run_stream::<T>))
+        .route(
+            "/ws/workflow-runs/{id}",
+            get(ws_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/run-stream/{id}",
+            get(ws_run_stream::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/ws/workflow-node-runs/{id}/stream",
-            get(ws_workflow_node_run_stream::<T>),
+            get(ws_workflow_node_run_stream::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/desktop-worker",
+            get(ws_desktop_worker::<T>).layer(Extension(pool.clone())),
         )
         .route(
             API_WORKFLOWS,

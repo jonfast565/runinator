@@ -10,6 +10,7 @@
 mod agent;
 mod config;
 mod gui;
+mod launcher;
 mod tray;
 
 fn main() -> eframe::Result<()> {

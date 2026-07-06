@@ -6,6 +6,7 @@ use std::{
 use log::info;
 use runinator_broker::Broker;
 use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret, load_jwt_secret_previous};
+use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
@@ -85,6 +86,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
             ),
         },
         None,
+        // the web service registering its own replica at startup, not an external caller.
+        &AuthContext::disabled_admin(),
     )
     .await?;
     let heartbeat_db = pool.clone();

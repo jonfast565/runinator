@@ -3,7 +3,7 @@
 use chrono::Utc;
 use runinator_broker::{
     adapters::rabbitmq::{RabbitMqBroker, RabbitMqBrokerConfig},
-    Broker, BrokerMessage, ControlCommand, ResultMessage,
+    ActionTarget, Broker, BrokerMessage, ConsumerProfile, ControlCommand, ResultMessage,
 };
 use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent};
 use runinator_models::json;
@@ -21,6 +21,7 @@ async fn rabbitmq_broker() -> Option<RabbitMqBroker> {
     };
     let action_queue = std::env::var("RUNINATOR_RABBITMQ_ACTION_QUEUE")
         .unwrap_or_else(|_| format!("runinator.test.actions.{}", Uuid::new_v4()));
+    let targeted_action_queue = format!("{action_queue}.targeted");
     let control_queue = std::env::var("RUNINATOR_RABBITMQ_CONTROL_QUEUE")
         .unwrap_or_else(|_| format!("runinator.test.control.{}", Uuid::new_v4()));
     let result_queue = std::env::var("RUNINATOR_RABBITMQ_RESULT_QUEUE")
@@ -30,6 +31,7 @@ async fn rabbitmq_broker() -> Option<RabbitMqBroker> {
         RabbitMqBroker::connect(
             RabbitMqBrokerConfig::new(uri)
                 .with_queues(action_queue, control_queue, result_queue)
+                .with_targeted_action_queue(targeted_action_queue)
                 .with_client_id(format!("runinator-test-{}", Uuid::new_v4())),
         )
         .await
@@ -161,6 +163,117 @@ async fn rabbitmq_broker_nack_redelivers_messages() {
     broker.ack(&consumer, redelivery.delivery_id).await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires a reachable RabbitMQ broker"]
+async fn rabbitmq_broker_still_delivers_any_targeted_actions_via_receive_for() {
+    let Some(broker) = rabbitmq_broker().await else {
+        return;
+    };
+    let command = action_command();
+    let command_id = command.command_id;
+    broker
+        .publish(BrokerMessage {
+            command,
+            dedupe_key: Some(command_id.to_string()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    // a plain, non-exclusive, unlabeled consumer still gets `Any` work through the shared queue.
+    let profile = ConsumerProfile::shared(format!("test-any-{}", Uuid::new_v4()));
+    let delivery = timeout(Duration::from_secs(10), broker.receive_for(&profile))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivery.command.command_id, command_id);
+    broker.ack(&profile.id, delivery.delivery_id).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a reachable RabbitMQ broker"]
+async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
+    let Some(broker) = rabbitmq_broker().await else {
+        return;
+    };
+    let mut command = action_command();
+    command.target = ActionTarget::Labels {
+        selector: [("runner".to_string(), "creds-sync".to_string())].into(),
+    };
+    let command_id = command.command_id;
+    broker
+        .publish(BrokerMessage {
+            command,
+            dedupe_key: Some(command_id.to_string()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    // an exclusive consumer whose labels don't include `runner=creds-sync` must never see this
+    // delivery (it would otherwise nack-and-loop on it forever since nothing else is competing).
+    let mismatched = ConsumerProfile::shared(format!("test-mismatch-{}", Uuid::new_v4()))
+        .with_labels([("runner".to_string(), "other".to_string())].into())
+        .exclusive();
+    let matching = ConsumerProfile::shared(format!("test-match-{}", Uuid::new_v4()))
+        .with_labels([("runner".to_string(), "creds-sync".to_string())].into())
+        .exclusive();
+
+    // race both; only `matching` should ever resolve to this command, and it must resolve well
+    // within the timeout even with `mismatched` also competing on the same targeted queue.
+    let delivery = timeout(Duration::from_secs(10), async {
+        tokio::select! {
+            delivery = broker.receive_for(&matching) => delivery,
+            // if the mismatched profile somehow won the race, that's the bug under test: surface
+            // it as a wrong delivery rather than hanging.
+            delivery = broker.receive_for(&mismatched) => delivery.map(|d| {
+                panic!(
+                    "mismatched consumer received command {} not intended for it",
+                    d.command.command_id
+                )
+            }),
+        }
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(delivery.command.command_id, command_id);
+    broker
+        .ack(&matching.id, delivery.delivery_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a reachable RabbitMQ broker"]
+async fn rabbitmq_broker_routes_replica_target_to_the_bound_replica_only() {
+    let Some(broker) = rabbitmq_broker().await else {
+        return;
+    };
+    let replica_id = Uuid::now_v7();
+    let mut command = action_command();
+    command.target = ActionTarget::Replica { replica_id };
+    let command_id = command.command_id;
+    broker
+        .publish(BrokerMessage {
+            command,
+            dedupe_key: Some(command_id.to_string()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let bound = ConsumerProfile::shared(format!("test-bound-{}", Uuid::new_v4()))
+        .with_replica_id(replica_id)
+        .exclusive();
+    let delivery = timeout(Duration::from_secs(10), broker.receive_for(&bound))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivery.command.command_id, command_id);
+    broker.ack(&bound.id, delivery.delivery_id).await.unwrap();
+}
+
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
@@ -174,6 +287,7 @@ fn action_command() -> ActionCommand {
             configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
+            required_labels: Default::default(),
         },
         attempt: 1,
         parameters: json!({ "value": true }),

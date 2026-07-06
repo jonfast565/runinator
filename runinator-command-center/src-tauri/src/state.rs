@@ -13,8 +13,6 @@ pub struct CommandCenterState {
     /// rebuilt with a default `Authorization` header whenever the access token changes, so every
     /// request site picks up the credential without per-call plumbing.
     pub client: Arc<RwLock<Client>>,
-    /// the raw access token, retained for command sites that need it directly.
-    pub access_token: Arc<RwLock<Option<String>>>,
 }
 
 impl CommandCenterState {
@@ -23,7 +21,6 @@ impl CommandCenterState {
             service_url: Arc::new(RwLock::new(None)),
             discovery_started: Arc::new(AtomicBool::new(false)),
             client: Arc::new(RwLock::new(Client::new())),
-            access_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -32,7 +29,7 @@ impl CommandCenterState {
     }
 
     /// swap in a client that presents `token` as `Authorization: Bearer …` (or a plain client when
-    /// `None`). called after login/refresh/logout. the raw token is retained for the embedded worker.
+    /// `None`). called after login/refresh/logout.
     pub async fn set_access_token(&self, token: Option<String>) {
         let normalized = token.filter(|value| !value.is_empty());
         let mut builder = Client::builder();
@@ -46,6 +43,5 @@ impl CommandCenterState {
         if let Ok(client) = builder.build() {
             *self.client.write().await = client;
         }
-        *self.access_token.write().await = normalized;
     }
 }

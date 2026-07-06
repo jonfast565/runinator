@@ -1,30 +1,87 @@
-//! persisted agent settings: the last-used service/broker urls and sandbox folder, so the GUI form
-//! does not need to be re-filled on every launch. best-effort only; a missing or corrupt file falls
-//! back to defaults rather than blocking startup.
+//! persisted agent settings: the last-used service url and sandbox folder, so the GUI form does not
+//! need to be re-filled on every launch. best-effort only; a missing or corrupt file falls back to
+//! defaults rather than blocking startup.
 
 use serde::{Deserialize, Serialize};
 
 const CONFIG_FILE_NAME: &str = "desktop-agent.json";
 
+/// which broker transport this agent uses — orthogonal to it being a "desktop" worker: a cloud
+/// worker can just as well relay through `runinator-ws` (e.g. no direct network path to the
+/// broker), and a desktop machine on the trusted network can just as well connect directly.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerMode {
+    /// relay through `runinator-ws`'s `/ws/desktop-worker` endpoint (derived from `service_url`).
+    /// the safe default for a machine that shouldn't (or can't) reach the broker directly.
+    #[default]
+    Relay,
+    /// connect straight to a broker backend (`direct_broker_backend`/`direct_broker_endpoint`) —
+    /// for a machine that's actually on the trusted network and wants to skip the relay hop.
+    Direct,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
+    /// also used to derive the ws broker relay URL in `BrokerMode::Relay` (scheme swapped,
+    /// `/ws/desktop-worker` appended) — see `agent::derive_relay_url`.
     pub service_url: String,
-    pub broker_url: String,
     pub sandbox_root: String,
     #[serde(default)]
     pub allow_write: bool,
     #[serde(default)]
     pub api_key: Option<String>,
+    /// extra routing labels this replica advertises, beyond the always-on `pool=desktop` — each
+    /// entry a `key=value` tag (same pairs `RUNINATOR_WORKER_LABELS`/`runinator_worker::parse_labels`
+    /// accept, joined with commas before parsing), so any future workflow that needs to pin work to a
+    /// desktop instance just needs a matching `.runner("...")`/label requirement, with no new agent
+    /// code or GUI control required.
+    #[serde(default)]
+    pub extra_labels: Vec<String>,
+    #[serde(default)]
+    pub broker_mode: BrokerMode,
+    /// broker backend name (`tcp`/`rabbitmq`/`kafka`/`http`), only used in `BrokerMode::Direct`.
+    #[serde(default = "default_direct_broker_backend")]
+    pub direct_broker_backend: String,
+    /// broker endpoint, only used in `BrokerMode::Direct` (e.g. `host:port` for tcp,
+    /// `amqp://user:pass@host:port/%2f` for rabbitmq).
+    #[serde(default)]
+    pub direct_broker_endpoint: String,
+    /// the command-center UI's URL, opened in the system's default browser by the "Open UI" button
+    /// (and tray menu item) when `command_center_app_path` is empty. a separate field from
+    /// `service_url`: the UI is typically its own deployment/ingress, not reachable by swapping a
+    /// path on the ws API's URL.
+    #[serde(default)]
+    pub command_center_url: String,
+    /// path to a native command-center install (a Tauri `.app` bundle on macOS, or an executable on
+    /// Windows/Linux) — "Open UI" launches this directly instead of the browser URL when set.
+    #[serde(default)]
+    pub command_center_app_path: String,
+    /// start the agent immediately when the process launches, without waiting for a manual click on
+    /// "Start agent" — for running this as a login item/background service on a machine nobody is
+    /// actively watching (e.g. the box that does hourly `packs/creds-sync` runs).
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
+fn default_direct_broker_backend() -> String {
+    "tcp".to_string()
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             service_url: "http://127.0.0.1:8080/".to_string(),
-            broker_url: "http://127.0.0.1:8088/".to_string(),
             sandbox_root: String::new(),
             allow_write: false,
             api_key: None,
+            extra_labels: Vec::new(),
+            broker_mode: BrokerMode::default(),
+            direct_broker_backend: default_direct_broker_backend(),
+            direct_broker_endpoint: String::new(),
+            command_center_url: String::new(),
+            command_center_app_path: String::new(),
+            auto_start: false,
         }
     }
 }

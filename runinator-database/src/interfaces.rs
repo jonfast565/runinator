@@ -6,7 +6,7 @@ use uuid::Uuid;
 use runinator_comm::{ActionCommand, ActionDispatchRecord, WorkflowResultEvent};
 use runinator_models::value::Value;
 use runinator_models::{
-    auth::{ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Team, User},
+    auth::{ApiKey, ApiKeyRecord, AuthContext, AuthSession, Grant, LocalCredential, Team, User},
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
     notifications::{NewNotification, Notification},
@@ -508,11 +508,14 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         uri: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
 
-    /// Register or refresh a runtime replica.
+    /// Register or refresh a runtime replica. `registered_by` is only recorded on the initial
+    /// insert (a later re-registration of the same instance_id/runtime_id upserts the rest of the
+    /// row but never reassigns ownership).
     fn register_replica(
         &self,
         request: ReplicaRegistrationRequest,
         observed_ip: Option<String>,
+        registered_by: &AuthContext,
     ) -> impl Future<Output = Result<ReplicaRecord, SendableError>> + Send;
 
     /// Refresh a replica heartbeat if the runtime id still matches.
@@ -551,6 +554,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         status: Option<ReplicaStatus>,
         stale_before: DateTime<Utc>,
     ) -> impl Future<Output = Result<Vec<ReplicaRecord>, SendableError>> + Send;
+
+    /// Fetch a single replica by id, so a caller presenting a `replica_id` (e.g. over the ws broker
+    /// relay) can be checked against who registered it.
+    fn fetch_replica(
+        &self,
+        replica_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
 
     /// Count node runs currently held by each executor replica, keyed by replica id. reflects live
     /// executor claims, so the count is the number of tasks actively running on each worker.

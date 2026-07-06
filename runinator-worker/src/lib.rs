@@ -15,7 +15,7 @@ pub mod worker;
 #[cfg(test)]
 mod tests;
 
-pub use broker::build_broker;
-pub use config::{Config, parse_config};
+pub use broker::{BrokerConfig, build_broker};
+pub use config::{Config, parse_config, parse_labels};
 pub use provider_repository::{ProviderFactory, default_provider_factory, resolve_provider};
 pub use worker::{WorkerRuntime, load_libraries, start_worker_loop};

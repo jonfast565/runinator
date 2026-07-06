@@ -219,6 +219,15 @@ pub enum PrincipalKind {
     Service,
 }
 
+impl PrincipalKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Service => "service",
+        }
+    }
+}
+
 /// the resolved principal for an authenticated request, injected as an axum extension.
 #[derive(Debug, Clone)]
 pub struct AuthContext {

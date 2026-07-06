@@ -1,12 +1,16 @@
 pub mod adapters;
 mod capabilities;
+pub mod dispatch;
 mod errors;
 mod factory;
 pub mod http;
 pub mod in_memory;
 mod instrumented;
 pub mod tcp;
+#[cfg(test)]
+mod tests;
 mod types;
+pub mod ws;
 
 pub use capabilities::{
     ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
@@ -42,10 +46,23 @@ pub trait Broker: Send + Sync + 'static {
 
     /// Wait for and retrieve the next delivery whose target matches `profile`. The targeting-aware
     /// path: an exclusive consumer (e.g. the desktop worker) only receives `Replica`/`Labels`
-    /// targets it satisfies, never general-pool `Any` work. Backends that do not route default to
-    /// the plain [`Broker::receive`] keyed by the profile id.
+    /// targets it satisfies, never general-pool `Any` work.
+    ///
+    /// Backends that do not have a smarter override (their own queue/topic routing per target) get
+    /// this safety net for free: receive, check the delivery's target against `profile`, and requeue
+    /// (`nack`) anything that doesn't match rather than handing it to the wrong consumer. A brief
+    /// sleep between mismatches avoids a hot loop if nothing currently connected matches transiently;
+    /// the reducer's own pre-dispatch liveness check means a genuine, lasting mismatch should be rare
+    /// and will otherwise surface via the node's own timeout, not an unbounded spin here.
     async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
-        self.receive(&profile.id).await
+        loop {
+            let delivery = self.receive(&profile.id).await?;
+            if delivery.command.target.matches(profile) {
+                return Ok(delivery);
+            }
+            self.nack(&profile.id, delivery.delivery_id).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     /// Acknowledge successful processing of a delivery.

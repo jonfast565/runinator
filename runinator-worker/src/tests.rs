@@ -16,7 +16,7 @@ async fn build_broker_rejects_kafka_without_result_topic() {
     config.broker_backend = "kafka".into();
     config.broker_result_topic = " ".into();
 
-    let err = match build_broker(&config).await {
+    let err = match build_broker(&config.broker_config()).await {
         Ok(_) => panic!("expected kafka result channel startup guard to fail"),
         Err(err) => err,
     };
@@ -31,13 +31,26 @@ async fn build_broker_rejects_rabbitmq_without_result_queue() {
     config.broker_backend = "rabbitmq".into();
     config.broker_result_topic = "".into();
 
-    let err = match build_broker(&config).await {
+    let err = match build_broker(&config.broker_config()).await {
         Ok(_) => panic!("expected rabbitmq result channel startup guard to fail"),
         Err(err) => err,
     };
 
     assert!(err.to_string().contains("Broker backend 'rabbitmq'"));
     assert!(err.to_string().contains("non-empty workflow result queue"));
+}
+
+#[tokio::test]
+async fn build_broker_supports_relaying_through_the_ws_backend() {
+    // proves any worker (not just runinator-desktop-agent) can pick "connect through the
+    // runinator-ws relay" instead of a direct broker backend, via the same config/build_broker path.
+    let mut config = test_config();
+    config.broker_backend = "ws".into();
+    config.broker_endpoint = "ws://127.0.0.1:0/ws/desktop-worker".into();
+
+    build_broker(&config.broker_config())
+        .await
+        .expect("the ws backend should build even before any connection attempt completes");
 }
 
 #[tokio::test]

@@ -106,7 +106,7 @@ pub async fn logout(
     .await
 }
 
-/// store the access token so subsequent requests carry it (desktop side of the credential).
+/// store the access token so subsequent requests carry it.
 #[tauri::command]
 pub async fn set_access_token(
     state: State<'_, CommandCenterState>,

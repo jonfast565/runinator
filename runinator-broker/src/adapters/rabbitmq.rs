@@ -1,3 +1,5 @@
+#[cfg(feature = "rabbitmq")]
+use crate::{ActionTarget, ConsumerProfile};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -18,6 +20,12 @@ const DEFAULT_CLIENT_ID: &str = "runinator";
 pub struct RabbitMqBrokerConfig {
     pub uri: String,
     pub action_queue: String,
+    // second action queue carrying only `Labels`/`Replica`-targeted actions, so `Any` traffic (the
+    // common case) never shares a queue with targeted traffic. See `Broker::receive_for`'s default
+    // safety net: RabbitMQ can't natively express "message selector ⊆ consumer labels" for open-ended
+    // labels, so this queue is deliberately coarse and every delivery from it is re-validated
+    // client-side against the requesting profile before being handed back.
+    pub targeted_action_queue: String,
     pub control_queue: String,
     pub result_queue: String,
     pub wake_queue: String,
@@ -32,6 +40,7 @@ impl RabbitMqBrokerConfig {
         Self {
             uri: uri.into(),
             action_queue: DEFAULT_ACTION_QUEUE.into(),
+            targeted_action_queue: format!("{DEFAULT_ACTION_QUEUE}.targeted"),
             control_queue: DEFAULT_CONTROL_QUEUE.into(),
             result_queue: DEFAULT_RESULT_QUEUE.into(),
             wake_queue: DEFAULT_WAKE_QUEUE.into(),
@@ -56,6 +65,12 @@ impl RabbitMqBrokerConfig {
         self.action_queue = action_queue.into();
         self.control_queue = control_queue.into();
         self.result_queue = result_queue.into();
+        self
+    }
+
+    /// override the queue that carries `Labels`/`Replica`-targeted actions (see field doc comment).
+    pub fn with_targeted_action_queue(mut self, targeted_action_queue: impl Into<String>) -> Self {
+        self.targeted_action_queue = targeted_action_queue.into();
         self
     }
 
@@ -124,6 +139,7 @@ struct RabbitMqBrokerInner {
     channel: AsyncMutex<lapin::Channel>,
     uri: String,
     action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    targeted_action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     control_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     wake_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
@@ -137,6 +153,7 @@ struct RabbitMqBrokerInner {
 #[derive(Clone, Copy)]
 enum RabbitMqChannel {
     Action,
+    TargetedAction,
     Control,
     Result,
     Wake,
@@ -156,6 +173,7 @@ impl RabbitMqBrokerInner {
             .await
             .map_err(rabbitmq_error("channel"))?;
         declare_queue(&channel, &config.action_queue).await?;
+        declare_queue(&channel, &config.targeted_action_queue).await?;
         declare_queue(&channel, &config.control_queue).await?;
         declare_queue(&channel, &config.result_queue).await?;
         declare_queue(&channel, &config.wake_queue).await?;
@@ -166,6 +184,7 @@ impl RabbitMqBrokerInner {
             channel: AsyncMutex::new(channel),
             uri: config.uri.clone(),
             action_consumers: Mutex::new(HashMap::new()),
+            targeted_action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
@@ -196,6 +215,7 @@ impl RabbitMqBrokerInner {
             .await
             .map_err(rabbitmq_error("reconnect_channel"))?;
         declare_queue(&new_channel, &config.action_queue).await?;
+        declare_queue(&new_channel, &config.targeted_action_queue).await?;
         declare_queue(&new_channel, &config.control_queue).await?;
         declare_queue(&new_channel, &config.result_queue).await?;
         declare_queue(&new_channel, &config.wake_queue).await?;
@@ -203,6 +223,7 @@ impl RabbitMqBrokerInner {
         declare_fanout_exchange(&new_channel, &config.event_exchange).await?;
         // consumers are bound to the old channel; clear them so they're recreated on next use.
         self.action_consumers.lock().clear();
+        self.targeted_action_consumers.lock().clear();
         self.control_consumers.lock().clear();
         self.result_consumers.lock().clear();
         self.wake_consumers.lock().clear();
@@ -276,6 +297,7 @@ impl RabbitMqBrokerInner {
     ) -> Result<Arc<AsyncMutex<lapin::Consumer>>, BrokerError> {
         let map = match channel {
             RabbitMqChannel::Action => &self.action_consumers,
+            RabbitMqChannel::TargetedAction => &self.targeted_action_consumers,
             RabbitMqChannel::Control => &self.control_consumers,
             RabbitMqChannel::Result => &self.result_consumers,
             RabbitMqChannel::Wake => &self.wake_consumers,
@@ -451,6 +473,7 @@ async fn nack_delivery(delivery: lapin::message::Delivery) -> Result<(), BrokerE
 fn queue_for(config: &RabbitMqBrokerConfig, channel: RabbitMqChannel) -> &str {
     match channel {
         RabbitMqChannel::Action => &config.action_queue,
+        RabbitMqChannel::TargetedAction => &config.targeted_action_queue,
         RabbitMqChannel::Control => &config.control_queue,
         RabbitMqChannel::Result => &config.result_queue,
         RabbitMqChannel::Wake => &config.wake_queue,
@@ -462,6 +485,7 @@ fn queue_for(config: &RabbitMqBrokerConfig, channel: RabbitMqChannel) -> &str {
 fn channel_name(channel: RabbitMqChannel) -> &'static str {
     match channel {
         RabbitMqChannel::Action => "actions",
+        RabbitMqChannel::TargetedAction => "actions.targeted",
         RabbitMqChannel::Control => "control",
         RabbitMqChannel::Result => "results",
         RabbitMqChannel::Wake => "wake",
@@ -474,6 +498,25 @@ fn rabbitmq_error(context: &'static str) -> impl FnOnce(lapin::Error) -> BrokerE
     move |err| BrokerError::Internal(format!("rabbitmq {context}: {err}"))
 }
 
+#[cfg(feature = "rabbitmq")]
+impl RabbitMqBroker {
+    /// receive the next delivery from the targeted-actions queue (`Labels`/`Replica` targets only).
+    /// unlike `receive`, callers must re-validate the delivery's target against their own profile —
+    /// this queue can carry cross-talk for other consumers' label groups.
+    async fn receive_targeted_action(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+        let result =
+            receive_json::<BrokerMessage>(self, RabbitMqChannel::TargetedAction, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.targeted_action_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
+        let broker_delivery = BrokerDelivery::from(message);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+}
+
 #[async_trait]
 #[cfg(feature = "rabbitmq")]
 impl Broker for RabbitMqBroker {
@@ -483,10 +526,19 @@ impl Broker for RabbitMqBroker {
 
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
+        // `Any` traffic (the common case) keeps using the plain shared queue unchanged; `Labels`/
+        // `Replica` targets go to the second queue so general workers never see them at all. See
+        // `receive_for`'s override below for how a targeted delivery is matched to the right consumer.
+        let queue = match &message.command.target {
+            ActionTarget::Any => &self.config.action_queue,
+            ActionTarget::Labels { .. } | ActionTarget::Replica { .. } => {
+                &self.config.targeted_action_queue
+            }
+        };
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, &self.config.action_queue, &key, payload).await
+        publish_json(&ch, queue, &key, payload).await
     }
 
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
@@ -499,6 +551,33 @@ impl Broker for RabbitMqBroker {
         self.inner
             .track_delivery(broker_delivery.delivery_id, delivery);
         Ok(broker_delivery)
+    }
+
+    /// non-exclusive profiles (ordinary cloud workers, including non-exclusive-but-labeled
+    /// org-dedicated workers) can legitimately receive both `Any` work and any `Labels`/`Replica`
+    /// target they satisfy, so race both queues. exclusive profiles (e.g. the desktop worker) never
+    /// match `Any` (see `ActionTarget::matches`), so only the targeted queue is worth draining.
+    /// either way, since RabbitMQ can't natively filter the targeted queue by content, every
+    /// delivery pulled from it is re-validated against `profile` and requeued if it doesn't match.
+    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
+        let targeted = async {
+            loop {
+                let delivery = self.receive_targeted_action(&profile.id).await?;
+                if delivery.command.target.matches(profile) {
+                    return Ok(delivery);
+                }
+                self.nack(&profile.id, delivery.delivery_id).await?;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        };
+        if profile.exclusive {
+            targeted.await
+        } else {
+            tokio::select! {
+                result = self.receive(&profile.id) => result,
+                result = targeted => result,
+            }
+        }
     }
 
     async fn ack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
@@ -752,6 +831,19 @@ mod tests {
         assert_eq!(config.control_queue, DEFAULT_CONTROL_QUEUE);
         assert_eq!(config.result_queue, DEFAULT_RESULT_QUEUE);
         assert_eq!(config.client_id, DEFAULT_CLIENT_ID);
+    }
+
+    #[test]
+    fn rabbitmq_config_defaults_targeted_action_queue() {
+        let config = RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f");
+
+        assert_eq!(
+            config.targeted_action_queue,
+            format!("{DEFAULT_ACTION_QUEUE}.targeted")
+        );
+
+        let config = config.with_targeted_action_queue("custom.targeted");
+        assert_eq!(config.targeted_action_queue, "custom.targeted");
     }
 
     #[test]

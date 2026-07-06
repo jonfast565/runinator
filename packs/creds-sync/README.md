@@ -15,12 +15,24 @@ credential files — add a new job, no workflow change.
 
 Each node uses `.runner("creds-sync")`. The reducer routes a node with a required label to a live
 worker advertising that label, and **parks then fails** (on the node `timeout`) when none is
-connected. So these workflows only ever execute on a worker you start on the operator's workstation:
+connected. So these workflows only ever execute on a worker you start on the operator's workstation,
+either a standalone worker:
 
 ```bash
 RUNINATOR_WORKER_LABELS=runner=creds-sync \
   cargo run -p runinator-worker -- --advertise-host <host>
 ```
+
+or `runinator-desktop-agent` (the tray app) with `runner=creds-sync` added to its "Extra labels"
+field — it registers the full built-in provider catalog (including `console`, `aws`) unconditionally,
+so either workflow can route there once the label matches; it just stays `exclusive`, so it never
+picks up unrelated general-pool work in the meantime.
+
+Either surface's "which broker transport" is a separate choice from "what kind of worker this is" —
+by default both relay through `runinator-ws` (`--broker-backend ws` for the standalone binary, or
+`runinator-desktop-agent`'s "Broker connection: Via web service" mode), but either can instead connect
+straight to the broker (`--broker-backend tcp`/`rabbitmq`, or the agent's "Direct" mode) if that
+worker is actually on the broker's trusted network.
 
 That worker must have:
 

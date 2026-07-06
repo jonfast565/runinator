@@ -27,19 +27,17 @@ kubectl -n runinator scale deploy/runinator-ws --replicas=3
 kubectl -n runinator scale deploy/runinator-worker --replicas=3
 ```
 
-Each worker pod also mounts a node-local AWS config directory at
-`/var/runinator/aws`, which is exposed inside the container as
-`/home/runinator/.aws` so AWS SSO profile and cache files are available to the
-worker process. Point that node path at your real `~/.aws` using your local
-cluster driver's mount or symlink support before applying the overlay.
-
-The ws, waker, and worker pods also mount a node-local Claude config directory
-at `/var/runinator/claude`, exposed inside each container as
-`/home/runinator/.claude`, so the `claude` binary invoked by the AI command
-(`runinator-provider-ai`) finds its config and credentials. It is mounted
-read-write because Claude Code writes session/project state and refreshes its
-OAuth token there. Point that node path at your real `~/.claude` using your
-local cluster driver's mount or symlink support before applying the overlay.
+AWS and Claude credentials reach the worker pod via the `components/rotated-creds`
+component (enabled by this overlay), not a hostPath mount — Docker Desktop's local
+cluster schedules replicas across several nodes, so a node-local hostPath is only
+ever populated on whichever one you touched. `rotated-creds` instead mounts the
+`aws-sso-cache` and `claude-credentials` Secrets, which `tools/runinator-secret-sync`
+(run on your workstation, see `scripts/sync-secrets.sh` and `packs/creds-sync`) pushes
+into the cluster from your local AWS SSO cache and Claude Code Keychain login. Run
+that sync at least once after a fresh deploy (both Secrets are optional, so pods start
+without them — the AWS/Claude actions just fail until the sync has run). Set your real
+IAM Identity Center values in `deploy/k8s/components/rotated-creds/aws-config-configmap.yaml`
+if you need working AWS SSO locally.
 
 The archiver pod mounts a node-local archive directory at `/var/runinator/archive`,
 exposed inside the container at `/var/lib/runinator/archive`, so the compressed

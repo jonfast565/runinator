@@ -143,6 +143,15 @@ pub struct ReplicaRecord {
     pub last_seen_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_at: Option<DateTime<Utc>>,
+    /// the identity that registered this replica, captured once at insert and never reassigned by
+    /// later heartbeats/upserts. lets a lower-trust external caller (e.g. a desktop-agent connecting
+    /// through the ws broker relay) be checked against the replica_id/labels it presents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_by_principal_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_by_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_by_org_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

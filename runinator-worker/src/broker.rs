@@ -6,12 +6,47 @@ use runinator_broker::{
     http::client::HttpBroker,
     in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
+    ws::client::WsBroker,
 };
 use runinator_models::errors::{RuntimeError, SendableError};
 
 use crate::config;
 
-pub async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, SendableError> {
+/// the subset of worker config that selects and builds a `Broker`, factored out of the full CLI
+/// [`config::Config`] so any caller (the standalone `runinator-worker` binary, or an embedded host
+/// like `runinator-desktop-agent`) can pick a backend without needing to construct the rest of a
+/// worker's CLI-oriented config. "which broker transport" and "what kind of worker this is" are
+/// orthogonal: any worker — cloud or desktop — can connect directly to a broker backend
+/// (tcp/rabbitmq/kafka/http/in-memory) or relay through `runinator-ws`'s `/ws/desktop-worker`
+/// endpoint (`"ws"`) depending on what network access it actually has.
+#[derive(Debug, Clone)]
+pub struct BrokerConfig {
+    pub broker_backend: String,
+    pub broker_endpoint: String,
+    pub broker_action_topic: String,
+    pub broker_control_topic: String,
+    pub broker_result_topic: String,
+    pub broker_client_id: String,
+    /// presented as a bearer token; only used by the `http`/`ws` backends today.
+    pub api_key: Option<String>,
+}
+
+impl config::Config {
+    /// the broker-relevant slice of this worker's full CLI config, for [`build_broker`].
+    pub fn broker_config(&self) -> BrokerConfig {
+        BrokerConfig {
+            broker_backend: self.broker_backend.clone(),
+            broker_endpoint: self.broker_endpoint.clone(),
+            broker_action_topic: self.broker_action_topic.clone(),
+            broker_control_topic: self.broker_control_topic.clone(),
+            broker_result_topic: self.broker_result_topic.clone(),
+            broker_client_id: self.broker_client_id.clone(),
+            api_key: self.api_key.clone(),
+        }
+    }
+}
+
+pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
     runinator_broker::ensure_named_workflow_result_channel(
         &config.broker_backend,
         &config.broker_result_topic,
@@ -29,6 +64,10 @@ pub async fn build_broker(config: &config::Config) -> Result<Arc<dyn Broker>, Se
 
             Arc::new(HttpBroker::new(url, client))
         }
+        "ws" => Arc::new(WsBroker::connect(
+            config.broker_endpoint.clone(),
+            config.api_key.clone(),
+        )),
         "in-memory" => Arc::new(InMemoryBroker::new()),
         "tcp" => Arc::new(TcpBroker::new(config.broker_endpoint.clone())),
         "kafka" => runinator_broker::build_kafka_broker(

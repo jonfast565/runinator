@@ -10,7 +10,14 @@ use axum::{
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
+use runinator_broker::{
+    Broker,
+    dispatch::dispatch,
+    tcp::types::TcpRequest,
+    ws::types::{WsRequestFrame, WsResponseFrame},
+};
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::auth::AuthContext;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -324,4 +331,109 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
         }
         log::info!("WebSocket connection closed for /ws/run-stream/{}", run_id);
     })
+}
+
+/// relays broker traffic for an external, lower-trust worker (e.g. `runinator-desktop-agent`) that
+/// can't reach the internal broker (RabbitMQ) directly, but can reach this already-authenticated,
+/// already-exposed endpoint. dispatches against the exact same `Arc<dyn Broker>` every other part of
+/// this service uses, so it's correct regardless of the deployment's backend, and it inherits the
+/// standard auth middleware (already applied to every `/ws/*` route) for free.
+///
+/// unlike `ws_events` (fan-out, no ack, read-only), this is bidirectional and multiplexed: each
+/// incoming request is dispatched on its own spawned task so a slow `receive_for`/`receive_control`
+/// never blocks a concurrent `ack` arriving moments later on the same connection.
+pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    log::info!("WebSocket upgrade request for /ws/desktop-worker");
+    ws.on_upgrade(move |socket| async move {
+        log::info!("WebSocket connection established for /ws/desktop-worker");
+        let (tx, mut rx_ws) = socket.split();
+        let tx = Arc::new(tokio::sync::Mutex::new(tx));
+        while let Some(msg) = rx_ws.next().await {
+            let text = match msg {
+                Ok(Message::Text(text)) => text,
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(_) => continue,
+            };
+            let Ok(frame) = serde_json::from_str::<WsRequestFrame>(&text) else {
+                continue;
+            };
+            let db = db.clone();
+            let broker = broker.clone();
+            let ctx = ctx.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let response =
+                    handle_desktop_worker_request(db.as_ref(), broker.as_ref(), &ctx, frame.body)
+                        .await;
+                let Ok(payload) =
+                    serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
+                else {
+                    return;
+                };
+                let _ = tx.lock().await.send(Message::Text(payload.into())).await;
+            });
+        }
+        log::info!("WebSocket connection closed for /ws/desktop-worker");
+    })
+}
+
+/// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
+/// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
+/// `receive_for`/`ack`/`nack` (action channel), `receive_control`/`ack_control` (control channel),
+/// and `publish_result` (result channel) — everything else (publishing actions/control/wake/ingress,
+/// the fan-out events channel, and the untargeted general `receive`) is refused outright.
+async fn handle_desktop_worker_request<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    ctx: &AuthContext,
+    request: TcpRequest,
+) -> runinator_broker::tcp::types::TcpResponse {
+    use runinator_broker::tcp::types::TcpResponse;
+
+    match &request {
+        TcpRequest::ReceiveFor { profile } => {
+            if !profile.exclusive {
+                return TcpResponse::Error {
+                    message: "desktop-worker relay requires an exclusive consumer profile".into(),
+                };
+            }
+            if let Some(replica_id) = profile.replica_id {
+                match repository::fetch_replica(db, replica_id).await {
+                    Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => {
+                    }
+                    Ok(Some(_)) => {
+                        return TcpResponse::Error {
+                            message: "replica_id is not owned by the connecting identity".into(),
+                        };
+                    }
+                    Ok(None) => {
+                        return TcpResponse::Error {
+                            message: "unknown replica_id".into(),
+                        };
+                    }
+                    Err(err) => {
+                        return TcpResponse::Error {
+                            message: err.to_string(),
+                        };
+                    }
+                }
+            }
+        }
+        TcpRequest::Ack { .. }
+        | TcpRequest::Nack { .. }
+        | TcpRequest::ReceiveControl { .. }
+        | TcpRequest::AckControl { .. }
+        | TcpRequest::PublishResult { .. } => {}
+        _ => {
+            return TcpResponse::Error {
+                message: "operation not permitted over the desktop-worker relay".into(),
+            };
+        }
+    }
+    dispatch(broker, request).await
 }

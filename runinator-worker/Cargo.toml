@@ -27,3 +27,7 @@ runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 [features]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
+# enables `--broker-backend ws`, relaying through runinator-ws's /ws/desktop-worker endpoint instead
+# of connecting to the broker directly — for a worker that only has network access to the web
+# service (e.g. running outside the cluster's trusted network).
+ws = ["runinator-broker/ws"]

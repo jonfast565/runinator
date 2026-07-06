@@ -1,4 +1,5 @@
 use super::*;
+use runinator_models::auth::AuthContext;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaListResponse, ReplicaProviderRegistration,
     ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest, ReplicaStatus,
@@ -21,8 +22,10 @@ pub async fn register_replica<T: DatabaseImpl>(
     db: &T,
     request: ReplicaRegistrationRequest,
     observed_ip: Option<String>,
+    registered_by: &AuthContext,
 ) -> Result<ReplicaRecord, SendableError> {
-    db.register_replica(request, observed_ip).await
+    db.register_replica(request, observed_ip, registered_by)
+        .await
 }
 
 pub async fn heartbeat_replica<T: DatabaseImpl>(
@@ -95,6 +98,13 @@ pub async fn reap_inactive_replicas<T: DatabaseImpl>(db: &T) -> Result<u64, Send
 pub async fn delete_expired_replicas<T: DatabaseImpl>(db: &T) -> Result<u64, SendableError> {
     let cutoff = Utc::now() - Duration::seconds(REPLICA_DELETE_SECONDS);
     db.delete_expired_replicas(cutoff).await
+}
+
+pub async fn fetch_replica<T: DatabaseImpl>(
+    db: &T,
+    replica_id: Uuid,
+) -> Result<Option<ReplicaRecord>, SendableError> {
+    db.fetch_replica(replica_id).await
 }
 
 pub async fn fetch_replicas<T: DatabaseImpl>(

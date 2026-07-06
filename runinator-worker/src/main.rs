@@ -46,7 +46,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
     info!("Worker ID: {}", config.worker_id);
 
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
-    let broker = build_broker(&config).await?;
+    let broker = build_broker(&config.broker_config()).await?;
     let api_client = build_api_client(&config)?;
     let shutdown = Arc::new(Notify::new());
 

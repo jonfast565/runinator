@@ -10,6 +10,7 @@ const ICON_SIZE: u32 = 32;
 
 pub enum TrayAction {
     Open,
+    OpenUi,
     Exit,
 }
 
@@ -17,6 +18,7 @@ pub enum TrayAction {
 pub struct AgentTray {
     _tray: TrayIcon,
     open_id: MenuId,
+    open_ui_id: MenuId,
     exit_id: MenuId,
 }
 
@@ -27,12 +29,15 @@ impl AgentTray {
     /// tray icon, so a failure here should not be fatal.
     pub fn new() -> Option<Self> {
         let open_item = MenuItem::new("Open Runinator Desktop Agent", true, None);
+        let open_ui_item = MenuItem::new("Open Command Center", true, None);
         let exit_item = MenuItem::new("Exit", true, None);
         let open_id = open_item.id().clone();
+        let open_ui_id = open_ui_item.id().clone();
         let exit_id = exit_item.id().clone();
 
         let menu = Menu::new();
         menu.append(&open_item).ok()?;
+        menu.append(&open_ui_item).ok()?;
         menu.append(&PredefinedMenuItem::separator()).ok()?;
         menu.append(&exit_item).ok()?;
 
@@ -46,6 +51,7 @@ impl AgentTray {
         Some(Self {
             _tray: tray,
             open_id,
+            open_ui_id,
             exit_id,
         })
     }
@@ -55,6 +61,9 @@ impl AgentTray {
         if let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == self.open_id {
                 return Some(TrayAction::Open);
+            }
+            if event.id == self.open_ui_id {
+                return Some(TrayAction::OpenUi);
             }
             if event.id == self.exit_id {
                 return Some(TrayAction::Exit);

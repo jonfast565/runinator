@@ -29,7 +29,9 @@ pub(crate) async fn register_replica<T: DatabaseImpl>(
     if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
         return reply;
     }
-    match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect)).await {
+    match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect), &ctx)
+        .await
+    {
         Ok(replica) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
         Err(err) => api_error(err.to_string()),
     }

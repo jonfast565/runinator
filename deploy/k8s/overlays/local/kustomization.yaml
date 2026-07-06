@@ -10,8 +10,15 @@ resources:
 # OpenTelemetry collector + Jaeger trace UI, and point the services at the collector. View traces at
 # http://localhost:16686 after `kubectl -n runinator port-forward svc/runinator-jaeger 16686:16686`.
 # See components/observability/kustomization.yaml for metrics/logs viewing. Drop this line to disable.
+#
+# rotated-creds mounts the aws-sso-cache/claude-credentials Secrets that tools/runinator-secret-sync
+# (via scripts/sync-secrets.sh, see packs/creds-sync) pushes into the worker pod. It replaces this
+# overlay's former hostPath aws-creds/claude-creds patches, which only worked reliably on a true
+# single-node cluster — a multi-node local cluster (e.g. Docker Desktop's default node pool) schedules
+# worker replicas across nodes, so a node-local hostPath mount is only ever populated on one of them.
 components:
   - ../../components/observability
+  - ../../components/rotated-creds
 
 # Single-node / local cluster (k3d, minikube, kind). PVCs use the cluster's
 # default StorageClass (e.g. local-path on k3d). If your local cluster has no
@@ -24,8 +31,6 @@ components:
 patches:
   - path: resources-patch.yaml
   - path: autoscaling-patch.yaml
-  - path: aws-creds-patch.yaml
-  - path: claude-creds-patch.yaml
   # Drop archiver output onto the real filesystem instead of an ephemeral PVC.
   # The base archiver declares a single volume (archive-data), so replacing
   # volumes/0 swaps its source to a node-local hostPath; the archiver keeps

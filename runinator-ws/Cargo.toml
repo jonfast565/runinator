@@ -47,5 +47,7 @@ async-trait = "0.1"
 [features]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
+# enables the real `WsBroker` client, needed to test the /ws/desktop-worker relay end to end.
+ws = ["runinator-broker/ws"]
 # cloud builds: enable the kube-rs node provisioner backend.
 kubernetes = ["runinator-provisioner/kubernetes"]

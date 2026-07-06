@@ -91,7 +91,7 @@ async fn kafka_broker_delivers_control_messages() {
             .ack_control(&consumer, delivery.delivery_id)
             .await
             .unwrap();
-        if delivery.command.workflow_run_id == 4242 {
+        if delivery.command.workflow_run_id == Uuid::from_u128(4242) {
             assert!(matches!(delivery.command.kind, ControlKind::Cancel));
             break;
         }
@@ -190,6 +190,7 @@ fn action_command() -> ActionCommand {
             configuration: runinator_models::workflows::WorkflowObject::default(),
             mcp_enabled: false,
             tags: Vec::new(),
+            required_labels: Default::default(),
         },
         attempt: 1,
         parameters: json!({ "value": true }),
