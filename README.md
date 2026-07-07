@@ -63,12 +63,16 @@ simply absent from the spec until annotated, so coverage can grow incrementally.
 Useful local commands:
 
 ```bash
+bash scripts/run-local.sh start
+bash scripts/run-local.sh foreground
 bash scripts/run-local.sh status
 bash scripts/run-local.sh watch
 bash scripts/run-local.sh logs
 bash scripts/run-local.sh logs --process web-service
 bash scripts/run-local.sh logs-watch --lines 40
 bash scripts/run-local.sh observe
+bash scripts/run-local.sh observe-foreground
+bash scripts/run-local.sh observability-start
 bash scripts/run-local.sh observability-status
 bash scripts/run-local.sh observability-logs
 bash scripts/run-local.sh observability-stop
@@ -554,7 +558,7 @@ without invalidating live tokens or stranding stored secrets:
 ### Quick start (local cluster)
 
 ```bash
-# Builds the eight K8s images, renders a temporary local overlay with matching
+# Builds the K8s images, renders a temporary local overlay with matching
 # image tags, applies it, and waits for Postgres, RabbitMQ, and app rollouts.
 cargo run -p xtask -- k8s deploy
 ```
@@ -570,6 +574,16 @@ The local overlay includes development-only Postgres, RabbitMQ, and app
 Secrets. For k3d/kind clusters that do not share Docker Desktop's image store,
 configure a local registry and pass it as `--local-registry localhost:5000` (or
 use `--image-repository` for any registry reachable by the cluster).
+
+Re-running `k8s deploy` against a cluster that already has the stack up
+preserves the existing `runinator-postgres` and `runinator-rabbitmq`
+StatefulSets by default, so redeploys don't roll your data stores. Pass
+`--recreate-infra` when you actually want those StatefulSets re-applied (e.g.
+after editing their manifests):
+
+```bash
+cargo run -p xtask -- k8s deploy --recreate-infra
+```
 
 To redeploy only the web interface, rebuild and apply just the
 `runinator-command-center-web` resources with:
