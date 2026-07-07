@@ -86,17 +86,18 @@ ENTRYPOINT ["/usr/local/bin/runinator-archiver"]
 FROM runtime-base AS ctl
 RUN mkdir -p /home/runinator/.runinator/workflows
 COPY --from=builder /workspace/target/release/runinatorctl /usr/local/bin/runinatorctl
-COPY packs/sdlc/sdlc.wdlp /home/runinator/.runinator/workflows/sdlc.wdlp
-COPY packs/sdlc/settings.wdls /home/runinator/.runinator/workflows/settings.wdls
-COPY packs/sdlc/wdl /home/runinator/.runinator/workflows/wdl
+# bake every pack in, each keeping its own subdirectory so the shared `wdl/` and `settings.wdls`
+# names never collide across packs; the import job applies them all.
+COPY packs /home/runinator/.runinator/workflows/packs
 RUN chown -R runinator:runinator /usr/local/bin/runinatorctl /home/runinator/.runinator \
     && chmod -R 775 /usr/local/bin/runinatorctl
 ENV RUNINATOR_API_BASE_URL=http://127.0.0.1:8080/
 USER runinator
-# short-lived: compile and import the workflow pack, then exit. override the final argument to
-# import a different pack, or pass other runinatorctl subcommands.
+# short-lived: compile and import a workflow pack, then exit. the default applies sdlc; override the
+# final argument to import a different pack, or pass other runinatorctl subcommands. the k8s
+# pack-import job overrides this to loop over every baked-in pack.
 ENTRYPOINT ["/usr/local/bin/runinatorctl"]
-CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/sdlc.wdlp"]
+CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.wdlp"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap

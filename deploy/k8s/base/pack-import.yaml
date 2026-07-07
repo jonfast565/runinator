@@ -23,10 +23,16 @@ spec:
           image: runinator-ctl:dev
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-lc"]
+          # apply every baked-in pack (each pack is its own subdirectory with a single .wdlp
+          # manifest). a new pack dropped into packs/ is picked up automatically on the next image
+          # build — no job edit needed. apply is force-overwrite, so re-deploys refresh definitions.
           args:
             - >
-              runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply
-              /home/runinator/.runinator/workflows/sdlc.wdlp
+              set -e;
+              for pack in /home/runinator/.runinator/workflows/packs/*/*.wdlp; do
+                echo "applying $pack";
+                runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply "$pack";
+              done
           envFrom:
             - configMapRef:
                 name: runinator-common
