@@ -1,6 +1,6 @@
 use crate::{
-    ActionCommand, ControlKind, WakeCommand, WireCodec, WorkflowResultEvent,
-    WorkflowResultEventKind, WsIngressCommand,
+    ActionCommand, ActionTarget, ControlCommand, ControlKind, WakeCommand, WireCodec,
+    WorkflowResultEvent, WorkflowResultEventKind, WsIngressCommand,
 };
 use chrono::Utc;
 use runinator_models::{json, runs::NewRunChunk, workflows::WorkflowAction};
@@ -49,6 +49,22 @@ fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
         control.dedupe_key(),
         format!("control:{workflow_run_id}:Cancel")
     );
+}
+
+#[test]
+fn control_command_round_trips_its_target_and_defaults_older_messages_to_any() {
+    let workflow_run_id = Uuid::now_v7();
+    let replica_id = Uuid::now_v7();
+    let command =
+        ControlCommand::for_node_run(workflow_run_id, Uuid::now_v7(), ControlKind::Cancel)
+            .targeting_replica(replica_id);
+    let decoded = ControlCommand::from_wire(&command.to_wire().unwrap()).unwrap();
+    assert_eq!(decoded.target, ActionTarget::Replica { replica_id });
+
+    // a pre-targeting message (no `target` field) must deserialize as `Any`.
+    let legacy = format!(r#"{{"workflow_run_id":"{workflow_run_id}","kind":"cancel"}}"#);
+    let decoded: ControlCommand = serde_json::from_str(&legacy).unwrap();
+    assert_eq!(decoded.target, ActionTarget::Any);
 }
 
 #[test]

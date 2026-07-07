@@ -69,6 +69,10 @@ impl Broker for FakeBroker {
         unimplemented!("not exercised by this test")
     }
 
+    async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        unimplemented!("not exercised by this test")
+    }
+
     async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
         unimplemented!("not exercised by this test")
     }

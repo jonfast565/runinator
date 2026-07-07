@@ -18,6 +18,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::broker::broker_error;
+use crate::events::{ActionOutcome, WorkerEvent, WorkerEventSink};
 use crate::executor;
 use crate::metrics;
 use crate::output_sink::RunOutputSink;
@@ -27,6 +28,11 @@ use crate::secrets::resolve_secret_refs;
 // grace added to an action's timeout before its executor lease is considered abandoned, so a worker
 // that is merely slow (clock skew, a long flush) is never preempted by a duplicate delivery.
 const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
+
+// backoff before retrying a failed broker receive. a transient broker error (restart, network blip)
+// must not tear down the loops: exiting the action loop aborts in-flight actions without
+// cancellation or drain, and exiting the control loop silently disables cancellation.
+const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 // one in-flight action execution, tracked so a control command can cancel it. the owning run id is
 // retained so a run-wide cancel can fan out to every node run of that run.
@@ -48,6 +54,8 @@ pub struct WorkerRuntime {
     pub max_concurrent_actions: usize,
     pub shutdown_grace: Duration,
     pub shutdown: Arc<Notify>,
+    /// observer for loop activity; use [`crate::events::NoopEventSink`] when nothing listens.
+    pub events: Arc<dyn WorkerEventSink>,
 }
 
 /// load plugin libraries from the supplied search paths, skipping any that do not exist.
@@ -79,10 +87,17 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         max_concurrent_actions,
         shutdown_grace,
         shutdown,
+        events,
     } = runtime;
 
-    // the control/ack channels are keyed by the consumer id; the action channel routes by profile.
+    // the ack channels are keyed by the consumer id; the action and control channels route by
+    // profile. the control profile is never exclusive: exclusivity keeps a desktop worker from
+    // stealing general-pool *work*, but a run-wide (untargeted) control must still reach it.
     let consumer_id = profile.id.clone();
+    let control_profile = ConsumerProfile {
+        exclusive: false,
+        ..profile.clone()
+    };
     let max_concurrent_actions = max_concurrent_actions.max(1);
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
     // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
@@ -90,9 +105,10 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
-        consumer_id.clone(),
+        control_profile,
         Arc::clone(&in_flight),
         shutdown.clone(),
+        Arc::clone(&events),
     ));
     let mut deliveries = JoinSet::new();
     info!(max_concurrent_actions, "worker action loop started");
@@ -122,7 +138,24 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 break;
             }
             result = broker.receive_for(&profile) => {
-                result.map_err(|err| broker_error("receive", err))?
+                match result {
+                    Ok(delivery) => delivery,
+                    Err(err) => {
+                        drop(permit);
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to receive action delivery: {}", err
+                        );
+                        tokio::select! {
+                            _ = shutdown.notified() => {
+                                info!("worker loop shutting down");
+                                break;
+                            }
+                            _ = tokio::time::sleep(RECEIVE_RETRY_BACKOFF) => {}
+                        }
+                        continue;
+                    }
+                }
             }
         };
 
@@ -136,6 +169,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let providers = Arc::clone(&providers);
         let replica_id = replica_id;
         let in_flight = Arc::clone(&in_flight);
+        let events = Arc::clone(&events);
         deliveries.spawn(async move {
             let _permit = permit;
             if let Err(err) = process_delivery(
@@ -147,6 +181,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 replica_id,
                 maybe_delivery,
                 in_flight,
+                events,
             )
             .await
             {
@@ -212,21 +247,50 @@ async fn drain_deliveries(deliveries: &mut JoinSet<()>) {
 
 async fn run_control_loop(
     broker: Arc<dyn Broker>,
-    consumer_id: String,
+    profile: ConsumerProfile,
     in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
     shutdown: Arc<Notify>,
+    events: Arc<dyn WorkerEventSink>,
 ) -> Result<(), SendableError> {
+    let consumer_id = profile.id.clone();
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
                 info!("Worker control loop shutting down");
                 return Ok(());
             }
-            result = broker.receive_control(&consumer_id) => {
-                result.map_err(|err| broker_error("receive_control", err))?
+            // the targeting-aware path: a cancel stamped with another replica's id is never handed
+            // to this worker, so it cannot be acked here and lost before reaching its holder.
+            result = broker.receive_control_for(&profile) => {
+                match result {
+                    Ok(delivery) => delivery,
+                    Err(err) => {
+                        error!(
+                            error_code = error_code_or_unknown(&err),
+                            "failed to receive control command: {}", err
+                        );
+                        tokio::select! {
+                            _ = shutdown.notified() => {
+                                info!("Worker control loop shutting down");
+                                return Ok(());
+                            }
+                            _ = tokio::time::sleep(RECEIVE_RETRY_BACKOFF) => {}
+                        }
+                        continue;
+                    }
+                }
             }
         };
-        handle_control_delivery(&broker, &consumer_id, &in_flight, delivery).await?;
+        // an ack failure is transient: the broker lease redelivers the control, and handling one
+        // twice is harmless. keep the loop alive so cancellation is never silently disabled.
+        if let Err(err) =
+            handle_control_delivery(&broker, &consumer_id, &in_flight, &events, delivery).await
+        {
+            error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "failed to handle control delivery: {}", err
+            );
+        }
     }
 }
 
@@ -234,6 +298,7 @@ async fn handle_control_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
     in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
+    events: &Arc<dyn WorkerEventSink>,
     delivery: ControlDelivery,
 ) -> Result<(), SendableError> {
     let control_kind = delivery.command.kind;
@@ -241,6 +306,10 @@ async fn handle_control_delivery(
         ControlKind::Cancel => "cancel",
         ControlKind::Pause => "pause",
         ControlKind::Resume => "resume",
+    });
+    events.handle(WorkerEvent::ControlReceived {
+        kind: control_kind,
+        workflow_run_id: delivery.command.workflow_run_id,
     });
     match control_kind {
         ControlKind::Cancel => {
@@ -318,6 +387,7 @@ async fn process_delivery(
     replica_id: Option<Uuid>,
     delivery: BrokerDelivery,
     in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
+    events: Arc<dyn WorkerEventSink>,
 ) -> Result<(), SendableError> {
     // link this execution span to the trace that dispatched the action (w3c context from the broker
     // message). a no-op when the dispatcher had otel off.
@@ -363,6 +433,9 @@ async fn process_delivery(
                     "skipping duplicate delivery: executor lease held elsewhere"
                 );
                 metrics::action_duplicate();
+                events.handle(WorkerEvent::ActionSkippedDuplicate {
+                    node_run_id: command.workflow_node_run_id,
+                });
                 in_flight.lock().await.remove(&command.workflow_node_run_id);
                 broker
                     .ack(consumer_id, delivery.delivery_id)
@@ -379,6 +452,14 @@ async fn process_delivery(
             ),
         }
     }
+    events.handle(WorkerEvent::ActionStarted {
+        workflow_run_id: command.workflow_run_id,
+        node_id: command.node_id.clone(),
+        node_run_id: command.workflow_node_run_id,
+        provider: action.provider.clone(),
+        function: action.function.clone(),
+        attempt: command.attempt,
+    });
     if let Err(err) = sink
         .publish_status(WorkflowStatus::Running, None, None)
         .await
@@ -389,7 +470,15 @@ async fn process_delivery(
             err
         );
         in_flight.lock().await.remove(&command.workflow_node_run_id);
-        nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+        nack_action_delivery(
+            broker,
+            consumer_id,
+            &api_client,
+            replica_id,
+            command.workflow_node_run_id,
+            delivery.delivery_id,
+        )
+        .await?;
         return Err(broker_error("publish_result", err));
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
@@ -403,6 +492,16 @@ async fn process_delivery(
                 message
             );
             metrics::secret_resolution_failure();
+            events.handle(WorkerEvent::ActionFinished {
+                workflow_run_id: command.workflow_run_id,
+                node_id: command.node_id.clone(),
+                node_run_id: command.workflow_node_run_id,
+                provider: action.provider.clone(),
+                function: action.function.clone(),
+                outcome: ActionOutcome::Failed,
+                duration_ms: 0,
+                message: Some(message.clone()),
+            });
             let output_json = TaskStatusOutput {
                 success: false,
                 duration_ms: None,
@@ -424,7 +523,15 @@ async fn process_delivery(
                     err
                 );
                 in_flight.lock().await.remove(&command.workflow_node_run_id);
-                nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+                nack_action_delivery(
+                    broker,
+                    consumer_id,
+                    &api_client,
+                    replica_id,
+                    command.workflow_node_run_id,
+                    delivery.delivery_id,
+                )
+                .await?;
                 return Err(broker_error("publish_result", err));
             }
             broker
@@ -461,12 +568,12 @@ async fn process_delivery(
     };
     in_flight.lock().await.remove(&command.workflow_node_run_id);
     let outcome = match result.status {
-        runinator_models::runs::RunStatus::TimedOut => "timed_out",
-        runinator_models::runs::RunStatus::Canceled => "canceled",
-        _ if result.task_result.success => "succeeded",
-        _ => "failed",
+        runinator_models::runs::RunStatus::TimedOut => ActionOutcome::TimedOut,
+        runinator_models::runs::RunStatus::Canceled => ActionOutcome::Canceled,
+        _ if result.task_result.success => ActionOutcome::Succeeded,
+        _ => ActionOutcome::Failed,
     };
-    metrics::action_completed(outcome, result.task_result.duration_ms() as f64);
+    metrics::action_completed(outcome.as_str(), result.task_result.duration_ms() as f64);
     if let Some(execution_result) = &result.execution_result
         && let Err(err) = sink.persist_result(execution_result).await
     {
@@ -476,11 +583,29 @@ async fn process_delivery(
             "failed to publish result artifacts: {}",
             err
         );
-        nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+        nack_action_delivery(
+            broker,
+            consumer_id,
+            &api_client,
+            replica_id,
+            command.workflow_node_run_id,
+            delivery.delivery_id,
+        )
+        .await?;
         return Err(broker_error("publish_result", err));
     }
     let task_result = result.task_result;
     let provider_message = task_result.message.clone().or_else(|| sink.message());
+    events.handle(WorkerEvent::ActionFinished {
+        workflow_run_id: command.workflow_run_id,
+        node_id: command.node_id.clone(),
+        node_run_id: command.workflow_node_run_id,
+        provider: action.provider.clone(),
+        function: action.function.clone(),
+        outcome,
+        duration_ms: task_result.duration_ms(),
+        message: provider_message.clone(),
+    });
 
     if task_result.success {
         info!(
@@ -497,7 +622,15 @@ async fn process_delivery(
             task_result.duration_ms()
         ));
         if let Err(err) = sink.flush().await {
-            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            nack_action_delivery(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                command.workflow_node_run_id,
+                delivery.delivery_id,
+            )
+            .await?;
             return Err(broker_error("publish_result", err));
         }
 
@@ -528,7 +661,15 @@ async fn process_delivery(
                 "failed to publish succeeded status: {}",
                 err
             );
-            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            nack_action_delivery(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                command.workflow_node_run_id,
+                delivery.delivery_id,
+            )
+            .await?;
             return Err(broker_error("publish_result", err));
         }
         if let Some(replica_id) = replica_id {
@@ -557,7 +698,15 @@ async fn process_delivery(
             provider_message.as_deref().unwrap_or("No error message")
         ));
         if let Err(err) = sink.flush().await {
-            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            nack_action_delivery(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                command.workflow_node_run_id,
+                delivery.delivery_id,
+            )
+            .await?;
             return Err(broker_error("publish_result", err));
         }
 
@@ -582,7 +731,15 @@ async fn process_delivery(
                 "failed to publish terminal status: {}",
                 err
             );
-            nack_action_delivery(broker, consumer_id, delivery.delivery_id).await?;
+            nack_action_delivery(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                command.workflow_node_run_id,
+                delivery.delivery_id,
+            )
+            .await?;
             return Err(broker_error("publish_result", err));
         }
         if let Some(replica_id) = replica_id {
@@ -602,11 +759,31 @@ async fn process_delivery(
         .map_err(|err| broker_error("ack", err))
 }
 
+/// return a delivery to the broker for redelivery, releasing this worker's executor lease first.
+/// without the release the retry is lost: the executor claim is not re-entrant (not even for this
+/// replica), so every redelivery would be dropped as a duplicate and acked until the lease goes
+/// stale, parking the node run until the reducer's timeout backstop fires.
 async fn nack_action_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
+    api_client: &AsyncApiClient<StaticLocator>,
+    replica_id: Option<Uuid>,
+    node_run_id: Uuid,
     delivery_id: uuid::Uuid,
 ) -> Result<(), SendableError> {
+    if let Some(replica_id) = replica_id {
+        // best-effort: a failed release still self-heals once the lease ages past the deadline.
+        if let Err(err) = api_client
+            .release_workflow_node_run_executor(node_run_id, replica_id, Utc::now())
+            .await
+        {
+            warn!(
+                node_run_id = %node_run_id,
+                "failed to release executor lease before redelivery: {}",
+                err
+            );
+        }
+    }
     broker
         .nack(consumer_id, delivery_id)
         .await

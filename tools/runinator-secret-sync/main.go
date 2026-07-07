@@ -56,7 +56,9 @@ func main() {
 	eng := &engine{cfg: cfg, kube: kube, dryRun: *dryRun}
 
 	if *once {
-		eng.tick(context.Background())
+		if !eng.tick(context.Background()) {
+			os.Exit(1)
+		}
 		return
 	}
 

@@ -119,6 +119,14 @@ mod tests {
             unreachable!()
         }
 
+        async fn nack_control(
+            &self,
+            _consumer: &str,
+            _delivery_id: Uuid,
+        ) -> Result<(), BrokerError> {
+            unreachable!()
+        }
+
         async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
             unreachable!()
         }

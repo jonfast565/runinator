@@ -384,9 +384,10 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
 
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
 /// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
-/// `receive_for`/`ack`/`nack` (action channel), `receive_control`/`ack_control` (control channel),
-/// and `publish_result` (result channel) — everything else (publishing actions/control/wake/ingress,
-/// the fan-out events channel, and the untargeted general `receive`) is refused outright.
+/// `receive_for`/`ack`/`nack` (action channel), `receive_control[_for]`/`ack_control`/`nack_control`
+/// (control channel), and `publish_result` (result channel) — everything else (publishing
+/// actions/control/wake/ingress, the fan-out events channel, and the untargeted general `receive`)
+/// is refused outright.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
@@ -402,32 +403,22 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
                     message: "desktop-worker relay requires an exclusive consumer profile".into(),
                 };
             }
-            if let Some(replica_id) = profile.replica_id {
-                match repository::fetch_replica(db, replica_id).await {
-                    Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => {
-                    }
-                    Ok(Some(_)) => {
-                        return TcpResponse::Error {
-                            message: "replica_id is not owned by the connecting identity".into(),
-                        };
-                    }
-                    Ok(None) => {
-                        return TcpResponse::Error {
-                            message: "unknown replica_id".into(),
-                        };
-                    }
-                    Err(err) => {
-                        return TcpResponse::Error {
-                            message: err.to_string(),
-                        };
-                    }
-                }
+            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+                return response;
+            }
+        }
+        // control consumption is deliberately non-exclusive (a run-wide `Any` control must still
+        // reach the desktop), so only the replica-ownership check applies here.
+        TcpRequest::ReceiveControlFor { profile } => {
+            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+                return response;
             }
         }
         TcpRequest::Ack { .. }
         | TcpRequest::Nack { .. }
         | TcpRequest::ReceiveControl { .. }
         | TcpRequest::AckControl { .. }
+        | TcpRequest::NackControl { .. }
         | TcpRequest::PublishResult { .. } => {}
         _ => {
             return TcpResponse::Error {
@@ -436,4 +427,28 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         }
     }
     dispatch(broker, request).await
+}
+
+/// refuse a profile whose replica_id exists but is not registered by the connecting identity, so a
+/// desktop connection cannot impersonate another replica to receive its targeted deliveries.
+async fn refuse_unowned_replica<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    profile: &runinator_comm::ConsumerProfile,
+) -> Option<runinator_broker::tcp::types::TcpResponse> {
+    use runinator_broker::tcp::types::TcpResponse;
+
+    let replica_id = profile.replica_id?;
+    match repository::fetch_replica(db, replica_id).await {
+        Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => None,
+        Ok(Some(_)) => Some(TcpResponse::Error {
+            message: "replica_id is not owned by the connecting identity".into(),
+        }),
+        Ok(None) => Some(TcpResponse::Error {
+            message: "unknown replica_id".into(),
+        }),
+        Err(err) => Some(TcpResponse::Error {
+            message: err.to_string(),
+        }),
+    }
 }

@@ -210,8 +210,42 @@ impl Broker for HttpBroker {
         }
     }
 
+    async fn receive_control_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<ControlDelivery, BrokerError> {
+        let url = self.endpoint("control/receive")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&ReceiveRequest {
+                consumer: profile.id.clone(),
+                profile: Some(profile.clone()),
+            })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let payload = response
+                    .json::<ReceiveControlResponse>()
+                    .await
+                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
+                Ok(payload.delivery)
+            }
+            status => Err(BrokerError::Internal(format!(
+                "unexpected control receive status: {status}"
+            ))),
+        }
+    }
+
     async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("control/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("control/nack", consumer, delivery_id).await
     }
 
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {

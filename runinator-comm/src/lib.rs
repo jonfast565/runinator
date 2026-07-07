@@ -107,6 +107,12 @@ pub struct ControlCommand {
     /// defaults to `None` for backward-compatible deserialization of run-wide commands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_node_run_id: Option<Uuid>,
+    /// runtime routing key selecting which worker(s) should receive this control. the web service
+    /// stamps the executing worker's replica (from the node run's executor claim) on cancels so
+    /// they reach the holder instead of a random control consumer; `Any` (the default, and the
+    /// deserialization of older messages) preserves the untargeted competing-consumer behavior.
+    #[serde(default)]
+    pub target: ActionTarget,
 }
 
 /// a request to run the web-service reducer for one ready-queue row at a future time. the web
@@ -312,6 +318,7 @@ impl ControlCommand {
             workflow_run_id,
             kind,
             workflow_node_run_id: None,
+            target: ActionTarget::Any,
         }
     }
 
@@ -325,7 +332,15 @@ impl ControlCommand {
             workflow_run_id,
             kind,
             workflow_node_run_id: Some(workflow_node_run_id),
+            target: ActionTarget::Any,
         }
+    }
+
+    /// route this control to the worker replica currently holding the executor lease, so it is not
+    /// consumed (and dropped) by a worker that never dispatched the action.
+    pub fn targeting_replica(mut self, replica_id: Uuid) -> Self {
+        self.target = ActionTarget::Replica { replica_id };
+        self
     }
 }
 

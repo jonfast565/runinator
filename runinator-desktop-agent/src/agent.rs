@@ -23,13 +23,16 @@ use runinator_api::{
     AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_provider,
     register_replica_session, spawn_replica_heartbeat_with_telemetry,
 };
-use runinator_comm::ConsumerProfile;
+use runinator_comm::{ConsumerProfile, ControlKind};
 use runinator_models::replicas::ReplicaKind;
 use runinator_plugin::provider::Provider;
 use runinator_provider_catalog::{StaticProvider, built_in_providers};
 use runinator_provider_local_files::LocalProvider;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
-use runinator_worker::{ProviderFactory, WorkerRuntime, parse_labels, start_worker_loop};
+use runinator_worker::{
+    ActionOutcome, ProviderFactory, WorkerEvent, WorkerEventSink, WorkerRuntime, parse_labels,
+    start_worker_loop,
+};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -81,7 +84,86 @@ pub(crate) fn log_line(shared: &SharedHandle, line: impl Into<String>) {
     if guard.logs.len() >= MAX_LOG_LINES {
         guard.logs.pop_front();
     }
-    guard.logs.push_back(line.into());
+    let stamped = format!(
+        "{} {}",
+        chrono::Local::now().format("%H:%M:%S"),
+        line.into()
+    );
+    guard.logs.push_back(stamped);
+}
+
+// first uuid segment; enough to correlate console lines with the run in the command center.
+fn short_id(id: &Uuid) -> String {
+    id.to_string().chars().take(8).collect()
+}
+
+/// render a worker-loop event as one console line, so the operator can see what this machine is
+/// processing rather than only that the loop started.
+fn describe_worker_event(event: &WorkerEvent) -> String {
+    match event {
+        WorkerEvent::ActionStarted {
+            workflow_run_id,
+            node_id,
+            provider,
+            function,
+            attempt,
+            ..
+        } => {
+            let attempt_suffix = if *attempt > 1 {
+                format!(", attempt {attempt}")
+            } else {
+                String::new()
+            };
+            format!(
+                "Executing {provider}.{function} (node '{node_id}', run {}{attempt_suffix})...",
+                short_id(workflow_run_id)
+            )
+        }
+        WorkerEvent::ActionSkippedDuplicate { node_run_id } => format!(
+            "Skipped duplicate delivery for node run {}: another worker holds it.",
+            short_id(node_run_id)
+        ),
+        WorkerEvent::ActionFinished {
+            workflow_run_id,
+            node_id,
+            provider,
+            function,
+            outcome,
+            duration_ms,
+            message,
+            ..
+        } => {
+            let subject = format!(
+                "{provider}.{function} (node '{node_id}', run {})",
+                short_id(workflow_run_id)
+            );
+            match outcome {
+                ActionOutcome::Succeeded => {
+                    format!("Completed {subject} in {duration_ms} ms.")
+                }
+                ActionOutcome::TimedOut => format!("Timed out {subject} after {duration_ms} ms."),
+                ActionOutcome::Canceled => format!("Canceled {subject} after {duration_ms} ms."),
+                ActionOutcome::Failed => format!(
+                    "Failed {subject} after {duration_ms} ms: {}.",
+                    message.as_deref().unwrap_or("no error message")
+                ),
+            }
+        }
+        WorkerEvent::ControlReceived {
+            kind,
+            workflow_run_id,
+        } => {
+            let kind = match kind {
+                ControlKind::Cancel => "cancel",
+                ControlKind::Pause => "pause",
+                ControlKind::Resume => "resume",
+            };
+            format!(
+                "Received {kind} control for run {}.",
+                short_id(workflow_run_id)
+            )
+        }
+    }
 }
 
 /// kick off registration and the worker loop on `rt`; returns immediately, updating `shared` as
@@ -333,6 +415,11 @@ async fn run_worker_loop_with_restart(
     shutdown_grace: Duration,
 ) {
     let mut retry_delay = WORKER_LOOP_RETRY_BASE;
+    // bridge worker-loop activity into the status console; one sink shared by every restart.
+    let shared_events = shared.clone();
+    let events: Arc<dyn WorkerEventSink> = Arc::new(move |event: WorkerEvent| {
+        log_line(&shared_events, describe_worker_event(&event));
+    });
 
     loop {
         let broker = match runinator_worker::build_broker(&broker_config).await {
@@ -363,6 +450,7 @@ async fn run_worker_loop_with_restart(
             max_concurrent_actions,
             shutdown_grace,
             shutdown: shutdown.clone(),
+            events: events.clone(),
         };
 
         let started_at = std::time::Instant::now();

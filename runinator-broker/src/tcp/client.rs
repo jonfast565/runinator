@@ -168,9 +168,37 @@ impl Broker for TcpBroker {
         }
     }
 
+    async fn receive_control_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<ControlDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveControlFor {
+                profile: profile.clone(),
+            })
+            .await?
+        {
+            TcpResponse::ControlDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected control delivery response".into(),
+            )),
+        }
+    }
+
     async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let response = self
             .request(TcpRequest::AckControl {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::NackControl {
                 consumer: consumer.to_string(),
                 delivery_id,
             })

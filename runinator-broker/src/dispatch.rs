@@ -40,6 +40,10 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .receive_control(&consumer)
             .await
             .map(|delivery| TcpResponse::ControlDelivery { delivery }),
+        TcpRequest::ReceiveControlFor { profile } => broker
+            .receive_control_for(&profile)
+            .await
+            .map(|delivery| TcpResponse::ControlDelivery { delivery }),
         TcpRequest::ReceiveResult { consumer } => broker
             .receive_result(&consumer)
             .await
@@ -70,6 +74,13 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .nack(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::NackControl {
+            consumer,
+            delivery_id,
+        } => broker
+            .nack_control(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::NackResult {

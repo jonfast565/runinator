@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+#[cfg(feature = "ws")]
+use runinator_broker::ws::client::WsBroker;
 use runinator_broker::{
     Broker, BrokerError,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
     http::client::HttpBroker,
     in_memory::InMemoryBroker,
     tcp::client::TcpBroker,
-    ws::client::WsBroker,
 };
 use runinator_models::errors::{RuntimeError, SendableError};
 
@@ -64,10 +65,18 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
 
             Arc::new(HttpBroker::new(url, client))
         }
+        #[cfg(feature = "ws")]
         "ws" => Arc::new(WsBroker::connect(
             config.broker_endpoint.clone(),
             config.api_key.clone(),
         )),
+        // without the feature WsBroker is a stub whose every operation errors; fail at startup
+        // with a clear message instead of letting the capability check report a misleading one.
+        #[cfg(not(feature = "ws"))]
+        "ws" => {
+            return Err(crate::errors::BROKER_FEATURE_DISABLED
+                .error("'ws' requires building runinator-worker with the `ws` feature"));
+        }
         "in-memory" => Arc::new(InMemoryBroker::new()),
         "tcp" => Arc::new(TcpBroker::new(config.broker_endpoint.clone())),
         "kafka" => runinator_broker::build_kafka_broker(

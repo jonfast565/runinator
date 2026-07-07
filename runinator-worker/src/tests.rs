@@ -40,6 +40,9 @@ async fn build_broker_rejects_rabbitmq_without_result_queue() {
     assert!(err.to_string().contains("non-empty workflow result queue"));
 }
 
+// only meaningful when the relay transport is compiled in; without the feature build_broker
+// fails fast with a feature-disabled error (covered below).
+#[cfg(feature = "ws")]
 #[tokio::test]
 async fn build_broker_supports_relaying_through_the_ws_backend() {
     // proves any worker (not just runinator-desktop-agent) can pick "connect through the
@@ -51,6 +54,22 @@ async fn build_broker_supports_relaying_through_the_ws_backend() {
     build_broker(&config.broker_config())
         .await
         .expect("the ws backend should build even before any connection attempt completes");
+}
+
+#[cfg(not(feature = "ws"))]
+#[tokio::test]
+async fn build_broker_rejects_the_ws_backend_when_the_feature_is_compiled_out() {
+    let mut config = test_config();
+    config.broker_backend = "ws".into();
+    config.broker_endpoint = "ws://127.0.0.1:0/ws/desktop-worker".into();
+
+    let err = match build_broker(&config.broker_config()).await {
+        Ok(_) => panic!("expected the ws backend to be rejected without the `ws` feature"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("ws"));
+    assert!(err.to_string().contains("feature"));
 }
 
 #[tokio::test]

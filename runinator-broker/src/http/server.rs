@@ -68,6 +68,7 @@ where
         .route("/control/publish", post(publish_control::<B>))
         .route("/control/receive", post(receive_control::<B>))
         .route("/control/ack", post(ack_control::<B>))
+        .route("/control/nack", post(nack_control::<B>))
         .route("/results/publish", post(publish_result::<B>))
         .route("/results/receive", post(receive_result::<B>))
         .route("/results/ack", post(ack_result::<B>))
@@ -198,10 +199,30 @@ async fn receive_control<B>(
 where
     B: Broker,
 {
-    match state.broker.receive_control(&request.consumer).await {
+    let received = match &request.profile {
+        Some(profile) => state.broker.receive_control_for(profile).await,
+        None => state.broker.receive_control(&request.consumer).await,
+    };
+    match received {
         Ok(delivery) => json_response(StatusCode::OK, ReceiveControlResponse { delivery }),
         Err(err) => error_response(err),
     }
+}
+
+async fn nack_control<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_control(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
 }
 
 async fn publish_result<B>(

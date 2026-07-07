@@ -612,6 +612,10 @@ impl Broker for RabbitMqBroker {
         ack_delivery(self.inner.take_pending(delivery_id)?).await
     }
 
+    async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
@@ -753,6 +757,10 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn ack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(rabbitmq_feature_error())
+    }
+
+    async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(rabbitmq_feature_error())
     }
 

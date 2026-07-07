@@ -65,6 +65,11 @@ pub const BROKER_OPERATION: ErrorDescriptor = ErrorDescriptor::new(
     "worker.broker.operation",
     "Broker operation failed",
 );
+pub const BROKER_FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI218",
+    "worker.broker.feature_disabled",
+    "Broker backend compiled out",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     RUNTIME_BUILD,
@@ -80,6 +85,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     BROKER_KAFKA,
     BROKER_RABBITMQ,
     BROKER_OPERATION,
+    BROKER_FEATURE_DISABLED,
 ];
 
 /// worker engine error dictionary.

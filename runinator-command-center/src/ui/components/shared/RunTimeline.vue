@@ -382,7 +382,7 @@ async function loadLogs(nodeRunId: string) {
     const chunks = await workflowRunExtrasService.fetchNodeRunChunks(nodeRunId);
     logCache.value = {
       ...logCache.value,
-      [nodeRunId]: chunks.map((chunk) => chunk.content).join(""),
+      [nodeRunId]: chunks.map((chunk) => chunk.content).join("\n"),
     };
   } catch {
     logCache.value = { ...logCache.value, [nodeRunId]: "" };

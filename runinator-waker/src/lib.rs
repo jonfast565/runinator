@@ -13,6 +13,9 @@ use tracing::{Instrument, error, info};
 
 use crate::config::Config;
 
+// backoff before retrying a failed wake receive, so a broker outage does not hot-loop the waker.
+const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+
 /// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
 /// returns none when no liveness file is configured.
 pub fn spawn_liveness(
@@ -47,6 +50,14 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
                             error_code = error_code_or_unknown(&err),
                             "failed to receive wake: {}", err
                         );
+                        // back off so an unreachable broker does not spin this loop hot.
+                        tokio::select! {
+                            _ = notify.notified() => {
+                                info!("shutdown signal received, exiting waker loop");
+                                return;
+                            }
+                            _ = tokio::time::sleep(RECEIVE_RETRY_BACKOFF) => {}
+                        }
                         continue;
                     }
                 }

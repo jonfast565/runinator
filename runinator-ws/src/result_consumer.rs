@@ -118,6 +118,14 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                             error_code = error_code_or_unknown(&err),
                             "failed to receive workflow result event: {}", err
                         );
+                        // back off so an unreachable broker does not spin this loop hot.
+                        tokio::select! {
+                            _ = shutdown.notified() => {
+                                info!("workflow result consumer shutting down");
+                                return;
+                            }
+                            _ = tokio::time::sleep(policy.retry_backoff) => {}
+                        }
                         continue;
                     }
                 }

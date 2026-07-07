@@ -157,6 +157,17 @@ impl Broker for InstrumentedBroker {
         result
     }
 
+    async fn receive_control_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<ControlDelivery, BrokerError> {
+        let start = Instant::now();
+        let result = self.inner.receive_control_for(profile).await;
+        self.metrics
+            .record(CH_CONTROL, "receive", start, &result, false);
+        result
+    }
+
     async fn ack_control(
         &self,
         consumer: &str,
@@ -165,6 +176,18 @@ impl Broker for InstrumentedBroker {
         let start = Instant::now();
         let result = self.inner.ack_control(consumer, delivery_id).await;
         self.metrics.record(CH_CONTROL, "ack", start, &result, true);
+        result
+    }
+
+    async fn nack_control(
+        &self,
+        consumer: &str,
+        delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        let start = Instant::now();
+        let result = self.inner.nack_control(consumer, delivery_id).await;
+        self.metrics
+            .record(CH_CONTROL, "nack", start, &result, true);
         result
     }
 

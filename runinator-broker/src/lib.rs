@@ -28,6 +28,11 @@ pub use types::{
 
 use async_trait::async_trait;
 
+/// how long an undeliverable targeted control may bounce before a non-matching consumer drops it.
+/// long enough to ride out a holder's broker reconnect, short enough to bound requeue churn once
+/// the holder is truly gone.
+pub const STALE_CONTROL_TTL_SECONDS: i64 = 300;
+
 /// Trait implemented by queue backends capable of delivering task commands.
 #[async_trait]
 pub trait Broker: Send + Sync + 'static {
@@ -74,12 +79,50 @@ pub trait Broker: Send + Sync + 'static {
     /// Publish a workflow control message on the control channel.
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError>;
 
-    /// Wait for and retrieve the next control delivery for the supplied consumer group.
+    /// Wait for and retrieve the next control delivery for the supplied consumer group,
+    /// regardless of target (the legacy untargeted path).
     async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError>;
+
+    /// Wait for and retrieve the next control delivery whose target matches `profile`.
+    ///
+    /// The targeting-aware control path: the web service stamps cancels with the replica holding
+    /// the action's executor lease, so the control reaches that worker instead of a random
+    /// competing consumer (which would ack it after finding no matching local execution, losing
+    /// the cancel). Backends without native routing get the same safety net as
+    /// [`Broker::receive_for`]: receive, check the target, and requeue mismatches. Unlike an
+    /// action, a control targeted at a replica that has since disconnected has no consumer left
+    /// that can ever match it, so a mismatch older than [`STALE_CONTROL_TTL_SECONDS`] is acked
+    /// (dropped) instead of requeued — controls are immediate signals and one that stale is moot.
+    async fn receive_control_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<ControlDelivery, BrokerError> {
+        loop {
+            let delivery = self.receive_control(&profile.id).await?;
+            if delivery.command.target.matches(profile) {
+                return Ok(delivery);
+            }
+            let age = chrono::Utc::now() - delivery.enqueued_at;
+            if age.num_seconds() >= STALE_CONTROL_TTL_SECONDS {
+                self.ack_control(&profile.id, delivery.delivery_id).await?;
+                continue;
+            }
+            self.nack_control(&profile.id, delivery.delivery_id).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
 
     /// Acknowledge successful processing of a control delivery.
     async fn ack_control(&self, consumer: &str, delivery_id: uuid::Uuid)
         -> Result<(), BrokerError>;
+
+    /// Return the control delivery to the queue for another attempt (or for the consumer whose
+    /// profile actually matches its target).
+    async fn nack_control(
+        &self,
+        consumer: &str,
+        delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError>;
 
     /// Publish a workflow result event on the result channel.
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError>;

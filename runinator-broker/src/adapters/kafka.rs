@@ -462,6 +462,10 @@ impl Broker for KafkaBroker {
         ack_pending(self.inner.take_pending(delivery_id)?)
     }
 
+    async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
@@ -608,6 +612,10 @@ impl Broker for KafkaBroker {
     }
 
     async fn ack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(kafka_feature_error())
+    }
+
+    async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(kafka_feature_error())
     }
 

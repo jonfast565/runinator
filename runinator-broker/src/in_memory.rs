@@ -85,6 +85,49 @@ impl Default for InMemoryBroker {
 }
 
 impl InMemoryBroker {
+    /// wait for and lease the first queued control delivery accepted by `matches`. targeted scan:
+    /// a non-matching head must not block controls for other consumers queued behind it, and a
+    /// control targeted at a consumer that never returns is dropped once it goes stale.
+    async fn receive_control_matching(
+        &self,
+        matches: impl Fn(&ControlDelivery) -> bool,
+    ) -> Result<ControlDelivery, BrokerError> {
+        loop {
+            // register for wakeups before scanning: control publishes use notify_waiters (no
+            // stored permit), so a publish landing between the scan and the wait would otherwise
+            // be lost until the sleep fallback fires.
+            let notified = self.control_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(delivery) = {
+                let mut guard = self.state.lock();
+                reclaim_expired_control(&mut guard, Instant::now());
+                drop_stale_control(&mut guard, chrono::Utc::now());
+                let index = guard.control_queue.iter().position(&matches);
+                match index.and_then(|index| guard.control_queue.remove(index)) {
+                    Some(delivery) => {
+                        guard.control_inflight.insert(
+                            delivery.delivery_id,
+                            Leased {
+                                delivery: delivery.clone(),
+                                leased_until: Instant::now() + self.lease_duration,
+                            },
+                        );
+                        Some(delivery)
+                    }
+                    None => None,
+                }
+            } {
+                return Ok(delivery);
+            }
+
+            tokio::select! {
+                _ = &mut notified => {}
+                _ = tokio::time::sleep(self.lease_duration) => {}
+            }
+        }
+    }
+
     /// get-or-create the dedicated fan-out receiver for one subscriber id.
     fn event_receiver(&self, consumer: &str) -> EventReceiver {
         let mut guard = self.event_subscribers.lock();
@@ -113,7 +156,9 @@ impl Broker for InMemoryBroker {
         let delivery: BrokerDelivery = message.into();
         guard.queue.push_back(delivery);
         drop(guard);
-        self.notify.notify_one();
+        // deliveries are targeted, so wake every waiter: notify_one could wake a consumer whose
+        // profile does not match, leaving the matching consumer asleep for a full lease period.
+        self.notify.notify_waiters();
         Ok(())
     }
 
@@ -125,6 +170,12 @@ impl Broker for InMemoryBroker {
 
     async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
         loop {
+            // register for wakeups before scanning: publishes use notify_waiters (no stored
+            // permit), so a publish landing between the scan and the wait would otherwise be lost
+            // until the sleep fallback fires.
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
                 reclaim_expired_actions(&mut guard, Instant::now());
@@ -152,7 +203,7 @@ impl Broker for InMemoryBroker {
             }
 
             tokio::select! {
-                _ = self.notify.notified() => {}
+                _ = &mut notified => {}
                 _ = tokio::time::sleep(self.lease_duration) => {}
             }
         }
@@ -172,6 +223,10 @@ impl Broker for InMemoryBroker {
         let mut guard = self.state.lock();
         if let Some(leased) = guard.inflight.remove(&delivery_id) {
             guard.queue.push_front(redeliver_action(leased.delivery));
+            drop(guard);
+            // wake sleeping consumers so a requeued delivery is not stranded until the sleep
+            // fallback when the nacking consumer disconnects right after returning it.
+            self.notify.notify_waiters();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -182,41 +237,42 @@ impl Broker for InMemoryBroker {
         let mut guard = self.state.lock();
         guard.control_queue.push_back(command.into());
         drop(guard);
-        self.control_notify.notify_one();
+        // controls are targeted, so wake every waiter: notify_one could wake a consumer whose
+        // profile does not match, leaving the matching consumer asleep for a full lease period.
+        self.control_notify.notify_waiters();
         Ok(())
     }
 
     async fn receive_control(&self, _consumer: &str) -> Result<ControlDelivery, BrokerError> {
-        loop {
-            if let Some(delivery) = {
-                let mut guard = self.state.lock();
-                reclaim_expired_control(&mut guard, Instant::now());
-                if let Some(delivery) = guard.control_queue.pop_front() {
-                    guard.control_inflight.insert(
-                        delivery.delivery_id,
-                        Leased {
-                            delivery: delivery.clone(),
-                            leased_until: Instant::now() + self.lease_duration,
-                        },
-                    );
-                    Some(delivery)
-                } else {
-                    None
-                }
-            } {
-                return Ok(delivery);
-            }
+        // the legacy untargeted path: hand over the head of the queue regardless of target.
+        self.receive_control_matching(|_| true).await
+    }
 
-            tokio::select! {
-                _ = self.control_notify.notified() => {}
-                _ = tokio::time::sleep(self.lease_duration) => {}
-            }
-        }
+    async fn receive_control_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<ControlDelivery, BrokerError> {
+        self.receive_control_matching(|delivery| delivery.command.target.matches(profile))
+            .await
     }
 
     async fn ack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
         if guard.control_inflight.remove(&delivery_id).is_some() {
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.control_inflight.remove(&delivery_id) {
+            guard
+                .control_queue
+                .push_front(redeliver_control(leased.delivery));
+            drop(guard);
+            self.control_notify.notify_waiters();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -281,6 +337,8 @@ impl Broker for InMemoryBroker {
             guard
                 .result_queue
                 .push_front(redeliver_result(leased.delivery));
+            drop(guard);
+            self.result_notify.notify_one();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -343,6 +401,8 @@ impl Broker for InMemoryBroker {
         let mut guard = self.state.lock();
         if let Some(leased) = guard.wake_inflight.remove(&delivery_id) {
             guard.wake_queue.push_front(redeliver_wake(leased.delivery));
+            drop(guard);
+            self.wake_notify.notify_one();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -407,6 +467,8 @@ impl Broker for InMemoryBroker {
             guard
                 .ingress_queue
                 .push_front(redeliver_ingress(leased.delivery));
+            drop(guard);
+            self.ingress_notify.notify_one();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -453,6 +515,15 @@ fn reclaim_expired_control(state: &mut BrokerState, now: Instant) {
                 .push_front(redeliver_control(leased.delivery));
         }
     }
+}
+
+/// drop queued controls that have gone stale: a control targeted at a replica that never returns
+/// has no consumer that can ever match it, and controls are immediate signals, so retaining one
+/// past the ttl only grows the queue (this broker also backs the long-lived http/tcp servers).
+fn drop_stale_control(state: &mut BrokerState, now: chrono::DateTime<chrono::Utc>) {
+    state.control_queue.retain(|delivery| {
+        (now - delivery.enqueued_at).num_seconds() < crate::STALE_CONTROL_TTL_SECONDS
+    });
 }
 
 fn reclaim_expired_results(state: &mut BrokerState, now: Instant) {
@@ -685,6 +756,101 @@ mod tests {
         let b = broker.receive_event("ws-b").await.unwrap();
         assert!(matches!(a.event, UiEvent::WorkflowsChanged));
         assert!(matches!(b.event, UiEvent::WorkflowsChanged));
+    }
+
+    #[tokio::test]
+    async fn receive_control_for_routes_targeted_controls_to_the_matching_replica() {
+        use runinator_comm::{ConsumerProfile, ControlCommand, ControlKind};
+
+        let broker = InMemoryBroker::new();
+        let holder = Uuid::now_v7();
+        let bystander = Uuid::now_v7();
+        let run_id = Uuid::now_v7();
+
+        // a cancel routed to the executor-holding replica, queued behind nothing special.
+        let targeted = ControlCommand::for_node_run(run_id, Uuid::now_v7(), ControlKind::Cancel)
+            .targeting_replica(holder);
+        broker.publish_control(targeted).await.unwrap();
+
+        // a worker that is not the holder must never receive it, even when polling first; the
+        // 50ms timeout bounds the test rather than proving absence forever.
+        let bystander_profile = ConsumerProfile::shared("worker-b").with_replica_id(bystander);
+        let unmatched = tokio::time::timeout(
+            Duration::from_millis(50),
+            broker.receive_control_for(&bystander_profile),
+        )
+        .await;
+        assert!(unmatched.is_err(), "targeted control leaked to a bystander");
+
+        // the holder receives it.
+        let holder_profile = ConsumerProfile::shared("worker-a").with_replica_id(holder);
+        let delivery = broker.receive_control_for(&holder_profile).await.unwrap();
+        assert_eq!(delivery.command.workflow_run_id, run_id);
+        broker
+            .ack_control("worker-a", delivery.delivery_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn receive_control_for_hands_untargeted_controls_to_any_non_exclusive_profile() {
+        use runinator_comm::{ConsumerProfile, ControlCommand, ControlKind};
+
+        let broker = InMemoryBroker::new();
+        let run_id = Uuid::now_v7();
+        broker
+            .publish_control(ControlCommand::new(run_id, ControlKind::Cancel))
+            .await
+            .unwrap();
+
+        // the worker's control profile is never exclusive, so a run-wide `Any` control matches a
+        // replica-bound profile too (a desktop worker must still see run-wide cancels).
+        let profile = ConsumerProfile::shared("desktop").with_replica_id(Uuid::now_v7());
+        let delivery = broker.receive_control_for(&profile).await.unwrap();
+        assert_eq!(delivery.command.workflow_run_id, run_id);
+    }
+
+    #[tokio::test]
+    async fn stale_queued_controls_are_dropped_not_delivered() {
+        use runinator_comm::{ControlCommand, ControlKind};
+
+        let mut state = BrokerState::default();
+        let delivery: ControlDelivery =
+            ControlCommand::new(Uuid::now_v7(), ControlKind::Cancel).into();
+        state.control_queue.push_back(delivery);
+
+        // fresh controls survive the sweep; one past the ttl is dropped.
+        drop_stale_control(&mut state, chrono::Utc::now());
+        assert_eq!(state.control_queue.len(), 1);
+        let past_ttl =
+            chrono::Utc::now() + chrono::Duration::seconds(crate::STALE_CONTROL_TTL_SECONDS + 1);
+        drop_stale_control(&mut state, past_ttl);
+        assert!(state.control_queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nack_control_requeues_for_the_matching_consumer() {
+        use runinator_comm::{ConsumerProfile, ControlCommand, ControlKind};
+
+        let broker = InMemoryBroker::new();
+        let run_id = Uuid::now_v7();
+        broker
+            .publish_control(ControlCommand::new(run_id, ControlKind::Pause))
+            .await
+            .unwrap();
+
+        // the legacy untargeted path takes it; a nack must return it for redelivery.
+        let first = broker.receive_control("worker-a").await.unwrap();
+        broker
+            .nack_control("worker-a", first.delivery_id)
+            .await
+            .unwrap();
+        let second = broker
+            .receive_control_for(&ConsumerProfile::shared("worker-b"))
+            .await
+            .unwrap();
+        assert_eq!(second.command.workflow_run_id, run_id);
+        assert_ne!(first.delivery_id, second.delivery_id);
     }
 
     #[tokio::test]

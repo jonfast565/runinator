@@ -238,6 +238,14 @@ pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
                             error_code = error_code_or_unknown(&err),
                             "failed to receive ingress message: {}", err
                         );
+                        // back off so an unreachable broker does not spin this loop hot.
+                        tokio::select! {
+                            _ = shutdown.notified() => {
+                                info!("ingress consumer shutting down");
+                                return;
+                            }
+                            _ = tokio::time::sleep(INGRESS_RETRY_BACKOFF) => {}
+                        }
                         continue;
                     }
                 }
@@ -405,10 +413,16 @@ async fn signal_canceled_executing_node_runs<T: DatabaseImpl>(
         }
     };
     for run in node_runs {
-        if run.status != WorkflowStatus::Canceled || run.current_executor_replica_id.is_none() {
+        let Some(executor_replica_id) = run.current_executor_replica_id else {
+            continue;
+        };
+        if run.status != WorkflowStatus::Canceled {
             continue;
         }
-        let command = ControlCommand::for_node_run(workflow_run_id, run.id, ControlKind::Cancel);
+        // route the cancel to the replica holding the executor lease so it is not consumed (and
+        // dropped) by a worker that never dispatched this action.
+        let command = ControlCommand::for_node_run(workflow_run_id, run.id, ControlKind::Cancel)
+            .targeting_replica(executor_replica_id);
         if let Err(err) = broker.publish_control(command).await {
             warn!(
                 run_id = %workflow_run_id,

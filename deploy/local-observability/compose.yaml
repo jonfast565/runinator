@@ -2,7 +2,7 @@ name: runinator-observability
 
 services:
   otel-collector:
-    image: otel/opentelemetry-collector:0.116.0
+    image: otel/opentelemetry-collector:0.119.0
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:
       - jaeger

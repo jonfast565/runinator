@@ -13,8 +13,8 @@ use tokio::sync::Notify;
 use tracing::{error, info};
 
 use runinator_worker::{
-    Config, WorkerRuntime, build_broker, default_provider_factory, errors, load_libraries,
-    parse_config, start_worker_loop,
+    Config, NoopEventSink, WorkerRuntime, build_broker, default_provider_factory, errors,
+    load_libraries, parse_config, start_worker_loop,
 };
 
 #[cfg(test)]
@@ -72,7 +72,10 @@ async fn run(config: Config) -> Result<(), SendableError> {
     let mut worker_task = {
         let runtime = WorkerRuntime {
             broker: broker.clone(),
+            // carry the replica id (without exclusivity) so replica-targeted controls — cancels
+            // routed to the worker holding an action's executor lease — reach this worker.
             profile: ConsumerProfile::shared(config.broker_consumer_id.clone())
+                .with_replica_id(replica_session.replica_id())
                 .with_labels(config.labels.clone()),
             libraries: Arc::clone(&libraries),
             api_client: api_client.clone(),
@@ -81,6 +84,8 @@ async fn run(config: Config) -> Result<(), SendableError> {
             max_concurrent_actions: config.max_concurrent_actions,
             shutdown_grace: Duration::from_secs(config.shutdown_grace_seconds),
             shutdown: shutdown.clone(),
+            // tracing already reports loop activity for the standalone binary.
+            events: Arc::new(NoopEventSink),
         };
         tokio::spawn(start_worker_loop(runtime))
     };

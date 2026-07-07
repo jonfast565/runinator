@@ -365,10 +365,43 @@ mod imp {
             }
         }
 
+        async fn receive_control_for(
+            &self,
+            profile: &ConsumerProfile,
+        ) -> Result<ControlDelivery, BrokerError> {
+            match self
+                .request_forever(TcpRequest::ReceiveControlFor {
+                    profile: profile.clone(),
+                })
+                .await?
+            {
+                TcpResponse::ControlDelivery { delivery } => Ok(delivery),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
         async fn ack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
             match self
                 .request_bounded(
                     TcpRequest::AckControl {
+                        consumer: consumer.to_string(),
+                        delivery_id,
+                    },
+                    ONE_SHOT_RETRY_WINDOW,
+                )
+                .await?
+            {
+                TcpResponse::Ok => Ok(()),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+            match self
+                .request_bounded(
+                    TcpRequest::NackControl {
                         consumer: consumer.to_string(),
                         delivery_id,
                     },
@@ -635,6 +668,10 @@ impl Broker for WsBroker {
     }
 
     async fn ack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+        Err(ws_feature_error())
+    }
+
+    async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(ws_feature_error())
     }
 

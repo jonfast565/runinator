@@ -312,8 +312,49 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
     let response = cancel_workflow_run_command(db, &command).await?;
+    // reliable path first: a cancel routed to the replica holding each in-flight action's executor
+    // lease, so it cannot be consumed (and dropped) by a worker holding nothing. the untargeted
+    // run-wide command below stays as a best-effort catch-all for executions whose claim was never
+    // recorded (e.g. a fail-open executor claim during a transient ws outage).
+    publish_targeted_run_cancels(db, broker, workflow_run_id).await;
     publish_worker_control_command(broker, command).await?;
     Ok(response)
+}
+
+/// publish a node-run cancel targeted at the executor-holding replica for every node run of this
+/// run still claimed by a worker. best-effort: a publish failure falls back to the untargeted
+/// run-wide cancel and, past that, the node's own timeout backstop.
+async fn publish_targeted_run_cancels<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    workflow_run_id: Uuid,
+) {
+    let node_runs = match db.fetch_workflow_node_runs(workflow_run_id).await {
+        Ok(node_runs) => node_runs,
+        Err(err) => {
+            log::warn!(
+                "Failed to load node runs for targeted cancel fan-out of run {workflow_run_id}: {err}"
+            );
+            return;
+        }
+    };
+    for node_run in node_runs {
+        let Some(executor_replica_id) = node_run.current_executor_replica_id else {
+            continue;
+        };
+        if node_run.status.is_terminal() {
+            continue;
+        }
+        let command =
+            ControlCommand::for_node_run(workflow_run_id, node_run.id, ControlKind::Cancel)
+                .targeting_replica(executor_replica_id);
+        if let Err(err) = broker.publish_control(command).await {
+            log::warn!(
+                "Failed to publish targeted cancel for node run {} of run {workflow_run_id}: {err}",
+                node_run.id
+            );
+        }
+    }
 }
 
 async fn cancel_workflow_run_command<T: DatabaseImpl>(

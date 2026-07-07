@@ -2427,6 +2427,10 @@ impl Broker for RecordingBroker {
         self.inner.ack_control(consumer, delivery_id).await
     }
 
+    async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.inner.nack_control(consumer, delivery_id).await
+    }
+
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
         self.inner.publish_result(message).await
     }

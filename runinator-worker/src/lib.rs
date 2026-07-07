@@ -5,6 +5,7 @@
 pub mod broker;
 pub mod config;
 pub mod errors;
+pub mod events;
 pub mod executor;
 pub mod metrics;
 pub mod output_sink;
@@ -17,5 +18,6 @@ mod tests;
 
 pub use broker::{BrokerConfig, build_broker};
 pub use config::{Config, parse_config, parse_labels};
+pub use events::{ActionOutcome, NoopEventSink, WorkerEvent, WorkerEventSink};
 pub use provider_repository::{ProviderFactory, default_provider_factory, resolve_provider};
 pub use worker::{WorkerRuntime, load_libraries, start_worker_loop};

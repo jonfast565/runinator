@@ -7177,6 +7177,7 @@ dependencies = [
 name = "runinator-desktop-agent"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "eframe",
  "env_logger",
  "log",
