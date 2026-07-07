@@ -1759,16 +1759,20 @@ where
         replica_id: Uuid,
         released_at: DateTime<Utc>,
     ) -> Result<(), SendableError> {
+        // conditional on the holder so a release can only free the caller's own lease: a late or
+        // fail-open release from a worker that never held (or no longer holds) the slot must not
+        // clear a live claim owned by another replica.
         self.pool()
             .execute(
                 sqlx::query(&self.render(
                     "UPDATE workflow_node_runs
                      SET last_executor_replica_id = ?, current_executor_replica_id = NULL, executor_released_at = ?
-                     WHERE id = ?",
+                     WHERE id = ? AND current_executor_replica_id = ?",
                 ))
                 .bind(replica_id)
                 .bind(released_at.timestamp())
-                .bind(node_run_id),
+                .bind(node_run_id)
+                .bind(replica_id),
             )
             .await?;
         Ok(())
@@ -2034,8 +2038,12 @@ where
             } => {
                 let now = Utc::now().timestamp();
                 let terminal = status.is_terminal();
+                // the trailing attempt guard discards a very late result from a superseded attempt
+                // (the row's attempt has moved past the event's), which would otherwise overwrite
+                // the retry's status. attempt 0 marks an older message with no attempt: apply it
+                // unconditionally as before.
                 sqlx::query(&self.render(
-                    "UPDATE workflow_node_runs SET status = ?, output_json = COALESCE(?, output_json), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' THEN ? WHEN ? = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN ? THEN ? WHEN ? = 'queued' THEN NULL ELSE finished_at END WHERE id = ? AND NOT (status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND ? NOT IN ('succeeded', 'failed', 'timed_out', 'canceled'))",
+                    "UPDATE workflow_node_runs SET status = ?, output_json = COALESCE(?, output_json), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' THEN ? WHEN ? = 'queued' THEN NULL ELSE started_at END, finished_at = CASE WHEN ? THEN ? WHEN ? = 'queued' THEN NULL ELSE finished_at END WHERE id = ? AND NOT (status IN ('succeeded', 'failed', 'timed_out', 'canceled') AND ? NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')) AND (? <= 0 OR attempt <= ?)",
                 ))
                 .bind(status.as_str())
                 .bind(output_json.as_ref().map(|value: &Value| value.to_string()))
@@ -2048,6 +2056,8 @@ where
                 .bind(status.as_str())
                 .bind(event.workflow_node_run_id)
                 .bind(status.as_str())
+                .bind(event.attempt)
+                .bind(event.attempt)
                 .execute(&mut *tx)
                 .await?;
             }

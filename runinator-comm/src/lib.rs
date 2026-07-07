@@ -286,6 +286,12 @@ pub struct WorkflowResultEvent {
     pub workflow_run_id: Uuid,
     pub workflow_node_run_id: Uuid,
     pub node_id: String,
+    /// the dispatch attempt (from the originating [`ActionCommand`]) this result belongs to, so a
+    /// very late result from a superseded attempt cannot overwrite a retry's status. defaults to 0
+    /// (unknown) for backward-compatible deserialization of older messages, which are applied
+    /// unconditionally as before.
+    #[serde(default)]
+    pub attempt: i64,
     pub kind: WorkflowResultEventKind,
     pub timestamp: DateTime<Utc>,
     /// correlation id carried back from the originating [`ActionCommand`] so worker result handling
@@ -376,6 +382,7 @@ impl WorkflowResultEvent {
             workflow_run_id: command.workflow_run_id,
             workflow_node_run_id: command.workflow_node_run_id,
             node_id: command.node_id.clone(),
+            attempt: command.attempt,
             kind,
             timestamp: Utc::now(),
             trace_id: command.trace_id,

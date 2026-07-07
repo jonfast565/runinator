@@ -350,7 +350,8 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         stale_before: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
-    /// Clear the current executor and record the last executor for a node run.
+    /// Clear the current executor and record the last executor for a node run. A no-op unless
+    /// `replica_id` is the current holder, so a stray release cannot free another replica's lease.
     fn release_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,

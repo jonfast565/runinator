@@ -523,6 +523,104 @@ async fn apply_workflow_result_event_does_not_regress_terminal_status() {
 }
 
 #[tokio::test]
+async fn apply_workflow_result_event_discards_status_from_superseded_attempt() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-result-attempt-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let node_run = create_node_run(&db).await;
+    // the reducer re-dispatched this node run as attempt 2 after the first attempt was written off.
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Running,
+        Some(2),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // a very late terminal result from the superseded first attempt must not settle the retry.
+    let mut stale_command =
+        action_command(node_run.workflow_run_id, node_run.id, &node_run.node_id);
+    stale_command.attempt = 1;
+    let stale = WorkflowResultEvent::status(
+        &stale_command,
+        WorkflowStatus::Failed,
+        None,
+        Some("late".into()),
+    );
+    assert!(db.apply_workflow_result_event(&stale).await.unwrap());
+    let row = db
+        .fetch_workflow_node_run(node_run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, WorkflowStatus::Running);
+    assert_eq!(row.message, None);
+
+    // the current attempt's result applies normally.
+    let mut current_command =
+        action_command(node_run.workflow_run_id, node_run.id, &node_run.node_id);
+    current_command.attempt = 2;
+    let current =
+        WorkflowResultEvent::status(&current_command, WorkflowStatus::Succeeded, None, None);
+    assert!(db.apply_workflow_result_event(&current).await.unwrap());
+    let row = db
+        .fetch_workflow_node_run(node_run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, WorkflowStatus::Succeeded);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn apply_workflow_result_event_applies_legacy_events_without_attempt() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-result-legacy-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let node_run = create_node_run(&db).await;
+    db.update_workflow_node_run(
+        node_run.id,
+        WorkflowStatus::Running,
+        Some(2),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // an event deserialized from an older worker carries attempt 0: applied unconditionally.
+    let mut legacy_command =
+        action_command(node_run.workflow_run_id, node_run.id, &node_run.node_id);
+    legacy_command.attempt = 0;
+    let legacy =
+        WorkflowResultEvent::status(&legacy_command, WorkflowStatus::Succeeded, None, None);
+    assert!(db.apply_workflow_result_event(&legacy).await.unwrap());
+    let row = db
+        .fetch_workflow_node_run(node_run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, WorkflowStatus::Succeeded);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
     let path = std::env::temp_dir().join(format!(
         "runinator-action-dispatches-{}.db",
@@ -981,7 +1079,16 @@ async fn executor_lease_is_mutually_exclusive_until_stale_or_released() {
             .await
             .unwrap()
     );
-    // releasing frees the slot for the next attempt immediately.
+    // a release by a replica that does not hold the lease is a no-op.
+    db.release_workflow_node_run_executor(node_run.id, worker_a, Utc::now())
+        .await
+        .unwrap();
+    assert!(
+        !db.claim_workflow_node_run_executor(node_run.id, worker_a, Utc::now(), stale_before)
+            .await
+            .unwrap()
+    );
+    // releasing by the holder frees the slot for the next attempt immediately.
     db.release_workflow_node_run_executor(node_run.id, worker_b, Utc::now())
         .await
         .unwrap();

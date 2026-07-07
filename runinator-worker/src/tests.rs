@@ -295,6 +295,15 @@ fn blocking_worker_runtime(
     started: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> crate::worker::WorkerRuntime {
+    blocking_worker_runtime_with_concurrency(broker, started, shutdown, 1)
+}
+
+fn blocking_worker_runtime_with_concurrency(
+    broker: std::sync::Arc<InMemoryBroker>,
+    started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
+    max_concurrent_actions: usize,
+) -> crate::worker::WorkerRuntime {
     crate::worker::WorkerRuntime {
         broker,
         profile: runinator_comm::ConsumerProfile::shared("test-consumer"),
@@ -310,7 +319,7 @@ fn blocking_worker_runtime(
                 started: started.clone(),
             }) as runinator_provider_catalog::StaticProvider]
         }),
-        max_concurrent_actions: 1,
+        max_concurrent_actions,
         shutdown_grace: std::time::Duration::from_secs(5),
         shutdown,
         events: std::sync::Arc::new(crate::events::NoopEventSink),
@@ -440,6 +449,98 @@ async fn control_canceled_action_still_publishes_canceled_status() {
         .is_err(),
         "a control-canceled delivery must be acked, not redelivered"
     );
+}
+
+#[tokio::test]
+async fn duplicate_delivery_of_in_flight_node_run_is_acked_without_executing() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let command = action_command();
+    // two deliveries of the same node run (a timeout-raced duplicate carries a fresh command id);
+    // the loser of the in-flight race must be dropped.
+    for _ in 0..2 {
+        let mut duplicate = command.clone();
+        duplicate.command_id = uuid::Uuid::new_v4();
+        broker
+            .publish(runinator_broker::BrokerMessage {
+                command: duplicate,
+                dedupe_key: None,
+                enqueued_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let runtime = blocking_worker_runtime_with_concurrency(
+        broker.clone(),
+        started.clone(),
+        shutdown.clone(),
+        2,
+    );
+    let worker = tokio::spawn(crate::worker::start_worker_loop(runtime));
+
+    wait_until_started(&started).await;
+    // let the duplicate work through its (ack-and-drop) path before settling the winner.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    broker
+        .publish_control(runinator_comm::ControlCommand::for_node_run(
+            command.workflow_run_id,
+            command.workflow_node_run_id,
+            runinator_comm::ControlKind::Cancel,
+        ))
+        .await
+        .unwrap();
+
+    // drain result events until the terminal status: exactly one running status may appear, so the
+    // duplicate never reached the observable execution path.
+    let mut running_count = 0;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let delivery = broker.receive_result("test-ws").await.unwrap();
+            if let WorkflowResultEventKind::Status { status, .. } = delivery.event.kind {
+                if status == WorkflowStatus::Running {
+                    running_count += 1;
+                } else if status.is_terminal() {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the surviving execution should settle terminally");
+    assert_eq!(
+        running_count, 1,
+        "the duplicate delivery must not start executing"
+    );
+
+    shutdown.notify_waiters();
+    worker.await.unwrap().unwrap();
+
+    // both deliveries settled by ack: nothing is left to redeliver.
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            broker.receive_for(&runinator_comm::ConsumerProfile::shared("verify")),
+        )
+        .await
+        .is_err(),
+        "a dropped duplicate must be acked, not redelivered"
+    );
+}
+
+#[tokio::test]
+async fn own_stale_leases_match_only_at_or_past_the_recorded_attempt() {
+    let leases = crate::worker::OwnStaleLeases::default();
+    let node_run_id = uuid::Uuid::new_v4();
+    leases.record(node_run_id, 2).await;
+    // an older attempt must never take the lease back (it was superseded).
+    assert!(!leases.matches(node_run_id, 1).await);
+    assert!(leases.matches(node_run_id, 2).await);
+    assert!(leases.matches(node_run_id, 3).await);
+    assert!(!leases.matches(uuid::Uuid::new_v4(), 2).await);
+    leases.clear(node_run_id).await;
+    assert!(!leases.matches(node_run_id, 2).await);
 }
 
 #[test]

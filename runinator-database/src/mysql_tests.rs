@@ -196,6 +196,7 @@ async fn mariadb_full_lifecycle() {
         workflow_run_id: run.id,
         workflow_node_run_id: node.id,
         node_id: "task-1".into(),
+        attempt: 1,
         timestamp: Utc::now(),
         kind: WorkflowResultEventKind::Status {
             status: WorkflowStatus::Succeeded,

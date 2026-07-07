@@ -103,6 +103,7 @@ fn workflow_result_events_round_trip_with_json() {
 
     assert_eq!(decoded.command_id, command.command_id);
     assert_eq!(decoded.workflow_node_run_id, workflow_node_run_id);
+    assert_eq!(decoded.attempt, 1);
     match decoded.kind {
         WorkflowResultEventKind::Chunk { chunk } => {
             assert_eq!(chunk.stream, "log");
@@ -110,4 +111,10 @@ fn workflow_result_events_round_trip_with_json() {
         }
         _ => panic!("expected chunk result event"),
     }
+
+    // an older message with no attempt field decodes to 0 (unknown), never an error.
+    let mut legacy = serde_json::to_value(&event).unwrap();
+    legacy.as_object_mut().unwrap().remove("attempt");
+    let decoded: WorkflowResultEvent = serde_json::from_value(legacy).unwrap();
+    assert_eq!(decoded.attempt, 0);
 }
