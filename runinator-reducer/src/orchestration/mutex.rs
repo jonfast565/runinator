@@ -27,17 +27,38 @@ fn parse_mutex_params(node: &WorkflowNode) -> MutexParams {
     }
 }
 
+/// the run currently holding a mutex record, if the record names one.
+pub(super) fn holder_run_id(record: &Value) -> Option<Uuid> {
+    record
+        .get("held_by_run_id")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<Uuid>().ok())
+}
+
 /// true when a mutex automation record is currently held by a run other than `skip_run_id`.
 /// a record is considered released when it carries a `released_at` field.
 pub(super) fn record_is_held_by_other(record: &Value, skip_run_id: Uuid) -> bool {
     if record.get("released_at").is_some() {
         return false;
     }
-    record
-        .get("held_by_run_id")
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<Uuid>().ok())
-        .is_some_and(|id| id != skip_run_id)
+    holder_run_id(record).is_some_and(|id| id != skip_run_id)
+}
+
+/// true when the run holding a lease is still active. a lease whose holder run has reached a
+/// terminal state (or no longer exists) is stale: the run ended without releasing — e.g. via
+/// cancellation, a crash, or a code path that bypassed the terminal-release hook — so its lock is
+/// reclaimable. this keeps a named mutex from deadlocking waiters behind a finished run.
+async fn holder_run_is_active<T: DatabaseImpl>(
+    db: &T,
+    record: &Value,
+) -> Result<bool, SendableError> {
+    let Some(run_id) = holder_run_id(record) else {
+        return Ok(false);
+    };
+    match db.fetch_workflow_run(run_id).await? {
+        Some(run) => Ok(!run.status.is_terminal()),
+        None => Ok(false),
+    }
 }
 
 async fn mutex_is_locked<T: DatabaseImpl>(
@@ -48,12 +69,59 @@ async fn mutex_is_locked<T: DatabaseImpl>(
     let records = db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
-    Ok(records.iter().any(|r| {
-        r.get("name").and_then(Value::as_str) == Some(name)
-            && record_is_held_by_other(r, skip_run_id)
-    }))
+    for record in &records {
+        if record.get("name").and_then(Value::as_str) != Some(name) {
+            continue;
+        }
+        if !record_is_held_by_other(record, skip_run_id) {
+            continue;
+        }
+        if !holder_run_is_active(db, record).await? {
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }
 
+/// release every mutex lease held by `run_id` by stamping `released_at`. called when a run reaches a
+/// terminal state so a shared named lock passes to the next waiter. idempotent: records already
+/// released or held by a different run are left untouched.
+pub(super) async fn release_run_mutexes<T: DatabaseImpl>(
+    db: &T,
+    run_id: Uuid,
+) -> Result<(), SendableError> {
+    let records = db
+        .fetch_automation_records(RECORD_TYPE.into(), None, None)
+        .await?;
+    for record in records {
+        if holder_run_id(&record) != Some(run_id) || record.get("released_at").is_some() {
+            continue;
+        }
+        let Some(id) = record
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<Uuid>().ok())
+        else {
+            continue;
+        };
+        let mut released = record.clone();
+        if let Some(object) = released.as_object_mut() {
+            object.insert(
+                "released_at".into(),
+                runinator_models::json!(Utc::now().timestamp()),
+            );
+        }
+        db.update_automation_record(RECORD_TYPE.into(), id, released)
+            .await?;
+    }
+    Ok(())
+}
+
+// record a lease for `name` held by `run_id`. mutual exclusion relies on the ws ingress consumer
+// driving the reducer one node at a time per replica, so the check-then-acquire above is atomic
+// within a replica; a multi-replica ws deployment would need a db-level compare-and-swap to make it
+// airtight across replicas.
 async fn acquire_mutex<T: DatabaseImpl>(
     db: &T,
     name: &str,

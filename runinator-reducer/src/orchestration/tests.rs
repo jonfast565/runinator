@@ -10,7 +10,7 @@ use super::collect::threshold_reached;
 use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
-use super::mutex::record_is_held_by_other;
+use super::mutex::{holder_run_id, record_is_held_by_other};
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
 use super::transitions::{timed_out, timed_out_since_created};
@@ -302,6 +302,22 @@ fn mutex_record_is_held_by_other_respects_released_flag() {
     .into();
     // released records are never considered held.
     assert!(!record_is_held_by_other(&released, run_b));
+}
+
+#[test]
+fn mutex_holder_run_id_parses_only_valid_uuids() {
+    let run = Uuid::now_v7();
+    let held = serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run}" }}"#))
+        .unwrap()
+        .into();
+    assert_eq!(holder_run_id(&held), Some(run));
+    // a record with no holder, or a malformed id, resolves to no holder.
+    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
+    assert_eq!(holder_run_id(&empty), None);
+    let malformed = serde_json::from_str::<Value>(r#"{ "held_by_run_id": "not-a-uuid" }"#)
+        .unwrap()
+        .into();
+    assert_eq!(holder_run_id(&malformed), None);
 }
 
 #[test]

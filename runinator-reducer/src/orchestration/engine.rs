@@ -56,6 +56,11 @@ pub async fn process_ready_node<T: DatabaseImpl>(
                 "workflow run step settled"
             );
             transitions::maybe_wake_subflow_parent(db, &next_run).await?;
+            // a run that acquired a named mutex holds it for the rest of the run; release on any
+            // terminal state so the next waiter can acquire. no-op for runs holding no lease.
+            if next_run.status.is_terminal() {
+                mutex::release_run_mutexes(db, next_run.id).await?;
+            }
             return Ok(disposition);
         }
         workflow_run = next_run;

@@ -65,9 +65,10 @@ if [[ ! -f "$config" ]]; then
   exit 1
 fi
 
-# build the Swift Keychain helper (macOS only); a config that does not use it
-# (no keychain-export command) still works on other platforms.
-if [[ $build -eq 1 && "$(uname -s)" == "Darwin" ]]; then
+# build the Swift Keychain helper (macOS only), but only when the config actually
+# invokes it. skipping this for configs that don't need it (e.g. the aws-sso job)
+# avoids contending with a concurrent run's SwiftPM lock on tools/keychain-export/.build.
+if [[ $build -eq 1 && "$(uname -s)" == "Darwin" ]] && grep -q "keychain-export" "$config"; then
   if command -v swift >/dev/null 2>&1; then
     echo "==> building keychain-export (release)"
     ( cd "$swift_dir" && swift build -c release )

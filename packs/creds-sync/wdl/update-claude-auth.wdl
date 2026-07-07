@@ -3,6 +3,13 @@ workflow "Update Claude Worker Auth" v1 {
     // the worker pods mount, so cloud workers act as the logged-in identity.
     trigger cron "0 * * * *"
 
+    // serialize against "Update AWS Worker Auth": both jobs run scripts/sync-secrets.sh on the same
+    // `creds-sync` runner and would otherwise race on shared build dirs (tools/keychain-export,
+    // tools/runinator-secret-sync). the shared lock name makes the two workflows mutually exclusive;
+    // it is held until this run ends. the timeout exceeds the node timeout below so a waiter never
+    // gives up while the holder is legitimately running.
+    mutex "creds-sync" every 10s timeout 600s
+
     // `.runner("creds-sync")` pins this to the workstation worker that holds the local login and a
     // kubeconfig. if no such worker is connected, the node parks then fails on the timeout below.
     node sync_claude <- console.run(
