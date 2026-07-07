@@ -252,6 +252,224 @@ fn worker_validates_provider_output_fields_when_present() {
     assert!(err.contains("provider output 'console.run.exit_code' expected integer, got string"));
 }
 
+// a provider whose execution blocks until its cancellation token fires, flagging when it starts.
+struct BlockingProvider {
+    started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl runinator_plugin::provider::Provider for BlockingProvider {
+    fn name(&self) -> String {
+        "test".into()
+    }
+
+    fn metadata(&self) -> runinator_models::providers::ProviderMetadata {
+        runinator_models::providers::ProviderMetadata {
+            name: "test".into(),
+            actions: vec![ActionMetadata::new("execute", "blocks until canceled")],
+            metadata: Default::default(),
+        }
+    }
+
+    fn execute_service(
+        &self,
+        _request: runinator_models::runs::ProviderExecutionRequest,
+        _sink: Option<std::sync::Arc<dyn runinator_plugin::provider::ProviderEventSink>>,
+        token: runinator_plugin::cancel::CancellationToken,
+    ) -> Result<TaskExecutionResult, runinator_models::errors::SendableError> {
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        while !token.is_cancelled() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // linger after the cancel so the executor's cancel arm settles the outcome as `Canceled`
+        // deterministically, then return so the blocking thread does not outlive the test runtime.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        Err("canceled".into())
+    }
+}
+
+// a worker loop harness executing a single blocking action against an in-memory broker. the api
+// endpoint is unreachable and replica_id is unset, so no executor-claim traffic occurs.
+fn blocking_worker_runtime(
+    broker: std::sync::Arc<InMemoryBroker>,
+    started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
+) -> crate::worker::WorkerRuntime {
+    crate::worker::WorkerRuntime {
+        broker,
+        profile: runinator_comm::ConsumerProfile::shared("test-consumer"),
+        libraries: std::sync::Arc::new(Default::default()),
+        api_client: runinator_api::AsyncApiClient::with_credentials(
+            runinator_api::StaticLocator::new("http://127.0.0.1:9/"),
+            None,
+        )
+        .unwrap(),
+        replica_id: None,
+        providers: std::sync::Arc::new(move || {
+            vec![Box::new(BlockingProvider {
+                started: started.clone(),
+            }) as runinator_provider_catalog::StaticProvider]
+        }),
+        max_concurrent_actions: 1,
+        shutdown_grace: std::time::Duration::from_secs(5),
+        shutdown,
+        events: std::sync::Arc::new(crate::events::NoopEventSink),
+    }
+}
+
+async fn wait_until_started(started: &std::sync::atomic::AtomicBool) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !started.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("provider should start executing");
+}
+
+#[tokio::test]
+async fn shutdown_preempted_action_is_requeued_not_canceled() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let command = action_command();
+    broker
+        .publish(runinator_broker::BrokerMessage {
+            command: command.clone(),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let runtime = blocking_worker_runtime(broker.clone(), started.clone(), shutdown.clone());
+    let worker = tokio::spawn(crate::worker::start_worker_loop(runtime));
+
+    wait_until_started(&started).await;
+    shutdown.notify_waiters();
+    worker.await.unwrap().unwrap();
+
+    // the run was not canceled: no terminal status may be published, only the initial `Running`.
+    let running = broker.receive_result("test-ws").await.unwrap();
+    match running.event.kind {
+        WorkflowResultEventKind::Status { status, .. } => {
+            assert_eq!(status, WorkflowStatus::Running)
+        }
+        other => panic!("expected running status, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            broker.receive_result("test-ws"),
+        )
+        .await
+        .is_err(),
+        "a shutdown-preempted action must not publish a terminal status"
+    );
+
+    // the delivery must be back on the action channel for another worker to pick up.
+    let redelivered = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        broker.receive_for(&runinator_comm::ConsumerProfile::shared("verify")),
+    )
+    .await
+    .expect("preempted delivery should be redelivered")
+    .unwrap();
+    assert_eq!(
+        redelivered.command.workflow_node_run_id,
+        command.workflow_node_run_id
+    );
+}
+
+#[tokio::test]
+async fn control_canceled_action_still_publishes_canceled_status() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let command = action_command();
+    broker
+        .publish(runinator_broker::BrokerMessage {
+            command: command.clone(),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let runtime = blocking_worker_runtime(broker.clone(), started.clone(), shutdown.clone());
+    let worker = tokio::spawn(crate::worker::start_worker_loop(runtime));
+
+    wait_until_started(&started).await;
+    broker
+        .publish_control(runinator_comm::ControlCommand::for_node_run(
+            command.workflow_run_id,
+            command.workflow_node_run_id,
+            runinator_comm::ControlKind::Cancel,
+        ))
+        .await
+        .unwrap();
+
+    // a genuine cancel settles the node as canceled: expect the terminal status on the result
+    // channel (skipping the initial running status and any log chunks).
+    let canceled_seen = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let delivery = broker.receive_result("test-ws").await.unwrap();
+            if let WorkflowResultEventKind::Status { status, .. } = delivery.event.kind
+                && status == WorkflowStatus::Canceled
+            {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(
+        canceled_seen.is_ok(),
+        "a control-requested cancel must publish a canceled status"
+    );
+
+    shutdown.notify_waiters();
+    worker.await.unwrap().unwrap();
+
+    // the canceled delivery was acked, not requeued.
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            broker.receive_for(&runinator_comm::ConsumerProfile::shared("verify")),
+        )
+        .await
+        .is_err(),
+        "a control-canceled delivery must be acked, not redelivered"
+    );
+}
+
+#[test]
+fn secret_resolution_errors_classify_transient_vs_definitive() {
+    use crate::secrets::is_transient_secret_error;
+    use runinator_models::errors::SendableError;
+
+    let server_error: SendableError = Box::new(runinator_api::ApiError::Http {
+        status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        url: "http://ws.local/".parse().unwrap(),
+        message: "boom".into(),
+    });
+    assert!(is_transient_secret_error(&server_error));
+
+    let missing: SendableError = Box::new(runinator_api::ApiError::Http {
+        status: reqwest::StatusCode::NOT_FOUND,
+        url: "http://ws.local/".parse().unwrap(),
+        message: "no such secret".into(),
+    });
+    assert!(!is_transient_secret_error(&missing));
+
+    let malformed: SendableError = Box::new(runinator_api::ApiError::UnexpectedResponse(
+        "not json".into(),
+    ));
+    assert!(!is_transient_secret_error(&malformed));
+
+    let unrelated: SendableError = "plain".into();
+    assert!(!is_transient_secret_error(&unrelated));
+}
+
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),

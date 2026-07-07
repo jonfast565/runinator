@@ -1,8 +1,19 @@
 use std::collections::{BTreeSet, HashMap};
 
-use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
+
+/// whether a secret-resolution failure is transient (web service unreachable, 5xx, discovery) and
+/// worth a redelivery, rather than a definitive rejection of the reference itself (4xx, malformed
+/// configuration) that should fail the action.
+pub(crate) fn is_transient_secret_error(err: &SendableError) -> bool {
+    match err.downcast_ref::<ApiError>() {
+        Some(ApiError::Request(_)) | Some(ApiError::Discovery(_)) => true,
+        Some(ApiError::Http { status, .. }) => status.is_server_error(),
+        _ => false,
+    }
+}
 
 pub(crate) async fn resolve_secret_refs(
     api_client: &AsyncApiClient<StaticLocator>,

@@ -1658,6 +1658,109 @@ async fn action_node_timeout_recovers_parked_run() {
     let _ = std::fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn action_node_fails_promptly_when_its_executing_worker_disconnects() {
+    use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
+
+    let (db, path) = test_db().await;
+    // no timeout_seconds: only the armed liveness poll can catch the dead executor.
+    let run_id = seed_run(
+        &db,
+        "executor-disconnect",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "run" } } },
+                {
+                    "id": "run",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute", "configuration": {} },
+                    "transitions": { "next": { "$node": "end" } }
+                },
+                { "id": "end", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    drain_ready_nodes(&db).await;
+    let dispatch = db.fetch_pending_action_dispatches(10).await.unwrap()[0].clone();
+    db.mark_action_dispatch_published(dispatch.id)
+        .await
+        .unwrap();
+
+    // a worker claimed the execution, then went offline without releasing the claim (crash or
+    // grace-period abort), so the reducer must treat the holder as disconnected.
+    let node_run_id = dispatch.command.workflow_node_run_id;
+    let runtime_id = Uuid::new_v4().to_string();
+    let dead_replica = db
+        .register_replica(
+            ReplicaRegistrationRequest {
+                replica_type: ReplicaKind::Worker,
+                instance_id: "doomed-worker".into(),
+                runtime_id: runtime_id.clone(),
+                display_name: None,
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: runinator_models::json!({}),
+            },
+            None,
+            &AuthContext {
+                principal_id: None,
+                is_admin: true,
+                kind: PrincipalKind::User,
+                org_id: None,
+                org_role: None,
+            },
+        )
+        .await
+        .unwrap()
+        .replica_id;
+    assert!(
+        db.claim_workflow_node_run_executor(
+            node_run_id,
+            dead_replica,
+            chrono::Utc::now(),
+            chrono::Utc::now() - chrono::Duration::seconds(60),
+        )
+        .await
+        .unwrap()
+    );
+    db.mark_replica_offline(dead_replica, runtime_id)
+        .await
+        .unwrap();
+
+    // the armed liveness poll is 15 seconds out; fire an equivalent due wake instead of sleeping.
+    db.enqueue_ready_node(
+        runinator_models::orchestration::NewOrchestrationEvent::new(
+            run_id,
+            Some("run".into()),
+            "dispatch_liveness_poll",
+            json!({ "node_id": "run" }),
+        ),
+        "run".into(),
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap();
+    drain_ready_nodes(&db).await;
+
+    let (run, nodes) = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let node_run = nodes.iter().find(|node| node.node_id == "run").unwrap();
+    assert_eq!(node_run.status, WorkflowStatus::TimedOut);
+    // the dead worker's claim must be released, or the retry this schedules would be dropped as a
+    // duplicate delivery by whichever worker picks it up.
+    assert!(node_run.current_executor_replica_id.is_none());
+    assert_eq!(run.status, WorkflowStatus::TimedOut);
+
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn merges_json_objects() {
     let defaults = json!({ "a": 1, "b": 2 });

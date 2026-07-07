@@ -18,9 +18,10 @@ const LOCAL_PROVIDER: &str = "local";
 const LOCAL_TARGET_POLL_SECONDS: i64 = 5;
 // a replica whose heartbeat is older than this is treated as disconnected; mirrors the ws reaper.
 const REPLICA_STALE_SECONDS: i64 = 30;
-// how often a dispatched action pinned to a label selector or replica rechecks that a matching
-// worker is still live, so a worker dying mid-run fails the node promptly rather than waiting out
-// (or never reaching) its `timeout_seconds` deadline.
+// how often a dispatched action rechecks that the worker executing it (its executor-claim holder,
+// or a worker matching its pinned label selector/replica) is still live, so a worker dying mid-run
+// fails the node promptly rather than waiting out (or never reaching) its `timeout_seconds`
+// deadline.
 const DISPATCH_LIVENESS_POLL_SECONDS: i64 = 15;
 
 // the routing decision for an action node: dispatch now to a resolved target, or park until the
@@ -116,8 +117,8 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         if node_run.status == WorkflowStatus::Running {
             // a dispatched action otherwise waits on its worker result indefinitely; honor the
             // node's timeout so a lost worker or dropped result cannot park the run forever. this
-            // is a backstop for a missing/very long timeout_seconds; the liveness check below is
-            // what actually catches a worker dying mid-run in a timely fashion.
+            // is a backstop for a missing/very long timeout_seconds; the liveness checks below are
+            // what actually catch a worker dying mid-run in a timely fashion.
             if timed_out(node, node_run) {
                 return time_out(
                     db,
@@ -129,26 +130,48 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
                 )
                 .await;
             }
+            // the executor claim names the worker actually running this action (any target,
+            // including the general pool). a dead holder can never publish a result, and its fresh
+            // claim makes every redelivery/retry get dropped as a duplicate — so release the claim
+            // before failing, or the retry this schedules would be swallowed until the claim ages
+            // past the timeout+grace staleness deadline.
+            if let Some(holder) = node_run.current_executor_replica_id
+                && !replica_is_live(db, holder).await?
+            {
+                db.release_workflow_node_run_executor(node_run.id, holder, Utc::now())
+                    .await?;
+                return time_out(
+                    db,
+                    workflow_run,
+                    node,
+                    node_run,
+                    "Worker executing this action disconnected",
+                    node_runs,
+                )
+                .await;
+            }
             // a pinned target (an explicit label selector, or the session-bound local provider)
             // has exactly one worker (or worker set) that can ever service it; if that worker just
             // went stale, no redelivery will ever land, so fail promptly instead of waiting out the
-            // full timeout. a general-pool (`Any`) dispatch is left alone: the broker can and will
-            // redeliver it to any other live worker, so a single dead consumer is not fatal there.
-            match dispatch_target_still_live(db, workflow_run, workflow, action).await? {
-                Some(false) => {
-                    return time_out(
-                        db,
-                        workflow_run,
-                        node,
-                        node_run,
-                        "Worker executing this action disconnected",
-                        node_runs,
-                    )
-                    .await;
-                }
-                Some(true) => arm_dispatch_liveness_poll(db, workflow_run.id, node).await?,
-                None => {}
+            // full timeout. this also covers a crash before the executor claim was recorded. the
+            // claim (if any) is left alone here: its holder is live per the check above, so freeing
+            // it could let a duplicate delivery run concurrently with the real execution.
+            if dispatch_target_still_live(db, workflow_run, workflow, action).await? == Some(false)
+            {
+                return time_out(
+                    db,
+                    workflow_run,
+                    node,
+                    node_run,
+                    "Worker executing this action disconnected",
+                    node_runs,
+                )
+                .await;
             }
+            // keep watching every dispatched action (not just pinned targets): the executor-claim
+            // check above is the only prompt dead-worker detection a general-pool dispatch has,
+            // and it only runs when something drives this node.
+            arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
             return Ok(());
         }
         // a node parked waiting for its bound desktop worker; honor the timeout, otherwise fall
@@ -203,10 +226,6 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             return park_for_target(db, workflow_run, node, &node_run).await;
         }
     };
-    let is_pinned_target = matches!(
-        target,
-        ActionTarget::Labels { .. } | ActionTarget::Replica { .. }
-    );
     let attempt = node_run.attempt + 1;
     let parameters =
         build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
@@ -246,11 +265,10 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     // no ready node is pending while the run awaits the worker, so a configured timeout must arm
     // its own wake-up to be checked at the deadline.
     arm_node_timeout(db, workflow_run.id, node).await?;
-    // a pinned target's worker can die mid-run with no result ever arriving; re-check its liveness
-    // well before the (possibly long, or unset) node timeout would otherwise catch it.
-    if is_pinned_target {
-        arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
-    }
+    // the executing worker can die mid-run with no result ever arriving; re-check its liveness
+    // (executor claim holder, or the pinned target's worker set) well before the possibly long,
+    // or unset, node timeout would otherwise catch it.
+    arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
     Ok(())
 }
 
@@ -411,7 +429,7 @@ async fn dispatch_target_still_live<T: DatabaseImpl>(
     Ok(None)
 }
 
-/// schedule the next liveness recheck of a dispatched action pinned to a label selector or replica.
+/// schedule the next liveness recheck of a dispatched action's executing worker.
 async fn arm_dispatch_liveness_poll<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

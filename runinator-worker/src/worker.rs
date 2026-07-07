@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use chrono::Utc;
 use runinator_api::{AsyncApiClient, StaticLocator};
@@ -23,7 +30,7 @@ use crate::executor;
 use crate::metrics;
 use crate::output_sink::RunOutputSink;
 use crate::provider_repository::ProviderFactory;
-use crate::secrets::resolve_secret_refs;
+use crate::secrets::{is_transient_secret_error, resolve_secret_refs};
 
 // grace added to an action's timeout before its executor lease is considered abandoned, so a worker
 // that is merely slow (clock skew, a long flush) is never preempted by a duplicate delivery.
@@ -34,12 +41,19 @@ const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
 // cancellation or drain, and exiting the control loop silently disables cancellation.
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
+// backoff before returning a delivery whose secrets could not be fetched from the web service, so
+// a ws outage does not hot-loop claim/execute/nack cycles against the broker.
+const SECRET_RETRY_BACKOFF: Duration = Duration::from_secs(5);
+
 // one in-flight action execution, tracked so a control command can cancel it. the owning run id is
 // retained so a run-wide cancel can fan out to every node run of that run.
 #[derive(Clone)]
 struct InFlightAction {
     workflow_run_id: Uuid,
     token: CancellationToken,
+    // set by the control loop before it cancels the token, so the result path can tell a genuine
+    // (ws-requested) cancel from a shutdown preemption that should requeue the delivery instead.
+    canceled_by_control: Arc<AtomicBool>,
 }
 
 /// everything the action loop needs to run. assembled by the binary (or an embedded host such as the
@@ -315,35 +329,38 @@ async fn handle_control_delivery(
         ControlKind::Cancel => {
             // a node-run-targeted cancel reaches exactly one losing race branch; a run-wide cancel
             // fans out to every node run of the run held on this worker.
-            let tokens = {
+            let actions = {
                 let guard = in_flight.lock().await;
                 match delivery.command.workflow_node_run_id {
                     Some(node_run_id) => guard
                         .get(&node_run_id)
-                        .map(|action| action.token.clone())
+                        .cloned()
                         .into_iter()
                         .collect::<Vec<_>>(),
                     None => guard
                         .values()
                         .filter(|action| action.workflow_run_id == delivery.command.workflow_run_id)
-                        .map(|action| action.token.clone())
+                        .cloned()
                         .collect::<Vec<_>>(),
                 }
             };
-            if tokens.is_empty() {
+            if actions.is_empty() {
                 info!(
                     run_id = %delivery.command.workflow_run_id,
                     node_id = ?delivery.command.workflow_node_run_id,
                     "cancellation requested, but no matching local execution is active"
                 );
             } else {
-                for token in &tokens {
-                    token.cancel();
+                for action in &actions {
+                    // flag before canceling so the result path never observes a control-canceled
+                    // token without the flag.
+                    action.canceled_by_control.store(true, Ordering::Release);
+                    action.token.cancel();
                 }
                 info!(
                     run_id = %delivery.command.workflow_run_id,
                     node_id = ?delivery.command.workflow_node_run_id,
-                    canceled = tokens.len(),
+                    canceled = actions.len(),
                     "cancellation requested; canceled local execution(s)"
                 );
             }
@@ -404,6 +421,7 @@ async fn process_delivery(
         InFlightAction {
             workflow_run_id: command.workflow_run_id,
             token: token.clone(),
+            canceled_by_control: Arc::new(AtomicBool::new(false)),
         },
     );
     let sink = RunOutputSink::new(
@@ -483,6 +501,30 @@ async fn process_delivery(
     }
     let parameters = match resolve_secret_refs(&api_client, command.parameters.clone()).await {
         Ok(parameters) => parameters,
+        // a transport failure or web-service outage is transient: the secret may resolve fine in a
+        // moment, so return the delivery for redelivery instead of failing the node (the default
+        // retry policy gives a node one attempt, so a ws blip would otherwise fail the whole run).
+        Err(err) if is_transient_secret_error(&err) => {
+            warn!(
+                node_run_id = %command.workflow_node_run_id,
+                error_code = error_code_or_unknown(err.as_ref()),
+                "transient failure resolving action secrets; returning delivery for retry: {}",
+                err
+            );
+            metrics::secret_resolution_failure();
+            in_flight.lock().await.remove(&command.workflow_node_run_id);
+            // pause so an unreachable web service does not hot-loop claim/nack cycles.
+            tokio::time::sleep(SECRET_RETRY_BACKOFF).await;
+            return nack_action_delivery(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                command.workflow_node_run_id,
+                delivery.delivery_id,
+            )
+            .await;
+        }
         Err(err) => {
             let message = format!("Failed to resolve action secrets: {err}");
             error!(
@@ -566,13 +608,44 @@ async fn process_delivery(
         )
         .await
     };
-    in_flight.lock().await.remove(&command.workflow_node_run_id);
+    let finished = in_flight.lock().await.remove(&command.workflow_node_run_id);
     let outcome = match result.status {
         runinator_models::runs::RunStatus::TimedOut => ActionOutcome::TimedOut,
         runinator_models::runs::RunStatus::Canceled => ActionOutcome::Canceled,
         _ if result.task_result.success => ActionOutcome::Succeeded,
         _ => ActionOutcome::Failed,
     };
+    // a cancellation no control command requested is shutdown preemption: the workflow itself was
+    // not canceled, so return the delivery (and the executor lease) for redelivery on another
+    // worker instead of publishing a terminal status that would settle the node — and with the
+    // default no-retry policy, the run — as canceled by a mere rolling restart. the mapped outcome
+    // races between `Canceled` (the executor's cancel arm) and `Failed` (a token-honoring provider
+    // returning an error first), so the preemption signal is the token itself: cancelled, but not
+    // by a control command, and not by the executor's own timeout (that maps to `TimedOut`).
+    let canceled_by_control = finished
+        .as_ref()
+        .is_some_and(|action| action.canceled_by_control.load(Ordering::Acquire));
+    if matches!(outcome, ActionOutcome::Canceled | ActionOutcome::Failed)
+        && finished
+            .as_ref()
+            .is_some_and(|action| action.token.is_cancelled())
+        && !canceled_by_control
+    {
+        warn!(
+            node_run_id = %command.workflow_node_run_id,
+            "action preempted by worker shutdown; returning delivery for redelivery"
+        );
+        metrics::action_completed("requeued", result.task_result.duration_ms() as f64);
+        return nack_action_delivery(
+            broker,
+            consumer_id,
+            &api_client,
+            replica_id,
+            command.workflow_node_run_id,
+            delivery.delivery_id,
+        )
+        .await;
+    }
     metrics::action_completed(outcome.as_str(), result.task_result.duration_ms() as f64);
     if let Some(execution_result) = &result.execution_result
         && let Err(err) = sink.persist_result(execution_result).await
@@ -672,15 +745,6 @@ async fn process_delivery(
             .await?;
             return Err(broker_error("publish_result", err));
         }
-        if let Some(replica_id) = replica_id {
-            let _ = api_client
-                .release_workflow_node_run_executor(
-                    command.workflow_node_run_id,
-                    replica_id,
-                    Utc::now(),
-                )
-                .await;
-        }
     } else {
         warn!(
             node_run_id = %command.workflow_node_run_id,
@@ -742,21 +806,25 @@ async fn process_delivery(
             .await?;
             return Err(broker_error("publish_result", err));
         }
-        if let Some(replica_id) = replica_id {
-            let _ = api_client
-                .release_workflow_node_run_executor(
-                    command.workflow_node_run_id,
-                    replica_id,
-                    Utc::now(),
-                )
-                .await;
-        }
     }
 
     broker
         .ack(consumer_id, delivery.delivery_id)
         .await
-        .map_err(|err| broker_error("ack", err))
+        .map_err(|err| broker_error("ack", err))?;
+    // release the executor lease only after the ack commits the delivery: releasing first would
+    // let an ack failure redeliver this already-completed action into a free claim and re-run its
+    // side effects. a failed release self-heals once the claim ages past the staleness deadline.
+    if let Some(replica_id) = replica_id {
+        let _ = api_client
+            .release_workflow_node_run_executor(
+                command.workflow_node_run_id,
+                replica_id,
+                Utc::now(),
+            )
+            .await;
+    }
+    Ok(())
 }
 
 /// return a delivery to the broker for redelivery, releasing this worker's executor lease first.
