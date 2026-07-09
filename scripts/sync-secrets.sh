@@ -65,16 +65,38 @@ if [[ ! -f "$config" ]]; then
   exit 1
 fi
 
+# stably codesign the keychain helper so the login-keychain "Always Allow" grant
+# survives rebuilds. adhoc/linker-signed binaries get a fresh code identity on each
+# build, which re-triggers the macOS keychain prompt. opt-in: set
+# RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY to a code-signing identity in your keychain.
+codesign_keychain_export() {
+  local identity="${RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY:-}"
+  [[ -n "$identity" ]] || return 0
+  local bin="${swift_bin_dir}/keychain-export"
+  [[ -x "$bin" ]] || return 0
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "warning: codesign not on PATH; leaving keychain-export adhoc-signed." >&2
+    return 0
+  fi
+  echo "==> codesigning keychain-export (identity: ${identity})"
+  codesign --force --sign "$identity" \
+    --identifier com.runinator.keychain-export "$bin" \
+    || echo "warning: codesign keychain-export failed; grant may re-prompt." >&2
+}
+
 # build the Swift Keychain helper (macOS only), but only when the config actually
 # invokes it. skipping this for configs that don't need it (e.g. the aws-sso job)
 # avoids contending with a concurrent run's SwiftPM lock on tools/keychain-export/.build.
-if [[ $build -eq 1 && "$(uname -s)" == "Darwin" ]] && grep -q "keychain-export" "$config"; then
-  if command -v swift >/dev/null 2>&1; then
-    echo "==> building keychain-export (release)"
-    ( cd "$swift_dir" && swift build -c release )
-  else
-    echo "warning: swift not on PATH; skipping keychain-export build." >&2
+if [[ "$(uname -s)" == "Darwin" ]] && grep -q "keychain-export" "$config"; then
+  if [[ $build -eq 1 ]]; then
+    if command -v swift >/dev/null 2>&1; then
+      echo "==> building keychain-export (release)"
+      ( cd "$swift_dir" && swift build -c release )
+    else
+      echo "warning: swift not on PATH; skipping keychain-export build." >&2
+    fi
   fi
+  codesign_keychain_export
 fi
 
 # build the Go engine.

@@ -71,5 +71,31 @@ code `3` to report a missing login distinctly.
 The **first** Keychain read by this binary triggers a macOS "keychain-export
 wants to use the login keychain" dialog. Click **Always Allow** once,
 interactively, **before** wiring it into an unattended rotator run — otherwise the
-invisible prompt will block. Rebuilding the binary changes its identity and may
-re-prompt; codesign it stably if that becomes a nuisance.
+invisible prompt will block.
+
+Clicking **Always Allow** typically asks for your password **twice**: once to
+authorize the read, and again to modify the item's ACL so the grant is
+remembered. That grant is bound to the binary's code identity, and an
+adhoc/linker-signed binary (the default from `swift build`) gets a **new identity
+on every rebuild** — so the grant is invalidated and you re-prompt each time the
+build path recompiles it.
+
+### One-time stable codesign (removes the repeated prompt)
+
+Give the binary a stable code identity so the grant persists across rebuilds. A
+self-signed cert is enough — no Developer ID required:
+
+1. In **Keychain Access ▸ Certificate Assistant ▸ Create a Certificate…**, make a
+   *Self Signed Root* of type *Code Signing* (e.g. name it `runinator-codesign`).
+2. Export the identity name into your environment:
+
+   ```sh
+   export RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY="runinator-codesign"
+   ```
+
+When that variable is set, both build paths that compile this helper — `scripts/sync-secrets.sh`
+and `cargo run -p xtask -- build` — re-sign the binary with a stable
+`--identifier com.runinator.keychain-export` after `swift build`. Approve
+**Always Allow** once more after switching to the signed binary; it then keeps the
+grant across every subsequent rebuild. If the variable is unset, the helper stays
+adhoc-signed and behaves as before.

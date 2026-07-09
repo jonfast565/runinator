@@ -13,11 +13,29 @@ mod gui;
 mod launcher;
 mod logging;
 mod notify;
+mod single_instance;
 mod tray;
 
 use std::sync::{Arc, Mutex};
 
 fn main() -> eframe::Result<()> {
+    // ensure only one desktop agent runs at a time: two copies would both register the exclusive
+    // `desktop` replica and contend for the same pinned/labeled work. a second launch surfaces a
+    // dialog and exits instead of starting a rival worker loop.
+    let _instance = match single_instance::acquire() {
+        Ok(Some(guard)) => Some(guard),
+        Ok(None) => {
+            single_instance::warn_already_running();
+            return Ok(());
+        }
+        // an unexpected bind failure must not lock the operator out of their own agent; note it and
+        // start anyway rather than refusing to run.
+        Err(err) => {
+            eprintln!("desktop-agent single-instance check failed, starting anyway: {err}");
+            None
+        }
+    };
+
     // load config up front so the log console starts at the persisted level, and share one state
     // handle between the tracing bridge (which writes log lines into it) and the GUI (which reads them).
     let draft = config::load();

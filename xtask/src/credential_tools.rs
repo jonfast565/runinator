@@ -35,6 +35,48 @@ fn build_keychain_export(workspace_root: &Path) {
     exec::warn_on_err("keychain-export build failed", || {
         exec::run("swift", &["build", "-c", "release"], &swift_dir)
     });
+
+    codesign_keychain_export(&swift_dir);
+}
+
+// stably codesigns the keychain helper so the login-keychain "always allow" grant
+// survives rebuilds. adhoc/linker-signed binaries get a fresh code identity on each
+// build, which re-triggers the macos keychain prompt. opt-in: set
+// RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY to a code-signing identity in your keychain.
+fn codesign_keychain_export(swift_dir: &Path) {
+    let Ok(identity) = std::env::var("RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY") else {
+        return;
+    };
+    if identity.is_empty() {
+        return;
+    }
+
+    let binary = swift_dir.join(".build/release/keychain-export");
+    if !binary.exists() {
+        return;
+    }
+
+    if !exec::tool_available("codesign") {
+        eprintln!("warning: codesign not found on PATH; leaving keychain-export adhoc-signed.");
+        return;
+    }
+
+    println!("==> Codesigning keychain-export (identity: {identity})");
+    let binary_path = binary.to_string_lossy();
+    exec::warn_on_err("keychain-export codesign failed", || {
+        exec::run(
+            "codesign",
+            &[
+                "--force",
+                "--sign",
+                &identity,
+                "--identifier",
+                "com.runinator.keychain-export",
+                binary_path.as_ref(),
+            ],
+            swift_dir,
+        )
+    });
 }
 
 fn build_secret_sync(workspace_root: &Path) {
