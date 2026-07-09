@@ -1592,6 +1592,22 @@ where
                 .bind(workflow_run_id),
             )
             .await?;
+        // a run that just reached a terminal state can still own pending ready nodes (poll re-arms,
+        // timeout wakes, unclaimed siblings). left behind they are rescanned forever by the wake
+        // publisher — re-driving a dead run, spamming ui events, and starving new work behind their
+        // stale `ready_at`. settle them here so the backstop stops seeing them.
+        if terminal {
+            self.pool()
+                .execute(
+                    sqlx::query(&self.render(
+                        "UPDATE workflow_ready_nodes SET completed_at = ?, status = 'succeeded', updated_at = ? WHERE workflow_run_id = ? AND completed_at IS NULL",
+                    ))
+                    .bind(now)
+                    .bind(now)
+                    .bind(workflow_run_id),
+                )
+                .await?;
+        }
         Ok(())
     }
 
@@ -2181,6 +2197,28 @@ where
         }
 
         let now = Utc::now().timestamp();
+
+        // invariant: a `(run, node)` has at most one live pending ready-node generation. every node
+        // kind re-arms by enqueuing a fresh row (poll re-checks, timeout wakes, retries, re-entry);
+        // if a prior generation's completion is lost — e.g. a db timeout after this new row was
+        // already armed — the stale, already-due rows would pile up and feed a runaway that the wake
+        // publisher rescans forever. settle any already-due pending rows for this node before adding
+        // the new one, so the backlog self-heals to a single live generation. future-dated rows (a
+        // node timeout, a not-yet-due poll) are left untouched, and the new row is inserted after, so
+        // neither is affected.
+        sqlx::query(&self.render(
+            "UPDATE workflow_ready_nodes
+             SET completed_at = ?, status = 'succeeded', updated_at = ?
+             WHERE workflow_run_id = ? AND node_id = ? AND completed_at IS NULL AND ready_at <= ?",
+        ))
+        .bind(now)
+        .bind(now)
+        .bind(event.workflow_run_id)
+        .bind(node_id.as_str())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
         let ready_id = Uuid::now_v7();
         let ready_columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
 
@@ -2440,6 +2478,32 @@ where
         .execute(self.pool())
         .await?;
         Ok(result.affected() > 0)
+    }
+
+    async fn settle_terminal_run_ready_nodes(&self, limit: i64) -> Result<u64, SendableError> {
+        let now = Utc::now().timestamp();
+        // the derived-table wrapper lets mysql update a table it also selects from; sqlite/postgres
+        // accept it too, so one statement serves every dialect. the join is index-backed on
+        // workflow_run_id / status.
+        let result = sqlx::query(&self.render(
+            "UPDATE workflow_ready_nodes
+             SET completed_at = ?, status = 'succeeded', updated_at = ?
+             WHERE id IN (
+                 SELECT id FROM (
+                     SELECT rn.id FROM workflow_ready_nodes rn
+                     JOIN workflow_runs wr ON wr.id = rn.workflow_run_id
+                     WHERE rn.completed_at IS NULL
+                       AND wr.status IN ('succeeded', 'failed', 'timed_out', 'canceled')
+                     LIMIT ?
+                 ) AS doomed
+             )",
+        ))
+        .bind(now)
+        .bind(now)
+        .bind(limit.max(1))
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected())
     }
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {

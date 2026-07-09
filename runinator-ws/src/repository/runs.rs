@@ -226,6 +226,16 @@ pub async fn publish_pending_wakes<T: DatabaseImpl>(
     Ok(())
 }
 
+/// safety backstop: settle uncompleted ready nodes whose run is already terminal, in bounded
+/// batches. the reducer settles these inline on the terminal transition; this catches any orphaned
+/// by a crash mid-transition so the wake publisher stops rescanning dead runs. returns rows settled.
+pub async fn settle_terminal_run_ready_nodes<T: DatabaseImpl>(
+    db: &T,
+    limit: i64,
+) -> Result<u64, SendableError> {
+    db.settle_terminal_run_ready_nodes(limit).await
+}
+
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
     db: &T,
     status: WorkflowStatus,

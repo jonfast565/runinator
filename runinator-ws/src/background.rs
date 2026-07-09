@@ -26,6 +26,8 @@ const MAX_INGRESS_ATTEMPTS: u32 = 3;
 const INGRESS_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 const REPLICA_REAP_INTERVAL: Duration = Duration::from_secs(60);
 const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
+const READY_NODE_REAP_INTERVAL: Duration = Duration::from_secs(30);
+const READY_NODE_REAP_LIMIT: i64 = 1000;
 
 /// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
 /// (the durable backstop). the broker dedupes wakes already in flight.
@@ -91,6 +93,36 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
                 return;
             }
             _ = tokio::time::sleep(REPLICA_REAP_INTERVAL) => {}
+        }
+    }
+}
+
+/// safety backstop for ready-node bookkeeping: periodically settle any uncompleted ready nodes whose
+/// run is already terminal. the reducer settles these inline on the terminal transition, so this
+/// normally finds nothing; it exists for the instability case where that path did not run to
+/// completion (a ws/broker/db crash mid-transition), preventing orphaned rows from being rescanned
+/// by the wake publisher forever and bloating the ready table. batched so a large post-outage
+/// backlog drains over several ticks rather than in one long-held lock.
+pub(crate) async fn run_ready_node_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+    info!("ready node reaper started");
+    loop {
+        match repository::settle_terminal_run_ready_nodes(db.as_ref(), READY_NODE_REAP_LIMIT).await
+        {
+            Ok(count) if count > 0 => {
+                info!(count, "settled orphaned ready node(s) for terminal run(s)")
+            }
+            Ok(_) => {}
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "ready node reaper iteration failed: {}", err
+            ),
+        }
+        tokio::select! {
+            _ = shutdown.notified() => {
+                info!("ready node reaper shutting down");
+                return;
+            }
+            _ = tokio::time::sleep(READY_NODE_REAP_INTERVAL) => {}
         }
     }
 }

@@ -492,6 +492,16 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scheduler_id: String,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Safety backstop: settle up to `limit` uncompleted ready-node rows whose workflow run is
+    /// already terminal. The reducer settles these inline on the terminal transition; this catches
+    /// rows orphaned when that path did not run to completion — a crash mid-transition, or work
+    /// enqueued before the inline cleanup existed — so the wake publisher stops rescanning dead runs.
+    /// Returns the number of rows settled.
+    fn settle_terminal_run_ready_nodes(
+        &self,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(
         &self,

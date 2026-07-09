@@ -4,8 +4,10 @@
 //! [`set_level`] — no restart, and `RUST_LOG` still wins at process startup for parity with a
 //! terminal-launched worker.
 
+use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::sync::OnceLock;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
@@ -14,6 +16,11 @@ use tracing_subscriber::reload;
 
 use crate::agent::{SharedHandle, try_log_line};
 use crate::config::LogLevel;
+
+// the on-disk agent log, under the shared app-data dir (`~/.runinator/logs/desktop-agent.log`). the
+// tray app has no visible stderr, so a rolling console alone leaves no post-mortem trail; the file
+// gives one for diagnosing routing/broker/worker issues after the fact.
+const LOG_FILE_NAME: &str = "logs/desktop-agent.log";
 
 // set once the subscriber is installed; lets the GUI change the filter without naming the (verbose)
 // reload-handle type. a no-op before init, or if another subscriber was already installed.
@@ -32,9 +39,23 @@ pub fn init(shared: SharedHandle, initial: LogLevel) {
             shared: shared.clone(),
         });
 
+    // a persistent file sink alongside the console. its own EnvFilter (info default, `RUNINATOR_LOG`
+    // honored) keeps the on-disk trail stable and diagnostic regardless of the live GUI level, and it
+    // carries timestamps the console omits. best-effort: if the file cannot be opened, log to console
+    // only rather than failing startup.
+    let file_layer = open_log_file().map(|file| {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_writer(FileMakeWriter { file })
+            .with_filter(file_filter(initial))
+    });
+
     if tracing_subscriber::registry()
         .with(filter)
         .with(console_layer)
+        .with(file_layer)
         .try_init()
         .is_err()
     {
@@ -55,6 +76,27 @@ pub fn set_level(level: LogLevel) {
 
 // the project-wide log-filter env var, matching the service binaries' shared logger.
 const LOG_ENV: &str = "RUNINATOR_LOG";
+
+/// open (creating dirs) the append-mode agent log file under the app-data dir. `None` on any io
+/// error so logging degrades to console-only rather than blocking startup.
+fn open_log_file() -> Option<Arc<Mutex<File>>> {
+    let path: PathBuf = runinator_utilities::app_data::app_data_path(LOG_FILE_NAME).ok()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok()?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()?;
+    Some(Arc::new(Mutex::new(file)))
+}
+
+/// file-sink filter: honor `RUNINATOR_LOG`, else at least the persisted level, so the on-disk trail
+/// is independent of the live GUI dropdown.
+fn file_filter(level: LogLevel) -> EnvFilter {
+    initial_filter(level)
+}
 
 /// startup filter: honor a `RUNINATOR_LOG` directive if present (parity with the service binaries'
 /// shared logger), otherwise the persisted level.
@@ -122,6 +164,46 @@ impl Drop for ConsoleWriter {
             if !trimmed.is_empty() {
                 try_log_line(&self.shared, trimmed.to_string());
             }
+        }
+    }
+}
+
+// a `MakeWriter` that appends each formatted tracing line to the shared log file. the fmt layer
+// writes a whole event per `make_writer`, so a single locked write per event keeps lines intact
+// without interleaving across threads.
+struct FileMakeWriter {
+    file: Arc<Mutex<File>>,
+}
+
+impl<'a> MakeWriter<'a> for FileMakeWriter {
+    type Writer = FileWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        FileWriter {
+            file: self.file.clone(),
+        }
+    }
+}
+
+struct FileWriter {
+    file: Arc<Mutex<File>>,
+}
+
+impl Write for FileWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        // a poisoned lock still yields the guard; a dropped file write is not worth panicking over.
+        let mut file = match self.file.lock() {
+            Ok(file) => file,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        file.write_all(data)?;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.file.lock() {
+            Ok(mut file) => file.flush(),
+            Err(poisoned) => poisoned.into_inner().flush(),
         }
     }
 }
