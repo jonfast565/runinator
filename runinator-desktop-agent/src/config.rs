@@ -21,12 +21,53 @@ pub enum BrokerMode {
     Direct,
 }
 
+/// verbosity for the agent's tracing output, surfaced live in the in-app log console. maps to a
+/// tracing `EnvFilter` base level (see `crate::logging`); the GUI dropdown drives it at runtime.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    /// levels in increasing-verbosity order, for the GUI dropdown.
+    pub const ALL: [LogLevel; 5] = [
+        LogLevel::Error,
+        LogLevel::Warn,
+        LogLevel::Info,
+        LogLevel::Debug,
+        LogLevel::Trace,
+    ];
+
+    /// the lowercase name, both the serde form and the tracing filter directive.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+            LogLevel::Trace => "trace",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// also used to derive the ws broker relay URL in `BrokerMode::Relay` (scheme swapped,
     /// `/ws/desktop-worker` appended) — see `agent::derive_relay_url`.
     pub service_url: String,
     pub sandbox_root: String,
+    /// base directory `console.run` commands execute from on this machine (the child process's
+    /// `current_dir`), exported to the console provider as `RUNINATOR_CONSOLE_WORKING_DIR`. lets a
+    /// workflow reference files by a relative path (e.g. `bash scripts/sync-secrets.sh` from a repo
+    /// checkout) instead of an absolute one baked in at import. empty inherits the agent's own cwd.
+    #[serde(default)]
+    pub console_working_dir: String,
     #[serde(default)]
     pub allow_write: bool,
     #[serde(default)]
@@ -70,6 +111,10 @@ pub struct AgentConfig {
     /// them; same knob as `runinator-worker`'s `--shutdown-grace-seconds`.
     #[serde(default = "default_shutdown_grace_seconds")]
     pub shutdown_grace_seconds: u64,
+    /// verbosity of the tracing output shown in the in-app log console; the GUI dropdown changes it
+    /// live (`RUST_LOG`, if set, still wins at process startup).
+    #[serde(default)]
+    pub log_level: LogLevel,
 }
 
 fn default_direct_broker_backend() -> String {
@@ -89,6 +134,7 @@ impl Default for AgentConfig {
         Self {
             service_url: "http://127.0.0.1:8080/".to_string(),
             sandbox_root: String::new(),
+            console_working_dir: String::new(),
             allow_write: false,
             api_key: None,
             extra_labels: Vec::new(),
@@ -100,6 +146,7 @@ impl Default for AgentConfig {
             auto_start: false,
             max_concurrent_actions: default_max_concurrent_actions(),
             shutdown_grace_seconds: default_shutdown_grace_seconds(),
+            log_level: LogLevel::default(),
         }
     }
 }

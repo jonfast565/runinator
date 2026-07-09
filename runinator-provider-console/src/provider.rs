@@ -25,10 +25,14 @@ impl Provider for ConsoleProvider {
             name: self.name(),
             actions: vec![
                 ActionMetadata::new("run", "Run a shell command")
-                    .with_parameters(vec![ParameterMetadata::required(
-                        "command",
-                        RuninatorType::String,
-                    )])
+                    .with_parameters(vec![
+                        ParameterMetadata::required("command", RuninatorType::String),
+                        ParameterMetadata::optional("interactive", RuninatorType::Boolean)
+                            .with_description(
+                                "run attached to the worker's desktop session so the command can \
+                                 prompt (browser login, Keychain dialog); output is not streamed",
+                            ),
+                    ])
                     .with_results(vec![
                         ResultMetadata::new("success", RuninatorType::Boolean),
                         ResultMetadata::new("exit_code", RuninatorType::Integer),

@@ -1,8 +1,0 @@
-// Worker Credential Sync Pack settings.
-//
-// the only required value is the absolute path, on the `creds-sync` worker, to a checkout of this
-// repository. the workflows invoke `scripts/sync-secrets.sh` from there, so it must point at the
-// machine where the operator is logged in to Claude/AWS and that holds a working kubeconfig.
-
-// e.g. "/Users/you/Documents/GitHub/runinator".
-config creds_sync.workspace = "<<insert here>>"

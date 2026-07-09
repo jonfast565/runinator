@@ -6,6 +6,5 @@
     "wdl/update-claude-auth.wdl",
     "wdl/update-aws-auth.wdl"
   ],
-  "settings": "settings.wdls",
   "triggers": []
 }

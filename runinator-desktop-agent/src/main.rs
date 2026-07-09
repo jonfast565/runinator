@@ -11,10 +11,18 @@ mod agent;
 mod config;
 mod gui;
 mod launcher;
+mod logging;
+mod notify;
 mod tray;
 
+use std::sync::{Arc, Mutex};
+
 fn main() -> eframe::Result<()> {
-    env_logger::init();
+    // load config up front so the log console starts at the persisted level, and share one state
+    // handle between the tracing bridge (which writes log lines into it) and the GUI (which reads them).
+    let draft = config::load();
+    let shared = Arc::new(Mutex::new(agent::Shared::default()));
+    logging::init(shared.clone(), draft.log_level);
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -26,6 +34,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Runinator Desktop Agent",
         native_options,
-        Box::new(|cc| Ok(Box::new(gui::DesktopAgentApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(gui::DesktopAgentApp::new(cc, shared, draft)))),
     )
 }

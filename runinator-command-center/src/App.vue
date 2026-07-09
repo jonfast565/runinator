@@ -110,10 +110,14 @@ onMounted(async () => {
 
   if (!discovery.isDesktop()) {
     const baseUrl = discovery.webServiceUrl();
-    app.setServiceUrl(baseUrl || null);
 
     if (baseUrl) {
+      // publish the auth token before advertising the service url: the event stream connects the
+      // moment serviceUrl is set, and a browser WebSocket can only present its token via ?token=.
+      // initializing auth first means that first connect already carries the token instead of 401ing
+      // and flapping into fallback.
       await auth.init();
+      app.setServiceUrl(baseUrl);
 
       if (auth.authenticated) {
         try {
@@ -123,6 +127,7 @@ onMounted(async () => {
         }
       }
     } else {
+      app.setServiceUrl(null);
       app.setError(
         "No service URL configured. Set VITE_RUNINATOR_WS_URL or serve the SPA from the runinator-command-center-web pod.",
       );

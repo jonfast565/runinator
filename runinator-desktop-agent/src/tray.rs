@@ -16,7 +16,7 @@ pub enum TrayAction {
 
 /// owns the tray icon for the process lifetime; dropping it removes the icon from the tray.
 pub struct AgentTray {
-    _tray: TrayIcon,
+    tray: TrayIcon,
     open_id: MenuId,
     open_ui_id: MenuId,
     exit_id: MenuId,
@@ -44,16 +44,24 @@ impl AgentTray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Runinator Desktop Agent")
-            .with_icon(build_icon())
+            .with_icon(build_icon(TrayColor::Idle.rgb()))
             .build()
             .ok()?;
 
         Some(Self {
-            _tray: tray,
+            tray,
             open_id,
             open_ui_id,
             exit_id,
         })
+    }
+
+    /// reflect the agent's connection state in the tray icon color and tooltip, so a degraded or
+    /// stopped agent is visible from the menu bar without opening the window. best-effort: a failing
+    /// platform call is ignored rather than propagated.
+    pub fn set_status(&self, color: TrayColor, tooltip: &str) {
+        let _ = self.tray.set_icon(Some(build_icon(color.rgb())));
+        let _ = self.tray.set_tooltip(Some(tooltip));
     }
 
     /// drain one pending tray/menu event, if any. non-blocking; call every frame.
@@ -84,9 +92,34 @@ impl AgentTray {
     }
 }
 
-// a filled circle on a transparent background; enough to be recognizable at tray size without
-// shipping an icon asset.
-fn build_icon() -> Icon {
+/// the tray-icon color that maps to an agent connection state. kept here rather than in `agent` so
+/// the tray owns its own palette and callers don't reach into rgba details.
+#[derive(Debug, Clone, Copy)]
+pub enum TrayColor {
+    /// stopped / not started — neutral gray.
+    Idle,
+    /// bringing the worker loop up — blue.
+    Connecting,
+    /// running and consuming actions — green.
+    Connected,
+    /// broker down or crash-looping — red.
+    Degraded,
+}
+
+impl TrayColor {
+    fn rgb(self) -> [u8; 3] {
+        match self {
+            TrayColor::Idle => [130, 130, 130],
+            TrayColor::Connecting => [45, 140, 200],
+            TrayColor::Connected => [64, 180, 96],
+            TrayColor::Degraded => [210, 90, 70],
+        }
+    }
+}
+
+// a filled circle on a transparent background in `color`; enough to be recognizable at tray size
+// without shipping an icon asset.
+fn build_icon(color: [u8; 3]) -> Icon {
     let mut rgba = vec![0u8; (ICON_SIZE * ICON_SIZE * 4) as usize];
     let center = ICON_SIZE as f32 / 2.0 - 0.5;
     let radius = ICON_SIZE as f32 / 2.0 - 2.0;
@@ -99,9 +132,9 @@ fn build_icon() -> Icon {
                 continue;
             }
             let idx = ((y * ICON_SIZE + x) * 4) as usize;
-            rgba[idx] = 45;
-            rgba[idx + 1] = 140;
-            rgba[idx + 2] = 200;
+            rgba[idx] = color[0];
+            rgba[idx + 1] = color[1];
+            rgba[idx + 2] = color[2];
             rgba[idx + 3] = 255;
         }
     }

@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { effectScope, nextTick } from "vue";
 import { useEventStream } from "../useEventStream";
 import { setHttpAuthToken } from "../../../core/api/httpRuntime";
+import { authService } from "../../../core/services";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
 import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
@@ -102,6 +103,37 @@ describe("useEventStream", () => {
     expect(MockWebSocket.sockets).toHaveLength(2);
     expect(MockWebSocket.sockets[0].close).toHaveBeenCalled();
     expect(MockWebSocket.sockets[1].url).toBe("ws://127.0.0.1:8080/ws/events?token=org-token-2");
+    scope.stop();
+  });
+
+  it("does not open a socket while auth is required but unauthenticated", async () => {
+    const app = useAppStore();
+    const auth = useAuthStore();
+    // simulate an enabled-but-logged-out backend: a browser WS would only 401 on a ?token=-less connect.
+    authService.resetForTests();
+    authService.setState((state) => ({ ...state, required: true, authenticated: false }));
+    app.setServiceUrl("http://127.0.0.1:8080/");
+
+    const scope = effectScope();
+    scope.run(() => {
+      useEventStream();
+    });
+    await nextTick();
+
+    // required + unauthenticated: no socket should be opened.
+    expect(MockWebSocket.sockets).toHaveLength(0);
+
+    // publish the token first (still unauthenticated → still no socket), then flip authenticated so
+    // the single connect that follows already carries the token.
+    await auth.applyAccessToken("org-token-9");
+    await nextTick();
+    expect(MockWebSocket.sockets).toHaveLength(0);
+
+    authService.setState((state) => ({ ...state, authenticated: true }));
+    await nextTick();
+
+    expect(MockWebSocket.sockets).toHaveLength(1);
+    expect(MockWebSocket.sockets[0].url).toBe("ws://127.0.0.1:8080/ws/events?token=org-token-9");
     scope.stop();
   });
 

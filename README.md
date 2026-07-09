@@ -398,6 +398,10 @@ a log file via `tracing`, filtered by `RUNINATOR_LOG` (an `EnvFilter` directive,
 default `info`). The web service additionally exposes Prometheus metrics at
 `/metrics`.
 
+The `runinator-desktop-agent` tray app honors the same `RUNINATOR_LOG` directive at
+startup and additionally renders those `tracing` records into its in-app log console,
+where a **Log → Level** dropdown changes the level live (no restart) and persists it.
+
 OpenTelemetry export is **off by default and turns on purely from the standard
 `OTEL_*` environment variables** — no CLI flags or config-file options. When
 `OTEL_EXPORTER_OTLP_ENDPOINT` (or a signal-specific

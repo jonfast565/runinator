@@ -20,6 +20,18 @@ fn parse_params_accepts_command_string() {
     let params = parse_params(&request(json!({ "command": "printf hello" }))).unwrap();
 
     assert_eq!(params.command, "printf hello");
+    // interactive defaults to false when the field is omitted.
+    assert!(!params.interactive);
+}
+
+#[test]
+fn parse_params_reads_interactive_flag() {
+    let params = parse_params(&request(
+        json!({ "command": "aws sso login", "interactive": true }),
+    ))
+    .unwrap();
+
+    assert!(params.interactive);
 }
 
 #[test]

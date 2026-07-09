@@ -221,8 +221,23 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     // resolve routing before any observable dispatch: a session-bound action whose desktop worker is
     // not connected parks (and re-checks) instead of being published to a queue no one drains.
     let target = match resolve_action_target(db, workflow_run, workflow, action).await? {
-        TargetResolution::Ready(target) => target,
+        TargetResolution::Ready(target) => {
+            tracing::info!(
+                node_id = %node.id,
+                action = %format!("{}.{}", action.provider, action.function),
+                target = ?target,
+                "action node dispatching to worker target"
+            );
+            target
+        }
         TargetResolution::Park => {
+            let required_labels = effective_required_labels(db, workflow, action).await?;
+            tracing::warn!(
+                node_id = %node.id,
+                action = %format!("{}.{}", action.provider, action.function),
+                required_labels = ?required_labels,
+                "action node parking: no live worker matches its target; will fail on node timeout"
+            );
             return park_for_target(db, workflow_run, node, &node_run).await;
         }
     };
@@ -370,6 +385,11 @@ async fn resolve_action_target<T: DatabaseImpl>(
     // worker that carries the labels, otherwise park until one connects (the node timeout fails it).
     if !required_labels.is_empty() {
         let worker_available = live_worker_matches_labels(db, &required_labels).await?;
+        tracing::debug!(
+            required_labels = ?required_labels,
+            worker_available,
+            "resolving label-targeted action"
+        );
         return Ok(target_for_labels(&required_labels, worker_available));
     }
     // only consult the registry when a local action actually has a launching replica to check.

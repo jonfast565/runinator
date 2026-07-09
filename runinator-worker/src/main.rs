@@ -43,7 +43,14 @@ fn main() -> Result<(), SendableError> {
 }
 
 async fn run(config: Config) -> Result<(), SendableError> {
-    info!(worker_id = %config.worker_id, "worker starting");
+    // log the advertised routing labels: a label-targeted action (e.g. a `.runner("creds-sync")`
+    // node) only lands here when these satisfy its selector, so surfacing them makes "which worker
+    // did this go to" answerable from the worker's own log.
+    info!(
+        worker_id = %config.worker_id,
+        labels = ?config.labels,
+        "worker starting"
+    );
 
     let libraries = Arc::new(load_libraries(&config.dll_paths)?);
     let broker = build_broker(&config.broker_config()).await?;

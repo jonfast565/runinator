@@ -147,7 +147,7 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
         .await
         .unwrap();
 
-    let runs = db.fetch_recent_workflow_runs().await.unwrap();
+    let runs = db.fetch_recent_workflow_runs(100).await.unwrap();
     assert_eq!(
         runs.iter().map(|run| run.id).collect::<Vec<_>>(),
         vec![newer.id, older.id]
@@ -898,7 +898,7 @@ async fn delete_workflow_cascades_runs_and_execution_records() {
     db.delete_workflow(workflow_id).await.unwrap();
 
     assert!(db.fetch_workflow(workflow_id).await.unwrap().is_none());
-    assert!(db.fetch_recent_workflow_runs().await.unwrap().is_empty());
+    assert!(db.fetch_recent_workflow_runs(100).await.unwrap().is_empty());
     assert!(
         db.fetch_workflow_node_run(node_run.id)
             .await

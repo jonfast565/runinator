@@ -6,6 +6,12 @@ use super::*;
 
 const RECORD_TYPE: &str = "workflow_mutex";
 const DEFAULT_POLL_INTERVAL: i64 = 5;
+// backstop lease lifetime for records that carry no explicit `lease_deadline` (a node with no
+// declared timeout, or a lease acquired before lease expiry existed). a wedged holder can hold a
+// non-terminal run indefinitely, which would otherwise deadlock every waiter behind it; capping the
+// hold from `acquired_at` lets the lock self-heal even when the holder run never reaches a terminal
+// state. one hour comfortably exceeds any legitimate mutex-protected section.
+const DEFAULT_LEASE_TTL_SECONDS: i64 = 3600;
 
 struct MutexParams {
     name: String,
@@ -44,6 +50,29 @@ pub(super) fn record_is_held_by_other(record: &Value, skip_run_id: Uuid) -> bool
     holder_run_id(record).is_some_and(|id| id != skip_run_id)
 }
 
+/// the lease lifetime for a mutex node: its declared timeout, so an acquired lock auto-expires that
+/// long after acquisition. `None` when the node declares no timeout, in which case the acquire-time
+/// backstop applies instead.
+fn lease_ttl_seconds(node: &WorkflowNode) -> Option<i64> {
+    node.timeout_seconds
+}
+
+/// true when a lease has outlived its expiry and is therefore reclaimable regardless of the holder
+/// run's status. a lease whose holder wedges in a non-terminal state (blocked, paused, a lost wake,
+/// a ws restart mid-run) would otherwise hold the lock forever and time out every waiter behind it.
+/// prefers the explicit `lease_deadline` stamped at acquire; falls back to `acquired_at` plus a
+/// generous backstop so leases predating lease expiry still self-heal.
+pub(super) fn lease_is_expired(record: &Value) -> bool {
+    let now = Utc::now().timestamp();
+    if let Some(deadline) = record.get("lease_deadline").and_then(Value::as_i64) {
+        return now > deadline;
+    }
+    if let Some(acquired) = record.get("acquired_at").and_then(Value::as_i64) {
+        return now > acquired + DEFAULT_LEASE_TTL_SECONDS;
+    }
+    false
+}
+
 /// true when the run holding a lease is still active. a lease whose holder run has reached a
 /// terminal state (or no longer exists) is stale: the run ended without releasing — e.g. via
 /// cancellation, a crash, or a code path that bypassed the terminal-release hook — so its lock is
@@ -74,6 +103,11 @@ async fn mutex_is_locked<T: DatabaseImpl>(
             continue;
         }
         if !record_is_held_by_other(record, skip_run_id) {
+            continue;
+        }
+        // an expired lease is reclaimable even if the holder run is still non-terminal: this is what
+        // keeps a wedged holder from deadlocking the lock and timing out every waiter behind it.
+        if lease_is_expired(record) {
             continue;
         }
         if !holder_run_is_active(db, record).await? {
@@ -126,12 +160,22 @@ async fn acquire_mutex<T: DatabaseImpl>(
     db: &T,
     name: &str,
     run_id: Uuid,
+    ttl_seconds: Option<i64>,
 ) -> Result<Option<Uuid>, SendableError> {
-    let record = runinator_models::json!({
+    let acquired_at = Utc::now().timestamp();
+    let mut record = runinator_models::json!({
         "name": name,
         "held_by_run_id": run_id,
-        "acquired_at": Utc::now().timestamp(),
+        "acquired_at": acquired_at,
     });
+    // stamp an absolute expiry so a holder that later wedges in a non-terminal state cannot hold the
+    // lock past this deadline; waiters reclaim it once it lapses.
+    if let (Some(ttl), Some(object)) = (ttl_seconds, record.as_object_mut()) {
+        object.insert(
+            "lease_deadline".into(),
+            runinator_models::json!(acquired_at + ttl),
+        );
+    }
     let inserted = db
         .create_automation_record(RECORD_TYPE.into(), record)
         .await?;
@@ -189,7 +233,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
             return Ok(ReadyNodeDisposition::KeepClaim);
         }
         // lock is free; record the acquisition and succeed.
-        acquire_mutex(db, &params.name, workflow_run.id).await?;
+        acquire_mutex(db, &params.name, workflow_run.id, lease_ttl_seconds(node)).await?;
         let output = MutexOutput {
             name: params.name,
             acquired: true,
@@ -217,7 +261,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
                 node.parameters.clone().into(),
             )
             .await?;
-        acquire_mutex(db, &params.name, workflow_run.id).await?;
+        acquire_mutex(db, &params.name, workflow_run.id, lease_ttl_seconds(node)).await?;
         let output = MutexOutput {
             name: params.name,
             acquired: true,

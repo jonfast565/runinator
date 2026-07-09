@@ -71,7 +71,8 @@ pub(crate) async fn ready<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
 ) -> (StatusCode, Json<ReadinessResponse>) {
-    let database_ready = db.fetch_recent_workflow_runs().await.is_ok();
+    // a cheap connectivity probe: fetch at most one row rather than the whole run history.
+    let database_ready = db.fetch_recent_workflow_runs(1).await.is_ok();
     let status = if database_ready { "ready" } else { "not_ready" };
     let code = if database_ready {
         StatusCode::OK

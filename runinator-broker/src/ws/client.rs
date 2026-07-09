@@ -150,6 +150,12 @@ mod imp {
     /// connection still surfaces an error to the caller promptly.
     const ONE_SHOT_RETRY_WINDOW: Duration = Duration::from_secs(3);
 
+    /// how often the client emits a keepalive ping. the relay is mostly idle — a `receive_for`
+    /// long-poll can sit quiet for minutes — so without traffic an idle-timeout intermediary (an
+    /// ingress, an lb, a `kubectl port-forward`) will drop the connection. kept well under the
+    /// usual 60s idle window so a ping always lands first.
+    const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
+
     struct PendingCleanup {
         pending: PendingMap,
         request_id: Uuid,
@@ -226,8 +232,22 @@ mod imp {
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Message>();
 
+        // the writer owns the sink: it drains caller frames off `write_rx` and also emits a periodic
+        // keepalive ping so an otherwise-idle relay isn't reaped. driving the keepalive from here ties
+        // its lifetime to the writer, so it stops the instant the connection tears down (all `write_tx`
+        // senders dropped, or the sink erroring) without a stray task to clean up.
         tokio::spawn(async move {
-            while let Some(message) = write_rx.recv().await {
+            let mut keepalive = tokio::time::interval(KEEPALIVE_INTERVAL);
+            keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            keepalive.tick().await; // the first tick fires immediately; skip it.
+            loop {
+                let message = tokio::select! {
+                    outgoing = write_rx.recv() => match outgoing {
+                        Some(message) => message,
+                        None => break, // all senders dropped: the connection is being torn down.
+                    },
+                    _ = keepalive.tick() => Message::Ping(Default::default()),
+                };
                 if sink.send(message).await.is_err() {
                     break;
                 }
@@ -235,16 +255,35 @@ mod imp {
         });
 
         let reader_pending = pending.clone();
+        // clone for the reader so it can answer inbound pings on the same connection.
+        let pong_tx = write_tx.clone();
         let reader = tokio::spawn(async move {
             while let Some(next) = source.next().await {
-                let Ok(Message::Text(text)) = next else {
-                    break;
+                let message = match next {
+                    Ok(message) => message,
+                    Err(_) => break, // transport error: the connection is gone.
                 };
-                let Ok(frame) = serde_json::from_str::<WsResponseFrame>(&text) else {
-                    continue;
-                };
-                if let Some(sender) = reader_pending.lock().remove(&frame.request_id) {
-                    let _ = sender.send(frame.body);
+                match message {
+                    Message::Text(text) => {
+                        let Ok(frame) = serde_json::from_str::<WsResponseFrame>(&text) else {
+                            continue;
+                        };
+                        if let Some(sender) = reader_pending.lock().remove(&frame.request_id) {
+                            let _ = sender.send(frame.body);
+                        }
+                    }
+                    // a keepalive ping is not a disconnect: answer it and keep the connection up.
+                    // tungstenite also auto-queues a pong, but our writer only flushes on demand, so
+                    // forward it explicitly to guarantee it leaves an otherwise-idle relay.
+                    Message::Ping(payload) => {
+                        let _ = pong_tx.send(Message::Pong(payload));
+                    }
+                    // a pong (the answer to our own keepalive) or a stray binary frame is likewise not
+                    // a disconnect; ignore it rather than tearing the connection down (the old code
+                    // broke here, so a single keepalive frame forced a full reconnect).
+                    Message::Pong(_) | Message::Binary(_) => {}
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
             // connection ended (error or close): drop every still-pending sender, which turns each

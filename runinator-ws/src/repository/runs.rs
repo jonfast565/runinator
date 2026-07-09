@@ -265,8 +265,9 @@ pub async fn release_workflow_run_claim<T: DatabaseImpl>(
 
 pub async fn fetch_recent_workflow_runs<T: DatabaseImpl>(
     db: &T,
+    limit: i64,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
-    db.fetch_recent_workflow_runs().await
+    db.fetch_recent_workflow_runs(limit).await
 }
 
 pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(

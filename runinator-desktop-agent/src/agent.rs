@@ -43,8 +43,9 @@ const POOL_LABEL: &str = "desktop";
 // env vars the local-files provider reads at execution time; set in-process before the loop starts.
 const ROOT_ENV: &str = "RUNINATOR_LOCAL_FILES_ROOT";
 const ALLOW_WRITE_ENV: &str = "RUNINATOR_LOCAL_FILES_ALLOW_WRITE";
-// cap kept small: this is a status console, not a log viewer.
-const MAX_LOG_LINES: usize = 400;
+// rolling cap on retained console lines; the oldest are dropped once it fills, so the buffer never
+// grows without bound during a long-running session.
+const MAX_LOG_LINES: usize = 10_000;
 // broker channel names/client id; fixed rather than exposed in the GUI — an advanced operator who
 // needs to match a non-default cluster naming scheme can still edit the persisted config JSON.
 const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
@@ -67,12 +68,55 @@ pub struct AgentStatus {
     pub broker_connection: Option<String>,
 }
 
+/// where the worker loop is in the connect/retry cycle. surfaced in the header and tray so a degraded
+/// agent (broker unreachable, loop crash-looping) is visible at a glance without opening the log.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ConnectionState {
+    /// no worker loop running (agent stopped or never started).
+    #[default]
+    Stopped,
+    /// building the broker connection / bringing the loop up.
+    Connecting,
+    /// the worker loop is up and consuming actions.
+    Connected,
+    /// the loop exited or the broker failed; backing off before the next attempt.
+    Reconnecting { retry_secs: u64 },
+}
+
+/// a single finished action, kept so the header can show what this machine last did.
+#[derive(Debug, Clone)]
+pub struct CompletedAction {
+    pub summary: String,
+    pub outcome: ActionOutcome,
+    pub duration_ms: i64,
+}
+
+/// live worker-loop counters and the latest resource sample, surfaced in the status header. updated
+/// from the worker event sink and the telemetry sampler; reset on each start.
+#[derive(Debug, Clone, Default)]
+pub struct AgentMetrics {
+    pub in_flight: u32,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub timed_out: u64,
+    pub canceled: u64,
+    pub skipped_duplicates: u64,
+    pub last_completed: Option<CompletedAction>,
+    pub cpu_percent: Option<f32>,
+    pub mem_percent: Option<f32>,
+}
+
 /// state shared between the GUI thread and the background tokio runtime driving the agent.
 #[derive(Default)]
 pub struct Shared {
     pub status: AgentStatus,
+    pub connection: ConnectionState,
+    pub metrics: AgentMetrics,
     pub busy: bool,
     pub logs: VecDeque<String>,
+    // latch so one degraded episode fires exactly one "disconnected" toast (and one "reconnected"
+    // toast on recovery), rather than one per backoff retry.
+    degraded_notified: bool,
     shutdown: Option<Arc<Notify>>,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -81,15 +125,102 @@ pub type SharedHandle = Arc<Mutex<Shared>>;
 
 pub(crate) fn log_line(shared: &SharedHandle, line: impl Into<String>) {
     let mut guard = shared.lock().expect("desktop agent state lock poisoned");
-    if guard.logs.len() >= MAX_LOG_LINES {
-        guard.logs.pop_front();
+    push_log_line(&mut guard, line);
+}
+
+/// non-blocking variant for the tracing bridge (`crate::logging`): a tracing event can fire while
+/// another path holds the state lock, and a blocking lock there would deadlock the emitting thread,
+/// so drop the line under contention rather than block.
+pub(crate) fn try_log_line(shared: &SharedHandle, line: impl Into<String>) {
+    if let Ok(mut guard) = shared.try_lock() {
+        push_log_line(&mut guard, line);
+    }
+}
+
+// record the current connect/retry phase for the header/tray, and fire a native toast when a degraded
+// episode begins or ends. cheap enough to call on every transition since it only touches the shared
+// state under a short lock (the toast itself is dispatched off-thread by `crate::notify`).
+fn set_connection(shared: &SharedHandle, state: ConnectionState) {
+    // decide the notification under the lock (so the latch is race-free), but fire it after
+    // releasing — `notify` only spawns a thread, yet keeping platform calls off a held lock is the
+    // habit worth keeping.
+    let toast = {
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        guard.connection = state.clone();
+        match &state {
+            ConnectionState::Reconnecting { .. } if !guard.degraded_notified => {
+                guard.degraded_notified = true;
+                Some(Toast::Degraded)
+            }
+            ConnectionState::Connected if guard.degraded_notified => {
+                guard.degraded_notified = false;
+                Some(Toast::Recovered)
+            }
+            _ => None,
+        }
+    };
+    match toast {
+        Some(Toast::Degraded) => crate::notify::notify_degraded("The broker is unreachable."),
+        Some(Toast::Recovered) => crate::notify::notify_recovered(),
+        None => {}
+    }
+}
+
+// which health toast a connection transition warrants, if any.
+enum Toast {
+    Degraded,
+    Recovered,
+}
+
+// fold one worker-loop event into the running counters so the header reflects throughput without
+// the operator parsing log lines. failures never panic the sink: a poisoned lock just drops the
+// update.
+fn apply_event_metrics(shared: &SharedHandle, event: &WorkerEvent) {
+    let Ok(mut guard) = shared.lock() else {
+        return;
+    };
+    match event {
+        WorkerEvent::ActionStarted { .. } => {
+            guard.metrics.in_flight = guard.metrics.in_flight.saturating_add(1);
+        }
+        WorkerEvent::ActionSkippedDuplicate { .. } => {
+            guard.metrics.skipped_duplicates = guard.metrics.skipped_duplicates.saturating_add(1);
+        }
+        WorkerEvent::ActionFinished {
+            provider,
+            function,
+            node_id,
+            outcome,
+            duration_ms,
+            ..
+        } => {
+            guard.metrics.in_flight = guard.metrics.in_flight.saturating_sub(1);
+            match outcome {
+                ActionOutcome::Succeeded => guard.metrics.succeeded += 1,
+                ActionOutcome::Failed => guard.metrics.failed += 1,
+                ActionOutcome::TimedOut => guard.metrics.timed_out += 1,
+                ActionOutcome::Canceled => guard.metrics.canceled += 1,
+            }
+            guard.metrics.last_completed = Some(CompletedAction {
+                summary: format!("{provider}.{function} ({node_id})"),
+                outcome: *outcome,
+                duration_ms: *duration_ms,
+            });
+        }
+        WorkerEvent::ControlReceived { .. } => {}
+    }
+}
+
+fn push_log_line(shared: &mut Shared, line: impl Into<String>) {
+    if shared.logs.len() >= MAX_LOG_LINES {
+        shared.logs.pop_front();
     }
     let stamped = format!(
         "{} {}",
         chrono::Local::now().format("%H:%M:%S"),
         line.into()
     );
-    guard.logs.push_back(stamped);
+    shared.logs.push_back(stamped);
 }
 
 // first uuid segment; enough to correlate console lines with the run in the command center.
@@ -223,11 +354,21 @@ pub fn stop(rt: &tokio::runtime::Handle, shared: SharedHandle) {
             .lock()
             .expect("desktop agent state lock poisoned");
         guard.status = AgentStatus::default();
+        guard.connection = ConnectionState::Stopped;
+        guard.metrics = AgentMetrics::default();
+        guard.degraded_notified = false;
         guard.busy = false;
     });
 }
 
 async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), String> {
+    {
+        // start from a clean slate so counters/telemetry reflect this run, not the previous one.
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        guard.metrics = AgentMetrics::default();
+        guard.connection = ConnectionState::Connecting;
+        guard.degraded_notified = false;
+    }
     log_line(shared, format!("Connecting to {} ...", config.service_url));
 
     let api_client = AsyncApiClient::with_credentials(
@@ -269,6 +410,15 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
     .map_err(|err| err.to_string())?;
     let replica_id = session.replica_id();
     log_line(shared, format!("Registered replica {replica_id}."));
+    // surface the advertised labels so the operator can confirm this machine is opted into the packs
+    // that pin to it (e.g. `runner=creds-sync`); a label-targeted action only routes here when these
+    // satisfy its selector.
+    let labels_display = labels
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log_line(shared, format!("Advertising labels: {labels_display}"));
 
     // publish the local-files provider metadata plus the full built-in catalog, so the service knows
     // this replica can run anything a cloud worker can (routing still gated by `exclusive`/labels).
@@ -294,6 +444,21 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
         } else {
             std::env::remove_var(ALLOW_WRITE_ENV);
         }
+        // base directory console commands run from, so a workflow can reference files by a relative
+        // path from a repo checkout (e.g. `packs/creds-sync`'s `bash scripts/sync-secrets.sh`) rather
+        // than an absolute path baked in at import. empty leaves the console provider on the agent's cwd.
+        if config.console_working_dir.trim().is_empty() {
+            std::env::remove_var(runinator_provider_console::WORKING_DIR_ENV);
+        } else {
+            std::env::set_var(
+                runinator_provider_console::WORKING_DIR_ENV,
+                config.console_working_dir.trim(),
+            );
+        }
+        // this worker runs in the operator's desktop session, so `console.run(interactive: true)` can
+        // attach to a real terminal (browser login, Keychain dialog). a headless cloud worker never
+        // sets this, so the console provider rejects interactive commands there instead of hanging.
+        std::env::set_var(runinator_provider_console::ALLOW_INTERACTIVE_ENV, "1");
     }
 
     // which broker transport to use is orthogonal to being a "desktop" worker: relay through
@@ -360,8 +525,9 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
         api_client.clone(),
         session,
         shutdown.clone(),
-        Some(telemetry),
+        Some(telemetry.clone()),
     );
+    spawn_telemetry_sampler(shared.clone(), telemetry, shutdown.clone());
 
     let shared_loop = shared.clone();
     let shutdown_loop = shutdown.clone();
@@ -418,13 +584,21 @@ async fn run_worker_loop_with_restart(
     // bridge worker-loop activity into the status console; one sink shared by every restart.
     let shared_events = shared.clone();
     let events: Arc<dyn WorkerEventSink> = Arc::new(move |event: WorkerEvent| {
+        apply_event_metrics(&shared_events, &event);
         log_line(&shared_events, describe_worker_event(&event));
     });
 
     loop {
+        set_connection(shared, ConnectionState::Connecting);
         let broker = match runinator_worker::build_broker(&broker_config).await {
             Ok(broker) => broker,
             Err(err) => {
+                set_connection(
+                    shared,
+                    ConnectionState::Reconnecting {
+                        retry_secs: retry_delay.as_secs(),
+                    },
+                );
                 log_line(
                     shared,
                     format!(
@@ -453,6 +627,7 @@ async fn run_worker_loop_with_restart(
             events: events.clone(),
         };
 
+        set_connection(shared, ConnectionState::Connected);
         let started_at = std::time::Instant::now();
         match start_worker_loop(runtime).await {
             Ok(()) => return, // graceful shutdown requested by `agent::stop`.
@@ -464,6 +639,12 @@ async fn run_worker_loop_with_restart(
             }
         }
 
+        set_connection(
+            shared,
+            ConnectionState::Reconnecting {
+                retry_secs: retry_delay.as_secs(),
+            },
+        );
         log_line(
             shared,
             format!("Restarting worker loop in {}s...", retry_delay.as_secs()),
@@ -482,6 +663,66 @@ async fn wait_or_shutdown(shutdown: &Notify, delay: Duration) -> bool {
         _ = shutdown.notified() => true,
         _ = tokio::time::sleep(delay) => false,
     }
+}
+
+// cadence for refreshing the header's cpu/ram readout; the heartbeat already reports telemetry to the
+// service, this is only the local mirror for the status window.
+const TELEMETRY_SAMPLE_INTERVAL: Duration = Duration::from_secs(3);
+
+/// periodically sample host cpu/memory into `shared` for the status header, until `shutdown` fires.
+/// the sample runs on a blocking thread since it refreshes system counters; kept separate from the
+/// heartbeat so the window updates even between heartbeat ticks.
+fn spawn_telemetry_sampler(
+    shared: SharedHandle,
+    telemetry: Arc<TelemetryCollector>,
+    shutdown: Arc<Notify>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let collector = telemetry.clone();
+            if let Ok(sample) = tokio::task::spawn_blocking(move || collector.sample()).await
+                && let Ok(mut guard) = shared.lock()
+            {
+                guard.metrics.cpu_percent = Some(sample.cpu_percent);
+                guard.metrics.mem_percent = Some(sample.mem_percent);
+            }
+            if wait_or_shutdown(&shutdown, TELEMETRY_SAMPLE_INTERVAL).await {
+                return;
+            }
+        }
+    });
+}
+
+/// one-shot connectivity check for the GUI's "Test connection" button: builds a throwaway client
+/// from the given url/key and lists worker replicas, logging the outcome. never touches the running
+/// agent, so it is safe to run whether started or stopped.
+pub fn test_connection(
+    rt: &tokio::runtime::Handle,
+    shared: SharedHandle,
+    service_url: String,
+    api_key: Option<String>,
+) {
+    rt.spawn(async move {
+        log_line(&shared, format!("Testing connection to {service_url} ..."));
+        let client =
+            match AsyncApiClient::with_credentials(StaticLocator::new(service_url), api_key) {
+                Ok(client) => client,
+                Err(err) => {
+                    log_line(&shared, format!("Connection test failed: {err}"));
+                    return;
+                }
+            };
+        match client.fetch_replicas(Some(ReplicaKind::Worker), None).await {
+            Ok(list) => log_line(
+                &shared,
+                format!(
+                    "Connection OK: service reachable, {} worker replica(s) registered.",
+                    list.replicas.len()
+                ),
+            ),
+            Err(err) => log_line(&shared, format!("Connection test failed: {err}")),
+        }
+    });
 }
 
 /// derive the ws broker relay URL from the service URL: swap the scheme (`http`->`ws`,

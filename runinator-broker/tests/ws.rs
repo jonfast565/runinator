@@ -168,6 +168,43 @@ async fn ws_broker_concurrent_receive_for_does_not_block_concurrent_requests() {
     server.abort();
 }
 
+/// regression: an inbound keepalive ping (from the server or any intermediary) must not be treated
+/// as a disconnect. the client used to `break` on every non-text frame, so a single ping tore the
+/// connection down and forced a reconnect — the churn behind the desktop-worker relay flapping. the
+/// client must instead stay connected and answer the ping with a pong on the same connection.
+#[tokio::test]
+async fn ws_broker_answers_inbound_ping_instead_of_dropping() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        ws.send(Message::Ping(Vec::from(&b"keepalive"[..]).into()))
+            .await
+            .unwrap();
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Pong(payload))) => {
+                    assert_eq!(payload.as_ref(), b"keepalive");
+                    break;
+                }
+                // ignore the client's own outbound keepalive pings, etc.
+                Some(Ok(_)) => continue,
+                other => panic!("expected a pong on the same connection, got {other:?}"),
+            }
+        }
+    });
+
+    let _broker = WsBroker::connect(format!("ws://{addr}/"), None);
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("client must answer the ping on the same connection, not reconnect")
+        .unwrap();
+}
+
 fn action_command() -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),

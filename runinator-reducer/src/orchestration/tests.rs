@@ -10,7 +10,7 @@ use super::collect::threshold_reached;
 use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
-use super::mutex::{holder_run_id, record_is_held_by_other};
+use super::mutex::{holder_run_id, lease_is_expired, record_is_held_by_other};
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
 use super::transitions::{timed_out, timed_out_since_created};
@@ -302,6 +302,38 @@ fn mutex_record_is_held_by_other_respects_released_flag() {
     .into();
     // released records are never considered held.
     assert!(!record_is_held_by_other(&released, run_b));
+}
+
+#[test]
+fn mutex_lease_expiry_reclaims_wedged_holders() {
+    let now = chrono::Utc::now().timestamp();
+    // an explicit deadline in the past is expired regardless of the holder run's status.
+    let expired_deadline =
+        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now - 1))
+            .unwrap()
+            .into();
+    assert!(lease_is_expired(&expired_deadline));
+    // a future deadline is still live.
+    let live_deadline =
+        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now + 600))
+            .unwrap()
+            .into();
+    assert!(!lease_is_expired(&live_deadline));
+    // legacy records without a deadline fall back to the acquire-time backstop: an old acquisition
+    // is reclaimable, a recent one is not.
+    let stale_legacy =
+        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 7200))
+            .unwrap()
+            .into();
+    assert!(lease_is_expired(&stale_legacy));
+    let recent_legacy =
+        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 10))
+            .unwrap()
+            .into();
+    assert!(!lease_is_expired(&recent_legacy));
+    // a record with neither field is never treated as expired (nothing to bound it).
+    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
+    assert!(!lease_is_expired(&empty));
 }
 
 #[test]

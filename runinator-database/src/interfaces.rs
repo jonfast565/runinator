@@ -269,9 +269,10 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scheduler_id: String,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
-    /// Fetch recent workflow runs across all workflow definitions.
+    /// Fetch the most recent workflow runs across all definitions, newest first, capped at `limit`.
     fn fetch_recent_workflow_runs(
         &self,
+        limit: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
     /// Fetch all runs for a specific workflow definition.

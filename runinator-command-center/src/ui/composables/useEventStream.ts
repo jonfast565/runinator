@@ -89,27 +89,33 @@ export function useEventStream() {
     router,
   });
 
-  watch(
-    () => app.serviceUrl,
-    (url) => {
-      client.disconnect();
+  function shouldConnect(): boolean {
+    // a browser WebSocket authenticates only via the ?token= query, so when auth is enabled don't
+    // open a socket until we're authenticated — otherwise a logged-out or expired session flaps the
+    // stream in an endless tokenless-401 reconnect loop. when auth is disabled `required` is false,
+    // so this is always allowed.
+    return Boolean(app.serviceUrl) && (!auth.required || auth.authenticated);
+  }
 
-      if (url) {
-        client.connect();
-      }
-    },
+  function reconnect() {
+    client.disconnect();
+
+    if (shouldConnect()) {
+      client.connect();
+    }
+  }
+
+  // reconnect on any input that changes whether/how we should be connected: the service url, auth
+  // gating (required/authenticated), and the token revision (so a refreshed token is picked up).
+  watch(
+    [
+      () => app.serviceUrl,
+      () => auth.required,
+      () => auth.authenticated,
+      () => auth.accessTokenRevision,
+    ],
+    reconnect,
     { immediate: true },
-  );
-
-  watch(
-    () => auth.accessTokenRevision,
-    () => {
-      client.disconnect();
-
-      if (app.serviceUrl) {
-        client.connect();
-      }
-    },
   );
 
   onBeforeUnmount(() => { client.disconnect(); });

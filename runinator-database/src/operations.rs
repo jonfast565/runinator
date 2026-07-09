@@ -1506,10 +1506,14 @@ where
         Ok(())
     }
 
-    async fn fetch_recent_workflow_runs(&self) -> Result<Vec<WorkflowRun>, SendableError> {
-        let rows = sqlx::query(&format!(
-            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY created_at DESC, id DESC"
-        ))
+    async fn fetch_recent_workflow_runs(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs ORDER BY created_at DESC, id DESC LIMIT ?"
+        )))
+        .bind(limit)
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())

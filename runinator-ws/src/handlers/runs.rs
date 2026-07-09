@@ -600,7 +600,11 @@ pub(crate) async fn get_workflow_runs<T: DatabaseImpl>(
         };
     }
 
-    match repository::fetch_recent_workflow_runs(db.as_ref()).await {
+    let limit = query
+        .limit
+        .map(|value| value.clamp(1, MAX_RECENT_RUN_LIMIT))
+        .unwrap_or(DEFAULT_RECENT_RUN_LIMIT);
+    match repository::fetch_recent_workflow_runs(db.as_ref(), limit).await {
         Ok(runs) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRunList(filter_runs(runs, &visible))),
@@ -608,6 +612,13 @@ pub(crate) async fn get_workflow_runs<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// default cap on the unfiltered recent-runs list, so a long-lived deployment's history doesn't grow
+/// the dashboard's poll payload without bound. clients can request more via `?limit=` up to the max.
+const DEFAULT_RECENT_RUN_LIMIT: i64 = 200;
+
+/// hard ceiling on `?limit=`, so a client can't ask for an unbounded dump.
+const MAX_RECENT_RUN_LIMIT: i64 = 1000;
 
 pub(crate) async fn get_runs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,

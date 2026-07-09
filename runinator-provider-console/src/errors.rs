@@ -26,6 +26,16 @@ pub(crate) const CANCELED: ErrorDescriptor =
     ErrorDescriptor::new("CONSOLE006", "console.canceled", "Command canceled");
 pub(crate) const TIMEOUT: ErrorDescriptor =
     ErrorDescriptor::new("CONSOLE007", "console.timeout", "Command timed out");
+pub(crate) const INTERACTIVE_NOT_PERMITTED: ErrorDescriptor = ErrorDescriptor::new(
+    "CONSOLE008",
+    "console.interactive_not_permitted",
+    "Interactive console is only available on a desktop worker agent",
+);
+pub(crate) const WORKING_DIR_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "CONSOLE009",
+    "console.working_dir.missing",
+    "Configured console working directory does not exist",
+);
 
 pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_PARAMS,
@@ -35,6 +45,8 @@ pub(crate) const DICTIONARY: &[ErrorDescriptor] = &[
     NONZERO_EXIT,
     CANCELED,
     TIMEOUT,
+    INTERACTIVE_NOT_PERMITTED,
+    WORKING_DIR_MISSING,
 ];
 
 impl ProviderErrors for ConsoleProvider {
