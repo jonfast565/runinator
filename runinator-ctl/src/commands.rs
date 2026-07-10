@@ -279,16 +279,18 @@ fn print_groups(groups: &[ProvisionedGroup]) {
         return;
     }
     println!(
-        "{:<12} {:<8} {:<8} {:<8} {:<12}",
-        "backend", "kind", "desired", "live", "name"
+        "{:<12} {:<10} {:<8} {:<8} {:<9} {:<12}",
+        "backend", "kind", "desired", "live", "managed", "name"
     );
     for group in groups {
         println!(
-            "{:<12} {:<8} {:<8} {:<8} {:<12}",
+            "{:<12} {:<10} {:<8} {:<8} {:<9} {:<12}",
             group.backend.as_str(),
             group.kind.as_str(),
             group.desired,
             group.available,
+            // ghost rows are kinds this backend has no template/deployment for.
+            if group.manageable { "yes" } else { "no" },
             group.name
         );
     }

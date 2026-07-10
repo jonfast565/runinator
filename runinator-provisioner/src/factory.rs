@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,24 +7,22 @@ use runinator_models::replicas::ReplicaKind;
 use crate::supervisor::{SupervisorNodeTemplate, SupervisorProvisioner};
 use crate::traits::{Provisioner, ProvisionerRegistry};
 
-/// supervisor-backend configuration: where to read state / enqueue control, plus spawn templates.
+/// supervisor-backend configuration: where to read state / enqueue control, plus a spawn template
+/// per node kind. keying by kind means a new kind is manageable as soon as a template is added.
 #[derive(Debug, Clone)]
 pub struct SupervisorBackendConfig {
     pub control_dir: PathBuf,
     pub state_file: PathBuf,
-    pub worker_template: Option<SupervisorNodeTemplate>,
-    pub waker_template: Option<SupervisorNodeTemplate>,
-    pub webservice_template: Option<SupervisorNodeTemplate>,
+    pub templates: BTreeMap<ReplicaKind, SupervisorNodeTemplate>,
 }
 
-/// kubernetes-backend configuration: namespace and the workload backing each node kind.
+/// kubernetes-backend configuration: namespace and the workload (deployment or stateful set)
+/// backing each node kind. keying by kind means a new kind is manageable once a workload is added.
 #[derive(Debug, Clone)]
 pub struct KubernetesBackendConfig {
     pub namespace: String,
-    pub worker_deployment: Option<String>,
-    pub waker_deployment: Option<String>,
-    pub webservice_deployment: Option<String>,
-    pub postgres_stateful_set: Option<String>,
+    pub deployments: BTreeMap<ReplicaKind, String>,
+    pub stateful_sets: BTreeMap<ReplicaKind, String>,
     pub postgres_scale_out_enabled: bool,
 }
 
@@ -41,14 +40,8 @@ pub fn build_registry(config: ProvisionerConfig) -> ProvisionerRegistry {
 
     if let Some(supervisor) = config.supervisor {
         let mut backend = SupervisorProvisioner::new(supervisor.control_dir, supervisor.state_file);
-        if let Some(template) = supervisor.worker_template {
-            backend = backend.with_template(ReplicaKind::Worker, template);
-        }
-        if let Some(template) = supervisor.waker_template {
-            backend = backend.with_template(ReplicaKind::Waker, template);
-        }
-        if let Some(template) = supervisor.webservice_template {
-            backend = backend.with_template(ReplicaKind::Webservice, template);
+        for (kind, template) in supervisor.templates {
+            backend = backend.with_template(kind, template);
         }
         provisioners.push(Arc::new(backend));
     }
@@ -65,17 +58,11 @@ fn build_kubernetes(provisioners: &mut Vec<Arc<dyn Provisioner>>, config: Kubern
     use crate::kubernetes::KubernetesProvisioner;
 
     let mut backend = KubernetesProvisioner::new(config.namespace);
-    if let Some(name) = config.worker_deployment {
-        backend = backend.with_deployment(ReplicaKind::Worker, name);
+    for (kind, name) in config.deployments {
+        backend = backend.with_deployment(kind, name);
     }
-    if let Some(name) = config.waker_deployment {
-        backend = backend.with_deployment(ReplicaKind::Waker, name);
-    }
-    if let Some(name) = config.webservice_deployment {
-        backend = backend.with_deployment(ReplicaKind::Webservice, name);
-    }
-    if let Some(name) = config.postgres_stateful_set {
-        backend = backend.with_stateful_set(ReplicaKind::Postgres, name);
+    for (kind, name) in config.stateful_sets {
+        backend = backend.with_stateful_set(kind, name);
     }
     if config.postgres_scale_out_enabled {
         backend = backend.with_postgres_scale_out_enabled();

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{providers::ProviderMetadata, value::Value};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplicaKind {
     Worker,
@@ -16,6 +16,18 @@ pub enum ReplicaKind {
 }
 
 impl ReplicaKind {
+    /// every replica kind, in canonical node-pools display order. this is the single source of
+    /// truth for enumerating kinds: adding a variant here surfaces it everywhere that iterates
+    /// kinds (provisioner config, supported-kinds, and the node-pools ui) without further edits.
+    pub const ALL: &'static [ReplicaKind] = &[
+        Self::Webservice,
+        Self::Worker,
+        Self::Waker,
+        Self::Background,
+        Self::Archiver,
+        Self::Postgres,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Worker => "worker",
@@ -25,6 +37,17 @@ impl ReplicaKind {
             Self::Postgres => "postgres",
             Self::Archiver => "archiver",
         }
+    }
+
+    /// control-plane kinds back the api or database; scaling one to zero would take the stack down,
+    /// so the node-pools ui keeps a floor of one replica for them.
+    pub fn is_control_plane(self) -> bool {
+        matches!(self, Self::Webservice | Self::Postgres)
+    }
+
+    /// the smallest desired count the node-pools ui should allow scaling this kind to.
+    pub fn min_desired(self) -> u32 {
+        if self.is_control_plane() { 1 } else { 0 }
     }
 }
 

@@ -89,6 +89,12 @@ spec:
               value: "runinator-waker"
             - name: RUNINATOR_PROVISIONER_K8S_WS_DEPLOYMENT
               value: "runinator-ws"
+            # Other node kinds are opt-in via RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT; until set
+            # they show as non-manageable rows in the Node Pools panel.
+            # - name: RUNINATOR_PROVISIONER_K8S_BACKGROUND_DEPLOYMENT
+            #   value: "runinator-background"
+            # - name: RUNINATOR_PROVISIONER_K8S_ARCHIVER_DEPLOYMENT
+            #   value: "runinator-archiver"
             # Optional only for replication-aware Postgres clusters with safe connection routing
             # such as an operator-managed primary/replica setup fronted by PgBouncer.
             # - name: RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET

@@ -93,6 +93,21 @@ impl KubernetesProvisioner {
             desired,
             available,
             manageable: true,
+            min_desired: kind.min_desired(),
+        }
+    }
+
+    // a non-manageable placeholder for a kind this backend has no workload mapped for, so the ui
+    // can still list every kind and show what is unconfigured.
+    fn ghost(&self, kind: ReplicaKind) -> ProvisionedGroup {
+        ProvisionedGroup {
+            backend: ProvisionBackend::Kubernetes,
+            kind,
+            name: kind.as_str().to_string(),
+            desired: 0,
+            available: 0,
+            manageable: false,
+            min_desired: kind.min_desired(),
         }
     }
 }
@@ -176,20 +191,16 @@ impl Provisioner for KubernetesProvisioner {
     }
 
     fn supported_kinds(&self) -> Vec<ReplicaKind> {
-        let mut kinds = Vec::new();
-        for kind in [
-            ReplicaKind::Worker,
-            ReplicaKind::Waker,
-            ReplicaKind::Webservice,
-            ReplicaKind::Postgres,
-        ] {
-            if self.deployments.contains_key(kind.as_str())
-                || self.stateful_sets.contains_key(kind.as_str())
-            {
-                kinds.push(kind);
-            }
-        }
-        kinds
+        // any kind mapped to a deployment or stateful set is manageable; iterating the canonical
+        // list means a new kind is picked up automatically once a workload is configured for it.
+        ReplicaKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| {
+                self.deployments.contains_key(kind.as_str())
+                    || self.stateful_sets.contains_key(kind.as_str())
+            })
+            .collect()
     }
 
     async fn available(&self) -> bool {
@@ -198,8 +209,15 @@ impl Provisioner for KubernetesProvisioner {
 
     async fn list(&self) -> Result<Vec<ProvisionedGroup>, SendableError> {
         let mut groups = Vec::new();
-        for kind in self.supported_kinds() {
-            if self.deployments.contains_key(kind.as_str()) {
+        for &kind in ReplicaKind::ALL {
+            let has_deployment = self.deployments.contains_key(kind.as_str());
+            let has_stateful_set = self.stateful_sets.contains_key(kind.as_str());
+            if !has_deployment && !has_stateful_set {
+                // unconfigured on this backend: ghost row so the ui still lists the kind.
+                groups.push(self.ghost(kind));
+                continue;
+            }
+            if has_deployment {
                 let api = self.deployments_api().await?;
                 let name = self.deployment_name(kind)?.to_string();
                 let deployment = api

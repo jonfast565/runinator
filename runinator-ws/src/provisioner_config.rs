@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use runinator_models::replicas::ReplicaKind;
 use runinator_provisioner::{
     KubernetesBackendConfig, ProvisionerConfig, SupervisorBackendConfig, SupervisorNodeTemplate,
 };
@@ -37,13 +39,35 @@ fn supervisor_backend_from_env() -> Option<SupervisorBackendConfig> {
         .map(|parent| parent.join("control"))
         .unwrap_or_else(|| PathBuf::from("supervisor/control"));
 
+    // read a spawn template per kind: RUNINATOR_PROVISIONER_SUPERVISOR_<KIND> (webservice also
+    // accepts the legacy _WS name). iterating the canonical kind list means a new kind gets an env
+    // slot automatically.
+    let mut templates = BTreeMap::new();
+    for &kind in ReplicaKind::ALL {
+        let key = format!(
+            "RUNINATOR_PROVISIONER_SUPERVISOR_{}",
+            supervisor_suffix(kind)
+        );
+        let template = template_from_env(&key).or_else(|| {
+            (kind == ReplicaKind::Webservice)
+                .then(|| template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WS"))
+                .flatten()
+        });
+        if let Some(template) = template {
+            templates.insert(kind, template);
+        }
+    }
+
     Some(SupervisorBackendConfig {
         control_dir,
         state_file,
-        worker_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WORKER"),
-        waker_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WAKER"),
-        webservice_template: template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WS"),
+        templates,
     })
+}
+
+// the env-var suffix naming a kind's supervisor template, e.g. WORKER / BACKGROUND.
+fn supervisor_suffix(kind: ReplicaKind) -> String {
+    kind.as_str().to_uppercase()
 }
 
 fn template_from_env(key: &str) -> Option<SupervisorNodeTemplate> {
@@ -61,26 +85,58 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
     if !env_enabled("RUNINATOR_PROVISIONER_K8S_ENABLED") {
         return None;
     }
+    // map a deployment per kind: RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT (webservice uses the
+    // legacy _WS name). worker/waker/webservice keep their default names so existing deployments
+    // stay manageable out of the box; other kinds are opt-in via their env var.
+    let mut deployments = BTreeMap::new();
+    for &kind in ReplicaKind::ALL {
+        if kind == ReplicaKind::Postgres {
+            continue; // postgres is a stateful set, handled below.
+        }
+        if let Some(name) = k8s_deployment(kind) {
+            deployments.insert(kind, name);
+        }
+    }
+
+    let mut stateful_sets = BTreeMap::new();
+    if let Some(name) = std::env::var("RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        stateful_sets.insert(ReplicaKind::Postgres, name);
+    }
+
     Some(KubernetesBackendConfig {
         namespace: std::env::var("RUNINATOR_PROVISIONER_K8S_NAMESPACE")
             .unwrap_or_else(|_| "runinator".to_string()),
-        worker_deployment: Some(
-            std::env::var("RUNINATOR_PROVISIONER_K8S_WORKER_DEPLOYMENT")
-                .unwrap_or_else(|_| "runinator-worker".to_string()),
-        ),
-        waker_deployment: Some(
-            std::env::var("RUNINATOR_PROVISIONER_K8S_WAKER_DEPLOYMENT")
-                .unwrap_or_else(|_| "runinator-waker".to_string()),
-        ),
-        webservice_deployment: Some(
-            std::env::var("RUNINATOR_PROVISIONER_K8S_WS_DEPLOYMENT")
-                .unwrap_or_else(|_| "runinator-ws".to_string()),
-        ),
-        postgres_stateful_set: std::env::var("RUNINATOR_PROVISIONER_K8S_POSTGRES_STATEFULSET")
-            .ok()
-            .filter(|value| !value.trim().is_empty()),
+        deployments,
+        stateful_sets,
         postgres_scale_out_enabled: env_enabled(
             "RUNINATOR_PROVISIONER_K8S_POSTGRES_SCALE_OUT_ENABLED",
         ),
     })
+}
+
+// the deployment name backing a kind: an explicit env override, else the default name for the
+// original three kinds. other kinds are unmapped (ghost rows) until an env var is set.
+fn k8s_deployment(kind: ReplicaKind) -> Option<String> {
+    let infix = match kind {
+        ReplicaKind::Webservice => "WS".to_string(), // legacy env name.
+        other => other.as_str().to_uppercase(),
+    };
+    let key = format!("RUNINATOR_PROVISIONER_K8S_{infix}_DEPLOYMENT");
+    if let Some(name) = std::env::var(&key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(name);
+    }
+    match kind {
+        ReplicaKind::Worker => Some("runinator-worker".to_string()),
+        ReplicaKind::Waker => Some("runinator-waker".to_string()),
+        ReplicaKind::Webservice => Some("runinator-ws".to_string()),
+        _ => None,
+    }
 }

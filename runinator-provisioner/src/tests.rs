@@ -188,6 +188,49 @@ async fn org_group_scales_an_independent_labeled_pool() {
 }
 
 #[tokio::test]
+async fn list_reports_every_kind_ghosting_the_unconfigured_ones() {
+    let dir = temp_dir("list-all");
+    write_snapshot(
+        &dir.join("state.json"),
+        &worker_snapshot(&[("prov-worker-a", "running")]),
+    )
+    .unwrap();
+
+    // only a worker template is configured.
+    let prov = provisioner(&dir);
+    let groups = prov.list().await.unwrap();
+
+    // every kind is present, in the canonical order.
+    assert_eq!(groups.len(), ReplicaKind::ALL.len());
+    for (group, kind) in groups.iter().zip(ReplicaKind::ALL.iter()) {
+        assert_eq!(group.kind, *kind);
+    }
+
+    let worker = groups
+        .iter()
+        .find(|g| g.kind == ReplicaKind::Worker)
+        .unwrap();
+    assert!(worker.manageable, "configured kind is manageable");
+    assert_eq!(worker.desired, 1);
+
+    let archiver = groups
+        .iter()
+        .find(|g| g.kind == ReplicaKind::Archiver)
+        .unwrap();
+    assert!(!archiver.manageable, "unconfigured kind is a ghost row");
+    assert_eq!(archiver.desired, 0);
+
+    // control-plane kinds report a floor of one, others report zero.
+    let webservice = groups
+        .iter()
+        .find(|g| g.kind == ReplicaKind::Webservice)
+        .unwrap();
+    assert_eq!(webservice.min_desired, 1);
+    assert_eq!(worker.min_desired, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn supervisor_backend_supports_webservice_when_template_is_configured() {
     let dir = temp_dir("ws");
     write_snapshot(&dir.join("state.json"), &worker_snapshot(&[])).unwrap();

@@ -128,6 +128,7 @@ impl SupervisorProvisioner {
             desired,
             available,
             manageable: self.templates.contains_key(kind.as_str()),
+            min_desired: kind.min_desired(),
         }
     }
 }
@@ -152,17 +153,13 @@ impl Provisioner for SupervisorProvisioner {
     }
 
     fn supported_kinds(&self) -> Vec<ReplicaKind> {
-        let mut kinds = Vec::new();
-        for kind in [
-            ReplicaKind::Worker,
-            ReplicaKind::Waker,
-            ReplicaKind::Webservice,
-        ] {
-            if self.templates.contains_key(kind.as_str()) {
-                kinds.push(kind);
-            }
-        }
-        kinds
+        // any kind with a spawn template is manageable; iterating the canonical list means a new
+        // kind is picked up automatically once a template is configured for it.
+        ReplicaKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| self.templates.contains_key(kind.as_str()))
+            .collect()
     }
 
     async fn available(&self) -> bool {
@@ -173,9 +170,15 @@ impl Provisioner for SupervisorProvisioner {
     async fn list(&self) -> Result<Vec<ProvisionedGroup>, SendableError> {
         // list reports each kind's default group; per-group (e.g. per-org) pools are tracked by the
         // caller (the web service records org allocations) and addressed via `spec.group` on scale.
+        // every kind is reported: kinds without a template come back as non-manageable ghost rows so
+        // operators see the full set and know what is still unconfigured.
         let mut groups = Vec::new();
-        for kind in self.supported_kinds() {
+        for &kind in ReplicaKind::ALL {
             let group = kind.as_str().to_string();
+            if !self.templates.contains_key(kind.as_str()) {
+                groups.push(self.group(kind, &group, 0, 0));
+                continue;
+            }
             let nodes = self.current_nodes(&prefix_for(&group))?;
             let available = nodes.iter().filter(|(_, up)| *up).count() as u32;
             groups.push(self.group(kind, &group, nodes.len() as u32, available));

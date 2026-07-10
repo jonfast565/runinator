@@ -590,6 +590,8 @@ export interface ProvisionedGroup {
   desired: number;
   available: number;
   manageable: boolean;
+  // smallest desired count the backend allows (a floor of one for control-plane kinds).
+  min_desired?: number;
 }
 
 export interface NodeSpec {

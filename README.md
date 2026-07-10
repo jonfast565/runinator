@@ -165,15 +165,24 @@ workflow action pickup.
 
 ### On-demand nodes
 
-Worker and waker nodes can be spun up and scaled down on demand through the web
+Nodes of every kind can be spun up and scaled down on demand through the web
 service's pluggable provisioner. Two backends are available: `supervisor` (adds
 dynamic local processes through the running `runinator-supervisor` control queue)
-and `kubernetes` (scales the worker/waker Deployments via kube-rs; the ws image
+and `kubernetes` (scales the backing Deployments via kube-rs; the ws image
 must be built with `--features kubernetes` and the `runinator-ws-provisioner`
 RBAC role applied). Enable a backend with `RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED`
-or `RUNINATOR_PROVISIONER_K8S_ENABLED`. The supervisor backend reads its spawn
-templates from `RUNINATOR_PROVISIONER_SUPERVISOR_WORKER` /
-`..._WAKER` (JSON `{ "command", "args", "env", "cwd" }`).
+or `RUNINATOR_PROVISIONER_K8S_ENABLED`.
+
+Each backend is configured per node kind, and the Node Pools panel lists **every**
+kind (`worker`, `waker`, `webservice`, `background`, `archiver`, `postgres`);
+kinds without a template/deployment on a backend show as non-manageable rows so a
+newly added kind is always visible and becomes scalable the moment it is wired up.
+The supervisor backend reads a spawn template per kind from
+`RUNINATOR_PROVISIONER_SUPERVISOR_<KIND>` (e.g. `..._WORKER`, `..._WAKER`,
+`..._BACKGROUND`; JSON `{ "command", "args", "env", "cwd" }`). The kubernetes
+backend reads a deployment name per kind from
+`RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT` (`worker`/`waker`/`ws` default to
+`runinator-worker`/`-waker`/`-ws`, other kinds are opt-in).
 
 Drive it from the CLI or the command center's Node Pools panel (Replicas view):
 

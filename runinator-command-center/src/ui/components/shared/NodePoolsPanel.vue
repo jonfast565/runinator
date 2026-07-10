@@ -30,46 +30,55 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="group in groups" :key="`${group.backend}-${group.kind}`">
+          <tr
+            v-for="group in groups"
+            :key="`${group.backend}-${group.kind}`"
+            :class="{ 'node-pools-ghost': !group.manageable }"
+          >
             <td>{{ group.backend }}</td>
             <td>{{ group.kind }}</td>
             <td>{{ group.desired }}</td>
             <td>{{ group.available }}</td>
             <td class="node-pools-actions">
-              <button
-                class="btn"
-                :disabled="busy || !group.manageable"
-                title="Spin up one node"
-                @click="scaleBy(group, 1)"
-              >
-                <Icon name="play" />
-                <span>Spin up</span>
-              </button>
-              <button
-                class="btn"
-                :disabled="busy || !group.manageable || group.desired <= minDesired(group)"
-                title="Scale down one node"
-                @click="scaleBy(group, -1)"
-              >
-                <Icon name="stop" />
-                <span>-1</span>
-              </button>
-              <button
-                class="btn"
-                :disabled="busy || !group.manageable || isProtected(group) || group.desired === 0"
-                :title="
-                  isProtected(group)
-                    ? `${group.kind} is a control-plane node and cannot be scaled to zero from here`
-                    : 'Scale to zero'
-                "
-                @click="scaleTo(group, 0)"
-              >
-                <span>Stop all</span>
-              </button>
+              <span v-if="!group.manageable" class="node-pools-unconfigured">
+                Not configured on this backend
+              </span>
+              <template v-else>
+                <button
+                  class="btn"
+                  :disabled="busy"
+                  title="Spin up one node"
+                  @click="scaleBy(group, 1)"
+                >
+                  <Icon name="play" />
+                  <span>Spin up</span>
+                </button>
+                <button
+                  class="btn"
+                  :disabled="busy || group.desired <= minDesired(group)"
+                  title="Scale down one node"
+                  @click="scaleBy(group, -1)"
+                >
+                  <Icon name="stop" />
+                  <span>-1</span>
+                </button>
+                <button
+                  class="btn"
+                  :disabled="busy || isProtected(group) || group.desired === 0"
+                  :title="
+                    isProtected(group)
+                      ? `${group.kind} is a control-plane node and cannot be scaled to zero from here`
+                      : 'Scale to zero'
+                  "
+                  @click="scaleTo(group, 0)"
+                >
+                  <span>Stop all</span>
+                </button>
+              </template>
             </td>
           </tr>
           <tr v-if="!groups.length">
-            <td colspan="5" class="empty-state">No manageable node groups reported.</td>
+            <td colspan="5" class="empty-state">No node groups reported.</td>
           </tr>
         </tbody>
       </table>
@@ -96,16 +105,15 @@ const auth = useAuthStore();
 
 const isAdmin = computed(() => !auth.required || auth.user?.is_admin === true);
 
-// webservice and postgres back the control plane; scaling them to zero from here would take down
-// the api or database, so keep a floor of one replica on these kinds.
-const PROTECTED_KINDS = new Set(["webservice", "postgres"]);
-
-function isProtected(group: ProvisionedGroup): boolean {
-  return PROTECTED_KINDS.has(group.kind);
+// the scale-to-zero floor is backend-provided: control-plane kinds (webservice/postgres) report a
+// min_desired of one so they cannot be scaled to zero from here, and any future protected kind is
+// honored without a ui change.
+function minDesired(group: ProvisionedGroup): number {
+  return group.min_desired ?? 0;
 }
 
-function minDesired(group: ProvisionedGroup): number {
-  return isProtected(group) ? 1 : 0;
+function isProtected(group: ProvisionedGroup): boolean {
+  return minDesired(group) > 0;
 }
 
 const backends = ref<NodeBackendInfo[]>([]);
@@ -200,5 +208,14 @@ onMounted(refresh);
   display: flex;
   gap: 0.4rem;
   white-space: nowrap;
+}
+/* ghost rows are kinds this backend has no template/deployment for; shown for awareness. */
+.node-pools-ghost td {
+  opacity: 0.5;
+}
+.node-pools-unconfigured {
+  font-size: 0.8rem;
+  font-style: italic;
+  opacity: 0.85;
 }
 </style>
