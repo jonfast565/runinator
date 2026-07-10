@@ -6,6 +6,7 @@ import { createArtifactsService } from "./artifacts";
 import { createNotificationsService } from "./notifications";
 import { createSecretsService } from "./secrets";
 import { createProvidersService } from "./providers";
+import { createCatalogMetadataService } from "./catalogMetadata";
 import { createOrgsService } from "./orgs";
 import { createAdminSettingsService } from "./admin-settings";
 import { createDisplayPreferencesService } from "./display-preferences";
@@ -32,6 +33,7 @@ export const artifactsService = createArtifactsService(appService);
 export const notificationsService = createNotificationsService(appService);
 export const secretsService = createSecretsService(appService);
 export const providersService = createProvidersService();
+export const catalogMetadataService = createCatalogMetadataService();
 export const orgsService = createOrgsService(appService, authService);
 export const adminSettingsService = createAdminSettingsService(appService);
 export const displayPreferencesService = createDisplayPreferencesService();
@@ -40,6 +42,8 @@ export const permissionsService = createPermissionsService(appService);
 export const workflowServices = createWorkflowServices({
   app: appService,
   getProviders: () => providersService.getState().providers,
+  getNodeKinds: () => catalogMetadataService.getState().nodeKinds,
+  getTriggerKinds: () => catalogMetadataService.getState().triggerKinds,
   refreshResources: () => {
     void resourcesService.refreshResources();
   },

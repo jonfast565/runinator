@@ -1020,6 +1020,39 @@ async fn wdl_evaluate_accepts_source_fragments() {
 }
 
 #[tokio::test]
+async fn get_node_kinds_returns_catalog_json() {
+    let (status, Json(response)) = crate::handlers::catalog_metadata::get_node_kinds().await;
+
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::JsonValue(value) = response else {
+        panic!("node catalog response must be json");
+    };
+    assert_eq!(value.as_array().map(Vec::len), Some(34));
+}
+
+#[tokio::test]
+async fn get_trigger_kinds_returns_catalog_json() {
+    let (status, Json(response)) = crate::handlers::catalog_metadata::get_trigger_kinds().await;
+
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::JsonValue(value) = response else {
+        panic!("trigger catalog response must be json");
+    };
+    assert_eq!(value.as_array().map(Vec::len), Some(2));
+}
+
+#[tokio::test]
+async fn get_enum_catalogs_returns_catalog_json() {
+    let (status, Json(response)) = crate::handlers::catalog_metadata::get_enum_catalogs().await;
+
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::JsonValue(value) = response else {
+        panic!("enum catalog response must be json");
+    };
+    assert_eq!(value.as_array().map(Vec::len), Some(4));
+}
+
+#[tokio::test]
 async fn wdl_analyze_validates_source_fragments() {
     let (db, path) = test_db().await;
     let Json(diagnostics) = crate::handlers::wdl::analyze_wdl(

@@ -181,6 +181,14 @@
   white-space: nowrap;
 }
 
+.view-title span.view-status.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  white-space: normal;
+}
+
 .toolbar-search {
   flex: 0 1 300px;
   width: min(300px, 28vw);

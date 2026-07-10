@@ -18,8 +18,9 @@
               <p>{{ pageDescription }}</p>
             </div>
             <div class="btn-row">
-              <button class="btn" @click="refreshPage">
-                <Icon name="refresh" />
+              <button class="btn" :disabled="loadingSecrets" @click="refreshPage">
+                <LoadingSpinner v-if="loadingSecrets" size="sm" label="Refreshing secrets" />
+                <Icon v-else name="refresh" />
                 <span>Refresh</span>
               </button>
               <button class="btn btn-primary" @click="openNewSetting">
@@ -45,7 +46,12 @@
           </div>
 
           <div class="settings-tree-shell">
-            <ul v-if="settingsTree.length" class="settings-tree-root">
+            <LoadingPanel
+              v-if="loadingSecrets"
+              compact
+              :message="loadingSecretsMessage || 'Refreshing secrets…'"
+            />
+            <ul v-else-if="settingsTree.length" class="settings-tree-root">
               <SettingsTreeNode
                 v-for="node in settingsTree"
                 :key="node.path"
@@ -180,12 +186,15 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
 import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import type { CredentialSummary, SettingKind } from "../../core/domain/models";
 import { secretKey, settingRef } from "../../core/utils/secrets";
 import { buildSettingsTree } from "../../core/utils/settings-tree";
@@ -197,6 +206,8 @@ const props = defineProps<{
 const app = useAppStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
+const { isLoading: loadingSecrets, loadingMessage: loadingSecretsMessage } =
+  useOperationLoading(["Refreshing secrets", "Loading config value"]);
 const editorOpen = ref(false);
 const modalRoot = ref<HTMLElement | null>(null);
 

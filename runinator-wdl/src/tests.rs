@@ -5512,6 +5512,69 @@ fn new_node_kinds_optional_clauses_round_trip() {
     }
 }
 
+/// a `mutex "name" { ... }` critical section lowers to an acquire node plus a paired release node,
+/// and round-trips back to the block form (with `hold` preserved).
+#[test]
+fn mutex_block_lowers_and_round_trips() {
+    let src = "workflow \"Crit\" v1 {\n  mutex \"deploy\" hold 300s {\n    node work <- console.run(command: \"echo go\")\n  }\n  node finish <- console.run(command: \"echo done\")\n}\n";
+    let first = compile_str(src, &default_test_options()).expect("compile block");
+
+    // the block produces a mutex acquire node and a paired mutex release node.
+    let graph = graph_value(&first);
+    let nodes = graph["nodes"].as_array().expect("nodes array");
+    let mutexes: Vec<&serde_json::Value> = nodes
+        .iter()
+        .filter(|node| node["kind"] == "mutex")
+        .collect();
+    assert_eq!(mutexes.len(), 2, "expected acquire + release nodes");
+    let acquire = mutexes
+        .iter()
+        .find(|node| node["parameters"]["release"] != serde_json::json!(true))
+        .expect("acquire node");
+    let release = mutexes
+        .iter()
+        .find(|node| node["parameters"]["release"] == serde_json::json!(true))
+        .expect("release node");
+    assert_eq!(acquire["parameters"]["name"], serde_json::json!("deploy"));
+    assert_eq!(
+        acquire["parameters"]["hold_timeout_seconds"],
+        serde_json::json!(300)
+    );
+    assert_eq!(release["parameters"]["name"], serde_json::json!("deploy"));
+
+    let wdl = decompile(&first).expect("decompile block");
+    assert!(
+        wdl.contains("mutex \"deploy\" hold 300s {"),
+        "block form not reconstructed:\n{wdl}"
+    );
+    let second = compile_str(&wdl, &default_test_options())
+        .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- wdl ---\n{wdl}"));
+    assert_eq!(
+        graph_value(&first),
+        graph_value(&second),
+        "mutex block diverged on round trip\n--- wdl ---\n{wdl}"
+    );
+}
+
+/// a bare `mutex release "name"` leaf lowers to a release node and round-trips.
+#[test]
+fn mutex_release_leaf_round_trips() {
+    let src = "workflow \"Rel\" v1 {\n  mutex \"deploy\"\n  node work <- console.run(command: \"echo go\")\n  mutex release \"deploy\"\n  node finish <- console.run(command: \"echo done\")\n}\n";
+    let first = compile_str(src, &default_test_options()).expect("compile release leaf");
+    let wdl = decompile(&first).expect("decompile release leaf");
+    assert!(
+        wdl.contains("mutex release \"deploy\""),
+        "release leaf not rendered:\n{wdl}"
+    );
+    let second = compile_str(&wdl, &default_test_options())
+        .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- wdl ---\n{wdl}"));
+    assert_eq!(
+        graph_value(&first),
+        graph_value(&second),
+        "mutex release leaf diverged on round trip\n--- wdl ---\n{wdl}"
+    );
+}
+
 /// a disconnected node (no incoming edge — e.g. one just added in the editor before the author
 /// wires it) must still appear in the decompiled wdl rather than silently vanishing.
 #[test]

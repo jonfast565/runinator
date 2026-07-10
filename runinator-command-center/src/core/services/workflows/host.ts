@@ -5,6 +5,8 @@ import type {
   ProviderMetadata,
   RuninatorType,
   WorkflowDefinition,
+  WorkflowNodeKindMetadata,
+  WorkflowTriggerKindMetadata,
   WorkflowValidationIssue,
 } from "../../domain/models";
 import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model";
@@ -16,6 +18,8 @@ import type { WorkflowServicesInternal, WorkflowServicesState } from "./state";
 export interface WorkflowServiceDeps {
   app: AppService;
   getProviders: () => ProviderMetadata[];
+  getNodeKinds: () => WorkflowNodeKindMetadata[];
+  getTriggerKinds: () => WorkflowTriggerKindMetadata[];
   refreshResources?(): void;
   confirm?(message: string): boolean;
   downloadBlob?(fileName: string, blob: Blob): void;
@@ -36,6 +40,8 @@ export interface WorkflowServiceHost {
     activeTab: AppTab;
   };
   getProviders: () => ProviderMetadata[];
+  getNodeKinds: () => WorkflowNodeKindMetadata[];
+  getTriggerKinds: () => WorkflowTriggerKindMetadata[];
   getSelectedWorkflow(): WorkflowDefinition | null;
   getSelectedWorkflowInputType(): RuninatorType | null;
   selectedWorkflowHasInputs(): boolean;

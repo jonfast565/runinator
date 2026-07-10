@@ -50,25 +50,21 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   }
 
   function getTransition(key: string): string {
-    const transitions = parseObject(host.state.stepEditor.transitions_json, {});
+    const transitions = asRecord(host.state.stepEditor.nodeDraft.transitions);
     return nodeRefId(transitions[key]) ?? "";
-    host.notify();
   }
 
   function setTransition(key: string, value: string) {
-    const transitions = parseObject(host.state.stepEditor.transitions_json, {});
+    const draft = host.state.stepEditor.nodeDraft;
+    const transitions = { ...asRecord(draft.transitions) };
 
     if (value) {
       transitions[key] = nodeRef(value);
     } else {
-      host.state.stepEditor.transitions_json = pretty(
-        Object.fromEntries(Object.entries(transitions).filter(([entryKey]) => entryKey !== key)),
-      );
-      host.state.isDirty = true;
-      return;
+      delete transitions[key];
     }
 
-    host.state.stepEditor.transitions_json = pretty(transitions);
+    host.state.stepEditor.nodeDraft = { ...draft, transitions };
     host.state.isDirty = true;
     host.notify();
   }
@@ -287,6 +283,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         applyBreakpointPatch(host.state.workflowRunDetail, current);
       }
     }
+
     host.notify();
   }
 
@@ -404,6 +401,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (host.state.workflowRunDetail?.run.id === runId) {
       await fetchWorkflowRunDetail(runId, true);
     }
+
     host.notify();
   }
 
@@ -505,6 +503,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!host.state.workflowRuns.some((run) => run.id === host.state.selectedWorkflowRunId)) {
       host.state.selectedWorkflowRunId = host.state.workflowRuns[0]?.id ?? null;
     }
+
     host.notify();
   }
 
@@ -530,6 +529,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (currentRunId !== null && (!host.state.workflowRunDetail || previousRunId !== currentRunId)) {
       await fetchWorkflowRunDetail(currentRunId, true);
     }
+
     host.notify();
   }
 
@@ -562,6 +562,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!internal.runDetailById.has(runId)) {
       internal.runDetailById.set(runId, null);
     }
+
     host.notify();
   }
 
@@ -589,6 +590,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!internal.runDetailById.get(runId)) {
       void fetchWorkflowRunDetail(runId, true);
     }
+
     host.notify();
   }
 
@@ -618,6 +620,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
         clearWorkflowRunGates();
       }
     }
+
     host.notify();
   }
 
@@ -787,10 +790,12 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     if (detail) {
       const hasWaiting = detail.nodes.some((n) => n.status === "waiting" || n.status === "approval_required" || n.status === "pending");
+
       if (hasWaiting) {
         host.deps.refreshResources();
       }
     }
+
     host.notify();
   }
 

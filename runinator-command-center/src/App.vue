@@ -47,6 +47,7 @@ import { useOrgsStore } from "./ui/adapters/pinia/orgs";
 import { useSecretsStore } from "./ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "./ui/adapters/pinia/workflows";
 import { useProvidersStore } from "./ui/adapters/pinia/providers";
+import { useCatalogMetadataStore } from "./ui/adapters/pinia/catalogMetadata";
 import { usePermissionsStore } from "./ui/adapters/pinia/permissions";
 import { useAdminSettingsStore } from "./ui/adapters/pinia/adminSettings";
 import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferences";
@@ -82,6 +83,7 @@ const artifacts = useArtifactsStore();
 const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
+const catalogMetadata = useCatalogMetadataStore();
 const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
 const gates = useGatesStore();
@@ -330,6 +332,7 @@ async function refreshTenantScopedState() {
     permissions.refreshAll().catch(() => undefined),
     gates.refreshGates().catch(() => undefined),
     providers.fetchProviders().catch(() => undefined),
+    catalogMetadata.fetchCatalogs().catch(() => undefined),
     app.refreshReplicas().catch(() => undefined),
   ]);
 
@@ -349,6 +352,7 @@ async function refreshBackendState(refreshProviders: boolean) {
     app.refreshReplicas().catch(() => undefined),
     orgs.refresh().catch(() => undefined),
     refreshProviders ? providers.fetchProviders().catch(() => undefined) : Promise.resolve(),
+    catalogMetadata.fetchCatalogs().catch(() => undefined),
   ]);
 }
 

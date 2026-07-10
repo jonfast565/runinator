@@ -10,7 +10,7 @@ use super::collect::threshold_reached;
 use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
-use super::mutex::{holder_run_id, lease_is_expired, record_is_held_by_other};
+use super::mutex::{holder_run_id, lease_is_expired, parse_mutex_params, record_is_held_by_other};
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
 use super::transitions::{timed_out, timed_out_since_created};
@@ -319,21 +319,53 @@ fn mutex_lease_expiry_reclaims_wedged_holders() {
             .unwrap()
             .into();
     assert!(!lease_is_expired(&live_deadline));
-    // legacy records without a deadline fall back to the acquire-time backstop: an old acquisition
-    // is reclaimable, a recent one is not.
-    let stale_legacy =
+    // a hold without an explicit deadline never expires by time: the acquire-wait timeout no longer
+    // caps the held lease, so a long critical section runs to completion (reclaimed only when the
+    // holder run terminates). even a very old acquisition stays live.
+    let old_unbounded =
         serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 7200))
             .unwrap()
             .into();
-    assert!(lease_is_expired(&stale_legacy));
-    let recent_legacy =
-        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 10))
-            .unwrap()
-            .into();
-    assert!(!lease_is_expired(&recent_legacy));
-    // a record with neither field is never treated as expired (nothing to bound it).
+    assert!(!lease_is_expired(&old_unbounded));
+    // a record with no deadline is never treated as expired (nothing to bound it).
     let empty = serde_json::from_str::<Value>("{}").unwrap().into();
     assert!(!lease_is_expired(&empty));
+}
+
+#[test]
+fn mutex_params_parse_release_and_hold() {
+    let node: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "sec",
+        "kind": "mutex",
+        "parameters": { "name": "deploy", "hold_timeout_seconds": 300 }
+    }))
+    .unwrap();
+    let acquire = parse_mutex_params(&node);
+    assert_eq!(acquire.name, "deploy");
+    assert!(!acquire.release);
+    assert_eq!(acquire.hold_timeout, Some(300));
+
+    let release_node: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "sec_release",
+        "kind": "mutex",
+        "parameters": { "name": "deploy", "release": true }
+    }))
+    .unwrap();
+    let release = parse_mutex_params(&release_node);
+    assert!(release.release);
+    assert_eq!(release.hold_timeout, None);
+
+    // name defaults to the node id, and an acquire without a hold has no lease bound.
+    let bare: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "lock1",
+        "kind": "mutex",
+        "parameters": {}
+    }))
+    .unwrap();
+    let bare = parse_mutex_params(&bare);
+    assert_eq!(bare.name, "lock1");
+    assert!(!bare.release);
+    assert_eq!(bare.hold_timeout, None);
 }
 
 #[test]

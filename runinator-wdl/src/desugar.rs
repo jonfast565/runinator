@@ -233,9 +233,11 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_cond(filter, aliases)?;
             }
         }
+        StmtKind::Mutex(mutex) => {
+            expand_block(&mut mutex.body, aliases)?;
+        }
         // these carry no spread-bearing expressions.
         StmtKind::Checkpoint(_)
-        | StmtKind::Mutex(_)
         | StmtKind::Throttle(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)

@@ -1,11 +1,12 @@
 <template>
-  <div class="empty-state" :class="{ compact }">
-    <div v-if="icon" class="empty-state-icon">
+  <div class="empty-state" :class="{ compact, loading }" role="status" :aria-live="loading ? 'polite' : undefined">
+    <LoadingSpinner v-if="loading" :size="compact ? 'sm' : 'md'" :label="loadingMessage || title" />
+    <div v-else-if="icon" class="empty-state-icon">
       <Icon :name="icon" :size="compact ? 18 : 24" />
     </div>
-    <p class="empty-state-title">{{ title }}</p>
-    <p v-if="description" class="empty-state-desc">{{ description }}</p>
-    <div v-if="$slots.default" class="empty-state-actions">
+    <p class="empty-state-title">{{ loading ? loadingMessage || title : title }}</p>
+    <p v-if="!loading && description" class="empty-state-desc">{{ description }}</p>
+    <div v-if="!loading && $slots.default" class="empty-state-actions">
       <slot />
     </div>
   </div>
@@ -13,6 +14,7 @@
 
 <script setup lang="ts">
 import Icon, { type IconName } from "./Icon.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 
 // shared empty/first-run placeholder. keep messages actionable: say what is empty and what to do next.
 withDefaults(
@@ -20,10 +22,18 @@ withDefaults(
     title: string;
     description?: string;
     icon?: IconName;
+    loading?: boolean;
+    loadingMessage?: string;
     // compact = inline within a narrow panel (smaller, less padding); default is a centered block.
     compact?: boolean;
   }>(),
-  { compact: false, description: undefined, icon: undefined },
+  {
+    compact: false,
+    description: undefined,
+    icon: undefined,
+    loading: false,
+    loadingMessage: undefined,
+  },
 );
 </script>
 
@@ -83,5 +93,10 @@ withDefaults(
   gap: 8px;
   justify-content: center;
   margin-top: 6px;
+}
+
+.empty-state.loading .empty-state-title {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 </style>

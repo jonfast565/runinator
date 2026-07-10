@@ -186,6 +186,10 @@ pub enum WorkflowTriggerKind {
 }
 
 impl WorkflowTriggerKind {
+    /// every trigger kind in a stable, ui-facing order.
+    pub const ALL: [WorkflowTriggerKind; 2] =
+        [WorkflowTriggerKind::Cron, WorkflowTriggerKind::Manual];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             WorkflowTriggerKind::Cron => "cron",
@@ -508,6 +512,47 @@ pub enum WorkflowNodeKind {
     CircuitBreaker,
     /// subscribe to a named event stream; drives a body subgraph on each matching event.
     EventSource,
+}
+
+impl WorkflowNodeKind {
+    /// every node kind in a stable, ui-facing order. used to build the metadata catalog; the
+    /// catalog's per-kind `match` is what guarantees exhaustiveness at compile time.
+    pub const ALL: [WorkflowNodeKind; 34] = [
+        WorkflowNodeKind::Start,
+        WorkflowNodeKind::Action,
+        WorkflowNodeKind::Wait,
+        WorkflowNodeKind::Condition,
+        WorkflowNodeKind::Switch,
+        WorkflowNodeKind::Toggle,
+        WorkflowNodeKind::Percentage,
+        WorkflowNodeKind::Approval,
+        WorkflowNodeKind::Gate,
+        WorkflowNodeKind::Signal,
+        WorkflowNodeKind::Loop,
+        WorkflowNodeKind::Parallel,
+        WorkflowNodeKind::Join,
+        WorkflowNodeKind::Try,
+        WorkflowNodeKind::Map,
+        WorkflowNodeKind::Race,
+        WorkflowNodeKind::Output,
+        WorkflowNodeKind::Input,
+        WorkflowNodeKind::Subflow,
+        WorkflowNodeKind::Config,
+        WorkflowNodeKind::Assert,
+        WorkflowNodeKind::Transform,
+        WorkflowNodeKind::Audit,
+        WorkflowNodeKind::Checkpoint,
+        WorkflowNodeKind::Mutex,
+        WorkflowNodeKind::Throttle,
+        WorkflowNodeKind::AwaitRun,
+        WorkflowNodeKind::Debounce,
+        WorkflowNodeKind::Collect,
+        WorkflowNodeKind::Barrier,
+        WorkflowNodeKind::CircuitBreaker,
+        WorkflowNodeKind::EventSource,
+        WorkflowNodeKind::End,
+        WorkflowNodeKind::Fail,
+    ];
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

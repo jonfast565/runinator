@@ -79,20 +79,21 @@
             >
               Refresh
             </button>
-            <button
-              type="button"
-              :disabled="!workflows.canManageWorkflowTriggers"
-              @click="workflows.addWorkflowTrigger('cron')"
-            >
-              New Cron
-            </button>
-            <button
-              type="button"
-              :disabled="!workflows.canManageWorkflowTriggers"
-              @click="workflows.addWorkflowTrigger('manual')"
-            >
-              New Manual
-            </button>
+            <template v-if="catalogMetadata.loaded">
+              <button
+                v-for="kind in catalogMetadata.triggerKinds"
+                :key="kind.kind"
+                type="button"
+                :disabled="!workflows.canManageWorkflowTriggers"
+                @click="workflows.addWorkflowTrigger(kind.kind)"
+              >
+                New {{ kind.label }}
+              </button>
+            </template>
+            <p v-else class="hint catalog-loading-hint">
+              <LoadingSpinner size="sm" label="Loading trigger types" />
+              Loading trigger types…
+            </p>
           </div>
         </div>
 
@@ -147,10 +148,19 @@
               Kind
               <select
                 v-model="workflows.triggerDraft.kind"
+                :disabled="!catalogMetadata.loaded"
                 @change="workflows.setTriggerKind(workflows.triggerDraft.kind)"
               >
-                <option value="cron">cron</option>
-                <option value="manual">manual</option>
+                <option v-if="!catalogMetadata.loaded" value="" disabled>
+                  Loading trigger types…
+                </option>
+                <option
+                  v-for="kind in catalogMetadata.triggerKinds"
+                  :key="kind.kind"
+                  :value="kind.kind"
+                >
+                  {{ kind.label }}
+                </option>
               </select>
             </label>
             <label class="checkbox"
@@ -172,7 +182,23 @@
           <div class="trigger-json-grid">
             <div class="form-field">
               <span class="form-field-label">Configuration</span>
-              <JsonEditor v-model="workflows.triggerJson.configuration" />
+              <!-- when the catalog provides fields for this trigger kind, render per-field editors. -->
+              <template v-if="triggerKindMeta && triggerKindMeta.fields.length">
+                <div class="trigger-field-list">
+                  <CatalogFieldEditor
+                    v-for="field in triggerKindMeta.fields"
+                    :key="field.name"
+                    :field="toNodeField(field)"
+                    :model-value="configDraft[field.name]"
+                    @update:model-value="setConfigField(field.name, $event)"
+                  />
+                </div>
+              </template>
+              <p v-else-if="catalogMetadata.loading || !catalogMetadata.loaded" class="hint catalog-loading-hint">
+                <LoadingSpinner size="sm" label="Loading trigger metadata" />
+                Loading trigger metadata…
+              </p>
+              <JsonEditor v-else v-model="workflows.triggerJson.configuration" />
             </div>
             <div class="form-field">
               <span class="form-field-label">Metadata</span>
@@ -212,19 +238,57 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { workflowSharingService } from "../../../core/services";
+import type { NodeFieldMetadata, UiField } from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
+import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
+const catalogMetadata = useCatalogMetadataStore();
 
 const ownerOrgId = ref<string>(workflows.workflowDraft.org_id ?? "");
 const ownerSaving = ref(false);
+
+const triggerKindMeta = computed(() =>
+  workflows.triggerDraft.kind ? catalogMetadata.triggerKind(workflows.triggerDraft.kind) : null,
+);
+
+// local mutable config record kept in sync with the trigger json for field-by-field editing.
+const configDraft = ref<Record<string, unknown>>({});
+
+watch(
+  () => workflows.triggerJson.configuration,
+  (json) => {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      configDraft.value =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : {};
+    } catch {
+      configDraft.value = {};
+    }
+  },
+  { immediate: true },
+);
+
+function setConfigField(name: string, value: unknown) {
+  configDraft.value = { ...configDraft.value, [name]: value };
+  workflows.triggerJson.configuration = JSON.stringify(configDraft.value, null, 2);
+}
+
+// adapts a UiField to NodeFieldMetadata for CatalogFieldEditor (location is unused by the editor).
+function toNodeField(f: UiField): NodeFieldMetadata {
+  return { ...f, location: { base: "parameters", path: [] } };
+}
 
 // keep the owner select in sync when the edited workflow changes.
 watch(
@@ -290,6 +354,12 @@ if (!orgs.memberships.length) {
   color: #66717e;
 }
 
+.catalog-loading-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .form-error {
   color: #a33a2f;
 }
@@ -315,6 +385,11 @@ if (!orgs.memberships.length) {
   gap: 12px;
   border-top: 1px solid #e5ebf1;
   padding-top: 12px;
+}
+
+.trigger-field-list {
+  display: grid;
+  gap: 8px;
 }
 
 .trigger-json-grid {

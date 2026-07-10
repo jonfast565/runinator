@@ -107,6 +107,8 @@ const MODIFIER_KW = new Set([
   "returns",
   "every",
   "timeout",
+  "hold",
+  "release",
   "key",
   "priority",
   "max_depth",
@@ -756,10 +758,10 @@ const snippets = [
     type: "keyword",
     detail: "named state snapshot",
   }),
-  snippetCompletion('mutex "${name}" timeout ${deadline}', {
+  snippetCompletion('mutex "${name}" {\n\t${body}\n}', {
     label: "mutex",
     type: "keyword",
-    detail: "cross-run exclusive lock",
+    detail: "cross-run exclusive lock (critical section)",
   }),
   snippetCompletion('throttle "${name}" rate ${n} per ${window}', {
     label: "throttle",

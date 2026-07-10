@@ -1130,13 +1130,66 @@ impl Lowerer {
         id: &str,
         next: &str,
     ) -> Result<(), WdlError> {
+        // a bare release leaf ends a section; it carries only the lock name.
+        if mutex.release {
+            let mut params = Map::new();
+            params.insert("name".into(), Value::String(mutex.name.clone()));
+            params.insert("release".into(), Value::Bool(true));
+            let fields = self.leaf_fields(params, stmt, next, None)?;
+            self.push(node(id, "mutex", fields));
+            return Ok(());
+        }
+
+        // acquire parameters shared by the leaf and block forms.
         let mut params = Map::new();
         params.insert("name".into(), Value::String(mutex.name.clone()));
         if let Some(poll) = mutex.poll_interval {
             params.insert("poll_interval_seconds".into(), Value::from(poll));
         }
-        let fields = self.leaf_fields(params, stmt, next, mutex.timeout)?;
-        self.push(node(id, "mutex", fields));
+        if let Some(hold) = mutex.hold {
+            params.insert("hold_timeout_seconds".into(), Value::from(hold));
+        }
+
+        // acquire-only leaf: hold the lock until the run terminates.
+        if mutex.body.is_empty() {
+            let fields = self.leaf_fields(params, stmt, next, mutex.timeout)?;
+            self.push(node(id, "mutex", fields));
+            return Ok(());
+        }
+
+        // block form: acquire -> body -> release -> continuation. mirror the parallel/join id scheme so
+        // the synthetic release id stays stable across a round trip.
+        let cont = self.block_cont(&stmt.transitions, next);
+        let release_id = self
+            .claim(&format!("{id}_release"))
+            .unwrap_or_else(|_| self.fresh("mutex_release"));
+        let body_entry = self.lower_block(&mutex.body, &release_id)?;
+
+        let mut acquire_transitions = Map::new();
+        acquire_transitions.insert("next".into(), node_ref(&body_entry));
+        let mut acquire_fields = vec![
+            ("parameters", Value::Object(params)),
+            ("transitions", Value::Object(acquire_transitions)),
+        ];
+        if let Some(seconds) = mutex.timeout {
+            acquire_fields.push(("timeout_seconds", Value::from(seconds)));
+        }
+        self.apply_annotations(&mut acquire_fields, stmt);
+        self.push(node(id, "mutex", acquire_fields));
+
+        let mut release_params = Map::new();
+        release_params.insert("name".into(), Value::String(mutex.name.clone()));
+        release_params.insert("release".into(), Value::Bool(true));
+        let mut release_transitions = Map::new();
+        release_transitions.insert("next".into(), node_ref(&cont));
+        self.push(node(
+            &release_id,
+            "mutex",
+            vec![
+                ("parameters", Value::Object(release_params)),
+                ("transitions", Value::Object(release_transitions)),
+            ],
+        ));
         Ok(())
     }
 

@@ -10,6 +10,8 @@ import type {
 import { asJsonValue } from "../domain/json";
 import { pretty } from "../utils/format";
 import { displayValue, isBlankValue } from "../utils/values";
+import { findTriggerKindMetadata } from "./catalog-registry";
+import { cloneTemplate } from "./field-location";
 import { asArray, asRecord, nodeRef, nodeRefId, valueRef } from "./index";
 
 export type BranchPolicyName = "all" | "any" | "first_success";
@@ -72,6 +74,23 @@ export function switchCaseEditor(value: JsonRecord): SwitchCaseEditor {
   return { match_kind: "equals", match_json: pretty(value.equals ?? ""), target };
 }
 
+export function emptyWorkflowTriggerDraft(
+  workflowId: string,
+  kind: WorkflowTriggerKind = "cron",
+): WorkflowTrigger {
+  return {
+    id: null,
+    workflow_id: workflowId,
+    kind,
+    enabled: true,
+    configuration: {},
+    next_execution: null,
+    blackout_start: null,
+    blackout_end: null,
+    metadata: {},
+  };
+}
+
 export function newWorkflowTriggerDraft(
   workflowId: string,
   kind: WorkflowTriggerKind = "cron",
@@ -90,11 +109,13 @@ export function newWorkflowTriggerDraft(
 }
 
 export function defaultTriggerConfiguration(kind: WorkflowTriggerKind): JsonRecord {
-  if (kind === "cron") {
-    return { cron: "0 * * * *", parameters: {} };
+  const template = findTriggerKindMetadata(kind)?.default_configuration;
+
+  if (template === undefined) {
+    throw new Error(`Trigger kind metadata for "${kind}" is not loaded`);
   }
 
-  return {};
+  return cloneTemplate(template);
 }
 
 // seed a draft input object from the workflow's input struct so declared fields render pre-populated.
@@ -158,89 +179,12 @@ export function createStepEditorState() {
     id: "",
     name: "",
     kind: "action",
-    approval_type: "generic",
-    approval_prompt: "Approval required",
-    gate_kind: "manual",
-    gate_when_json: "{}",
-    gate_poll_interval: 30,
-    gate_timeout: 0,
-    gate_label: "",
-    signal_name: "signal",
-    condition_fallback: "",
-    condition_branches: [] as { when_json: string; target: string }[],
-    wait_seconds: 60,
-    wait_initial_status: "waiting",
-    wait_until_status: "",
-    wait_json: "{}",
-    loop_items_json: "[]",
-    loop_target: "",
-    loop_max_iterations: 10,
-    switch_value_json: pretty(valueRef("params", ["mode"])),
-    switch_cases: [] as SwitchCaseEditor[],
-    switch_default: "",
-    toggle_value_json: pretty(valueRef("config", ["flags", "enabled"])),
-    toggle_on: "",
-    toggle_off: "",
-    percentage_key_json: pretty(valueRef("input", ["user_id"])),
-    percentage_buckets: [] as { weight: number; target: string }[],
-    percentage_default: "",
-    parallel_branches: [] as string[],
-    join_wait_for: [] as string[],
-    join_mode: "all",
-    try_body: "",
-    try_catch: "",
-    try_finally: "",
-    map_items_json: "[]",
-    map_target: "",
-    map_concurrency: 1,
-    race_branches: [] as string[],
-    race_winner: "first_success",
-    output_event_type: "workflow.output",
-    output_data_json: "{}",
-    input_prompt: "Provide input",
-    config_name_json: '""',
-    config_metadata_json: "{}",
-    subflow_id: "",
-    subflow_parameters_json: "{}",
-    assert_assertions: [] as { name: string; condition_json: string; message: string }[],
-    transform_bindings_json: "{}",
-    audit_action_json: pretty("workflow.audit"),
-    audit_actor_json: "",
-    audit_target_json: "",
-    audit_reason_json: "",
-    checkpoint_name: "",
-    mutex_name: "",
-    mutex_poll_interval: 30,
-    throttle_name: "",
-    throttle_max_per_window: 10,
-    throttle_window_seconds: 60,
-    throttle_poll_interval: 30,
-    await_run_ids_json: pretty(valueRef("params", ["run_ids"])),
-    await_mode: "all",
-    await_poll_interval: 30,
-    debounce_name: "",
-    debounce_delay_seconds: 30,
-    debounce_trigger_key_json: "",
-    collect_name: "",
-    collect_max: 10,
-    barrier_name: "",
-    barrier_count: 2,
-    barrier_poll_interval: 30,
-    circuit_name: "",
-    circuit_threshold: 5,
-    circuit_window_seconds: 60,
-    circuit_cooldown_seconds: 60,
-    event_source_type: "*",
-    event_source_filter_json: "",
-    event_source_max: 0,
     locked: false,
     skipped: false,
     max_attempts: 1,
     timeout_seconds: 0,
-    action_name: "",
-    action_function: "",
-    parameters_json: "{}",
-    transitions_json: "{}",
+    // working copy of the full node json — the modal and catalog field editors read/write here.
+    nodeDraft: {} as JsonRecord,
   };
 }
 

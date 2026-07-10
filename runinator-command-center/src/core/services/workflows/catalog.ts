@@ -40,18 +40,18 @@ const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
 const MAX_OPEN_RUN_TABS = 8;
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
-export type WorkflowEditorPeer = {
+export interface WorkflowEditorPeer {
   setWorkflowJsonSilently: (next: string) => void;
   setWorkflowWdlSilently: (next: string) => void;
   refreshWorkflowWdl: () => Promise<void>;
   syncWorkflowJson: () => boolean;
   syncWorkflowWdl: () => Promise<boolean>;
   scheduleWorkflowWdlRefresh: () => void;
-};
+}
 
-export type WorkflowRunsPeer = {
+export interface WorkflowRunsPeer {
   clearWorkflowRunGates: () => void;
-};
+}
 
 export function createWorkflowCatalogService(
   host: WorkflowServiceHost,
@@ -90,6 +90,7 @@ export function createWorkflowCatalogService(
     if (workflow && !host.state.isDirty) {
       await selectWorkflow(workflow);
     }
+
     host.notify();
   }
 
@@ -164,6 +165,7 @@ export function createWorkflowCatalogService(
     } catch (err) {
       host.ctx.setError(`Could not export this workflow as WDL (${errorMessage(err)}).`);
     }
+
     host.notify();
   }
 
@@ -312,6 +314,7 @@ export function createWorkflowCatalogService(
       host.state.triggerDraft.configuration = defaultTriggerConfiguration(kind);
       host.state.triggerJson.configuration = pretty(host.state.triggerDraft.configuration);
     }
+
     host.notify();
   }
 
@@ -508,6 +511,7 @@ export function createWorkflowCatalogService(
       host.state.selectedWorkflowRunId = null;
       host.state.isDirty = false;
     }
+
     host.notify();
   }
 

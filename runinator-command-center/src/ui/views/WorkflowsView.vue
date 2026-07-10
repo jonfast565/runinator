@@ -45,7 +45,14 @@
             </div>
           </div>
           <EmptyState
-            v-if="!workflows.workflows.length"
+            v-if="loadingWorkflows"
+            compact
+            loading
+            title="Loading workflows"
+            :loading-message="loadingWorkflowsMessage"
+          />
+          <EmptyState
+            v-else-if="!workflows.workflows.length"
             compact
             icon="workflow"
             title="No workflows yet"
@@ -142,10 +149,13 @@ import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOperationLoading } from "../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
+const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
+  useOperationLoading("Refreshing workflows");
 const scopeFilter = ref<"all" | "org" | "global">("all");
 // mobile master-detail: 'list' shows the workflow list, 'editor' shows the canvas/inspector.
 const mobileView = ref<"list" | "editor">("list");

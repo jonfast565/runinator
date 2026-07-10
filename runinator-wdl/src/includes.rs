@@ -201,9 +201,9 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_cond(filter, source_dir, paths)?;
             }
         }
+        StmtKind::Mutex(mutex) => collect_block(&mutex.body, source_dir, paths)?,
         // these reference no file()-bearing expressions.
         StmtKind::Checkpoint(_)
-        | StmtKind::Mutex(_)
         | StmtKind::Throttle(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)

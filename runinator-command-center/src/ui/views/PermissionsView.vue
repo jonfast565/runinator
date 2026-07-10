@@ -6,8 +6,9 @@
           <h2>Permissions</h2>
           <p>Users, teams, workflow access, and API keys.</p>
         </div>
-        <button class="btn" :disabled="app.loading" @click="refresh">
-          <Icon name="refresh" />
+        <button class="btn" :disabled="loadingPermissions" @click="refresh">
+          <LoadingSpinner v-if="loadingPermissions" size="sm" label="Refreshing permissions" />
+          <Icon v-else name="refresh" />
           <span>Refresh</span>
         </button>
       </header>
@@ -55,7 +56,12 @@
               <span>New User</span>
             </button>
           </div>
-          <DataTable>
+          <LoadingPanel
+            v-if="loadingPermissions && !permissions.filteredUsers.length"
+            compact
+            :message="loadingPermissionsMessage || 'Loading users…'"
+          />
+          <DataTable v-else>
             <table>
               <thead>
                 <tr>
@@ -98,7 +104,12 @@
               <span>New Team</span>
             </button>
           </div>
-          <DataTable>
+          <LoadingPanel
+            v-if="loadingPermissions && !permissions.filteredTeams.length"
+            compact
+            :message="loadingPermissionsMessage || 'Loading teams…'"
+          />
+          <DataTable v-else>
             <table>
               <thead>
                 <tr>
@@ -175,7 +186,12 @@
               <span>Refresh</span>
             </button>
           </div>
-          <DataTable>
+          <LoadingPanel
+            v-if="loadingPermissions && !permissions.workflowGrants.length"
+            compact
+            :message="loadingPermissionsMessage || 'Loading workflow access…'"
+          />
+          <DataTable v-else>
             <table>
               <thead>
                 <tr>
@@ -227,7 +243,12 @@
             </div>
           </div>
 
-          <DataTable>
+          <LoadingPanel
+            v-if="loadingPermissions && !permissions.visibleApiKeys.length"
+            compact
+            :message="loadingPermissionsMessage || 'Loading API keys…'"
+          />
+          <DataTable v-else>
             <table>
               <thead>
                 <tr>
@@ -600,15 +621,20 @@
 import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { permissionLevels, usePermissionsStore } from "../../ui/adapters/pinia/permissions";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import type { ApiKey, PrincipalType, Team, User } from "../../core/domain/models";
 import { formatDate } from "../../core/utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
 const permissions = usePermissionsStore();
+const { isLoading: loadingPermissions, loadingMessage: loadingPermissionsMessage } =
+  useOperationLoading(["Loading permissions", "Loading API keys", "Loading workflow access"]);
 const activeTab = ref<"users" | "teams" | "access" | "apiKeys">("users");
 const userTeamId = ref("");
 const memberUserId = ref("");

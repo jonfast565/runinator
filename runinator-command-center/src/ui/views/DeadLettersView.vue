@@ -9,15 +9,22 @@
             <option value="result">result</option>
             <option value="ingress">ingress</option>
           </select>
-          <button class="btn" :disabled="loading" @click="refresh">
+          <Button variant="default" :loading="loading" @click="refresh">
             <Icon name="refresh" />
             <span>Refresh</span>
-          </button>
+          </Button>
         </div>
       </div>
 
       <EmptyState
-        v-if="!rows.length"
+        v-if="loading && !rows.length"
+        compact
+        loading
+        title="Loading dead letters"
+        loading-message="Loading dead letters…"
+      />
+      <EmptyState
+        v-else-if="!rows.length"
         compact
         icon="flag"
         title="No dead-lettered messages"
@@ -62,6 +69,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import Button from "../components/shared/Button.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import { deadLettersService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";

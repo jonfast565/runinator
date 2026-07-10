@@ -52,6 +52,7 @@ use crate::handlers::{
         get_org_nodes, get_org_quota, get_org_usage, get_rate_card, put_org_quota, scale_org_nodes,
     },
     catalog::{get_catalog_items, upsert_catalog_item},
+    catalog_metadata::{get_enum_catalogs, get_node_kinds, get_trigger_kinds},
     credentials::{
         delete_credential, get_credential, import_secret_bundle, put_credential, reencrypt_settings,
     },
@@ -554,6 +555,9 @@ pub fn build_router<T: DatabaseImpl>(
             "/providers/import",
             post(import_provider_bundle::<T>).layer(Extension(pool.clone())),
         )
+        .route("/node-kinds", get(get_node_kinds))
+        .route("/trigger-kinds", get(get_trigger_kinds))
+        .route("/catalog/enums", get(get_enum_catalogs))
         .route(
             "/webhooks/wake",
             post(webhook_wake::<T>).layer(Extension(pool.clone())),

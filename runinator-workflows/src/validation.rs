@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use runinator_models::{
     providers::ProviderMetadata,
     types::RuninatorType,
+    value::Value,
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowTransitions,
     },
@@ -123,6 +124,7 @@ pub fn validate_workflow(
 
     validate_graph_cycles(&start, &nodes)?;
     validate_map_concurrency_bodies(&nodes)?;
+    validate_mutex_sections(&start, &nodes)?;
 
     Ok((start, nodes))
 }
@@ -421,6 +423,68 @@ fn body_edges(node: &WorkflowNode) -> Result<Vec<WorkflowNodeRef>, WorkflowValid
     let mut edges = transition_targets(&node.transitions);
     edges.extend(parameter_targets(node)?);
     Ok(edges)
+}
+
+/// the lock name a mutex node governs, defaulting to the node id (matching the reducer).
+fn mutex_name(node: &WorkflowNode) -> String {
+    node.parameters
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| node.id.as_str())
+        .to_string()
+}
+
+/// true when a mutex node releases its lock (an end-of-section release node) rather than acquiring.
+fn mutex_is_release(node: &WorkflowNode) -> bool {
+    node.parameters
+        .get("release")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// a mutex release node must be bracketed by its acquire: on every path from the start it must pass an
+/// acquire for the same lock first. checked as reachability — from the start, following all edges but
+/// treating each acquire for the lock as a barrier the walk stops at; if a release for that lock is
+/// still reachable, the release can run before the lock is held. cycles are bounded by the visited
+/// set (re-reaching an acquire just reinforces the existing hold at runtime, so it needs no error).
+fn validate_mutex_sections(
+    start: &str,
+    nodes: &[WorkflowNode],
+) -> Result<(), WorkflowValidationError> {
+    let node_map: HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    let release_locks: HashSet<String> = nodes
+        .iter()
+        .filter(|node| node.kind == WorkflowNodeKind::Mutex && mutex_is_release(node))
+        .map(|node| mutex_name(node))
+        .collect();
+
+    for lock in release_locks {
+        let mut visited = HashSet::new();
+        let mut stack = vec![start.to_string()];
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id.clone()) {
+                continue;
+            }
+            let Some(node) = node_map.get(id.as_str()) else {
+                continue;
+            };
+            if node.kind == WorkflowNodeKind::Mutex && mutex_name(node) == lock {
+                if mutex_is_release(node) {
+                    return Err(WorkflowValidationError::MutexReleaseBeforeAcquire {
+                        node: id,
+                        name: lock,
+                    });
+                }
+                // an acquire for this lock is a barrier: paths beyond it hold the lock, so stop here.
+                continue;
+            }
+            for edge in body_edges(node)? {
+                stack.push(edge.as_str().to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// the set of nodes reachable from `target` without crossing `map_id`, following every outgoing edge.

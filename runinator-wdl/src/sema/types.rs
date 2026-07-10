@@ -346,9 +346,9 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_cond(filter, env, diagnostics);
             }
         }
+        StmtKind::Mutex(mutex) => check_block(&mutex.body, env, diagnostics),
         // these carry no expressions to type-check.
         StmtKind::Checkpoint(_)
-        | StmtKind::Mutex(_)
         | StmtKind::Throttle(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)

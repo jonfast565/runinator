@@ -11,7 +11,11 @@
     </button>
     <div class="view-title">
       <h1>{{ headingFor(app.activeTab) }}</h1>
-      <span>{{ activeSubtitle }}</span>
+      <span v-if="app.loading && app.opLabel" class="view-status loading">
+        <LoadingSpinner size="sm" :label="app.opLabel" />
+        {{ app.opLabel }}…
+      </span>
+      <span v-else>{{ activeSubtitle }}</span>
     </div>
     <div v-if="searchPlaceholder" class="toolbar-search">
       <input
@@ -41,10 +45,11 @@
         class="btn"
         aria-label="Refresh"
         title="Refresh"
-        :disabled="app.interactionsDisabled"
+        :disabled="app.interactionsDisabled || app.loading"
         @click="$emit('refresh')"
       >
-        <Icon name="refresh" />
+        <LoadingSpinner v-if="app.loading" size="sm" label="Refreshing" />
+        <Icon v-else name="refresh" />
         <span>Refresh</span>
       </button>
       <button
@@ -52,11 +57,12 @@
         class="btn btn-primary"
         aria-label="Run workflow"
         title="Run workflow"
-        :disabled="app.interactionsDisabled || !workflows.canRunWorkflow"
+        :disabled="app.interactionsDisabled || !workflows.canRunWorkflow || startingRun"
         @click="workflows.runSelectedWorkflow()"
       >
-        <Icon name="play" />
-        <span>Run Workflow</span>
+        <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
+        <Icon v-else name="play" />
+        <span>{{ startingRun ? "Starting…" : "Run Workflow" }}</span>
       </button>
       <UserMenu v-if="auth.user" />
     </div>
@@ -66,6 +72,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Icon from "../shared/Icon.vue";
+import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import ConnectionStrip from "./ConnectionStrip.vue";
 import UserMenu from "./UserMenu.vue";
 import { navItemForTab, useAppStore } from "../../../ui/adapters/pinia/app";
@@ -74,6 +81,7 @@ import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 import { useOrgsStore } from "../../../ui/adapters/pinia/orgs";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useOperationLoading } from "../../composables/useOperationLoading";
 import type { AppTab } from "../../../core/navigation/app";
 
 defineEmits<{ refresh: [] }>();
@@ -84,6 +92,7 @@ const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const orgs = useOrgsStore();
 const secrets = useSecretsStore();
+const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
 
 function onSwitchOrg(event: Event) {
   const orgId = (event.target as HTMLSelectElement).value;

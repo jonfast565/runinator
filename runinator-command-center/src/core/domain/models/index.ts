@@ -59,6 +59,17 @@ export type {
 } from "./provider/action-metadata";
 export type { ProviderMetadata, ProviderRuntimeMetadata } from "./provider/provider-metadata";
 
+export type {
+  EdgeTaxonomy,
+  FieldLocation,
+  NodeEdgeSlot,
+  NodeFieldLocationBase,
+  NodeFieldMetadata,
+  WorkflowNodeKindMetadata,
+} from "./catalog/node-kind-metadata";
+export type { UiField, WorkflowTriggerKindMetadata } from "./catalog/trigger-kind-metadata";
+export type { EnumCatalogMetadata, EnumOptionMetadata } from "./catalog/enum-metadata";
+
 export type { RunSummary } from "./run/run-summary";
 export type { RunChunk } from "./run/run-chunk";
 

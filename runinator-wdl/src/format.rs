@@ -761,15 +761,28 @@ impl Formatter {
         text
     }
 
-    fn mutex(&self, mutex: &MutexStmt) -> String {
-        let mut text = format!("mutex {}", quote(&mutex.name));
+    fn mutex(&mut self, mutex: &MutexStmt) -> String {
+        // a bare release leaf carries only the lock name.
+        if mutex.release {
+            return format!("mutex release {}", quote(&mutex.name));
+        }
+        let mut header = format!("mutex {}", quote(&mutex.name));
         if let Some(poll) = mutex.poll_interval {
-            text.push_str(&format!(" every {poll}s"));
+            header.push_str(&format!(" every {poll}s"));
         }
         if let Some(timeout) = mutex.timeout {
-            text.push_str(&format!(" timeout {timeout}s"));
+            header.push_str(&format!(" timeout {timeout}s"));
         }
-        text
+        if let Some(hold) = mutex.hold {
+            header.push_str(&format!(" hold {hold}s"));
+        }
+        if mutex.body.is_empty() {
+            return header;
+        }
+        header.push_str(" {");
+        self.render_block(&header, &mutex.body, "}")
+            .trim_end_matches('\n')
+            .to_string()
     }
 
     fn throttle(&self, throttle: &ThrottleStmt) -> String {

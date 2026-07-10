@@ -17,7 +17,9 @@
               <h2>Runs</h2>
               <p>Recent workflow executions, filtered by the current search when present.</p>
             </div>
-            <button class="btn" @click="workflows.fetchRecentWorkflowRuns()">
+            <button class="btn" :disabled="loadingRuns" @click="workflows.fetchRecentWorkflowRuns()">
+              <LoadingSpinner v-if="loadingRuns" size="sm" label="Refreshing runs" />
+              <Icon v-else name="refresh" />
               <span>Refresh</span>
             </button>
           </div>
@@ -36,7 +38,14 @@
             </div>
           </div>
           <EmptyState
-            v-if="!workflows.recentWorkflowRuns.length"
+            v-if="loadingRuns"
+            compact
+            loading
+            title="Loading runs"
+            :loading-message="loadingRunsMessage"
+          />
+          <EmptyState
+            v-else-if="!workflows.recentWorkflowRuns.length"
             compact
             :icon="app.searchQuery ? 'search' : 'runs'"
             :title="app.searchQuery ? 'No matches' : 'No runs yet'"
@@ -197,7 +206,9 @@
 import { computed, ref, watch } from "vue";
 import { workflowRunExtrasService } from "../../core/services";
 import EmptyState from "../components/shared/EmptyState.vue";
+import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
@@ -207,6 +218,7 @@ import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type { RunArtifact, WorkflowRunArtifact } from "../../core/domain/models";
@@ -214,6 +226,8 @@ import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
+const { isLoading: loadingRuns, loadingMessage: loadingRunsMessage } =
+  useOperationLoading("Loading workflow runs");
 const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
 

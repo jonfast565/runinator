@@ -161,6 +161,7 @@
 import { computed } from "vue";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
 import {
   asArray,
@@ -170,6 +171,8 @@ import {
   workflowNodeActionConfig,
   workflowNodeActionInputs,
 } from "../../../core/workflow";
+import { findNodeKindMetadata } from "../../../core/workflow/catalog-registry";
+import { getAtLocation } from "../../../core/workflow/field-location";
 import { displayValue } from "../../../core/utils/values";
 
 interface DetailItem {
@@ -212,6 +215,7 @@ interface ResultRow {
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
+const catalogMetadata = useCatalogMetadataStore();
 
 // named slots let this read-only view narrow parameters/transitions/action
 // without a bare JsonRecord index collapsing every access to `unknown`.
@@ -367,13 +371,15 @@ const resultRows = computed<ResultRow[]>(() =>
 
 const detailSections = computed<DetailSection[]>(() => {
   const current = node.value;
+  // subscribe to nodeKinds so the section re-computes when the catalog loads.
+  void catalogMetadata.nodeKinds;
 
   if (!current) {
     return [];
   }
 
   return [kindSection(current)].filter(
-    (section) => section.items.length || section.chips.length || section.rows.length,
+    (sect) => sect.items.length || sect.chips.length || sect.rows.length,
   );
 });
 
@@ -382,105 +388,45 @@ const transitionRows = computed<DetailRow[]>(() =>
 );
 
 function kindSection(current: StepEditorNode): DetailSection {
-  switch (current.kind) {
-    case "approval":
-      return section("Approval", [
-        item("Type", current.parameters?.approval_type ?? current.parameters?.type ?? "generic"),
-        item("Prompt", current.parameters?.prompt ?? "Approval required"),
-      ]);
-    case "condition":
-      return section("Conditions", [], [], branchRows(current));
-    case "wait":
-      return section("Wait", waitItems(current.wait));
-    case "loop":
-      return section("Loop", [
-        item("Items", valueLabel(current.parameters?.items)),
-        item("Target", refLabel(current.parameters?.target)),
-        item("Max Iterations", current.max_iterations ?? 10),
-      ]);
-    case "switch":
-      return section(
-        "Switch",
-        [item("Value", valueLabel(current.parameters?.value))],
-        [],
-        switchRows(current),
-      );
-    case "toggle":
-      return section("Toggle", [
-        item("Value", valueLabel(current.parameters?.value)),
-        item("On", refLabel(current.parameters?.on)),
-        item("Off", refLabel(current.parameters?.off)),
-      ]);
-    case "percentage":
-      return section(
-        "Percentage",
-        [
-          item("Key", valueLabel(current.parameters?.key)),
-          item("Default", refLabel(current.parameters?.default)),
-        ],
-        [],
-        percentageRows(current),
-      );
-    case "parallel":
-      return section(
-        "Parallel",
-        [],
-        nodeRefArray(current.parameters?.branches).map((target) => `branch -> ${target}`),
-      );
-    case "join":
-      return section(
-        "Join",
-        [item("Mode", current.parameters?.mode ?? "all")],
-        nodeRefArray(current.parameters?.wait_for).map((target) => `wait for ${target}`),
-      );
-    case "try":
-      return section("Try", [
-        item("Body", refLabel(current.parameters?.body)),
-        item("Catch", refLabel(current.parameters?.catch)),
-        item("Finally", refLabel(current.parameters?.finally)),
-      ]);
-    case "map":
-      return section("Map", [
-        item("Items", valueLabel(current.parameters?.items)),
-        item("Target", refLabel(current.parameters?.target)),
-        item("Concurrency", current.parameters?.concurrency ?? "-"),
-      ]);
-    case "race":
-      return section(
-        "Race",
-        [item("Winner", current.parameters?.winner ?? "first_success")],
-        nodeRefArray(current.parameters?.branches).map((target) => `race -> ${target}`),
-      );
-    case "output":
-      return section("Output", [
-        item("Event", current.parameters?.event_type ?? "workflow.output"),
-        item("Data", valueLabel(current.parameters?.data)),
-      ]);
-    case "input":
-      return section("Input", [
-        item("Prompt", valueLabel(current.parameters?.prompt ?? "Provide input")),
-      ]);
-    case "config":
-      return section("Config", [
-        item("Name", valueLabel(current.parameters?.name)),
-        item("Metadata", valueLabel(current.parameters?.metadata)),
-      ]);
-    case "subflow":
-      return section("Subflow", [
-        item("Workflow", subflowLabel(current.subflow_id)),
-        item("Parameters", valueLabel(current.parameters)),
-      ]);
-    case "start":
-      return section("Start", [item("Starts At", refLabel(current.transitions?.next))]);
-    case "end":
-      return section("End", [item("Terminal", "yes")]);
-    case "fail":
-      return section("Fail", [item("Terminal", "yes")]);
-    default:
-      return section(displayValue(current.kind ?? "Node"), [
-        item("Parameters", valueLabel(current.parameters)),
-      ]);
+  const kind = typeof current.kind === "string" ? current.kind : "";
+  const meta = findNodeKindMetadata(kind);
+
+  // show a loading placeholder until catalog metadata arrives.
+  if (!meta) {
+    return section(displayValue(kind || "Node"), [
+      item("Details", "Loading node metadata…"),
+    ]);
   }
+
+  const items: DetailItem[] = [];
+  const chips: string[] = [];
+  const rows: DetailRow[] = [];
+
+  for (const field of meta.fields) {
+    const raw = getAtLocation(current, field.location);
+    items.push(item(field.label || field.name, raw));
+  }
+
+  for (const slot of meta.edge_slots) {
+    const raw = getAtLocation(current, slot.target);
+
+    if (slot.multiple) {
+      const arr = Array.isArray(raw) ? raw : [];
+      const targets = arr.map(nodeRefId).filter((id): id is string => Boolean(id));
+
+      if (targets.length) {
+        chips.push(...targets.map((t) => `${slot.label} → ${t}`));
+      }
+    } else {
+      const target = nodeRefId(raw);
+
+      if (target) {
+        rows.push({ label: slot.label, value: target });
+      }
+    }
+  }
+
+  return section(meta.label, items, chips, rows);
 }
 
 function transitionsSection(current: StepEditorNode): DetailSection {
@@ -522,52 +468,6 @@ function branchRows(current: StepEditorNode): DetailRow[] {
   });
 }
 
-function switchRows(current: StepEditorNode): DetailRow[] {
-  const rows = asArray(current.parameters?.cases).map((entry, index) => {
-    const switchCase = asRecord(entry);
-    return {
-      label: displayValue(switchCase.label ?? `case ${String(index + 1)}`),
-      value: refLabel(switchCase.target),
-      note: conditionLabel(switchCase.when ?? switchCase.condition),
-    };
-  });
-
-  if (current.parameters?.default) {
-    rows.push({ label: "default", value: refLabel(current.parameters.default), note: "" });
-  }
-
-  return rows;
-}
-
-function percentageRows(current: StepEditorNode): DetailRow[] {
-  const buckets = asArray(current.parameters?.buckets);
-  const total = buckets.reduce(
-    (sum: number, bucket) => sum + (Number(asRecord(bucket).weight) || 0),
-    0,
-  );
-  return buckets.map((entry, index) => {
-    const bucket = asRecord(entry);
-    const weight = Number(bucket.weight) || 0;
-    const share = total > 0 ? ` (${String(Math.round((weight / total) * 100))}%)` : "";
-    return {
-      label: `bucket ${String(index + 1)}`,
-      value: refLabel(bucket.target),
-      note: `weight ${String(weight)}${share}`,
-    };
-  });
-}
-
-function waitItems(wait: unknown): DetailItem[] {
-  const record = isRecord(wait) ? wait : {};
-  return [item("Seconds", record.seconds ?? "-"), item("Until", record.until ?? "-")];
-}
-
-function nodeRefArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map(nodeRefId).filter((target): target is string => Boolean(target))
-    : [];
-}
-
 function conditionLabel(value: unknown): string {
   if (!isRecord(value)) {
     return valueLabel(value);
@@ -590,18 +490,6 @@ function conditionLabel(value: unknown): string {
 
 function refLabel(value: unknown): string {
   return nodeRefId(value) ?? "-";
-}
-
-// prefer the target workflow's name over its raw id, falling back to the id when unresolved.
-function subflowLabel(subflowId: unknown): string {
-  const id = displayValue(subflowId);
-
-  if (!id) {
-    return "-";
-  }
-
-  const name = workflows.workflows.find((workflow) => workflow.id === id)?.name;
-  return name ?? `Workflow ${id}`;
 }
 
 // render a runinator type into a short readable signature (e.g. array<string>, map<integer>).

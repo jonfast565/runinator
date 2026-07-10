@@ -1163,6 +1163,25 @@ pub async fn fetch_providers(
 }
 
 #[tauri::command]
+pub async fn fetch_node_kinds(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Value>> {
+    get_json(&state, "node-kinds").await
+}
+
+#[tauri::command]
+pub async fn fetch_trigger_kinds(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "trigger-kinds").await
+}
+
+#[tauri::command]
+pub async fn fetch_enum_catalogs(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "catalog/enums").await
+}
+
+#[tauri::command]
 pub async fn fetch_replicas(
     state: State<'_, CommandCenterState>,
 ) -> CommandResult<ReplicaListResponse> {

@@ -82,6 +82,10 @@ pub enum WorkflowValidationError {
         target_kind: String,
         expected: String,
     },
+    #[error(
+        "WORKFLOW029 - mutex release node '{node}' for lock '{name}' can be reached before the lock is acquired"
+    )]
+    MutexReleaseBeforeAcquire { node: String, name: String },
 }
 
 // numbered error dictionary for the workflow validator.
@@ -222,6 +226,11 @@ pub const INVALID_NODE_REFERENCE_TYPE: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.invalid_node_reference_type",
     "Node reference targets an invalid node kind",
 );
+pub const MUTEX_RELEASE_BEFORE_ACQUIRE: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW029",
+    "workflow.mutex_release_before_acquire",
+    "Mutex release can be reached before the lock is acquired",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
@@ -252,6 +261,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     INTRINSIC_ERROR,
     INVALID_GOTO_TARGET,
     INVALID_NODE_REFERENCE_TYPE,
+    MUTEX_RELEASE_BEFORE_ACQUIRE,
 ];
 
 impl EngineErrors for WorkflowValidationError {

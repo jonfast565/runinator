@@ -16,7 +16,7 @@ import {
   directTransitionKeys,
   isRecord,
   validateWorkflowIssues,
-  workflowNodeKinds,
+  workflowNodeKindsList,
 } from "../../workflow/index";
 import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model";
 import type { AppTab } from "../../navigation/app";
@@ -73,12 +73,23 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   });
 
   const ctx = {
-    runOperation: <T>(label: string, operation: () => Promise<T>) => deps.app.runOperation(label, operation),
-    setStatus: (text: string) => { deps.app.setStatus(text); },
-    setError: (text: string) => { deps.app.setError(text); },
-    get normalizedSearch() { return deps.app.normalizedSearch; },
-    get activeTab() { return deps.app.getState().activeTab; },
-    set activeTab(tab: AppTab) { deps.app.setActiveTab(tab); },
+    runOperation: <T>(label: string, operation: () => Promise<T>) =>
+      deps.app.runOperation(label, operation),
+    setStatus: (text: string) => {
+      deps.app.setStatus(text);
+    },
+    setError: (text: string) => {
+      deps.app.setError(text);
+    },
+    get normalizedSearch() {
+      return deps.app.normalizedSearch;
+    },
+    get activeTab() {
+      return deps.app.getState().activeTab;
+    },
+    set activeTab(tab: AppTab) {
+      deps.app.setActiveTab(tab);
+    },
   };
 
   function getSelectedWorkflow(): WorkflowDefinition | null {
@@ -120,17 +131,21 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     return Boolean(
       status &&
       ["running", "waiting", "approval_required"].includes(status) &&
-      !Boolean(getControlState()?.pause_requested),
+      !getControlState()?.pause_requested,
     );
   }
 
   function canResumeWorkflowRun(): boolean {
     const status = state.workflowRunDetail?.run.status;
-    return status === "paused" || (status === "debug_paused" && Boolean(getControlState()?.pause_requested));
+    return (
+      status === "paused" ||
+      (status === "debug_paused" && Boolean(getControlState()?.pause_requested))
+    );
   }
 
   function canCancelWorkflowRun(): boolean {
     const status = state.workflowRunDetail?.run.status;
+
     if (!status) {
       return false;
     }
@@ -151,6 +166,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
 
   function getFilteredWorkflows(): WorkflowDefinition[] {
     const query = ctx.normalizedSearch;
+
     if (!query) {
       return state.workflows;
     }
@@ -180,6 +196,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
 
   function getWorkflowRunWorkflow(): WorkflowDefinition | null {
     const snapshot = runWorkflowSnapshot(state.workflowRunDetail);
+
     if (snapshot) {
       return snapshot;
     }
@@ -217,10 +234,14 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     deps,
     store,
     internal,
-    get state() { return state; },
+    get state() {
+      return state;
+    },
     notify,
     ctx,
     getProviders: deps.getProviders,
+    getNodeKinds: deps.getNodeKinds,
+    getTriggerKinds: deps.getTriggerKinds,
     getSelectedWorkflow,
     getSelectedWorkflowInputType,
     selectedWorkflowHasInputs,
@@ -260,7 +281,9 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     runs,
     internal,
     state: store,
-    workflowNodeKinds,
+    get workflowNodeKinds() {
+      return workflowNodeKindsList();
+    },
     directTransitionKeys,
     notify,
     ...catalog,

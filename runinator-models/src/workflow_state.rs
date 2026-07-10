@@ -488,11 +488,14 @@ pub struct MutexState {
     pub deadline_unix: Option<i64>,
 }
 
-/// mutex node output on acquisition.
+/// mutex node output on acquisition or release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutexOutput {
     pub name: String,
     pub acquired: bool,
+    /// true when this node released the lock (an end-of-section release node).
+    #[serde(default)]
+    pub released: bool,
 }
 
 /// throttle node-run state while parked waiting for a token.

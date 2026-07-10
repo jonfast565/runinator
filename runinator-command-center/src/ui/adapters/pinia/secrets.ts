@@ -45,6 +45,7 @@ export const useSecretsStore = defineStore("secrets", () => {
     loadConfigValues: (settings: CredentialSummary[]) => secretsService.loadConfigValues(settings),
     saveDraft: async () => {
       const saved = await secretsService.saveDraft({ ...draft });
+
       if (saved) {
         draft.secret = "";
       }
@@ -65,7 +66,7 @@ export const useSecretsStore = defineStore("secrets", () => {
       Object.assign(draft, blankDraft(kind));
     },
     moveSecretSelection: (delta: number) =>
-      secretsService.moveSecretSelection(delta, appService.normalizedSearch),
+      { secretsService.moveSecretSelection(delta, appService.normalizedSearch); },
     secretsForScopes: (credentialScopes: string[]) =>
       secretsService.secretsForScopes(credentialScopes),
   };

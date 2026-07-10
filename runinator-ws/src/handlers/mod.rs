@@ -4,6 +4,7 @@ pub(crate) mod auth;
 pub(crate) mod automation;
 pub(crate) mod billing;
 pub(crate) mod catalog;
+pub(crate) mod catalog_metadata;
 pub(crate) mod credentials;
 pub(crate) mod debug;
 pub(crate) mod health;

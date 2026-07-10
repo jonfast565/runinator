@@ -8,10 +8,10 @@
             <input v-model="store.unreadOnly" type="checkbox" @change="refresh" />
             <span>Unread only</span>
           </label>
-          <button class="btn" :disabled="loading" @click="refresh">
+          <Button variant="default" :loading="loading" @click="refresh">
             <Icon name="refresh" />
             <span>Refresh</span>
-          </button>
+          </Button>
           <button class="btn" :disabled="loading || store.unreadCount === 0" @click="markAllRead">
             <Icon name="check" />
             <span>Mark all read</span>
@@ -27,6 +27,8 @@
         :rows="filteredNotifications"
         row-key="id"
         :page-size="25"
+        :loading="loading"
+        loading-message="Loading notifications…"
         responsive="cards"
         :row-class="rowClass"
         initial-sort-key="created_at"
@@ -69,6 +71,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
+import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useAppStore } from "../../ui/adapters/pinia/app";

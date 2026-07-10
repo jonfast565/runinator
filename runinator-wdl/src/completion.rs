@@ -487,8 +487,8 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
         (
             "mutex",
             "keyword",
-            "cross-run exclusive lock",
-            "mutex \"${name}\" timeout ${deadline}",
+            "cross-run exclusive lock; brackets a critical section as a block",
+            "mutex \"${name}\" {\n\t${body}\n}",
             true,
         ),
         (

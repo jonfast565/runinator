@@ -298,8 +298,13 @@ audit_kw     = { "action" | "actor" | "target" | "reason" }
 // a named state snapshot for later rollback. `checkpoint "after-ingest"`.
 checkpoint_stmt = { "checkpoint" ~ string }
 
-// a named cross-run exclusive lock. parks until the lease is free. `mutex "deploy" timeout 300s`.
-mutex_stmt   = { "mutex" ~ string ~ poll_every? ~ node_timeout? }
+// a named cross-run exclusive lock. `mutex "deploy" timeout 300s` acquires and holds until the run
+// ends. `mutex "deploy" { ... }` brackets a critical section, releasing at the block's end. `hold`
+// caps the held lease independently of the acquire-wait `timeout`. `mutex release "deploy"` is the
+// bare release leaf a block desugars to. parks until the lease is free.
+mutex_hold    = { "hold" ~ duration }
+mutex_release = { "release" }
+mutex_stmt    = { "mutex" ~ (mutex_release ~ string | string ~ poll_every? ~ node_timeout? ~ mutex_hold? ~ block?) }
 
 // a named cross-run rate limiter (n per window). `throttle "github" rate 10 per 60s`.
 throttle_stmt = { "throttle" ~ string ~ "rate" ~ integer ~ "per" ~ duration ~ poll_every? ~ node_timeout? }

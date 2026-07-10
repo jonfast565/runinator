@@ -679,7 +679,6 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Transform
                 | WorkflowNodeKind::Audit
                 | WorkflowNodeKind::Checkpoint
-                | WorkflowNodeKind::Mutex
                 | WorkflowNodeKind::Throttle
                 | WorkflowNodeKind::AwaitRun
                 | WorkflowNodeKind::Debounce
@@ -704,6 +703,7 @@ impl<'a> Decompiler<'a> {
                     let stop_after = advance.is_none();
                     (advance, stop_after)
                 }
+                WorkflowNodeKind::Mutex => (self.emit_mutex(node, stop)?, false),
                 WorkflowNodeKind::Map => (self.emit_map(node, stop)?, false),
                 WorkflowNodeKind::Parallel => (self.emit_parallel(node, stop)?, false),
                 WorkflowNodeKind::Race => (self.emit_race(node, stop)?, false),
@@ -1575,6 +1575,10 @@ impl<'a> Decompiler<'a> {
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        // a bare release leaf carries only the lock name.
+        if mutex_is_release(node) {
+            return Ok(format!("mutex release {}", quote(name)));
+        }
         let mut text = format!("mutex {}", quote(name));
         if let Some(poll) = node
             .parameters
@@ -1583,9 +1587,78 @@ impl<'a> Decompiler<'a> {
         {
             text.push_str(&format!(" every {poll}s"));
         }
+        if let Some(hold) = node
+            .parameters
+            .get("hold_timeout_seconds")
+            .and_then(Value::as_i64)
+        {
+            text.push_str(&format!(" hold {hold}s"));
+        }
         // the node timeout round-trips through the `@timeout(...)` annotation prefix, so it is not
         // rendered inline here (doing so would double-emit it).
         Ok(text)
+    }
+
+    /// emit a mutex node. an acquire that brackets a body (paired with a `<id>_release` node) renders
+    /// the `mutex "..." { ... }` critical-section block; a plain acquire or a bare release renders as
+    /// a leaf. mirrors how `emit_parallel` consumes its join.
+    fn emit_mutex(
+        &mut self,
+        node: &WorkflowNode,
+        outer_stop: Option<&str>,
+    ) -> Result<Option<String>, WdlError> {
+        if !mutex_is_release(node) {
+            if let Some((release_id, cont)) = self.find_mutex_release(node) {
+                let body_entry = node
+                    .transitions
+                    .next
+                    .as_ref()
+                    .map(|target| target.as_str().to_string());
+                self.line(&format!(
+                    "{}{} {{",
+                    self.block_id_prefix(node),
+                    self.mutex_text(node)?
+                ));
+                self.indent += 1;
+                if let Some(body) = &body_entry {
+                    self.emit_region(body, Some(release_id.as_str()))?;
+                }
+                self.indent -= 1;
+                return Ok(self.close_block_line("}", cont, outer_stop));
+            }
+        }
+        // a plain acquire or a bare release leaf: emit it and advance like any other leaf.
+        let success = self.emit_leaf(node, outer_stop)?;
+        Ok(match success {
+            Some(next)
+                if !self.is_terminal(&next)
+                    && outer_stop != Some(next.as_str())
+                    && !self.visited.contains(&next) =>
+            {
+                Some(next)
+            }
+            _ => None,
+        })
+    }
+
+    /// the release node closing an acquire's critical section, if one exists. uses the lowerer's
+    /// stable `<acquire_id>_release` id and matches the lock name. returns the release id and the
+    /// section's continuation (the release node's `next`).
+    fn find_mutex_release(&self, acquire: &WorkflowNode) -> Option<(String, Option<String>)> {
+        let name = acquire.parameters.get("name").and_then(Value::as_str);
+        let release = self.nodes.get(format!("{}_release", acquire.id).as_str())?;
+        if !matches!(release.kind, WorkflowNodeKind::Mutex) || !mutex_is_release(release) {
+            return None;
+        }
+        if release.parameters.get("name").and_then(Value::as_str) != name {
+            return None;
+        }
+        let cont = release
+            .transitions
+            .next
+            .as_ref()
+            .map(|target| target.as_str().to_string());
+        Some((release.id.clone(), cont))
     }
 
     fn throttle_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -2396,6 +2469,14 @@ fn single_node_id(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// true when a mutex node releases its lock (an end-of-section release node) rather than acquiring.
+fn mutex_is_release(node: &WorkflowNode) -> bool {
+    node.parameters
+        .get("release")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
     matches!(
         kind,
@@ -2433,6 +2514,7 @@ fn is_generated_control_id(node: &WorkflowNode) -> bool {
         WorkflowNodeKind::Toggle => &["toggle"],
         WorkflowNodeKind::Percentage => &["percentage"],
         WorkflowNodeKind::Try => &["try"],
+        WorkflowNodeKind::Mutex => &["mutex", "mutex_release"],
         _ => return true,
     };
     prefixes

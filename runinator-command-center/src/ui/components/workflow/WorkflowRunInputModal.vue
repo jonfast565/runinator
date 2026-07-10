@@ -14,8 +14,9 @@
           }}</span>
         </div>
         <div class="modal-header-actions">
-          <button type="submit" class="primary">
-            {{ workflows.runInputDebug ? "Run Debug" : "Run" }}
+          <button type="submit" class="primary" :disabled="startingRun">
+            <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
+            {{ startingRun ? "Starting…" : workflows.runInputDebug ? "Run Debug" : "Run" }}
           </button>
           <button type="button" @click="workflows.closeRunInput">Close</button>
         </div>
@@ -33,8 +34,9 @@
 
       <div class="modal-actions">
         <button type="button" @click="workflows.closeRunInput">Cancel</button>
-        <button type="submit" class="primary">
-          {{ workflows.runInputDebug ? "Run Debug" : "Run" }}
+        <button type="submit" class="primary" :disabled="startingRun">
+          <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
+          {{ startingRun ? "Starting…" : workflows.runInputDebug ? "Run Debug" : "Run" }}
         </button>
       </div>
     </form>
@@ -46,8 +48,11 @@ import { computed, onMounted, ref } from "vue";
 import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import RunInputForm from "../shared/RunInputForm.vue";
+import LoadingSpinner from "../shared/LoadingSpinner.vue";
+import { useOperationLoading } from "../../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
+const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
 const runInputFormRef = ref<InstanceType<typeof RunInputForm> | null>(null);
 const modalRoot = ref<HTMLElement | null>(null);
 

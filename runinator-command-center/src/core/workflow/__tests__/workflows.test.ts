@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProviderMetadata, WorkflowDefinition } from "../../domain/models";
 import {
   addDirectTransition,
@@ -19,6 +19,7 @@ import {
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
   recordArray,
+  setWorkflowCatalogs,
   workflowEdgeEditorDraft,
   workflowEdgeOptionId,
   workflowEdgeSemanticOptions,
@@ -29,6 +30,11 @@ import {
 } from "../index";
 import { buildGraphEdges, buildGraphNodes } from "../../../ui/adapters/vue-flow/builder";
 import { newWorkflowTriggerDraft } from "../editor-defaults";
+import {
+  testMatchKindEnumCatalog,
+  testNodeKindCatalog,
+  testTriggerKindCatalog,
+} from "./catalog-fixtures";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000001";
 const RUN_ID = "00000000-0000-0000-0000-000000000010";
@@ -37,6 +43,18 @@ const SEARCH_WORKFLOW_ID = "00000000-0000-0000-0000-000000000034";
 const SEARCH_RUN_ID = "00000000-0000-0000-0000-000000000012";
 
 describe("workflow graph utils", () => {
+  beforeEach(() => {
+    setWorkflowCatalogs({
+      nodeKinds: testNodeKindCatalog,
+      triggerKinds: testTriggerKindCatalog,
+      enums: testMatchKindEnumCatalog,
+    });
+  });
+
+  afterEach(() => {
+    setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
+  });
+
   const workflow: WorkflowDefinition = {
     id: WORKFLOW_ID,
     name: "Flow",
@@ -378,13 +396,13 @@ describe("workflow graph utils", () => {
       expect.arrayContaining([
         expect.objectContaining({ source: "route", target: "fanout", label: "case 1" }),
         expect.objectContaining({ source: "route", target: "done", label: "default" }),
-        expect.objectContaining({ source: "fanout", target: "a", label: "branch" }),
+        expect.objectContaining({ source: "fanout", target: "a", label: "branches" }),
         expect.objectContaining({ source: "join", target: "b", label: "wait_for" }),
         expect.objectContaining({ source: "guard", target: "body", label: "body" }),
         expect.objectContaining({ source: "guard", target: "recover", label: "catch" }),
         expect.objectContaining({ source: "guard", target: "cleanup", label: "finally" }),
         expect.objectContaining({ source: "batch", target: "item", label: "target" }),
-        expect.objectContaining({ source: "race", target: "fast", label: "race" }),
+        expect.objectContaining({ source: "race", target: "fast", label: "branches" }),
       ]),
     );
     expect(edges.find((edge) => edge.label === "body")?.data).toMatchObject({
@@ -1306,5 +1324,97 @@ describe("workflow graph utils", () => {
       nodes: [],
     });
     expect(nodes.find((node) => node.id === "b")?.class).toBe("node-danger");
+  });
+});
+
+describe("catalog-driven workflow helpers", () => {
+  afterEach(() => {
+    setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
+  });
+
+  it("creates nodes from catalog default_template when loaded", () => {
+    setWorkflowCatalogs({
+      nodeKinds: [
+        {
+          kind: "wait",
+          label: "Wait",
+          icon: "clock",
+          description: "Pauses the run.",
+          category: "control-flow",
+          protected: false,
+          terminal: false,
+          addable: true,
+          supports_predicate_edges: true,
+          fields: [],
+          edge_slots: [],
+          default_template: {
+            kind: "wait",
+            wait: { seconds: 42 },
+            parameters: {},
+            retry: { max_attempts: 1 },
+            transitions: {},
+          },
+        },
+        {
+          kind: "toggle",
+          label: "Toggle",
+          icon: "toggle",
+          description: "On/off router.",
+          category: "control-flow",
+          protected: false,
+          terminal: false,
+          addable: true,
+          supports_predicate_edges: false,
+          fields: [],
+          edge_slots: [
+            {
+              key: "on",
+              label: "Toggle on",
+              taxonomy: "control",
+              target: { base: "parameters", path: ["on"] },
+              multiple: false,
+              editable_label: false,
+              editable_condition: false,
+              orderable: false,
+            },
+            {
+              key: "off",
+              label: "Toggle off",
+              taxonomy: "control",
+              target: { base: "parameters", path: ["off"] },
+              multiple: false,
+              editable_label: false,
+              editable_condition: false,
+              orderable: false,
+            },
+          ],
+          default_template: {
+            kind: "toggle",
+            parameters: {
+              value: true,
+              on: { $node: "end" },
+              off: { $node: "fail" },
+            },
+            retry: { max_attempts: 1 },
+            transitions: {},
+          },
+        },
+      ],
+      triggerKinds: [],
+      enums: [],
+    });
+
+    const waitNode = createWorkflowNode("wait", []);
+    expect(waitNode).toMatchObject({
+      kind: "wait",
+      wait: { seconds: 42 },
+      retry: { max_attempts: 1 },
+    });
+    expect(waitNode.id).toBe("wait");
+
+    const toggleNode = createWorkflowNode("toggle", []);
+    expect(workflowEdgeSemanticOptions(toggleNode).map((option) => option.id)).toEqual(
+      expect.arrayContaining(["control:on", "control:off", "direct:next"]),
+    );
   });
 });

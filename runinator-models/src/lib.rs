@@ -2,6 +2,7 @@ pub mod api_routes;
 pub mod auth;
 pub mod billing;
 pub mod bundles;
+pub mod catalog_metadata;
 pub mod core;
 pub mod debug;
 pub mod errors;

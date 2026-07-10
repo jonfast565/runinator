@@ -5,6 +5,9 @@ import {
   addTeamMember,
   createApiKey,
   createUser,
+  fetchEnumCatalogs,
+  fetchNodeKinds,
+  fetchTriggerKinds,
   fetchWorkflowNodeRunArtifacts,
   fetchWorkflowNodeRunChunks,
   listTeamMembers,
@@ -17,6 +20,34 @@ import { invoke } from "@tauri-apps/api/core";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
+
+describe("command center catalog metadata API", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    setCommandRuntime({
+      isTauri: () => true,
+      invoke: (name, args) => invoke(name, args),
+      wsBaseUrl: () => "http://127.0.0.1:8080",
+      apiBaseUrl: () => "/api",
+    });
+  });
+
+  it("requests node kinds", async () => {
+    await fetchNodeKinds();
+    expect(invoke).toHaveBeenCalledWith("fetch_node_kinds", undefined);
+  });
+
+  it("requests trigger kinds", async () => {
+    await fetchTriggerKinds();
+    expect(invoke).toHaveBeenCalledWith("fetch_trigger_kinds", undefined);
+  });
+
+  it("requests enum catalogs", async () => {
+    await fetchEnumCatalogs();
+    expect(invoke).toHaveBeenCalledWith("fetch_enum_catalogs", undefined);
+  });
+});
 
 describe("command center workflow node run API", () => {
   beforeEach(() => {

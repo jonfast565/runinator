@@ -9,12 +9,9 @@ import type {
 } from "../../domain/models";
 import {
   createStepEditorState,
+  emptyWorkflowTriggerDraft,
   newWorkflowDraft,
-  newWorkflowTriggerDraft,
-  type SwitchCaseEditor,
 } from "../../workflow/editor-defaults";
-
-export type { SwitchCaseEditor };
 
 export type StepEditorState = ReturnType<typeof createStepEditorState>;
 
@@ -119,7 +116,7 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     triggerEditorOpen: false,
     triggerEditorCreating: false,
     triggerEditorError: "",
-    triggerDraft: newWorkflowTriggerDraft("", "cron"),
+    triggerDraft: emptyWorkflowTriggerDraft("", "cron"),
     triggerJson: { configuration: "{}", metadata: "{}" },
     workflowEditorMode: "graph",
     workflowLayoutDirection: "horizontal",

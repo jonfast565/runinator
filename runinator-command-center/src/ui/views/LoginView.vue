@@ -13,6 +13,7 @@
       </label>
       <p v-if="auth.error" class="login-error">{{ auth.error }}</p>
       <button class="login-submit" type="submit" :disabled="submitting || !username || !password">
+        <LoadingSpinner v-if="submitting" size="sm" label="Signing in" />
         {{ submitting ? "Signing in…" : "Sign in" }}
       </button>
     </form>
@@ -21,6 +22,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 
 const auth = useAuthStore();
@@ -94,6 +96,10 @@ async function submit() {
 }
 
 .login-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 4px;
   padding: 9px 12px;
   border: 0;

@@ -4,8 +4,9 @@
       <aside class="panel replicas-list-panel">
         <div class="panel-toolbar">
           <h2>Replicas</h2>
-          <button class="btn" :disabled="loading" @click="refresh">
-            <Icon name="refresh" />
+          <button class="btn" :disabled="loadingReplicas" @click="refresh">
+            <LoadingSpinner v-if="loadingReplicas" size="sm" label="Refreshing replicas" />
+            <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
         </div>
@@ -16,7 +17,12 @@
           <span class="replica-stat">{{ offlineCount }} offline</span>
         </div>
 
-        <div v-if="!filteredReplicas.length" class="empty-state">
+        <LoadingPanel
+          v-if="loadingReplicas && !app.replicas.length"
+          compact
+          :message="loadingReplicasMessage || 'Loading replicas…'"
+        />
+        <div v-else-if="!filteredReplicas.length" class="empty-state">
           No replicas match the current filters.
         </div>
 
@@ -121,7 +127,12 @@
             <div class="replicas-section-head">
               <h3>Telemetry</h3>
               <span class="replicas-section-hint">
-                {{ samplesLoading ? "loading…" : `${samples.length} sample(s), last hour` }}
+                <LoadingSpinner v-if="samplesLoading" size="sm" label="Loading telemetry" />
+                {{
+                  samplesLoading
+                    ? "Loading telemetry…"
+                    : `${samples.length} sample(s), last hour`
+                }}
               </span>
             </div>
             <div class="sparkline-grid">
@@ -182,16 +193,20 @@
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import NodePoolsPanel from "../components/shared/NodePoolsPanel.vue";
 import Sparkline from "../components/shared/Sparkline.vue";
 import { replicaSamplesService } from "../../core/services";
 import type { ReplicaSample } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import type { ReplicaKind } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
-const loading = ref(false);
+const { isLoading: loadingReplicas, loadingMessage: loadingReplicasMessage } =
+  useOperationLoading(["Loading replicas", "Loading replica samples"]);
 const selectedReplicaId = ref<string | null>(null);
 const samples = ref<ReplicaSample[]>([]);
 const samplesLoading = ref(false);
@@ -282,13 +297,7 @@ const offlineCount = computed(
 );
 
 async function refresh() {
-  loading.value = true;
-
-  try {
-    await app.runOperation("Loading replicas", () => app.refreshReplicas());
-  } finally {
-    loading.value = false;
-  }
+  await app.runOperation("Loading replicas", () => app.refreshReplicas());
 }
 
 function replicaKindLabel(kind: ReplicaKind): string {

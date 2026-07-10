@@ -6,19 +6,19 @@ use super::*;
 
 const RECORD_TYPE: &str = "workflow_mutex";
 const DEFAULT_POLL_INTERVAL: i64 = 5;
-// backstop lease lifetime for records that carry no explicit `lease_deadline` (a node with no
-// declared timeout, or a lease acquired before lease expiry existed). a wedged holder can hold a
-// non-terminal run indefinitely, which would otherwise deadlock every waiter behind it; capping the
-// hold from `acquired_at` lets the lock self-heal even when the holder run never reaches a terminal
-// state. one hour comfortably exceeds any legitimate mutex-protected section.
-const DEFAULT_LEASE_TTL_SECONDS: i64 = 3600;
 
-struct MutexParams {
-    name: String,
-    poll_interval: i64,
+pub(super) struct MutexParams {
+    pub(super) name: String,
+    pub(super) poll_interval: i64,
+    // true when this node releases a held lock (an end-of-section release node) instead of acquiring.
+    pub(super) release: bool,
+    // optional hold lease lifetime; when set, an acquired lock auto-expires this long after
+    // acquisition regardless of the holder run's state. decoupled from the node timeout, which bounds
+    // only the wait-to-acquire.
+    pub(super) hold_timeout: Option<i64>,
 }
 
-fn parse_mutex_params(node: &WorkflowNode) -> MutexParams {
+pub(super) fn parse_mutex_params(node: &WorkflowNode) -> MutexParams {
     let params: Value = node.parameters.clone().into();
     MutexParams {
         name: params
@@ -30,6 +30,11 @@ fn parse_mutex_params(node: &WorkflowNode) -> MutexParams {
             .get("poll_interval_seconds")
             .and_then(Value::as_i64)
             .unwrap_or(DEFAULT_POLL_INTERVAL),
+        release: params
+            .get("release")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        hold_timeout: params.get("hold_timeout_seconds").and_then(Value::as_i64),
     }
 }
 
@@ -50,27 +55,17 @@ pub(super) fn record_is_held_by_other(record: &Value, skip_run_id: Uuid) -> bool
     holder_run_id(record).is_some_and(|id| id != skip_run_id)
 }
 
-/// the lease lifetime for a mutex node: its declared timeout, so an acquired lock auto-expires that
-/// long after acquisition. `None` when the node declares no timeout, in which case the acquire-time
-/// backstop applies instead.
-fn lease_ttl_seconds(node: &WorkflowNode) -> Option<i64> {
-    node.timeout_seconds
-}
-
-/// true when a lease has outlived its expiry and is therefore reclaimable regardless of the holder
-/// run's status. a lease whose holder wedges in a non-terminal state (blocked, paused, a lost wake,
-/// a ws restart mid-run) would otherwise hold the lock forever and time out every waiter behind it.
-/// prefers the explicit `lease_deadline` stamped at acquire; falls back to `acquired_at` plus a
-/// generous backstop so leases predating lease expiry still self-heal.
+/// true when a lease carries an explicit `hold` deadline that has passed, making it reclaimable
+/// regardless of the holder run's status. only a node that declares an explicit `hold` timeout
+/// stamps a `lease_deadline`; a lock held with no `hold` never expires this way and is instead
+/// released when its holder run reaches a terminal state (see `holder_run_is_active`) or when an
+/// end-of-section release node runs. this lets a legitimate critical section run to completion
+/// however long it takes, while a bounded `hold` still self-heals a wedged holder.
 pub(super) fn lease_is_expired(record: &Value) -> bool {
-    let now = Utc::now().timestamp();
-    if let Some(deadline) = record.get("lease_deadline").and_then(Value::as_i64) {
-        return now > deadline;
-    }
-    if let Some(acquired) = record.get("acquired_at").and_then(Value::as_i64) {
-        return now > acquired + DEFAULT_LEASE_TTL_SECONDS;
-    }
-    false
+    let Some(deadline) = record.get("lease_deadline").and_then(Value::as_i64) else {
+        return false;
+    };
+    Utc::now().timestamp() > deadline
 }
 
 /// true when the run holding a lease is still active. a lease whose holder run has reached a
@@ -125,12 +120,38 @@ pub(super) async fn release_run_mutexes<T: DatabaseImpl>(
     db: &T,
     run_id: Uuid,
 ) -> Result<(), SendableError> {
+    release_run_leases(db, run_id, None).await
+}
+
+/// release only the lease(s) named `name` held by `run_id`. drives an end-of-section release node so
+/// the critical section ends before the run terminates. idempotent and a no-op when the run holds no
+/// such lock.
+pub(super) async fn release_run_mutex_named<T: DatabaseImpl>(
+    db: &T,
+    run_id: Uuid,
+    name: &str,
+) -> Result<(), SendableError> {
+    release_run_leases(db, run_id, Some(name)).await
+}
+
+/// stamp `released_at` on every unreleased lease held by `run_id`, optionally restricted to a single
+/// `name`. shared by the terminal-release hook and the end-of-section release node.
+async fn release_run_leases<T: DatabaseImpl>(
+    db: &T,
+    run_id: Uuid,
+    name: Option<&str>,
+) -> Result<(), SendableError> {
     let records = db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
     for record in records {
         if holder_run_id(&record) != Some(run_id) || record.get("released_at").is_some() {
             continue;
+        }
+        if let Some(name) = name {
+            if record.get("name").and_then(Value::as_str) != Some(name) {
+                continue;
+            }
         }
         let Some(id) = record
             .get("id")
@@ -150,6 +171,25 @@ pub(super) async fn release_run_mutexes<T: DatabaseImpl>(
             .await?;
     }
     Ok(())
+}
+
+/// true when `run_id` already holds a live, unexpired lease for `name`. re-reaching an acquire node in
+/// a loop reinforces this lock rather than recording a second lease. an expired hold does not count,
+/// so a run whose bounded hold lapsed re-contends normally instead of assuming it still holds.
+async fn run_holds_mutex<T: DatabaseImpl>(
+    db: &T,
+    name: &str,
+    run_id: Uuid,
+) -> Result<bool, SendableError> {
+    let records = db
+        .fetch_automation_records(RECORD_TYPE.into(), None, None)
+        .await?;
+    Ok(records.iter().any(|record| {
+        record.get("name").and_then(Value::as_str) == Some(name)
+            && record.get("released_at").is_none()
+            && holder_run_id(record) == Some(run_id)
+            && !lease_is_expired(record)
+    }))
 }
 
 // record a lease for `name` held by `run_id`. mutual exclusion relies on the ws ingress consumer
@@ -185,6 +225,21 @@ async fn acquire_mutex<T: DatabaseImpl>(
         .and_then(|s| s.parse::<Uuid>().ok()))
 }
 
+/// acquire `name` for `run_id`, or reinforce an existing hold. re-reaching an acquire node in a loop
+/// must not record a second lease for a lock the run already holds; it simply keeps the current one.
+async fn acquire_or_reinforce<T: DatabaseImpl>(
+    db: &T,
+    name: &str,
+    run_id: Uuid,
+    hold_timeout: Option<i64>,
+) -> Result<(), SendableError> {
+    if run_holds_mutex(db, name, run_id).await? {
+        return Ok(());
+    }
+    acquire_mutex(db, name, run_id, hold_timeout).await?;
+    Ok(())
+}
+
 async fn enqueue_mutex_poll<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
@@ -203,8 +258,9 @@ async fn enqueue_mutex_poll<T: DatabaseImpl>(
     Ok(())
 }
 
-/// process a mutex node: try to acquire a named distributed lease. parks and polls until the
-/// lease becomes available or the optional timeout elapses.
+/// process a mutex node. an acquire node tries to take a named distributed lease, parking and polling
+/// until it is free or the wait timeout elapses; a release node (`release: true`) ends the section by
+/// releasing the run's hold on the named lease and completing inline.
 pub(super) async fn process_mutex_node<T: DatabaseImpl>(
     db: &T,
     workflow_run: &WorkflowRun,
@@ -213,6 +269,37 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
     node_runs: &[WorkflowNodeRun],
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let params = parse_mutex_params(node);
+
+    // an end-of-section release node: drop this run's hold on the named lock and complete. no acquire,
+    // no park. a no-op when the run holds no such lock (idempotent when re-reached in a loop).
+    if params.release {
+        let node_run = db
+            .create_workflow_node_run(
+                workflow_run.id,
+                node.id.clone(),
+                node.parameters.clone().into(),
+            )
+            .await?;
+        release_run_mutex_named(db, workflow_run.id, &params.name).await?;
+        let output = MutexOutput {
+            name: params.name,
+            acquired: false,
+            released: true,
+        };
+        transition_from_node(
+            db,
+            workflow_run,
+            node,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output.to_wire_value()?),
+            Some("mutex_released".into()),
+            node_runs,
+        )
+        .await?;
+        return Ok(ReadyNodeDisposition::Complete);
+    }
+
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
@@ -233,10 +320,11 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
             return Ok(ReadyNodeDisposition::KeepClaim);
         }
         // lock is free; record the acquisition and succeed.
-        acquire_mutex(db, &params.name, workflow_run.id, lease_ttl_seconds(node)).await?;
+        acquire_or_reinforce(db, &params.name, workflow_run.id, params.hold_timeout).await?;
         let output = MutexOutput {
             name: params.name,
             acquired: true,
+            released: false,
         };
         transition_from_node(
             db,
@@ -261,10 +349,11 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
                 node.parameters.clone().into(),
             )
             .await?;
-        acquire_mutex(db, &params.name, workflow_run.id, lease_ttl_seconds(node)).await?;
+        acquire_or_reinforce(db, &params.name, workflow_run.id, params.hold_timeout).await?;
         let output = MutexOutput {
             name: params.name,
             acquired: true,
+            released: false,
         };
         transition_from_node(
             db,

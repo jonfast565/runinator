@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useWorkflowsStore } from "../workflows";
 import { useProvidersStore } from "../providers";
@@ -33,6 +33,8 @@ import {
   patchWorkflowRunDebug,
   saveWorkflowWdl,
 } from "../../../../core/api/commandCenterApi";
+import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
+import { testNodeKindCatalog } from "../../../../core/workflow/__tests__/catalog-fixtures";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000007";
 const RUN_ID = "00000000-0000-0000-0000-000000000070";
@@ -42,6 +44,7 @@ const TRIGGER_ID = "00000000-0000-0000-0000-000000000012";
 describe("workflow run detail state", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    setWorkflowCatalogs({ nodeKinds: testNodeKindCatalog, triggerKinds: [], enums: [] });
     useWorkflowsStore().clearServiceState({ discardDraft: true });
     vi.stubGlobal("window", {
       clearTimeout: () => undefined,
@@ -53,6 +56,10 @@ describe("workflow run detail state", () => {
     vi.clearAllMocks();
     vi.mocked(fetchGates).mockResolvedValue([]);
     vi.mocked(decompileToWdl).mockResolvedValue("workflow stub { start -> end }");
+  });
+
+  afterEach(() => {
+    setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
   });
 
   it("does not let older HTTP fetches overwrite a WebSocket push", async () => {
@@ -211,7 +218,7 @@ describe("workflow run detail state", () => {
     });
     workflows.openStepEditor("prepare");
 
-    workflows.stepEditor.parameters_json = JSON.stringify({
+    (workflows.stepEditor.nodeDraft as any).action.configuration = {
       workflow_input: {
         target: "prod",
         environments: {
@@ -219,14 +226,14 @@ describe("workflow run detail state", () => {
         },
         strategy: { manual: true },
       },
-    });
+    };
 
     expect(workflows.applyStepEditor()).toBe(false);
     expect(workflows.stepEditorError).toBe(
       "Workflow Input.environments.prod.retries must be an integer",
     );
 
-    workflows.stepEditor.parameters_json = JSON.stringify({
+    (workflows.stepEditor.nodeDraft as any).action.configuration = {
       workflow_input: {
         target: "prod",
         environments: {
@@ -234,7 +241,7 @@ describe("workflow run detail state", () => {
         },
         strategy: { manual: true },
       },
-    });
+    };
 
     expect(workflows.applyStepEditor()).toBe(true);
     expect(
@@ -265,13 +272,13 @@ describe("workflow run detail state", () => {
     });
     workflows.openStepEditor("notify");
 
-    workflows.stepEditor.parameters_json = JSON.stringify({
+    (workflows.stepEditor.nodeDraft as any).action.configuration = {
       url: "https://example.test/hook",
       payload: {
         message: { $concat: ["ticket ", { $ref: { params: ["ticket_id"] } }] },
         urgent: true,
       },
-    });
+    };
 
     expect(workflows.applyStepEditor()).toBe(true);
     expect(
@@ -420,35 +427,20 @@ describe("workflow run detail state", () => {
     });
 
     workflows.populateStepEditor("output-1");
-    expect(workflows.stepEditor.output_data_json).toBe("null");
 
-    workflows.stepEditor.output_data_json = JSON.stringify(
-      {
-        message: "hello",
-        retries: [1, 2],
-        nested: { ok: true },
-      },
-      null,
-      2,
-    );
+    // set output data directly in nodeDraft.parameters (the catalog field editor writes here).
+    (workflows.stepEditor.nodeDraft as any).parameters = {
+      event_type: "workflow.output",
+      data: { message: "hello", retries: [1, 2], nested: { ok: true } },
+    };
 
     expect(workflows.applyStepEditor()).toBe(true);
     expect(
       (workflows.ensureWorkflowNodes().find((node) => node.id === "output-1") as any)?.parameters,
     ).toEqual({
       event_type: "workflow.output",
-      data: {
-        message: "hello",
-        retries: [1, 2],
-        nested: { ok: true },
-      },
+      data: { message: "hello", retries: [1, 2], nested: { ok: true } },
     });
-
-    workflows.populateStepEditor("output-1");
-    workflows.stepEditor.output_data_json = "{ invalid json";
-
-    expect(workflows.applyStepEditor()).toBe(false);
-    expect(workflows.stepEditorError).toBe("Output data must be valid JSON");
   });
 
   it("keeps WDL-lowered output payload expressions valid", () => {
@@ -462,7 +454,8 @@ describe("workflow run detail state", () => {
     });
 
     workflows.populateStepEditor("output-1");
-    workflows.stepEditor.output_data_json = JSON.stringify({ $ref: { params: ["message"] } });
+    // write expression value directly into nodeDraft (as the catalog field editor would).
+    (workflows.stepEditor.nodeDraft as any).parameters.data = { $ref: { params: ["message"] } };
 
     expect(workflows.applyStepEditor()).toBe(true);
     expect(workflows.stepEditorError).toBe("");
@@ -486,11 +479,14 @@ describe("workflow run detail state", () => {
     });
 
     workflows.populateStepEditor("config-1");
-    workflows.stepEditor.config_name_json = JSON.stringify({ $ref: { params: ["release_name"] } });
-    workflows.stepEditor.config_metadata_json = JSON.stringify({
-      source: { $ref: { prev: ["artifact"] } },
-      approved: true,
-    });
+    // write config fields directly into nodeDraft.parameters (as the catalog field editor would).
+    (workflows.stepEditor.nodeDraft as any).parameters = {
+      name: { $ref: { params: ["release_name"] } },
+      metadata: {
+        source: { $ref: { prev: ["artifact"] } },
+        approved: true,
+      },
+    };
 
     expect(workflows.applyStepEditor()).toBe(true);
     expect(workflows.stepEditorError).toBe("");
@@ -503,12 +499,6 @@ describe("workflow run detail state", () => {
         approved: true,
       },
     });
-
-    workflows.populateStepEditor("config-1");
-    workflows.stepEditor.config_metadata_json = "{ invalid json";
-
-    expect(workflows.applyStepEditor()).toBe(false);
-    expect(workflows.stepEditorError).toBe("Config metadata must be valid JSON");
   });
 
   it("syncs json edits into the draft and wdl view", async () => {

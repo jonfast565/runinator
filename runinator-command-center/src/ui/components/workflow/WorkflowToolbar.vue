@@ -37,23 +37,28 @@
           <span>New Node</span>
         </button>
         <div v-if="openMenu === 'nodes'" class="toolbar-menu-panel node-menu-panel" role="menu">
+          <p v-if="catalogMetadata.loading || !catalogMetadata.loaded" class="catalog-loading-hint">
+            <LoadingSpinner size="sm" label="Loading node types" />
+            Loading node types…
+          </p>
           <button
             v-for="kind in workflows.workflowNodeKinds"
             :key="kind"
             type="button"
             role="menuitem"
             class="btn btn-ghost node-menu-item"
-            :title="workflowNodeKindInfo[kind]?.description"
+            :title="workflowNodeKindDescription(kind)"
+            :disabled="!catalogMetadata.loaded"
             @click="addNode(kind)"
           >
             <Icon
-              :name="workflowNodeKindInfo[kind]?.icon ?? 'box'"
+              :name="workflowNodeKindIcon(kind)"
               :size="14"
               class="node-menu-icon"
             />
             <span class="node-menu-text">
               <span class="node-menu-label">{{ workflowNodeKindLabel(kind) }}</span>
-              <span class="node-menu-desc">{{ workflowNodeKindInfo[kind]?.description }}</span>
+              <span class="node-menu-desc">{{ workflowNodeKindDescription(kind) }}</span>
             </span>
           </button>
         </div>
@@ -93,10 +98,12 @@
       <button
         class="btn"
         :class="{ 'btn-primary': workflows.isDirty }"
+        :disabled="savingWorkflow"
         @click="workflows.saveSelectedWorkflow"
       >
-        <Icon name="save" />
-        <span>{{ workflows.isDirty ? "Save changes" : "Save" }}</span>
+        <LoadingSpinner v-if="savingWorkflow" size="sm" label="Saving workflow" />
+        <Icon v-else name="save" />
+        <span>{{ savingWorkflow ? "Saving…" : workflows.isDirty ? "Save changes" : "Save" }}</span>
       </button>
       <div class="toolbar-menu">
         <button
@@ -132,30 +139,33 @@
       </div>
       <button
         class="btn btn-primary"
-        :disabled="!workflows.canRunWorkflow"
+        :disabled="!workflows.canRunWorkflow || startingRun"
         @click="workflows.runSelectedWorkflow()"
       >
-        <Icon name="play" />
-        <span>Run</span>
+        <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
+        <Icon v-else name="play" />
+        <span>{{ startingRun ? "Starting…" : "Run" }}</span>
       </button>
       <button
         v-if="!isActiveDebugRun"
         class="btn btn-warn"
-        :disabled="!workflows.canRunWorkflow"
+        :disabled="!workflows.canRunWorkflow || startingRun"
         @click="workflows.runSelectedWorkflowDebug"
       >
-        <Icon name="debug" />
-        <span>Run Debug</span>
+        <LoadingSpinner v-if="startingRun" size="sm" label="Starting debug run" />
+        <Icon v-else name="debug" />
+        <span>{{ startingRun ? "Starting…" : "Run Debug" }}</span>
       </button>
       <button
         v-else
         class="btn btn-danger"
-        :disabled="!workflows.canCancelWorkflowRun"
+        :disabled="!workflows.canCancelWorkflowRun || cancelingRun"
         title="Cancel the active debug run"
         @click="workflows.cancelSelectedWorkflowRun"
       >
-        <Icon name="stop" />
-        <span>Stop Debug</span>
+        <LoadingSpinner v-if="cancelingRun" size="sm" label="Canceling run" />
+        <Icon v-else name="stop" />
+        <span>{{ cancelingRun ? "Stopping…" : "Stop Debug" }}</span>
       </button>
       <button
         class="btn"
@@ -179,12 +189,23 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { WorkflowLayoutDirection, WorkflowNodeKind } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
-import { workflowNodeKindInfo, workflowNodeKindLabel } from "../../../core/workflow";
+import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
+import {
+  workflowNodeKindDescription,
+  workflowNodeKindIcon,
+  workflowNodeKindLabel,
+} from "../../../core/workflow";
 import Icon from "../shared/Icon.vue";
+import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 import ShareWorkflowModal from "./ShareWorkflowModal.vue";
+import { useOperationLoading } from "../../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
+const catalogMetadata = useCatalogMetadataStore();
+const { isLoading: savingWorkflow } = useOperationLoading("Saving workflow");
+const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
+const { isLoading: cancelingRun } = useOperationLoading("Canceling workflow run", { prefix: true });
 const toolbarRef = ref<HTMLElement | null>(null);
 const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
 const shareOpen = ref(false);
@@ -222,6 +243,10 @@ function closeMenu() {
 }
 
 function addNode(kind: WorkflowNodeKind) {
+  if (!catalogMetadata.loaded) {
+    return;
+  }
+
   closeMenu();
   workflows.addWorkflowNode(kind);
 }
@@ -354,5 +379,15 @@ onBeforeUnmount(() => {
   font-size: 10.5px;
   line-height: 1.35;
   white-space: normal;
+}
+
+.catalog-loading-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 </style>

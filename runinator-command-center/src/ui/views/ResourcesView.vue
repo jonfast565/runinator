@@ -15,8 +15,9 @@
           <div class="panel-toolbar">
             <h2>{{ title }}</h2>
             <div class="btn-row">
-              <button class="btn" @click="refresh">
-                <Icon name="refresh" />
+              <button class="btn" :disabled="loadingResources" @click="refresh">
+                <LoadingSpinner v-if="loadingResources" size="sm" label="Refreshing resources" />
+                <Icon v-else name="refresh" />
                 <span>Refresh</span>
               </button>
               <template v-if="endpoint === 'approvals'">
@@ -66,7 +67,15 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!resourcesStore.filteredResourceRecords.length">
+                <tr v-if="loadingResources && !resourcesStore.resourceRecords.length">
+                  <td :colspan="endpoint === 'approvals' ? 7 : 6" class="empty-cell">
+                    <LoadingPanel
+                      compact
+                      :message="loadingResourcesMessage || `Loading ${title.toLowerCase()}…`"
+                    />
+                  </td>
+                </tr>
+                <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
                   <td :colspan="endpoint === 'approvals' ? 7 : 6" class="empty-cell">
                     {{
                       resourcesStore.resourceRecords.length
@@ -127,12 +136,15 @@
 import { computed, onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import { formatDate, pretty } from "../../core/utils/format";
 import { isBadStatus, isGoodStatus } from "../../core/utils/status";
 
@@ -144,6 +156,8 @@ const props = withDefaults(defineProps<{ endpoint?: string; title?: string }>(),
 const resourcesStore = useResourcesStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
+const { isLoading: loadingResources, loadingMessage: loadingResourcesMessage } =
+  useOperationLoading(["Refreshing resources", "Loading workflow approvals"]);
 
 const title = computed(() => props.title || labelFor(props.endpoint));
 

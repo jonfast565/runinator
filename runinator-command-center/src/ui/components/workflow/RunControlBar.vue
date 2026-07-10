@@ -2,7 +2,7 @@
   <div class="run-control-bar">
     <button
       class="btn btn-sm"
-      :disabled="!workflows.canPauseWorkflowRun"
+      :disabled="!workflows.canPauseWorkflowRun || runControlBusy"
       title="Pause after the current node finishes"
       @click="workflows.pauseSelectedWorkflowRun"
     >
@@ -11,7 +11,7 @@
     </button>
     <button
       class="btn btn-primary btn-sm"
-      :disabled="!workflows.canResumeWorkflowRun"
+      :disabled="!workflows.canResumeWorkflowRun || runControlBusy"
       title="Resume a paused workflow run"
       @click="workflows.resumeSelectedWorkflowRun"
     >
@@ -20,7 +20,7 @@
     </button>
     <button
       class="btn btn-danger btn-sm"
-      :disabled="!workflows.canCancelWorkflowRun"
+      :disabled="!workflows.canCancelWorkflowRun || runControlBusy"
       title="Cancel run immediately"
       @click="workflows.cancelSelectedWorkflowRun"
     >
@@ -32,9 +32,14 @@
 
 <script setup lang="ts">
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
+import { useOperationLoading } from "../../composables/useOperationLoading";
 import Icon from "../shared/Icon.vue";
 
 const workflows = useWorkflowsStore();
+const { isLoading: runControlBusy } = useOperationLoading(
+  ["Pausing workflow run", "Resuming workflow run", "Canceling workflow run"],
+  { prefix: true },
+);
 </script>
 
 <style scoped>

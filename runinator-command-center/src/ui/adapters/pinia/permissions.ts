@@ -62,12 +62,14 @@ export const usePermissionsStore = defineStore("permissions", () => {
     },
     selectUser: (user: User | null) => {
       Object.assign(userDraft, permissionsService.selectUser(user));
+
       if (!permissionsService.selectedApiKey()) {
         Object.assign(apiKeyDraft, blankApiKeyDraft(user?.id ?? null));
       }
     },
     clearUserDraft: () => {
       Object.assign(userDraft, permissionsService.clearUserSelection());
+
       if (!permissionsService.selectedApiKey()) {
         Object.assign(apiKeyDraft, blankApiKeyDraft());
       }

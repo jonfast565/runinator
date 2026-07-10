@@ -1499,8 +1499,12 @@ fn parse_mutex(pair: Pair<Rule>) -> Result<MutexStmt, WdlError> {
     let mut name = String::new();
     let mut poll_interval = None;
     let mut timeout = None;
+    let mut hold = None;
+    let mut release = false;
+    let mut body = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::mutex_release => release = true,
             Rule::string => name = plain_string(inner)?,
             Rule::poll_every => {
                 let value = first_inner(inner)?;
@@ -1510,6 +1514,11 @@ fn parse_mutex(pair: Pair<Rule>) -> Result<MutexStmt, WdlError> {
                 let value = first_inner(inner)?;
                 timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
             }
+            Rule::mutex_hold => {
+                let value = first_inner(inner)?;
+                hold = Some(parse_duration(value.as_str(), span_of(&value))?);
+            }
+            Rule::block => body = parse_block(inner)?,
             _ => {}
         }
     }
@@ -1517,6 +1526,9 @@ fn parse_mutex(pair: Pair<Rule>) -> Result<MutexStmt, WdlError> {
         name,
         poll_interval,
         timeout,
+        hold,
+        release,
+        body,
     })
 }
 

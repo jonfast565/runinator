@@ -10,10 +10,10 @@
             placeholder="Filter by action (e.g. auth.login)"
             @keyup.enter="refresh"
           />
-          <button class="btn" :disabled="loading" @click="refresh">
+          <Button variant="default" :loading="loading" @click="refresh">
             <Icon name="refresh" />
             <span>Refresh</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -22,6 +22,8 @@
         :rows="rows"
         row-key="id"
         :page-size="50"
+        :loading="loading"
+        loading-message="Loading audit log…"
         responsive="cards"
         initial-sort-key="created_at"
         initial-sort-dir="desc"
@@ -53,6 +55,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import Button from "../components/shared/Button.vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import { auditLogService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";

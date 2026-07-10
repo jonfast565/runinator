@@ -4,10 +4,10 @@
       <div class="panel-toolbar">
         <h2>Artifacts</h2>
         <div class="btn-row">
-          <button class="btn" :disabled="loading" @click="refresh">
+          <Button variant="default" :loading="loading" @click="refresh">
             <Icon name="refresh" />
             <span>Refresh</span>
-          </button>
+          </Button>
           <button class="btn btn-primary" :disabled="loading" @click="onUpload">
             <Icon name="upload" />
             <span>Upload</span>
@@ -19,6 +19,8 @@
         :rows="filteredArtifacts"
         row-key="id"
         :selected-key="store.selectedArtifactId"
+        :loading="loading"
+        loading-message="Loading artifacts…"
         responsive="cards"
         :empty-title="store.artifacts.length ? 'No matches' : 'No artifacts yet'"
         :empty-description="
@@ -52,6 +54,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
+import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
 import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
 import { useAppStore } from "../../ui/adapters/pinia/app";

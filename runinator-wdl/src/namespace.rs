@@ -357,9 +357,9 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
                 resolve_cond(filter, scope)?;
             }
         }
+        StmtKind::Mutex(mutex) => resolve_block(&mut mutex.body, scope)?,
         // no namespace-qualified references to resolve.
         StmtKind::Checkpoint(_)
-        | StmtKind::Mutex(_)
         | StmtKind::Throttle(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)

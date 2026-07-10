@@ -335,9 +335,9 @@ fn resolve_stmt(
                 resolve_cond(filter, symbols, scope, ctx, diagnostics);
             }
         }
+        StmtKind::Mutex(mutex) => resolve_block(&mutex.body, symbols, scope, diagnostics),
         // these declare no references to resolve.
         StmtKind::Checkpoint(_)
-        | StmtKind::Mutex(_)
         | StmtKind::Throttle(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)

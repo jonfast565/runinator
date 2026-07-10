@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use runinator_models::value::{Map, Value};
 
+mod catalog;
 mod compute;
 mod conditions;
 mod errors;
@@ -16,6 +17,7 @@ mod types;
 mod typing;
 mod validation;
 
+pub use catalog::{enum_catalogs, node_kind_catalog, trigger_kind_catalog};
 pub use compute::{
     ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES,
     IntrinsicLibrary, PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures,

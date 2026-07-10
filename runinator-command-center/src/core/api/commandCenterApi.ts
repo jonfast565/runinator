@@ -15,6 +15,9 @@ import type {
   PermissionLevel,
   PrincipalType,
   ProviderMetadata,
+  WorkflowNodeKindMetadata,
+  WorkflowTriggerKindMetadata,
+  EnumCatalogMetadata,
   ReplicaListResponse,
   RunArtifact,
   RunChunk,
@@ -565,6 +568,18 @@ export async function fetchResourceRecords(endpoint: string) {
 
 export async function fetchProviders() {
   return command<ProviderMetadata[]>("fetch_providers");
+}
+
+export async function fetchNodeKinds() {
+  return command<WorkflowNodeKindMetadata[]>("fetch_node_kinds");
+}
+
+export async function fetchTriggerKinds() {
+  return command<WorkflowTriggerKindMetadata[]>("fetch_trigger_kinds");
+}
+
+export async function fetchEnumCatalogs() {
+  return command<EnumCatalogMetadata[]>("fetch_enum_catalogs");
 }
 
 export async function fetchReplicas() {

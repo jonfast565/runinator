@@ -245,12 +245,12 @@
       <template v-if="edgeEditorIsSwitchCase">
         <label>
           Match
-          <select v-model="edgeEditor.matchKind">
-            <option value="equals">equals</option>
-            <option value="not_equals">not_equals</option>
-            <option value="exists">exists</option>
-            <option value="when">when</option>
+          <select v-if="matchKindsLoaded" v-model="edgeEditor.matchKind">
+            <option v-for="opt in matchKindOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
           </select>
+          <span v-else class="hint">Loading match kinds…</span>
         </label>
         <label>
           Match
@@ -300,6 +300,7 @@ import { workflowInputType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
+import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { optionIdForSourceHandle, recordArray } from "../../../core/workflow";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
 import { displayValue } from "../../../core/utils/values";
@@ -317,6 +318,7 @@ provide("workflowEdgeInteractive", true);
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
 const secretsStore = useSecretsStore();
+const catalogMetadata = useCatalogMetadataStore();
 const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
 const contextMenu = ref<
   | null
@@ -378,6 +380,10 @@ const edgeEditorPriority = computed<number | null>({
       typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
   },
 });
+// match_kind options driven from catalog only.
+const matchKindOptions = computed(() => catalogMetadata.enumOptions("match_kind"));
+const matchKindsLoaded = computed(() => matchKindOptions.value.length > 0);
+
 const edgeEditorCanMove = computed(() => {
   const optionId = edgeEditor.value?.optionId ?? "";
   return (

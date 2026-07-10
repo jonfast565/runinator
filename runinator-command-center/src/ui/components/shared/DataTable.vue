@@ -18,6 +18,7 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
 import { computed, ref, watch } from "vue";
 import Icon, { type IconName } from "./Icon.vue";
 import EmptyState from "./EmptyState.vue";
+import LoadingPanel from "./LoadingPanel.vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
 import { displayValue } from "../../../core/utils/values";
 
@@ -38,6 +39,8 @@ const props = withDefaults(
     emptyTitle?: string;
     emptyDescription?: string;
     emptyIcon?: IconName;
+    loading?: boolean;
+    loadingMessage?: string;
     initialSortKey?: string;
     initialSortDir?: "asc" | "desc";
     // 'cards' renders label:value cards on mobile; 'scroll' keeps the table and hides low-priority columns.
@@ -54,6 +57,8 @@ const props = withDefaults(
     emptyTitle: undefined,
     emptyDescription: undefined,
     emptyIcon: undefined,
+    loading: false,
+    loadingMessage: undefined,
     initialSortKey: undefined,
     initialSortDir: undefined,
     responsive: "scroll",
@@ -187,8 +192,13 @@ function compareValues(left: unknown, right: unknown): number {
     <slot />
   </div>
   <div v-else class="data-table">
+    <LoadingPanel
+      v-if="loading"
+      compact
+      :message="loadingMessage || 'Loading…'"
+    />
     <!-- mobile card layout: each row becomes a stack of label:value pairs. -->
-    <div v-if="cardMode" class="data-table-cards">
+    <div v-else-if="cardMode" class="data-table-cards">
       <EmptyState
         v-if="!pagedRows.length && emptyTitle"
         compact

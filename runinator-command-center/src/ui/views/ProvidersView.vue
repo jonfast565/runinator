@@ -5,12 +5,18 @@
         <div class="panel-toolbar">
           <h2>Providers</h2>
           <button class="btn" :disabled="providers.loading" @click="providers.fetchProviders()">
-            <Icon name="refresh" />
+            <LoadingSpinner v-if="providers.loading" size="sm" label="Refreshing providers" />
+            <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
         </div>
         <div v-if="providers.error" class="providers-error">{{ providers.error }}</div>
-        <div v-if="!providers.providers.length" class="empty-state">No providers registered.</div>
+        <LoadingPanel
+          v-if="providers.loading"
+          compact
+          message="Loading providers…"
+        />
+        <div v-else-if="!providers.providers.length" class="empty-state">No providers registered.</div>
         <div v-else-if="!filteredProviders.length" class="empty-state">
           No providers match "{{ app.searchQuery }}".
         </div>
@@ -171,6 +177,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import type { RuninatorType } from "../../core/domain/models";

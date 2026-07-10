@@ -30,147 +30,36 @@ import type { IconName } from "../domain/icons";
 import type { GraphEdgeLike, GraphEdgeModel, GraphNodeModel } from "./graph-model";
 import { statusClassForNode } from "../utils/status";
 import { displayValue, isBlankValue } from "../utils/values";
+import { addableNodeKinds, findNodeKindMetadata } from "./catalog-registry";
+import { cloneTemplate, getAtLocation } from "./field-location";
 
-export const workflowNodeKinds: WorkflowNodeKind[] = [
-  "action",
-  "approval",
-  "gate",
-  "signal",
-  "loop",
-  "condition",
-  "wait",
-  "switch",
-  "toggle",
-  "percentage",
-  "parallel",
-  "join",
-  "try",
-  "map",
-  "race",
-  "output",
-  "input",
-  "config",
-  "subflow",
-  "assert",
-  "transform",
-  "audit",
-  "checkpoint",
-  "mutex",
-  "throttle",
-  "await_run",
-  "debounce",
-  "collect",
-  "barrier",
-  "circuit_breaker",
-  "event_source",
-];
+export {
+  addableNodeKinds,
+  findNodeKindMetadata,
+  getNodeKindCatalog,
+  isEnumCatalogLoaded,
+  isNodeCatalogLoaded,
+  isTriggerCatalogLoaded,
+  setWorkflowCatalogs,
+} from "./catalog-registry";
+export { cloneTemplate, getAtLocation, setAtLocation } from "./field-location";
 
-// icon name and a one-line description for every node kind, used by node chrome and the palette.
-export interface WorkflowNodeKindInfo {
-  icon: IconName;
-  description: string;
+export function workflowNodeKindsList(): WorkflowNodeKind[] {
+  return addableNodeKinds() as WorkflowNodeKind[];
 }
 
-export const workflowNodeKindInfo: Record<WorkflowNodeKind, WorkflowNodeKindInfo> = {
-  start: { icon: "play", description: "Entry point where the workflow run begins." },
-  action: { icon: "bolt", description: "Runs a task through a provider action." },
-  wait: { icon: "clock", description: "Pauses the run for a fixed delay or until a time." },
-  condition: { icon: "branch", description: "Routes down a branch based on a boolean expression." },
-  switch: { icon: "switch", description: "Routes to one of several cases by matching a value." },
-  toggle: {
-    icon: "toggle",
-    description: "A light switch: routes to on or off by a value's truthiness.",
-  },
-  percentage: {
-    icon: "percentage",
-    description: "Weighted rollout: routes to a bucket by a stable hash of a key.",
-  },
-  approval: { icon: "approve", description: "Halts until a human approves or rejects." },
-  gate: {
-    icon: "shield",
-    description: "Blocks until an automated/policy check or manual gate opens.",
-  },
-  signal: {
-    icon: "bell",
-    description: "Pauses until a named external signal is delivered to the run.",
-  },
-  loop: { icon: "loop", description: "Repeats its target node while a condition holds." },
-  parallel: { icon: "parallel", description: "Fans out into branches that run concurrently." },
-  join: { icon: "join", description: "Waits for upstream branches to finish before continuing." },
-  try: { icon: "shield", description: "Guards a body node and catches failures with a handler." },
-  map: { icon: "grid", description: "Runs its target once for each item in a collection." },
-  race: { icon: "race", description: "Runs branches concurrently; the first to finish wins." },
-  output: { icon: "output", description: "Publishes output without interrupting the flow." },
-  input: { icon: "message", description: "Waits for a user-supplied value from the UI." },
-  subflow: { icon: "workflow", description: "Invokes another workflow as a nested step." },
-  config: { icon: "gear", description: "Sets configuration values for downstream nodes." },
-  end: { icon: "flag", description: "Terminal node that completes the run successfully." },
-  fail: { icon: "alert", description: "Terminal node that ends the run as failed." },
-  assert: {
-    icon: "check",
-    description: "Evaluates named boolean assertions; fails with a structured violation list.",
-  },
-  transform: {
-    icon: "gear",
-    description: "Resolves named expression bindings into the run context; no side effects.",
-  },
-  audit: {
-    icon: "file",
-    description: "Appends a tamper-evident audit record to the workflow log.",
-  },
-  checkpoint: {
-    icon: "save",
-    description:
-      "Snapshots run state at a named point; enables rollback via the control-plane API.",
-  },
-  mutex: {
-    icon: "lock",
-    description: "Acquires a named distributed mutex; parks until the lock is available.",
-  },
-  throttle: {
-    icon: "hourglass",
-    description: "Enforces a cross-run rate limit; parks until a token is available.",
-  },
-  await_run: {
-    icon: "runs",
-    description: "Waits for one or more independently-started runs to reach a terminal state.",
-  },
-  debounce: {
-    icon: "clock",
-    description: "Parks with a trailing delay that resets on re-trigger; collapses event bursts.",
-  },
-  collect: {
-    icon: "list",
-    description: "Accumulates externally-delivered items until a count or time threshold is met.",
-  },
-  barrier: {
-    icon: "join",
-    description:
-      "Parks until N runs reach this named barrier; the last arrival releases all waiters.",
-  },
-  circuit_breaker: {
-    icon: "shield",
-    description: "Tracks failure rates across runs; fast-fails or routes to fallback when tripped.",
-  },
-  event_source: {
-    icon: "bell",
-    description:
-      "Subscribes to a named event stream; drives a body subgraph on each matching event.",
-  },
-};
-
 export function workflowNodeKindIcon(kind: string): IconName {
-  return workflowNodeKindInfo[kind as WorkflowNodeKind].icon;
+  return (findNodeKindMetadata(kind)?.icon ?? "box") as IconName;
 }
 
 // human-friendly label for a node kind: the wire value is snake_case (e.g. `await_run`,
 // `circuit_breaker`), which reads poorly in the palette/chrome, so render it title-cased.
 export function workflowNodeKindLabel(kind: string): string {
-  return titleCase(kind);
+  return findNodeKindMetadata(kind)?.label ?? titleCase(kind);
 }
 
 export function workflowNodeKindDescription(kind: string): string {
-  return workflowNodeKindInfo[kind as WorkflowNodeKind].description;
+  return findNodeKindMetadata(kind)?.description ?? "";
 }
 
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = [
@@ -328,7 +217,8 @@ export function buildGraphEdgeModels(workflow: WorkflowDefinition): GraphEdgeMod
         const semanticKey = `branches.${String(index)}`;
         const handles = edgeHandles(definition, source, semanticKey);
         const base = displayValue(branch.label) || `branch ${String(index + 1)}`;
-        const label = typeof branch.priority === "number" ? `#${String(branch.priority)} ${base}` : base;
+        const label =
+          typeof branch.priority === "number" ? `#${String(branch.priority)} ${base}` : base;
         edges.push(
           graphEdge(
             source,
@@ -351,25 +241,9 @@ export function buildGraphEdgeModels(workflow: WorkflowDefinition): GraphEdgeMod
   return separateParallelEdges(edges);
 }
 
-// control-flow kinds carry their own parameter-based routes; condition has its own branch options;
-// terminals and start have no user-defined predicate routes. everything else is a default-transition
-// node that can host predicate edges.
-const predicateEdgeExcludedKinds = new Set([
-  "condition",
-  "switch",
-  "parallel",
-  "race",
-  "join",
-  "try",
-  "loop",
-  "map",
-  "start",
-  "end",
-  "fail",
-]);
-
+// predicate edges are only available when the catalog marks a kind as supporting them.
 function supportsPredicateEdges(kind: string): boolean {
-  return !predicateEdgeExcludedKinds.has(kind);
+  return findNodeKindMetadata(kind)?.supports_predicate_edges ?? false;
 }
 
 export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSemanticOption[] {
@@ -380,8 +254,9 @@ export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSeman
   }));
   const kind = workflowNodeKind(node.kind);
   const transitions = isRecord(node.transitions) ? node.transitions : {};
+  const metadata = findNodeKindMetadata(kind);
 
-  if (kind === "condition") {
+  if (metadata?.edge_slots.some((slot) => slot.taxonomy === "branch" && slot.multiple)) {
     const branches = asArray(transitions.branches);
     branches.forEach((_, index) => {
       options.push({
@@ -413,104 +288,29 @@ export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSeman
     });
   }
 
-  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  if (metadata) {
+    for (const slot of metadata.edge_slots.filter((entry) => entry.taxonomy === "control")) {
+      const description = slot.description ?? `Set the ${slot.label.toLowerCase()} route`;
+      const values = getAtLocation(node, slot.target);
 
-  if (kind === "switch") {
-    const cases = recordArray(parameters.cases);
-    cases.forEach((_, index) => {
-      options.push({
-        id: `control:cases:${String(index)}`,
-        label: `Switch case ${String(index + 1)}`,
-        description: "Update an existing switch case",
-      });
-    });
-    options.push({
-      id: "control:cases:new",
-      label: "New switch case",
-      description: "Add a switch case route",
-    });
-    options.push({
-      id: "control:default",
-      label: "Switch default",
-      description: "Set the default switch route",
-    });
-  }
-
-  if (kind === "toggle") {
-    options.push({
-      id: "control:on",
-      label: "Toggle on",
-      description: "Node routed to when the value is truthy",
-    });
-    options.push({
-      id: "control:off",
-      label: "Toggle off",
-      description: "Node routed to when the value is falsy",
-    });
-  }
-
-  if (kind === "percentage") {
-    const buckets = asArray(parameters.buckets);
-    buckets.forEach((_, index) => {
-      options.push({
-        id: `control:buckets:${String(index)}`,
-        label: `Bucket ${String(index + 1)}`,
-        description: "Update an existing percentage bucket target",
-      });
-    });
-    options.push({
-      id: "control:default",
-      label: "Percentage default",
-      description: "Fallback route when no bucket matches",
-    });
-  }
-
-  if (kind === "parallel" || kind === "race") {
-    const branches = asArray(parameters.branches);
-    branches.forEach((_, index) => {
-      options.push({
-        id: `control:branches:${String(index)}`,
-        label: `${titleCase(kind)} branch ${String(index + 1)}`,
-        description: "Update an existing branch target",
-      });
-    });
-    options.push({
-      id: "control:branches:new",
-      label: `New ${kind} branch`,
-      description: "Add a branch target",
-    });
-  }
-
-  if (kind === "join") {
-    const dependencies = asArray(parameters.wait_for);
-    dependencies.forEach((_, index) => {
-      options.push({
-        id: `control:wait_for:${String(index)}`,
-        label: `Join dependency ${String(index + 1)}`,
-        description: "Update an existing join dependency",
-      });
-    });
-    options.push({
-      id: "control:wait_for:new",
-      label: "New join dependency",
-      description: "Add a node this join waits for",
-    });
-  }
-
-  if (kind === "try") {
-    options.push(
-      { id: "control:body", label: "Try body", description: "Set the guarded body node" },
-      { id: "control:catch", label: "Try catch", description: "Set the error handler node" },
-      { id: "control:finally", label: "Try finally", description: "Set the cleanup node" },
-    );
-  }
-
-  if (kind === "loop" || kind === "map") {
-    options.push({
-      id: "control:target",
-      label: `${titleCase(kind)} target`,
-      description: "Set the repeated target node",
-    });
+      if (slot.multiple) {
+        const entries = Array.isArray(values) ? values : [];
+        entries.forEach((_, index) => {
+          options.push({
+            id: `control:${slot.key}:${String(index)}`,
+            label: `${slot.label} ${String(index + 1)}`,
+            description,
+          });
+        });
+        options.push({
+          id: `control:${slot.key}:new`,
+          label: `New ${slot.label.toLowerCase()}`,
+          description,
+        });
+      } else {
+        options.push({ id: `control:${slot.key}`, label: slot.label, description });
+      }
+    }
   }
 
   return options;
@@ -697,7 +497,7 @@ function pushConnectivityIssues(
 }
 
 export function workflowEdgeOptionId(edge: GraphEdgeLike): string {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (data?.kind === "direct" && data.transitionKey) {
     return `direct:${data.transitionKey}`;
@@ -735,7 +535,7 @@ export function workflowEdgeEditorDraft(
   }
 
   const base = defaultWorkflowEdgeEditorDraft(edge, optionId);
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (data?.kind === "branch" && typeof data.branchIndex === "number") {
     const branches = asArray(asRecord(node.transitions).branches);
@@ -885,8 +685,11 @@ export function moveWorkflowEdgeEditorDraft(
   };
 }
 
-function defaultWorkflowEdgeEditorDraft(edge: GraphEdgeLike, optionId: string): WorkflowEdgeEditorDraft {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+function defaultWorkflowEdgeEditorDraft(
+  edge: GraphEdgeLike,
+  optionId: string,
+): WorkflowEdgeEditorDraft {
+  const data = edge.data;
   return {
     edgeId: edge.id ?? "",
     source: edge.source,
@@ -1167,10 +970,7 @@ function orderedEdgeLocation(
 
   const [, parameterKey, rawIndex] = draft.optionId.split(":");
 
-  if (
-    !["cases", "branches", "wait_for"].includes(parameterKey) ||
-    rawIndex === "new"
-  ) {
+  if (!["cases", "branches", "wait_for"].includes(parameterKey) || rawIndex === "new") {
     return null;
   }
 
@@ -1434,148 +1234,15 @@ export function createWorkflowNode(
   kind: WorkflowNodeKind,
   nodes: JsonRecord[],
 ): WorkflowEditorNodeRecord {
-  const id = uniqueWorkflowNodeId(nodes, kind);
-  const node: WorkflowEditorNodeRecord = {
-    id,
-    kind,
-    parameters: {},
-    retry: { max_attempts: 1 },
-    transitions: {},
-  };
+  const metadata = findNodeKindMetadata(kind);
 
-  switch (kind) {
-    case "action":
-      node.action = { provider: "", function: "", timeout_seconds: 300, configuration: {} };
-      break;
-    case "approval":
-      node.parameters = { approval_type: "generic", prompt: "Approval required" };
-      node.transitions = { on_success: nodeRef("end"), on_reject: nodeRef("end") };
-      break;
-    case "gate":
-      node.parameters = { kind: "manual", poll_interval: 30 };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "signal":
-      node.parameters = { name: "signal" };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "loop":
-      node.parameters = { items: [], target: nodeRef("end") };
-      node.max_iterations = 10;
-      break;
-    case "condition":
-      node.condition = {};
-      node.transitions = {
-        branches: [
-          {
-            when: { value: valueRef("params", ["approved"]), equals: true },
-            target: nodeRef("end"),
-          },
-        ],
-        next: nodeRef("end"),
-      };
-      break;
-    case "wait":
-      node.wait = { seconds: 60 };
-      break;
-    case "switch":
-      node.parameters = { value: valueRef("params", ["mode"]), cases: [], default: nodeRef("end") };
-      break;
-    case "toggle":
-      node.parameters = {
-        value: valueRef("config", ["flags", "enabled"]),
-        on: nodeRef("end"),
-        off: nodeRef("end"),
-      };
-      break;
-    case "percentage":
-      node.parameters = {
-        key: valueRef("input", ["user_id"]),
-        buckets: [],
-        default: nodeRef("end"),
-      };
-      break;
-    case "parallel":
-    case "race":
-      node.parameters = { branches: [] };
-      break;
-    case "join":
-      node.parameters = { wait_for: [], mode: "all" };
-      break;
-    case "try":
-      node.parameters = {};
-      break;
-    case "map":
-      node.parameters = { items: [], target: nodeRef("end"), concurrency: 1 };
-      break;
-    case "output":
-      node.parameters = { event_type: "workflow.output", data: {} };
-      break;
-    case "input":
-      node.parameters = { prompt: "Provide input" };
-      break;
-    case "config":
-      node.parameters = { name: "", metadata: {} };
-      break;
-    case "subflow":
-      node.subflow_id = "";
-      break;
-    case "assert":
-      node.parameters = { assertions: [] };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "transform":
-      node.parameters = { bindings: {} };
-      node.transitions = { next: nodeRef("end") };
-      break;
-    case "audit":
-      node.parameters = { action: "" };
-      node.transitions = { next: nodeRef("end") };
-      break;
-    case "checkpoint":
-      node.parameters = { name: "checkpoint" };
-      node.transitions = { next: nodeRef("end") };
-      break;
-    case "mutex":
-      node.parameters = { name: "my-mutex" };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "throttle":
-      node.parameters = { name: "my-throttle", max_per_window: 10, window_seconds: 60 };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "await_run":
-      node.parameters = { run_ids: [], mode: "all" };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "debounce":
-      node.parameters = { name: "my-debounce", delay_seconds: 30 };
-      node.transitions = { on_success: nodeRef("end") };
-      break;
-    case "collect":
-      node.parameters = { name: "my-collect", max: 10 };
-      node.transitions = { on_success: nodeRef("end") };
-      break;
-    case "barrier":
-      node.parameters = { name: "my-barrier", count: 2 };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "circuit_breaker":
-      node.parameters = {
-        name: "my-circuit-breaker",
-        threshold: 5,
-        window_seconds: 60,
-        cooldown_seconds: 30,
-      };
-      node.transitions = { on_success: nodeRef("end"), on_failure: nodeRef("end") };
-      break;
-    case "event_source":
-      node.parameters = { event_type: "" };
-      node.transitions = { on_success: nodeRef("end") };
-      break;
+  if (!metadata) {
+    throw new Error(`Node kind metadata for "${kind}" is not loaded`);
   }
 
-  return node;
+  const template = cloneTemplate(metadata.default_template);
+  template.id = uniqueWorkflowNodeId(nodes, kind);
+  return template as WorkflowEditorNodeRecord;
 }
 
 export function uniqueWorkflowNodeId(nodes: JsonRecord[], base: string): string {
@@ -1662,7 +1329,7 @@ export function removeWorkflowEdgeHandles(
 }
 
 export function workflowEdgeSemanticKey(edge: GraphEdgeLike): string {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (data?.transitionKey) {
     return data.transitionKey;
@@ -1680,7 +1347,7 @@ export function setWorkflowEdgeLabelOffset(
   edge: GraphEdgeLike,
   labelOffset: WorkflowEdgeLabelOffset | null,
 ) {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
   const semanticKey = workflowEdgeSemanticKey(edge);
 
   if (!semanticKey) {
@@ -1703,7 +1370,7 @@ export function setWorkflowEdgeLabelAnchor(
   edge: GraphEdgeLike,
   labelAnchor: WorkflowEdgeLabelAnchor | null,
 ) {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
   const semanticKey = workflowEdgeSemanticKey(edge);
 
   if (!semanticKey) {
@@ -1723,7 +1390,7 @@ export function setWorkflowEdgeLabelAnchor(
 }
 
 function removeEdgeHandlesForEdge(definition: JsonRecord, edge: GraphEdgeLike) {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (data?.transitionKey) {
     removeWorkflowEdgeHandles(definition, edge.source, data.transitionKey);
@@ -1808,7 +1475,7 @@ function renameWorkflowEdgeHandleSource(
 }
 
 export function removeEditableEdge(node: JsonRecord, edge: GraphEdgeLike): boolean {
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (!data?.editable || !isRecord(node.transitions)) {
     return false;
@@ -1848,7 +1515,7 @@ export function removeWorkflowEdge(node: JsonRecord, edge: GraphEdgeLike): boole
     return true;
   }
 
-  const data = edge.data as WorkflowEditorEdgeData | undefined;
+  const data = edge.data;
 
   if (data?.kind !== "control" || !data.parameterKey) {
     return false;
@@ -2472,7 +2139,7 @@ function separateParallelEdges(edges: GraphEdgeModel[]): GraphEdgeModel[] {
     const parallelOffset = 18 + index * 18;
     return {
       ...edge,
-      data: { ...(edge.data as WorkflowEditorEdgeData), parallelOffset },
+      data: { ...(edge.data), parallelOffset },
       pathOptions: { offset: parallelOffset, borderRadius: 8 },
       zIndex: index + 1,
     };
@@ -2507,150 +2174,55 @@ function controlFlowEdges(
 function controlFlowTargetValues(
   node: JsonRecord,
 ): { target: string; label: string; parameterKey?: string; parameterIndex?: number }[] {
-  const parameters = isRecord(node.parameters) ? node.parameters : {};
+  const metadata = findNodeKindMetadata(workflowNodeKind(node.kind));
 
-  switch (node.kind) {
-    case "switch": {
-      const cases = recordArray(parameters.cases);
-      const targets: {
-        target: string;
-        label: string;
-        parameterKey?: string;
-        parameterIndex?: number;
-      }[] = cases
-        .filter(isRecord)
-        .map((item, index) => ({
-          target: nodeRefId(item.target),
-          label: displayValue(item.label) || `case ${String(index + 1)}`,
-          parameterKey: "cases",
-          parameterIndex: index,
-        }))
-        .filter(
-          (
-            item,
-          ): item is {
-            target: string;
-            label: string;
-            parameterKey: string;
-            parameterIndex: number;
-          } => Boolean(item.target),
-        );
-      const defaultTarget = nodeRefId(parameters.default);
+  if (metadata) {
+    const targets: {
+      target: string;
+      label: string;
+      parameterKey?: string;
+      parameterIndex?: number;
+    }[] = [];
 
-      if (defaultTarget) {
-        targets.push({ target: defaultTarget, label: "default", parameterKey: "default" });
+    for (const slot of metadata.edge_slots.filter((entry) => entry.taxonomy === "control")) {
+      const value = getAtLocation(node, slot.target);
+
+      if (!slot.multiple) {
+        const target = nodeRefId(value);
+
+        if (target) {
+          targets.push({ target, label: slot.key, parameterKey: slot.key });
+        }
+
+        continue;
       }
 
-      return targets;
+      const values = Array.isArray(value) ? value : [];
+      values.forEach((item, parameterIndex) => {
+        const record = asRecord(item);
+        const target =
+          slot.key === "cases" || slot.key === "buckets"
+            ? nodeRefId(record.target)
+            : nodeRefId(item);
+
+        if (!target) {
+          return;
+        }
+
+        const label =
+          slot.key === "cases"
+            ? displayValue(record.label) || `case ${String(parameterIndex + 1)}`
+            : slot.key === "buckets"
+              ? `${String(Number(record.weight ?? 0))}%`
+              : slot.key;
+        targets.push({ target, label, parameterKey: slot.key, parameterIndex });
+      });
     }
 
-    case "toggle": {
-      const targets: {
-        target: string;
-        label: string;
-        parameterKey?: string;
-        parameterIndex?: number;
-      }[] = [];
-      const on = nodeRefId(parameters.on);
-
-      if (on) {
-        targets.push({ target: on, label: "on", parameterKey: "on" });
-      }
-
-      const off = nodeRefId(parameters.off);
-
-      if (off) {
-        targets.push({ target: off, label: "off", parameterKey: "off" });
-      }
-
-      return targets;
-    }
-
-    case "percentage": {
-      const buckets = asArray(parameters.buckets);
-      const targets: {
-        target: string;
-        label: string;
-        parameterKey?: string;
-        parameterIndex?: number;
-      }[] = buckets
-        .filter(isRecord)
-        .map((item, index) => ({
-          target: nodeRefId(item.target),
-          label: `${String(Number(item.weight ?? 0))}%`,
-          parameterKey: "buckets",
-          parameterIndex: index,
-        }))
-        .filter(
-          (
-            item,
-          ): item is {
-            target: string;
-            label: string;
-            parameterKey: string;
-            parameterIndex: number;
-          } => Boolean(item.target),
-        );
-      const percentageDefault = nodeRefId(parameters.default);
-
-      if (percentageDefault) {
-        targets.push({ target: percentageDefault, label: "default", parameterKey: "default" });
-      }
-
-      return targets;
-    }
-
-    case "parallel":
-      return nodeRefArray(parameters.branches).map((target, parameterIndex) => ({
-        target,
-        label: "branch",
-        parameterKey: "branches",
-        parameterIndex,
-      }));
-    case "join":
-      return nodeRefArray(parameters.wait_for).map((target, parameterIndex) => ({
-        target,
-        label: "wait_for",
-        parameterKey: "wait_for",
-        parameterIndex,
-      }));
-
-    case "try": {
-      const targets: { target: string; label: string; parameterKey: string }[] = [];
-      const body = nodeRefId(parameters.body);
-      const catchTarget = nodeRefId(parameters.catch);
-      const finallyTarget = nodeRefId(parameters.finally);
-
-      if (body) {
-        targets.push({ target: body, label: "body", parameterKey: "body" });
-      }
-
-      if (catchTarget) {
-        targets.push({ target: catchTarget, label: "catch", parameterKey: "catch" });
-      }
-
-      if (finallyTarget) {
-        targets.push({ target: finallyTarget, label: "finally", parameterKey: "finally" });
-      }
-
-      return targets;
-    }
-
-    case "map": {
-      const target = nodeRefId(parameters.target);
-      return target ? [{ target, label: "target", parameterKey: "target" }] : [];
-    }
-
-    case "race":
-      return nodeRefArray(parameters.branches).map((target, parameterIndex) => ({
-        target,
-        label: "race",
-        parameterKey: "branches",
-        parameterIndex,
-      }));
-    default:
-      return [];
+    return targets;
   }
+
+  return [];
 }
 
 export function nodeRef(target: string): JsonRecord {
@@ -2902,7 +2474,14 @@ function pushExpressionIssues(
 
   if (Array.isArray(value.$concat)) {
     value.$concat.forEach((item, index) => {
-      pushExpressionIssues(issues, item, nodeIds, nodeId, `${label}.$concat[${String(index)}]`, edgeKey);
+      pushExpressionIssues(
+        issues,
+        item,
+        nodeIds,
+        nodeId,
+        `${label}.$concat[${String(index)}]`,
+        edgeKey,
+      );
     });
   }
 
@@ -3065,7 +2644,7 @@ export function optionIdForSourceHandle(handleId?: string | null): string | null
 
 function workflowNodeKind(value: unknown): WorkflowNodeKind {
   return typeof value === "string" &&
-    ["start", ...workflowNodeKinds, "loop", "end", "fail"].includes(value)
+    ["start", ...workflowNodeKindsList(), "end", "fail"].includes(value)
     ? (value as WorkflowNodeKind)
     : "action";
 }
@@ -3163,7 +2742,9 @@ function describeValue(value: unknown): string {
   }
 
   if (Array.isArray(value)) {
-    return value.length === 0 ? "[]" : `[${String(value.length)} item${value.length === 1 ? "" : "s"}]`;
+    return value.length === 0
+      ? "[]"
+      : `[${String(value.length)} item${value.length === 1 ? "" : "s"}]`;
   }
 
   try {
@@ -3176,112 +2757,46 @@ function describeValue(value: unknown): string {
 
 // each node kind renders a concise, never-"[object Object]" description of its activity.
 function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): string {
-  const parameters = asRecord(node.parameters);
+  const kind = workflowNodeKind(node.kind);
 
-  switch (workflowNodeKind(node.kind)) {
-    case "action": {
-      const config = workflowNodeActionConfig(node);
+  if (kind === "action") {
+    const config = workflowNodeActionConfig(node);
 
-      if (!config.provider) {
-        return "Unconfigured action";
-      }
-
-      return config.action ? `${config.provider}.${config.action}` : config.provider;
+    if (!config.provider) {
+      return "Unconfigured action";
     }
 
-    case "approval":
-      return describeValue(parameters.prompt) || "Approval required";
-
-    case "condition": {
-      const branches = asArray(asRecord(node.transitions).branches);
-      const count = branches.length;
-      return `${String(count)} branch${count === 1 ? "" : "es"}`;
-    }
-
-    case "switch": {
-      const count = Array.isArray(parameters.cases) ? parameters.cases.length : 0;
-      return `Switch on ${describeValue(parameters.value) || "value"} (${String(count)} case${count === 1 ? "" : "s"})`;
-    }
-
-    case "toggle":
-      return `Toggle on ${describeValue(parameters.value) || "value"}`;
-
-    case "percentage": {
-      const count = Array.isArray(parameters.buckets) ? parameters.buckets.length : 0;
-      return `Split on ${describeValue(parameters.key) || "key"} (${String(count)} bucket${count === 1 ? "" : "s"})`;
-    }
-
-    case "wait": {
-      const wait = asRecord(node.wait);
-      const until = wait.until_status;
-
-      if (until) {
-        return `Wait for ${describeValue(until)}`;
-      }
-
-      const seconds = Number(wait.seconds ?? 0);
-      return seconds > 0 ? `Wait ${String(seconds)}s` : "Wait";
-    }
-
-    case "loop": {
-      const target = nodeRefId(parameters.target);
-      const max = Number(node.max_iterations ?? 0);
-      return `Loop${target ? ` → ${target}` : ""}${max ? ` ×${String(max)}` : ""}`;
-    }
-
-    case "map": {
-      const target = nodeRefId(parameters.target);
-      const concurrency = Number(parameters.concurrency ?? 1);
-      return `Map${target ? ` → ${target}` : ""} (×${String(concurrency)})`;
-    }
-
-    case "parallel": {
-      const count = nodeRefArray(parameters.branches).length;
-      return `${String(count)} parallel branch${count === 1 ? "" : "es"}`;
-    }
-
-    case "race": {
-      const count = nodeRefArray(parameters.branches).length;
-      return `Race ${String(count)} branch${count === 1 ? "" : "es"}`;
-    }
-
-    case "join": {
-      const count = nodeRefArray(parameters.wait_for).length;
-      return `Join ${String(count)} (${describeValue(parameters.mode) || "all"})`;
-    }
-
-    case "try": {
-      const parts = ["body", "catch", "finally"].filter((key) => nodeRefId(parameters[key]));
-      return parts.length ? `Try (${parts.join(", ")})` : "Try";
-    }
-
-    case "output":
-      return `Output ${describeValue(parameters.event_type) || "workflow.output"}`;
-    case "input":
-      return describeValue(parameters.prompt) || "Input";
-    case "config":
-      return describeValue(parameters.name) || "Config";
-
-    case "subflow": {
-      const subflowId = node.subflow_id != null ? displayValue(node.subflow_id) : "";
-      const name = subflowId ? subflowNames?.get(subflowId) : undefined;
-
-      if (name) {
-        return name;
-      }
-
-      return `Workflow ${subflowId || "-"}`;
-    }
-
-    case "start":
-      return "Start";
-    case "end":
-      return "Success";
-    case "fail":
-      return "Workflow failure";
-    default:
-      return workflowNodeKind(node.kind);
+    return config.action ? `${config.provider}.${config.action}` : config.provider;
   }
+
+  if (kind === "subflow") {
+    const subflowId = node.subflow_id != null ? displayValue(node.subflow_id) : "";
+    return subflowNames?.get(subflowId) ?? `Workflow ${subflowId || "-"}`;
+  }
+
+  if (kind === "start") {
+    return "Start";
+  }
+
+  if (kind === "end") {
+    return "Success";
+  }
+
+  if (kind === "fail") {
+    return "Workflow failure";
+  }
+
+  const metadata = findNodeKindMetadata(kind);
+  const fields = metadata?.fields
+    .map((field) => describeValue(getAtLocation(node, field.location)))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (fields?.length) {
+    return fields.join(" · ");
+  }
+
+  return metadata?.label ?? kind;
 }
 
 function approvalPrompt(node: JsonRecord, state?: JsonRecord): string | undefined {
