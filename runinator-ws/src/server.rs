@@ -18,14 +18,11 @@ use tokio::{
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::background::{
-    instance_id, run_action_dispatch_publisher, run_event_consumer, run_ingress_consumer,
-    run_ready_node_reaper, run_replica_reaper, run_trigger_loop, run_usage_sampler,
-    run_wake_publisher,
-};
+use runinator_engine::{EnginePublisher, run_background_engine};
+
+use crate::event_consumer::{instance_id, run_event_consumer};
 use crate::events::{AppEvent, EventBus};
 use crate::handlers::catalog::seed_builtin_catalog;
-use crate::result_consumer::run_result_consumer;
 use crate::router::build_router;
 
 /// what this web service replica advertises to the replica list at registration and on every
@@ -45,6 +42,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     advertisement: ReplicaAdvertisement,
     auth: crate::auth::AuthOptions,
     rate_limit: crate::rate_limit::RateLimitConfig,
+    run_engine: bool,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
     seed_builtin_catalog(pool.as_ref()).await?;
@@ -139,45 +137,45 @@ pub async fn run_webserver<T: DatabaseImpl>(
     // the bus publishes emitted events to the broker; the event consumer is the sole writer to the
     // local broadcast that feeds this replica's WebSocket clients.
     let bus = EventBus::new(events_tx.clone(), broker.clone());
-    background.spawn(run_result_consumer(
-        pool.clone(),
-        broker.clone(),
-        bus.clone(),
-        notify.clone(),
-    ));
-    background.spawn(run_ingress_consumer(
-        pool.clone(),
-        broker.clone(),
-        bus.clone(),
-        instance.clone(),
-        notify.clone(),
-    ));
-    background.spawn(run_wake_publisher(
-        pool.clone(),
-        broker.clone(),
-        notify.clone(),
-    ));
-    background.spawn(run_trigger_loop(
-        pool.clone(),
-        bus.clone(),
-        instance.clone(),
-        notify.clone(),
-    ));
-    background.spawn(run_action_dispatch_publisher(
-        pool.clone(),
-        broker.clone(),
-        instance.clone(),
-        notify.clone(),
-    ));
+    // every replica consumes the broker fan-out events channel so its WebSocket clients see events
+    // emitted by any replica or a standalone background worker, regardless of who did the work.
     background.spawn(run_event_consumer(
         broker.clone(),
         events_tx.clone(),
         instance.clone(),
         notify.clone(),
     ));
-    background.spawn(run_replica_reaper(pool.clone(), notify.clone()));
-    background.spawn(run_ready_node_reaper(pool.clone(), notify.clone()));
-    background.spawn(run_usage_sampler(pool.clone(), notify.clone()));
+    // run the durable orchestration engine in-process unless a standalone background worker owns it.
+    // the engine publishes UI events onto the broker; this replica's event consumer above fans them
+    // out to WebSocket clients either way.
+    if run_engine {
+        info!("embedding the background orchestration engine in-process");
+        let engine_pool = pool.clone();
+        let engine_broker = broker.clone();
+        let engine_publisher = EnginePublisher::new(broker.clone());
+        let engine_instance = instance.clone();
+        let engine_shutdown = notify.clone();
+        background.spawn(async move {
+            // run_background_engine drives its own shutdown on internal loop failure, so a returned
+            // Err has already notified `notify`; returning here surfaces the exit to the join below.
+            if let Err(err) = run_background_engine(
+                engine_pool,
+                engine_broker,
+                engine_publisher,
+                engine_instance,
+                engine_shutdown,
+            )
+            .await
+            {
+                error!("in-process background engine exited: {err}");
+            }
+        });
+    } else {
+        info!(
+            "background orchestration engine is DISABLED in-process; a standalone \
+             runinator-background-worker must run it"
+        );
+    }
     if rate_limit.enabled {
         info!(
             requests_per_second = rate_limit.requests_per_second,
@@ -235,7 +233,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
             crate::stability::record_background_loop_failure();
             notify.notify_waiters();
             background.shutdown().await;
-            Err(crate::errors::BACKGROUND_LOOP_EXITED.bare())
+            Err(runinator_engine::errors::BACKGROUND_LOOP_EXITED.bare())
         }
     }
 }

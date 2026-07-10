@@ -2193,13 +2193,12 @@ async fn result_consumer_acks_duplicate_deliveries_and_persists_results_once() {
     );
     let broker = Arc::new(RecordingBroker::new());
     let broker_for_consumer: Arc<dyn Broker> = broker.clone();
-    let (events, _rx) = tokio::sync::broadcast::channel(16);
-    let bus = crate::events::EventBus::new(events, broker_for_consumer.clone());
+    let publisher = runinator_engine::EnginePublisher::new(broker_for_consumer.clone());
     let shutdown = Arc::new(Notify::new());
     let consumer = tokio::spawn(crate::result_consumer::run_result_consumer(
         db.clone(),
         broker_for_consumer,
-        bus,
+        publisher,
         shutdown.clone(),
     ));
 
@@ -2265,13 +2264,12 @@ async fn result_consumer_dead_letters_poison_result_events_after_retries() {
     );
     let broker = Arc::new(RecordingBroker::new());
     let broker_for_consumer: Arc<dyn Broker> = broker.clone();
-    let (events, _rx) = tokio::sync::broadcast::channel(16);
-    let bus = crate::events::EventBus::new(events, broker_for_consumer.clone());
+    let publisher = runinator_engine::EnginePublisher::new(broker_for_consumer.clone());
     let shutdown = Arc::new(Notify::new());
     let consumer = tokio::spawn(crate::result_consumer::run_result_consumer_with_policy(
         db.clone(),
         broker_for_consumer,
-        bus,
+        publisher,
         shutdown.clone(),
         crate::result_consumer::ResultConsumerPolicy::new(2, Duration::from_millis(1)),
     ));

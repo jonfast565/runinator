@@ -5,7 +5,7 @@ use runinator_comm::{ControlCommand, ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::workflows::WorkflowStatus;
-use tokio::sync::{Notify, broadcast};
+use tokio::sync::Notify;
 use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
@@ -13,8 +13,6 @@ use crate::{
     events::{AppEvent, EventSender, emit, emit_workflow_run},
     repository, stability,
 };
-
-const EVENT_CONSUMER_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
 const INGRESS_CONSUMER_ID: &str = "runinator-ws-ingress";
 const WAKE_PUBLISH_INTERVAL: Duration = Duration::from_millis(1000);
@@ -31,7 +29,7 @@ const READY_NODE_REAP_LIMIT: i64 = 1000;
 
 /// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
 /// (the durable backstop). the broker dedupes wakes already in flight.
-pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
+pub async fn run_wake_publisher<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
@@ -60,7 +58,7 @@ pub(crate) async fn run_wake_publisher<T: DatabaseImpl>(
 /// hard-delete rows that have stayed quiet far longer so offline replicas do not pile up forever.
 /// the reducer-facing views derive stale state per fetch; this loop is the durable cleanup that
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
-pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("replica reaper started");
     loop {
         match repository::reap_inactive_replicas(db.as_ref()).await {
@@ -103,7 +101,7 @@ pub(crate) async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Ar
 /// completion (a ws/broker/db crash mid-transition), preventing orphaned rows from being rescanned
 /// by the wake publisher forever and bloating the ready table. batched so a large post-outage
 /// backlog drains over several ticks rather than in one long-held lock.
-pub(crate) async fn run_ready_node_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_ready_node_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("ready node reaper started");
     loop {
         match repository::settle_terminal_run_ready_nodes(db.as_ref(), READY_NODE_REAP_LIMIT).await
@@ -130,12 +128,34 @@ pub(crate) async fn run_ready_node_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown:
 /// periodically record each org's dedicated node allocation into the usage ledger so per-org
 /// node-hours (and cost) can be integrated over time. sampling the recorded allocations keeps
 /// accounting exact and provisioner-independent; a missed sample only reduces temporal resolution.
-pub(crate) async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+// floor a timestamp to the start of its `interval`-sized window, so instances sampling the same
+// window agree on the bucketed `sampled_at` key. falls back to the raw time if the interval is zero.
+fn bucket_to_interval(
+    now: chrono::DateTime<chrono::Utc>,
+    interval: Duration,
+) -> chrono::DateTime<chrono::Utc> {
+    let secs = interval.as_secs() as i64;
+    if secs <= 0 {
+        return now;
+    }
+    let bucketed = now.timestamp() - now.timestamp().rem_euclid(secs);
+    chrono::DateTime::from_timestamp(bucketed, 0).unwrap_or(now)
+}
+
+#[cfg(test)]
+#[path = "loops_tests.rs"]
+mod tests;
+
+pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("usage sampler started");
     loop {
         match db.list_all_resource_groups().await {
             Ok(groups) => {
-                let now = chrono::Utc::now();
+                // bucket the timestamp to the sampling-interval boundary so every instance sampling
+                // the same window produces the same (org, backend, kind, sampled_at) key; the insert
+                // is an idempotent DO-NOTHING upsert, so N-up sampling converges to one row per
+                // window instead of over-counting node-hours by the instance count.
+                let now = bucket_to_interval(chrono::Utc::now(), USAGE_SAMPLE_INTERVAL);
                 for group in groups {
                     let org_id = group.org_id;
                     let sample = runinator_models::billing::UsageSample {
@@ -170,7 +190,7 @@ pub(crate) async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc
 }
 
 /// periodically turn due workflow triggers into runs (formerly a waker loop, now in-process).
-pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
+pub async fn run_trigger_loop<T: DatabaseImpl>(
     db: Arc<T>,
     events: EventSender,
     instance_id: String,
@@ -213,7 +233,7 @@ pub(crate) async fn run_trigger_loop<T: DatabaseImpl>(
 }
 
 /// periodically drain durable action-dispatch intents and publish them to the broker action channel.
-pub(crate) async fn run_action_dispatch_publisher<T: DatabaseImpl>(
+pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance_id: String,
@@ -247,7 +267,7 @@ pub(crate) async fn run_action_dispatch_publisher<T: DatabaseImpl>(
 
 /// consume the ingress channel: drive requests (from wakers) run the reducer, control requests
 /// (from workers) pause/resume/cancel a run. the web service is the sole consumer.
-pub(crate) async fn run_ingress_consumer<T: DatabaseImpl>(
+pub async fn run_ingress_consumer<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     events: EventSender,
@@ -465,47 +485,4 @@ async fn signal_canceled_executing_node_runs<T: DatabaseImpl>(
             );
         }
     }
-}
-
-/// consume the broker fan-out events channel and re-broadcast every event to this replica's local
-/// WebSocket clients. each replica subscribes with its own per-replica `instance_id`, so every
-/// replica receives every UI event regardless of which replica emitted it.
-pub(crate) async fn run_event_consumer(
-    broker: Arc<dyn Broker>,
-    local: broadcast::Sender<AppEvent>,
-    instance_id: String,
-    shutdown: Arc<Notify>,
-) {
-    info!("event consumer started");
-    loop {
-        let received = tokio::select! {
-            _ = shutdown.notified() => {
-                info!("event consumer shutting down");
-                return;
-            }
-            received = broker.receive_event(&instance_id) => received,
-        };
-        match received {
-            // a send error just means no WebSocket clients are connected right now; events are
-            // best-effort, so drop it.
-            Ok(delivery) => {
-                let _ = local.send(delivery.event);
-            }
-            Err(err) => {
-                error!(
-                    error_code = error_code_or_unknown(&err),
-                    "failed to receive UI event: {}", err
-                );
-                tokio::select! {
-                    _ = shutdown.notified() => return,
-                    _ = tokio::time::sleep(EVENT_CONSUMER_RETRY_BACKOFF) => {}
-                }
-            }
-        }
-    }
-}
-
-/// a stable per-process identifier used when claiming database rows.
-pub(crate) fn instance_id() -> String {
-    format!("runinator-ws-{}", Uuid::new_v4())
 }

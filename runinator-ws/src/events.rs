@@ -1,29 +1,33 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use runinator_broker::{Broker, EventMessage};
+use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_engine::EnginePublisher;
 use runinator_models::runs::RunStatus;
 use tokio::sync::broadcast;
-
-use crate::repository;
 
 // the UI event contract lives in runinator-comm so it can cross the broker fan-out events channel.
 pub use runinator_comm::UiEvent as AppEvent;
 
-/// fan-out bus for UI events. emitting publishes to the broker `events` channel; the per-replica
-/// event consumer ([`crate::background::run_event_consumer`]) is the sole writer to the local
-/// broadcast that feeds this replica's WebSocket clients. this keeps every ws replica's clients in
-/// sync regardless of which replica did the work.
+/// fan-out bus for UI events. it keeps the local broadcast that feeds this replica's WebSocket
+/// clients (via [`EventBus::subscribe`], written solely by
+/// [`crate::event_consumer::run_event_consumer`]) and delegates every emit to the shared
+/// [`EnginePublisher`], so ws handlers and the background engine publish onto the broker `events`
+/// channel through one code path. this keeps every ws replica's clients in sync regardless of which
+/// replica (or a standalone background worker) did the work.
 #[derive(Clone)]
 pub struct EventBus {
     local: broadcast::Sender<AppEvent>,
-    broker: Arc<dyn Broker>,
+    publisher: EnginePublisher,
 }
 
 impl EventBus {
     pub fn new(local: broadcast::Sender<AppEvent>, broker: Arc<dyn Broker>) -> Self {
-        Self { local, broker }
+        Self {
+            local,
+            publisher: EnginePublisher::new(broker),
+        }
     }
 
     /// subscribe a WebSocket client to this replica's locally-broadcast events.
@@ -32,39 +36,19 @@ impl EventBus {
     }
 }
 
-// the threaded handle stays named EventSender so handler/loop signatures are unchanged.
+// the threaded handle stays named EventSender so handler signatures are unchanged.
 pub type EventSender = EventBus;
 
 pub(crate) fn emit(events: &EventSender, event: AppEvent) {
-    // publish to the broker; the per-replica consumer re-broadcasts to every replica's clients.
-    let broker = events.broker.clone();
-    tokio::spawn(async move {
-        if let Err(err) = broker.publish_event(EventMessage::new(event)).await {
-            log::warn!("failed to publish UI event: {}", err);
-        }
-    });
+    runinator_engine::events::emit(&events.publisher, event);
 }
 
 pub(crate) fn emit_workflow_run(events: &EventSender, run_id: Uuid) {
-    emit(events, AppEvent::WorkflowRunChanged { run_id });
+    runinator_engine::events::emit_workflow_run(&events.publisher, run_id);
 }
 
 pub(crate) fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus) {
-    emit(
-        events,
-        AppEvent::RunStatusChanged {
-            run_id,
-            terminal: is_terminal_run_status(status),
-        },
-    );
-    emit(events, AppEvent::TasksChanged);
-}
-
-pub(crate) fn is_terminal_run_status(status: RunStatus) -> bool {
-    matches!(
-        status,
-        RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
-    )
+    runinator_engine::events::emit_task_run(&events.publisher, run_id, status);
 }
 
 pub(crate) async fn emit_workflow_node_run<T: DatabaseImpl>(
@@ -72,8 +56,6 @@ pub(crate) async fn emit_workflow_node_run<T: DatabaseImpl>(
     events: &EventSender,
     workflow_node_run_id: Uuid,
 ) {
-    if let Ok(Some(node_run)) = repository::fetch_workflow_node_run(db, workflow_node_run_id).await
-    {
-        emit_workflow_run(events, node_run.workflow_run_id);
-    }
+    runinator_engine::events::emit_workflow_node_run(db, &events.publisher, workflow_node_run_id)
+        .await;
 }

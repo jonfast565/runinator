@@ -226,6 +226,9 @@ fn id_flag(kind: ReplicaKind) -> &'static str {
     match kind {
         ReplicaKind::Worker => "--worker-id",
         ReplicaKind::Waker => "--waker-id",
-        ReplicaKind::Webservice | ReplicaKind::Postgres | ReplicaKind::Archiver => "--instance-id",
+        ReplicaKind::Webservice
+        | ReplicaKind::Background
+        | ReplicaKind::Postgres
+        | ReplicaKind::Archiver => "--instance-id",
     }
 }

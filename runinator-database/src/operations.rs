@@ -4609,10 +4609,18 @@ where
     }
 
     async fn insert_usage_sample(&self, sample: UsageSample) -> Result<(), SendableError> {
-        sqlx::query(&self.render(
+        // idempotent per (org, backend, kind, sampled_at): the sampler buckets sampled_at to the
+        // interval boundary, so any number of ws replicas / background workers sampling the same
+        // window converge to one row instead of over-counting node-hours by the instance count.
+        let conflict = queries::on_conflict_nothing(
+            self.dialect(),
+            "org_id, backend, kind, sampled_at",
+            "node_count",
+        );
+        sqlx::query(&self.render(&format!(
             "INSERT INTO org_usage_ledger (id, org_id, backend, kind, node_count, sampled_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        ))
+             VALUES (?, ?, ?, ?, ?, ?) {conflict}",
+        )))
         .bind(Uuid::now_v7())
         .bind(sample.org_id)
         .bind(sample.backend.as_str())

@@ -5,9 +5,10 @@
 # so shared dependencies are compiled once instead of once per image. each
 # service has its own thin final stage; select it with `--target <service>`:
 #
-#   docker build -f deploy/Dockerfile --target ws        -t runinator-ws:dev        .
-#   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
-#   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
+#   docker build -f deploy/Dockerfile --target ws         -t runinator-ws:dev         .
+#   docker build -f deploy/Dockerfile --target background -t runinator-background:dev  .
+#   docker build -f deploy/Dockerfile --target waker      -t runinator-waker:dev      .
+#   docker build -f deploy/Dockerfile --target worker     -t runinator-worker:dev     .
 #   docker build -f deploy/Dockerfile --target archiver  -t runinator-archiver:dev  .
 #   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
 #   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
@@ -26,13 +27,14 @@ RUN rustup install 1.91.1 && \
     rustup default 1.91.1 && \
     cargo build --release \
         -p runinator-ws \
+        -p runinator-background-worker \
         -p runinator-worker \
         -p runinator-archiver \
         -p runinator-waker \
         -p runinator-ctl \
         -p runinator-bootstrap \
         -p runinator-plugin-console \
-        --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-worker/rabbitmq,runinator-waker/rabbitmq
+        --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq
 
 # ---- shared runtime base ----
 FROM alpine:${ALPINE_VERSION} AS runtime-base
@@ -51,6 +53,15 @@ RUN chown -R runinator:runinator /usr/local/bin/runinator-ws \
 EXPOSE 8080
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-ws"]
+
+# ---- background: standalone durable orchestration engine (ws with RUNINATOR_WS_RUN_ENGINE=false
+#      offloads its engine here so HTTP replicas and engine replicas scale independently) ----
+FROM runtime-base AS background
+COPY --from=builder /workspace/target/release/runinator-background-worker /usr/local/bin/runinator-background-worker
+RUN chown -R runinator:runinator /usr/local/bin/runinator-background-worker \
+    && chmod -R 775 /usr/local/bin/runinator-background-worker
+USER runinator
+ENTRYPOINT ["/usr/local/bin/runinator-background-worker"]
 
 # ---- waker ----
 FROM runtime-base AS waker

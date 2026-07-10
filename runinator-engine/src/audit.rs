@@ -10,7 +10,7 @@ use tracing::error;
 use uuid::Uuid;
 
 /// persist a dead-lettered broker message so a failed delivery leaves a durable record.
-pub(crate) async fn persist_dead_letter<T: DatabaseImpl>(
+pub async fn persist_dead_letter<T: DatabaseImpl>(
     db: &T,
     channel: &str,
     event_id: Option<Uuid>,
@@ -37,7 +37,7 @@ pub(crate) async fn persist_dead_letter<T: DatabaseImpl>(
 }
 
 /// outcome of an audited action, used for the `outcome` column.
-pub(crate) enum AuditOutcome {
+pub enum AuditOutcome {
     Success,
     Failure,
     Denied,
@@ -56,7 +56,7 @@ impl AuditOutcome {
 /// append an audit-log entry. `actor_id`/`actor_kind` describe the principal; `resource_*` are
 /// optional and name the affected resource for authz decisions.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn record_audit<T: DatabaseImpl>(
+pub async fn record_audit<T: DatabaseImpl>(
     db: &T,
     actor_id: Option<Uuid>,
     actor_kind: &str,

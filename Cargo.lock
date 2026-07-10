@@ -7125,6 +7125,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-background-worker"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "log",
+ "reqwest",
+ "runinator-broker",
+ "runinator-database",
+ "runinator-db-cli",
+ "runinator-engine",
+ "runinator-models",
+ "runinator-utilities",
+ "rustls 0.23.40",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-bootstrap"
 version = "0.1.0"
 dependencies = [
@@ -7285,6 +7303,30 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-engine"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "log",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "opentelemetry",
+ "runinator-broker",
+ "runinator-comm",
+ "runinator-database",
+ "runinator-models",
+ "runinator-reducer",
+ "runinator-utilities",
+ "runinator-workflows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "utoipa",
  "uuid",
 ]
 
@@ -7726,6 +7768,7 @@ dependencies = [
  "runinator-comm",
  "runinator-database",
  "runinator-db-cli",
+ "runinator-engine",
  "runinator-models",
  "runinator-provider-catalog",
  "runinator-provisioner",

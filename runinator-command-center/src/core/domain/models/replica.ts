@@ -1,6 +1,12 @@
 import type { JsonRecord } from "../json";
 
-export type ReplicaKind = "worker" | "waker" | "webservice" | "postgres" | "archiver";
+export type ReplicaKind =
+  | "worker"
+  | "waker"
+  | "webservice"
+  | "background"
+  | "postgres"
+  | "archiver";
 
 export type ReplicaStatus = "live" | "stale" | "offline";
 
@@ -27,6 +33,7 @@ export interface ReplicaCounts {
   workers: number;
   wakers: number;
   webservices: number;
+  background: number;
 }
 
 export interface ReplicaListResponse {

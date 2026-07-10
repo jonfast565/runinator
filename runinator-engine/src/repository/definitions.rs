@@ -3,8 +3,10 @@ use super::{catalog, triggers};
 use runinator_models::semver::SemVerBump;
 use uuid::Uuid;
 
-#[cfg(test)]
-pub(crate) fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
+/// shallow-merge `parameters` over `defaults` when both are json objects; used by task-parameter
+/// defaulting tests, including cross-crate ones under the `test-support` feature.
+#[cfg(any(test, feature = "test-support"))]
+pub fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     match (defaults, parameters) {
         (Value::Object(defaults), Value::Object(parameters)) => {
             let mut merged = defaults.clone();
@@ -34,7 +36,7 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
     let providers = catalog::fetch_catalog_items(db, Some("provider_metadata".into())).await?;
     let providers = provider_metadata_from_items(providers)?;
     // type-check `config.*` references against the stored settings schema.
-    let config_type = crate::handlers::credentials::config_type_tree(db).await;
+    let config_type = crate::settings::config_type_tree(db).await;
     runinator_workflows::validate_workflow_with_config(&workflow, &providers, &config_type)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     validate_workflow_subflows(db, &workflow).await?;

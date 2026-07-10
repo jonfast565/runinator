@@ -198,7 +198,26 @@ The web service owns the reducer and drives workflows over the broker: it
 publishes scheduled work on the `wake` channel, and the `runinator-waker` (a
 small, broker-only timer/relay) sleeps until each ready node is due and then
 publishes a `drive` on the `ingress` channel that the web service consumes to
-advance the run. The waker holds no state and reaches the web service only over
+advance the run.
+
+The durable orchestration engine — the reducer plus the wake/trigger/action/
+ingress loops, the result consumer, and the replica/ready-node/usage maintenance
+backstops — lives in the `runinator-engine` library crate and can run in either
+of two topologies. By default `runinator-ws` embeds it in-process
+(`RUNINATOR_WS_RUN_ENGINE=true`), so the single-process local/dev/supervisor
+stack runs everything as-is. Setting `RUNINATOR_WS_RUN_ENGINE=false` makes ws
+serve HTTP/WebSocket only and offloads the engine to one or more standalone
+`runinator-background-worker` processes that talk to the same database and broker
+directly (not the ws HTTP API), so HTTP replicas and engine replicas scale
+independently. The engine is multi-replica safe: durable claims/leases
+(`FOR UPDATE SKIP LOCKED`), shared-group result/ingress consumers, broker-deduped
+wakes, and an idempotent per-window usage sampler let any number of
+`runinator-background-worker` (and/or engine-embedding ws) replicas run
+active/active. Background workers register as `background` replicas and appear in
+the fleet/replica view. The Kubernetes base (`deploy/k8s/base`) and
+`deploy/docker-compose.yml` ship the split topology; flip ws back to
+`RUNINATOR_WS_RUN_ENGINE=true` and drop the background Deployment to fold it back
+in-process. The waker holds no state and reaches the web service only over
 the broker, so multiple waker replicas can run active/active. SQLite remains
 the default for simple local development and single-process stacks. MariaDB and
 Postgres are also supported for local development when you want a server-backed

@@ -29,6 +29,7 @@ opentelemetry = "0.32"
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }
+runinator-engine = { path = "../runinator-engine" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
 runinator-db-cli = { path = "../runinator-db-cli" }
@@ -43,10 +44,14 @@ runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [dev-dependencies]
 async-trait = "0.1"
+# enable the engine's in-crate test hooks (forced-failure injection, test helpers) so the
+# result-consumer/repository integration tests can drive engine behavior. dev-only, so normal
+# builds never compile the hooks in.
+runinator-engine = { path = "../runinator-engine", features = ["test-support"] }
 
 [features]
-kafka = ["runinator-broker/kafka"]
-rabbitmq = ["runinator-broker/rabbitmq"]
+kafka = ["runinator-broker/kafka", "runinator-engine/kafka"]
+rabbitmq = ["runinator-broker/rabbitmq", "runinator-engine/rabbitmq"]
 # enables the real `WsBroker` client, needed to test the /ws/desktop-worker relay end to end.
 ws = ["runinator-broker/ws"]
 # cloud builds: enable the kube-rs node provisioner backend.

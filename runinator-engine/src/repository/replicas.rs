@@ -9,11 +9,11 @@ use uuid::Uuid;
 
 const REPLICA_STALE_SECONDS: i64 = 30;
 // inactivity window after which a stale replica is reaped to offline.
-pub(crate) const REPLICA_REAP_SECONDS: i64 = 600;
+pub const REPLICA_REAP_SECONDS: i64 = 600;
 // inactivity window after which an offline replica row is hard-deleted (60 minutes).
-pub(crate) const REPLICA_DELETE_SECONDS: i64 = 3600;
+pub const REPLICA_DELETE_SECONDS: i64 = 3600;
 // retention window for telemetry samples; older points are pruned by the reaper. 24 hours.
-pub(crate) const REPLICA_SAMPLE_RETENTION_SECONDS: i64 = 86_400;
+pub const REPLICA_SAMPLE_RETENTION_SECONDS: i64 = 86_400;
 // default window and cap when serving the samples endpoint.
 const REPLICA_SAMPLE_DEFAULT_WINDOW_SECONDS: i64 = 3_600;
 const REPLICA_SAMPLE_MAX_POINTS: i64 = 1_000;
@@ -139,6 +139,13 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
             .filter(|replica| {
                 replica.status == ReplicaStatus::Live
                     && replica.replica_type == ReplicaKind::Webservice
+            })
+            .count() as i64,
+        background: replicas
+            .iter()
+            .filter(|replica| {
+                replica.status == ReplicaStatus::Live
+                    && replica.replica_type == ReplicaKind::Background
             })
             .count() as i64,
     };

@@ -1,12 +1,17 @@
 // typed encoding and validation for the unified settings store. config values carry a json-schema
 // (declared on the request, else inferred from the value on first write) that is pinned per
 // (scope, name) and validated on every later write (hard error on mismatch); secrets are
-// implicitly string-typed. these helpers are pure: callers pass the previously-stored schema
-// (decoded from the persisted bytes) so this module never touches the database.
+// implicitly string-typed. the encode/decode helpers are pure: callers pass the previously-stored
+// schema (decoded from the persisted bytes) so they never touch the database. `config_type_tree`
+// is the one database-reading helper, used by workflow validation to type-check `config.*` refs.
 
+use std::collections::BTreeMap;
+
+use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
+use runinator_utilities::secret_cipher::SecretCipher;
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +24,7 @@ struct StoredConfig {
 }
 
 /// decode a stored config payload back to its json value (back-compat: a bare value or string).
-pub(crate) fn decode_config_value(bytes: &[u8]) -> Value {
+pub fn decode_config_value(bytes: &[u8]) -> Value {
     if let Ok(stored) = serde_json::from_slice::<StoredConfig>(bytes) {
         return stored.value;
     }
@@ -28,7 +33,7 @@ pub(crate) fn decode_config_value(bytes: &[u8]) -> Value {
 }
 
 /// the schema pinned in a stored config payload, if it carries one.
-pub(crate) fn decode_config_schema(bytes: &[u8]) -> Option<Value> {
+pub fn decode_config_schema(bytes: &[u8]) -> Option<Value> {
     serde_json::from_slice::<StoredConfig>(bytes)
         .ok()
         .map(|stored| stored.schema)
@@ -36,7 +41,7 @@ pub(crate) fn decode_config_schema(bytes: &[u8]) -> Option<Value> {
 
 /// the pinned type of a stored config slot, decoded from its bytes (back-compat: infer from the
 /// bare value when no schema is stored).
-pub(crate) fn stored_config_type(bytes: &[u8]) -> Option<RuninatorType> {
+pub fn stored_config_type(bytes: &[u8]) -> Option<RuninatorType> {
     match decode_config_schema(bytes) {
         Some(schema) => Some(RuninatorType::from_json_schema(&schema)),
         None => Some(RuninatorType::infer_from_value(&decode_config_value(bytes))),
@@ -47,7 +52,7 @@ pub(crate) fn stored_config_type(bytes: &[u8]) -> Option<RuninatorType> {
 /// schema (the request's, else `stored_schema` pinned on the first write, else one inferred from
 /// the value on first write) and must conform to it; secrets must be a non-empty string.
 /// `stored_schema` is the schema decoded from this slot's previously-stored bytes, if any.
-pub(crate) fn validate_and_encode(
+pub fn validate_and_encode(
     kind: SettingKind,
     scope: &str,
     name: &str,
@@ -100,6 +105,46 @@ fn value_type(value: &Value) -> &'static str {
         Value::Array(_) => "array",
         Value::Object(_) => "object",
     }
+}
+
+// the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
+// rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
+// only the web service and engine hold the keys.
+fn settings_cipher() -> SecretCipher {
+    SecretCipher::from_env()
+}
+
+/// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
+/// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
+/// stays permissive (`any`) rather than failing validation.
+pub async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
+    let cipher = settings_cipher();
+    let Ok(entries) = db.list_settings().await else {
+        return RuninatorType::map(RuninatorType::Any);
+    };
+    let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();
+    for entry in entries {
+        if entry.kind != SettingKind::Config {
+            continue;
+        }
+        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
+            continue;
+        };
+        let Some(ty) = stored_config_type(&plaintext) else {
+            continue;
+        };
+        scopes
+            .entry(entry.scope)
+            .or_default()
+            .insert(entry.name, ty);
+    }
+    let scope_fields = scopes.into_iter().map(|(scope, names)| {
+        (
+            scope,
+            RuninatorType::open_structure(names, RuninatorType::Any),
+        )
+    });
+    RuninatorType::open_structure(scope_fields, RuninatorType::Any)
 }
 
 #[cfg(test)]

@@ -1,0 +1,73 @@
+# Standalone durable orchestration engine, split out of ws so HTTP replicas and engine replicas
+# scale independently. The engine talks to postgres + rabbitmq directly (not the ws HTTP API) and
+# is multi-replica safe: durable claims/leases (FOR UPDATE SKIP LOCKED), shared-group result/ingress
+# consumers, broker-deduped wakes, and the idempotent per-window usage sampler. ws runs with
+# RUNINATOR_WS_RUN_ENGINE=false so exactly one tier owns the loops.
+#
+# Headless Service so the pods have a resolvable DNS name to advertise to the replica list. Nothing
+# dials into them, so this exists purely for discovery/observability, not load balancing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-background
+  namespace: runinator
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: runinator-background
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-background
+  namespace: runinator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: runinator-background
+  template:
+    metadata:
+      labels:
+        app: runinator-background
+    spec:
+      containers:
+        - name: background
+          image: runinator-background:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-background-worker"]
+          args:
+            - "--database"
+            - "postgres"
+            - "--database-url"
+            - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+            - "--instance-id"
+            - "$(POD_NAME)"
+            - "--broker-backend"
+            - "rabbitmq"
+            - "--broker-endpoint"
+            - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
+            - "--broker-client-id"
+            - "runinator-background-$(POD_NAME)"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-postgres-secret
+            - secretRef:
+                name: runinator-rabbitmq-secret
+            - secretRef:
+                name: runinator-app-secret
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"

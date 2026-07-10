@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use runinator_models::errors::{RuntimeError, SendableError};
 use tokio::sync::Notify;
 use tracing::{Instrument, error, info, warn};
@@ -21,7 +21,7 @@ const DEFAULT_RESULT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 const DEFAULT_RESULT_MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ResultConsumerPolicy {
+pub struct ResultConsumerPolicy {
     max_attempts: u32,
     retry_backoff: Duration,
     max_backoff: Duration,
@@ -38,8 +38,9 @@ impl Default for ResultConsumerPolicy {
 }
 
 impl ResultConsumerPolicy {
-    #[cfg(test)]
-    pub(crate) fn new(max_attempts: u32, retry_backoff: Duration) -> Self {
+    /// build a policy with an explicit attempt cap and base retry backoff; used by callers that
+    /// tune the consumer (and by cross-crate tests) rather than taking the environment default.
+    pub fn new(max_attempts: u32, retry_backoff: Duration) -> Self {
         Self {
             max_attempts,
             retry_backoff,
@@ -52,7 +53,7 @@ impl ResultConsumerPolicy {
     /// the base doubles per attempt (`base * 2^(attempt-1)`), is capped at `max_backoff`, then a
     /// uniformly random fraction in `[0, capped]` is taken (full jitter) to avoid thundering-herd
     /// retries when many events fail at once. `attempt` is 1-based (the first retry).
-    pub(crate) fn backoff_for(&self, attempt: u32) -> Duration {
+    pub fn backoff_for(&self, attempt: u32) -> Duration {
         let base = self.retry_backoff.as_millis().max(1) as u64;
         let max = self.max_backoff.as_millis().max(1) as u64;
         // shift by attempt-1, saturating so a large attempt count cannot overflow.
@@ -78,7 +79,7 @@ fn jitter_millis(ceiling: u64) -> u64 {
     nanos % (ceiling + 1)
 }
 
-pub(crate) async fn run_result_consumer<T: DatabaseImpl>(
+pub async fn run_result_consumer<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     events: EventSender,
@@ -94,7 +95,7 @@ pub(crate) async fn run_result_consumer<T: DatabaseImpl>(
     .await;
 }
 
-pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
+pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     events: EventSender,
@@ -218,7 +219,7 @@ pub(crate) async fn run_result_consumer_with_policy<T: DatabaseImpl>(
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 async fn apply_result_event<T: DatabaseImpl>(
     db: &T,
     event: &runinator_comm::WorkflowResultEvent,
@@ -226,7 +227,7 @@ async fn apply_result_event<T: DatabaseImpl>(
     repository::apply_workflow_result_event(db, event).await
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 async fn apply_result_event<T: DatabaseImpl>(
     db: &T,
     event: &runinator_comm::WorkflowResultEvent,

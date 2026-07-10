@@ -10,6 +10,7 @@ pub enum ReplicaKind {
     Worker,
     Waker,
     Webservice,
+    Background,
     Postgres,
     Archiver,
 }
@@ -20,6 +21,7 @@ impl ReplicaKind {
             Self::Worker => "worker",
             Self::Waker => "waker",
             Self::Webservice => "webservice",
+            Self::Background => "background",
             Self::Postgres => "postgres",
             Self::Archiver => "archiver",
         }
@@ -34,6 +36,7 @@ impl TryFrom<&str> for ReplicaKind {
             "worker" => Ok(Self::Worker),
             "waker" => Ok(Self::Waker),
             "webservice" => Ok(Self::Webservice),
+            "background" => Ok(Self::Background),
             "postgres" => Ok(Self::Postgres),
             "archiver" => Ok(Self::Archiver),
             other => Err(format!("Unknown replica kind '{other}'")),
@@ -169,6 +172,8 @@ pub struct ReplicaCounts {
     pub workers: i64,
     pub wakers: i64,
     pub webservices: i64,
+    #[serde(default)]
+    pub background: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -37,6 +37,17 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
+  name: runinator-background
+  namespace: runinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: runinator-background
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
   name: runinator-command-center
   namespace: runinator
 spec:

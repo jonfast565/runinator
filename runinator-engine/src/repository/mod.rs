@@ -18,7 +18,6 @@ use runinator_models::{
     },
 };
 
-use crate::handlers::providers::provider_metadata_from_items;
 pub use crate::repository_runs::{
     add_run_artifact, append_run_chunk, delete_artifact, fetch_all_artifacts, fetch_run_artifacts,
     fetch_run_chunks, fetch_runs_by_status, persist_artifact_file, update_run_status,
@@ -29,6 +28,7 @@ mod catalog;
 mod debug;
 mod definitions;
 mod node_runs;
+mod provider_meta;
 mod replicas;
 mod runs;
 mod support;
@@ -38,6 +38,7 @@ pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
 pub use node_runs::*;
+pub use provider_meta::{provider_metadata_from_item, provider_metadata_from_items};
 pub use replicas::*;
 pub use runs::*;
 pub use triggers::*;

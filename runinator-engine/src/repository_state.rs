@@ -1,6 +1,6 @@
 use runinator_models::workflows::WorkflowNodeRun;
 
-pub(crate) fn latest_node_run_for<'a>(
+pub fn latest_node_run_for<'a>(
     node_runs: &'a [WorkflowNodeRun],
     node_id: &str,
 ) -> Option<&'a WorkflowNodeRun> {

@@ -34,7 +34,7 @@ describe("service connection state", () => {
           last_seen_at: "",
         },
       ],
-      { workers: 1, wakers: 0, webservices: 0 },
+      { workers: 1, wakers: 0, webservices: 0, background: 0 },
     );
     expect(app.serviceBlocked).toBe(false);
 
@@ -47,7 +47,7 @@ describe("service connection state", () => {
     expect(app.interactionsDisabled).toBe(true);
     expect(app.loadingMessage).toBe("Waiting for Runinator service...");
     expect(app.replicas).toEqual([]);
-    expect(app.replicaCounts).toEqual({ workers: 0, wakers: 0, webservices: 0 });
+    expect(app.replicaCounts).toEqual({ workers: 0, wakers: 0, webservices: 0, background: 0 });
   });
 
   it("surfaces a dismissible outage and disables interactions when a known backend becomes unreachable", () => {
@@ -131,7 +131,7 @@ describe("service connection state", () => {
       },
     ]);
 
-    expect(app.replicaCounts).toEqual({ workers: 2, wakers: 0, webservices: 1 });
+    expect(app.replicaCounts).toEqual({ workers: 2, wakers: 0, webservices: 1, background: 0 });
     expect(app.liveReplicaCount).toBe(3);
   });
 

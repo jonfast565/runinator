@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
-use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
@@ -16,9 +14,7 @@ use runinator_utilities::secret_cipher::SecretCipher;
 
 use crate::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
 use crate::responses::{api_error, bad_request, not_found};
-use crate::settings::{
-    decode_config_schema, decode_config_value, stored_config_type, validate_and_encode,
-};
+use crate::settings::{decode_config_schema, decode_config_value, validate_and_encode};
 
 // the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
 // rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
@@ -33,39 +29,6 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(0)
-}
-
-/// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
-/// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
-/// stays permissive (`any`) rather than failing validation.
-pub(crate) async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
-    let cipher = settings_cipher();
-    let Ok(entries) = db.list_settings().await else {
-        return RuninatorType::map(RuninatorType::Any);
-    };
-    let mut scopes: BTreeMap<String, BTreeMap<String, RuninatorType>> = BTreeMap::new();
-    for entry in entries {
-        if entry.kind != SettingKind::Config {
-            continue;
-        }
-        let Some(plaintext) = cipher.try_decrypt(&entry.value) else {
-            continue;
-        };
-        let Some(ty) = stored_config_type(&plaintext) else {
-            continue;
-        };
-        scopes
-            .entry(entry.scope)
-            .or_default()
-            .insert(entry.name, ty);
-    }
-    let scope_fields = scopes.into_iter().map(|(scope, names)| {
-        (
-            scope,
-            RuninatorType::open_structure(names, RuninatorType::Any),
-        )
-    });
-    RuninatorType::open_structure(scope_fields, RuninatorType::Any)
 }
 
 pub(crate) async fn get_credential<T: DatabaseImpl>(

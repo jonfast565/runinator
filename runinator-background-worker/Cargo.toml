@@ -1,0 +1,28 @@
+[package]
+name = "runinator-background-worker"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "runinator-background-worker"
+path = "src/main.rs"
+
+[dependencies]
+log = "0.4"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+uuid = { version = "1.18", features = ["v4"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+# used only to install a process-default rustls CryptoProvider at startup (see main.rs).
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+runinator-engine = { path = "../runinator-engine" }
+runinator-broker = { path = "../runinator-broker" }
+runinator-database = { path = "../runinator-database" }
+runinator-db-cli = { path = "../runinator-db-cli" }
+runinator-models = { path = "../runinator-models" }
+runinator-utilities = { path = "../runinator-utilities" }
+
+[features]
+kafka = ["runinator-broker/kafka", "runinator-engine/kafka"]
+rabbitmq = ["runinator-broker/rabbitmq", "runinator-engine/rabbitmq"]

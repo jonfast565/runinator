@@ -66,6 +66,10 @@ services:
       - "8080:8080"
     environment:
       RUNINATOR_AUTH_ENABLED: "true"
+      # the standalone background service below owns the durable orchestration engine; this replica
+      # serves HTTP/WebSocket only. set to "true" (the default) to fold the engine back in-process
+      # and drop the background service.
+      RUNINATOR_WS_RUN_ENGINE: "false"
     command:
       - "--database"
       - "postgres"
@@ -76,6 +80,31 @@ services:
       - "--advertise-host"
       - "ws"
       - "--disable-gossip"
+      - "--broker-backend"
+      - "tcp"
+      - "--broker-endpoint"
+      - "broker:7070"
+
+  # durable orchestration engine (reducer, wake/trigger/action/ingress loops, result consumer,
+  # maintenance backstops), split out of ws so HTTP and engine scale independently. it talks to the
+  # same postgres + broker directly, not through the ws HTTP API.
+  background:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: background
+    depends_on:
+      postgres:
+        condition: service_healthy
+      broker:
+        condition: service_started
+      bootstrap:
+        condition: service_completed_successfully
+    command:
+      - "--database"
+      - "postgres"
+      - "--database-url"
+      - "postgresql://runinator:runinator@postgres:5432/runinator"
       - "--broker-backend"
       - "tcp"
       - "--broker-endpoint"

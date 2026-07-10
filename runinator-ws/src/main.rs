@@ -71,6 +71,7 @@ async fn main() -> Result<(), SendableError> {
         rate_limit_enabled,
         rate_limit_rps,
         rate_limit_burst,
+        run_engine,
     } = args;
     let auth_options = AuthOptions {
         enabled: auth_enabled,
@@ -167,6 +168,7 @@ async fn main() -> Result<(), SendableError> {
                 advertisement.clone(),
                 auth_options.clone(),
                 rate_limit_options,
+                run_engine,
             )
             .await?;
         }

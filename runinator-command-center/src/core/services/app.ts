@@ -77,7 +77,7 @@ export function createAppService() {
     searchQuery: "",
     lastRefreshAt: null,
     eventStreamState: "disconnected",
-    replicaCounts: { workers: 0, wakers: 0, webservices: 0 },
+    replicaCounts: { workers: 0, wakers: 0, webservices: 0, background: 0 },
     replicas: [],
     toasts: [],
   });
@@ -146,7 +146,7 @@ export function createAppService() {
         searchQuery: "",
         lastRefreshAt: null,
         eventStreamState: "disconnected",
-        replicaCounts: { workers: 0, wakers: 0, webservices: 0 },
+        replicaCounts: { workers: 0, wakers: 0, webservices: 0, background: 0 },
         replicas: [],
         toasts: [],
       }));
@@ -232,7 +232,7 @@ export function createAppService() {
         errorText: url ? "" : state.errorText,
         eventStreamState: url ? state.eventStreamState : "disconnected",
         replicas: url ? state.replicas : [],
-        replicaCounts: url ? state.replicaCounts : { workers: 0, wakers: 0, webservices: 0 },
+        replicaCounts: url ? state.replicaCounts : { workers: 0, wakers: 0, webservices: 0, background: 0 },
       }));
     },
     setEventStreamState(state: EventStreamState) {
@@ -252,6 +252,9 @@ export function createAppService() {
           webservices: nextReplicas.filter(
             (replica) => replica.replica_type === "webservice" && replica.status === "live",
           ).length,
+          background: nextReplicas.filter(
+            (replica) => replica.replica_type === "background" && replica.status === "live",
+          ).length,
         },
       }));
     },
@@ -259,7 +262,7 @@ export function createAppService() {
       store.setState((state) => ({
         ...state,
         replicas: [],
-        replicaCounts: { workers: 0, wakers: 0, webservices: 0 },
+        replicaCounts: { workers: 0, wakers: 0, webservices: 0, background: 0 },
       }));
     },
     setInitialLoading(value: boolean) {

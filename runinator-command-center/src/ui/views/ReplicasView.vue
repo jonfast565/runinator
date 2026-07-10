@@ -299,6 +299,8 @@ function replicaKindLabel(kind: ReplicaKind): string {
       return "Worker";
     case "waker":
       return "Waker";
+    case "background":
+      return "Background Worker";
     case "postgres":
       return "Postgres";
     case "archiver":

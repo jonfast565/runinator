@@ -74,6 +74,18 @@ pub(crate) fn on_conflict_update(dialect: SqlDialect, conflict: &str, columns: &
     }
 }
 
+/// build the conflict tail of an idempotent insert that keeps the existing row on conflict.
+///
+/// postgres/sqlite use `ON CONFLICT(...) DO NOTHING`. mysql has no `DO NOTHING`, so it self-assigns
+/// `noop_col` (`col = col`) to make the duplicate a no-op that preserves the stored row. `noop_col`
+/// must be a real column on the target table.
+pub(crate) fn on_conflict_nothing(dialect: SqlDialect, conflict: &str, noop_col: &str) -> String {
+    match dialect {
+        SqlDialect::Sqlite | SqlDialect::Postgres => format!("ON CONFLICT({conflict}) DO NOTHING"),
+        SqlDialect::MySql => format!("ON DUPLICATE KEY UPDATE {noop_col} = {noop_col}"),
+    }
+}
+
 /// boolean true literal for an `enabled = ...` comparison.
 pub(crate) fn bool_true(dialect: SqlDialect) -> &'static str {
     match dialect {
