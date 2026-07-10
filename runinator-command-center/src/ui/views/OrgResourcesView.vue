@@ -8,13 +8,19 @@
       <div class="panel">
         <div class="panel-toolbar">
           <h2>Resources — {{ orgs.activeOrg.name }}</h2>
-          <button class="btn" :disabled="loading" @click="refresh">
-            <Icon name="refresh" />
+          <button class="btn" :disabled="refreshing" @click="refresh">
+            <LoadingSpinner v-if="refreshing" size="sm" label="Refreshing org resources" />
+            <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
         </div>
 
-        <div class="res-summary">
+        <LoadingPanel
+          v-if="refreshing && projectedMonthlyCents === 0 && !groups.length"
+          compact
+          :message="refreshMessage || 'Loading org resources…'"
+        />
+        <div v-else class="res-summary">
           <div class="res-stat">
             <label>Projected monthly</label>
             <div class="res-stat-value">{{ fmtCents(projectedMonthlyCents) }}</div>
@@ -48,7 +54,12 @@
         <div class="res-grid">
           <section class="res-card res-card-wide">
             <h3 class="res-card-title">Dedicated allocations</h3>
-            <div v-if="!groups.length" class="empty-state">
+            <LoadingPanel
+              v-if="refreshing && !groups.length"
+              compact
+              :message="refreshMessage || 'Loading node pools…'"
+            />
+            <div v-else-if="!groups.length" class="empty-state">
               No dedicated node pools. Scale one below.
             </div>
             <table v-else class="res-table">
@@ -75,7 +86,12 @@
 
           <section class="res-card">
             <h3 class="res-card-title">Node-hours (30d)</h3>
-            <div v-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
+            <LoadingPanel
+              v-if="refreshing && !usageKinds.length"
+              compact
+              message="Loading usage…"
+            />
+            <div v-else-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
             <table v-else class="res-table">
               <thead>
                 <tr>
@@ -105,7 +121,10 @@
                 <option value="webservice">webservice</option>
               </select>
               <input v-model.number="scaleDesired" type="number" min="0" />
-              <button class="btn btn-primary" type="submit" :disabled="scaling">Set desired</button>
+              <button class="btn btn-primary" type="submit" :disabled="scaling">
+                <LoadingSpinner v-if="scaling" size="sm" label="Scaling org nodes" />
+                {{ scaling ? "Scaling…" : "Set desired" }}
+              </button>
               <span class="res-preview">
                 ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
               </span>
@@ -125,6 +144,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import {
   orgResourcesService,
   type OrgQuota,
@@ -132,15 +153,17 @@ import {
   type OrgUsage,
   type RateCard,
 } from "../../core/services";
-import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useOperationLoading } from "../composables/useOperationLoading";
 
 const HOURS_PER_MONTH = 730;
 
-const app = useAppStore();
 const orgs = useOrgsStore();
-const loading = ref(false);
-const scaling = ref(false);
+const refreshing = ref(false);
+const { isLoading: loadingNodes, loadingMessage: refreshMessage } =
+  useOperationLoading("Loading org nodes");
+const { isLoading: scalingNodes } = useOperationLoading("Scaling org nodes");
+const scaling = computed(() => scalingNodes.value);
 const groups = ref<OrgResourceGroup[]>([]);
 const projectedMonthlyCents = ref(0);
 const quota = ref<OrgQuota | null>(null);
@@ -172,16 +195,16 @@ function fmtCents(cents: number): string {
 
 async function refresh() {
   const orgId = orgs.activeOrgId;
-  groups.value = [];
-  projectedMonthlyCents.value = 0;
-  quota.value = null;
-  usage.value = null;
 
   if (!orgId) {
+    groups.value = [];
+    projectedMonthlyCents.value = 0;
+    quota.value = null;
+    usage.value = null;
     return;
   }
 
-  loading.value = true;
+  refreshing.value = true;
 
   try {
     rateCard.value = await orgResourcesService.fetchRateCard().catch(() => ({ entries: [] }));
@@ -194,7 +217,7 @@ async function refresh() {
     quota.value = await orgResourcesService.fetchQuota(orgId).catch(() => null);
     usage.value = await orgResourcesService.fetchUsage(orgId).catch(() => null);
   } finally {
-    loading.value = false;
+    refreshing.value = false;
   }
 }
 
@@ -205,8 +228,6 @@ async function scale() {
     return;
   }
 
-  scaling.value = true;
-
   try {
     await orgResourcesService.scaleNodes(orgId, {
       backend: scaleBackend.value,
@@ -214,8 +235,8 @@ async function scale() {
       desired: Math.max(0, Math.floor(scaleDesired.value)),
     });
     await refresh();
-  } finally {
-    scaling.value = false;
+  } catch {
+    // runOperation surfaces errors via toast.
   }
 }
 

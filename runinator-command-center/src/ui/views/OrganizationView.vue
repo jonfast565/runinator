@@ -3,8 +3,9 @@
     <div class="panel">
       <div class="panel-toolbar">
         <h2>Organizations</h2>
-        <button class="btn" :disabled="loading" @click="refresh">
-          <Icon name="refresh" />
+        <button class="btn" :disabled="loadingOrgData" @click="refresh">
+          <LoadingSpinner v-if="loadingOrgData" size="sm" label="Refreshing organizations" />
+          <Icon v-else name="refresh" />
           <span>Refresh</span>
         </button>
       </div>
@@ -27,9 +28,10 @@
         <form class="org-card" @submit.prevent="createOrg">
           <label class="org-card-label">Create organization</label>
           <input v-model="newOrgName" placeholder="Acme Inc." />
-          <button class="btn btn-primary" type="submit" :disabled="!newOrgName.trim()">
-            <Icon name="plus" />
-            <span>Create organization</span>
+          <button class="btn btn-primary" type="submit" :disabled="!newOrgName.trim() || creatingOrg">
+            <LoadingSpinner v-if="creatingOrg" size="sm" label="Creating organization" />
+            <Icon v-else name="plus" />
+            <span>{{ creatingOrg ? "Creating…" : "Create organization" }}</span>
           </button>
         </form>
       </div>
@@ -41,7 +43,12 @@
         <span class="chip role-badge">{{ members.length }} member(s)</span>
       </div>
 
-      <div v-if="!members.length" class="empty-state">No members loaded.</div>
+      <LoadingPanel
+        v-if="loadingOrgData && !members.length"
+        compact
+        :message="loadingOrgDataMessage || 'Loading members…'"
+      />
+      <div v-else-if="!members.length" class="empty-state">No members loaded.</div>
       <table v-else class="org-table">
         <thead>
           <tr>
@@ -108,6 +115,11 @@
 
       <div class="teams-layout">
         <div class="teams-list">
+          <LoadingPanel
+            v-if="loadingOrgData && !teams.length"
+            compact
+            :message="loadingOrgDataMessage || 'Loading teams…'"
+          />
           <button
             v-for="team in teams"
             :key="team.id ?? team.name"
@@ -134,7 +146,12 @@
           <div v-if="!selectedTeamId" class="empty-state">Select a team to manage its members.</div>
           <template v-else>
             <h3>{{ selectedTeamName }} · members</h3>
-            <div v-if="!teamMembers.length" class="empty-state">No members yet.</div>
+            <LoadingPanel
+              v-if="loadingTeamMembers && !teamMembers.length"
+              compact
+              :message="loadingTeamMembersMessage || 'Loading team members…'"
+            />
+            <div v-else-if="!teamMembers.length" class="empty-state">No members yet.</div>
             <ul v-else class="team-member-list">
               <li v-for="user in teamMembers" :key="user.id ?? ''">
                 <span class="avatar">{{ initials(user.username) }}</span>
@@ -163,6 +180,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import {
   orgAdminService,
   type OrgMembership,
@@ -172,10 +191,19 @@ import {
 } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useOperationLoading } from "../composables/useOperationLoading";
 
 const app = useAppStore();
 const orgs = useOrgsStore();
-const loading = ref(false);
+const { isLoading: loadingOrgData, loadingMessage: loadingOrgDataMessage } = useOperationLoading([
+  "Loading organizations",
+  "Loading org members",
+  "Loading users",
+  "Loading teams",
+]);
+const { isLoading: loadingTeamMembers, loadingMessage: loadingTeamMembersMessage } =
+  useOperationLoading("Loading team members");
+const { isLoading: creatingOrg } = useOperationLoading("Creating organization");
 const members = ref<OrgMembership[]>([]);
 const users = ref<User[]>([]);
 const newOrgName = ref("");
@@ -293,17 +321,11 @@ async function removeFromTeam(user: User) {
 }
 
 async function refresh() {
-  loading.value = true;
-
-  try {
-    await orgs.refresh();
-    // resolve usernames when the caller is a platform admin; ignore a 403 otherwise.
-    users.value = await orgAdminService.listUsers().catch(() => []);
-    await refreshMembers();
-    await refreshTeams();
-  } finally {
-    loading.value = false;
-  }
+  await orgs.refresh();
+  // resolve usernames when the caller is a platform admin; ignore a 403 otherwise.
+  users.value = await orgAdminService.listUsers().catch(() => []);
+  await refreshMembers();
+  await refreshTeams();
 }
 
 async function refreshMembers() {

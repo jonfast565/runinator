@@ -14,8 +14,9 @@
               :title="`Inspect (${modKeyLabel}I)`"
               @click="inspectPackNow"
             >
-              <Icon name="refresh" />
-              <span>Inspect</span>
+              <LoadingSpinner v-if="inspecting" size="sm" label="Inspecting pack" />
+              <Icon v-else name="refresh" />
+              <span>{{ inspecting ? "Inspecting…" : "Inspect" }}</span>
             </button>
             <button
               class="btn btn-primary"
@@ -23,8 +24,9 @@
               :title="`Apply (⇧${modKeyLabel}↵)`"
               @click="applyPack"
             >
-              <Icon name="upload" />
-              <span>Apply</span>
+              <LoadingSpinner v-if="applying" size="sm" label="Applying pack" />
+              <Icon v-else name="upload" />
+              <span>{{ applying ? "Applying…" : "Apply" }}</span>
             </button>
           </div>
         </div>
@@ -89,6 +91,7 @@
         </div>
 
         <div class="dev-status-row">
+          <LoadingSpinner v-if="busy || saving" size="sm" :label="statusText" />
           <StatusBadge :status="statusBadge" />
           <span>{{ statusText }}</span>
         </div>
@@ -134,6 +137,11 @@
           <span>{{ lastInspectText }}</span>
         </div>
         <div class="dev-file-list">
+          <LoadingPanel
+            v-if="inspecting && !watchedFiles.length"
+            compact
+            message="Inspecting pack…"
+          />
           <button
             v-for="file in watchedFiles"
             :key="file.path"
@@ -161,12 +169,14 @@
           </div>
           <div class="actions">
             <button class="btn" :disabled="!canSaveSource || saving" @click="saveSelectedSource">
-              <Icon name="save" />
-              <span>Save</span>
+              <LoadingSpinner v-if="saving || writingFile" size="sm" label="Saving file" />
+              <Icon v-else name="save" />
+              <span>{{ saving || writingFile ? "Saving…" : "Save" }}</span>
             </button>
             <button class="btn" :disabled="!selectedFilePath || busy" @click="reloadSelectedSource">
-              <Icon name="refresh" />
-              <span>Reload</span>
+              <LoadingSpinner v-if="readingFile" size="sm" label="Reloading file" />
+              <Icon v-else name="refresh" />
+              <span>{{ readingFile ? "Reloading…" : "Reload" }}</span>
             </button>
           </div>
         </div>
@@ -214,21 +224,25 @@
               :title="`Run (${modKeyLabel}↵)`"
               @click="runSelectedWorkflow"
             >
-              <Icon name="play" />
-              <span>{{ latestRunId ? "Re-run" : "Run" }}</span>
+              <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
+              <Icon v-else name="play" />
+              <span>{{ startingRun ? "Starting…" : latestRunId ? "Re-run" : "Run" }}</span>
             </button>
             <button
               v-if="runInFlight"
               class="btn btn-danger"
               title="Cancel this run"
+              :disabled="cancelingRun"
               @click="cancelRun"
             >
-              <Icon name="stop" />
-              <span>Cancel</span>
+              <LoadingSpinner v-if="cancelingRun" size="sm" label="Canceling run" />
+              <Icon v-else name="stop" />
+              <span>{{ cancelingRun ? "Canceling…" : "Cancel" }}</span>
             </button>
             <button class="btn" :disabled="!latestRunId || busy" @click="refreshLatestRun">
-              <Icon name="refresh" />
-              <span>Refresh</span>
+              <LoadingSpinner v-if="loadingRun" size="sm" label="Refreshing run" />
+              <Icon v-else name="refresh" />
+              <span>{{ loadingRun ? "Refreshing…" : "Refresh" }}</span>
             </button>
           </div>
         </div>
@@ -281,13 +295,18 @@
               <RunNodeActions
                 :node="node"
                 :run="latestRunDetail.run"
-                :busy="busy"
+                :busy="busy || replayingRun"
                 @action="onRunNodeAction"
               />
             </template>
           </RunTimeline>
         </template>
-        <div v-else class="empty-state">No run started from this panel.</div>
+        <LoadingPanel
+          v-if="loadingRun && !latestRunDetail"
+          compact
+          message="Loading workflow run…"
+        />
+        <div v-else-if="!latestRunDetail" class="empty-state">No run started from this panel.</div>
       </section>
     </div>
   </section>
@@ -298,6 +317,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { devPackService } from "../../core/services";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
+import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import PackDiff from "../components/shared/PackDiff.vue";
 import RunInputForm from "../components/shared/RunInputForm.vue";
 import RunNodeActions, { type RunNodeActionType } from "../components/shared/RunNodeActions.vue";
@@ -307,6 +328,7 @@ import WdlEditor from "../components/shared/WdlEditor.vue";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
 import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
+import { useOperationLoading } from "../composables/useOperationLoading";
 import { displayValue } from "../../core/utils/values";
 import type {
   DevPackFile,
@@ -323,6 +345,14 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out
 const workflows = useWorkflowsStore();
 const providers = useProvidersStore();
 const secrets = useSecretsStore();
+const { isLoading: inspecting } = useOperationLoading("Inspecting dev pack");
+const { isLoading: applying } = useOperationLoading("Applying dev pack");
+const { isLoading: readingFile } = useOperationLoading("Reading dev pack file");
+const { isLoading: writingFile } = useOperationLoading("Writing dev pack file");
+const { isLoading: startingRun } = useOperationLoading("Starting workflow run");
+const { isLoading: loadingRun } = useOperationLoading("Loading workflow run");
+const { isLoading: cancelingRun } = useOperationLoading("Canceling workflow run");
+const { isLoading: replayingRun } = useOperationLoading("Replaying workflow run");
 
 const OPTIONS_STORAGE_KEY = "runinator.devPack.options";
 const savedOptions = loadDevOptions();
@@ -370,7 +400,9 @@ const runWorkflowKey = computed(() => runWorkflowRef.value || "none");
 const canSaveSource = computed(
   () => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
 );
-const canRun = computed(() => Boolean(runWorkflowRef.value) && !busy.value);
+const canRun = computed(
+  () => Boolean(runWorkflowRef.value) && !busy.value && !startingRun.value,
+);
 const runInFlight = computed(() => {
   const status = latestRunDetail.value?.run.status;
   return Boolean(status) && !TERMINAL_STATUSES.has(status ?? "");
