@@ -33,6 +33,7 @@ import {
   patchWorkflowRunDebug,
   saveWorkflowWdl,
 } from "../../../../core/api/commandCenterApi";
+import { catalogMetadataService } from "../../../../core/services";
 import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
 import { testNodeKindCatalog } from "../../../../core/workflow/__tests__/catalog-fixtures";
 
@@ -676,6 +677,29 @@ describe("workflow run detail state", () => {
     expect(
       (workflows.ensureWorkflowNodes().find((node) => node.id === "task-1") as any)?.kind,
     ).toBe("action");
+  });
+
+  it("updates workflowNodeKinds when catalog metadata loads", () => {
+    setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
+    catalogMetadataService.setState((state) => ({
+      ...state,
+      nodeKinds: [],
+      loaded: false,
+    }));
+
+    const workflows = useWorkflowsStore();
+    expect(workflows.workflowNodeKinds).toEqual([]);
+
+    setWorkflowCatalogs({ nodeKinds: testNodeKindCatalog, triggerKinds: [], enums: [] });
+    catalogMetadataService.setState((state) => ({
+      ...state,
+      nodeKinds: testNodeKindCatalog,
+      loaded: true,
+    }));
+
+    expect(workflows.workflowNodeKinds).toEqual(
+      testNodeKindCatalog.filter((entry) => entry.addable).map((entry) => entry.kind),
+    );
   });
 });
 

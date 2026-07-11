@@ -225,6 +225,10 @@ const isActiveDebugRun = computed(() => {
 });
 
 function toggleMenu(menu: "nodes" | "arrange" | "export") {
+  if (menu === "nodes" && openMenu.value !== "nodes" && !catalogMetadata.loaded) {
+    void catalogMetadata.fetchCatalogs();
+  }
+
   openMenu.value = openMenu.value === menu ? null : menu;
 }
 

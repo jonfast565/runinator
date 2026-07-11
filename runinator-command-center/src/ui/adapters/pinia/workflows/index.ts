@@ -40,7 +40,8 @@ import {
   newWorkflowDraft,
   newWorkflowTriggerDraft,
 } from "../../../../core/workflow/editor-defaults";
-import { workflowServices } from "../../../../core/services";
+import { catalogMetadataService, workflowServices } from "../../../../core/services";
+import { workflowNodeKindsList } from "../../../../core/workflow";
 import { useAppStore } from "../app";
 import { useProvidersStore } from "../providers";
 import { buildGraphEdges, buildGraphNodes } from "../../vue-flow/builder";
@@ -57,6 +58,7 @@ function providerCatalog(): ProviderMetadata[] {
 export const useWorkflowsStore = defineStore("workflows", () => {
   const svc = workflowServices;
   const state = mirrorServiceState(svc);
+  const catalogState = mirrorServiceState(catalogMetadataService);
   const app = useAppStore();
 
   function mirroredComputed<T>(selector: () => T) {
@@ -543,7 +545,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     isDebugRun,
     currentBreakpoints,
     isBreakpointed,
-    workflowNodeKinds: svc.workflowNodeKinds,
+    workflowNodeKinds: computed(() => {
+      void catalogState.value.nodeKinds;
+      return workflowNodeKindsList();
+    }),
     directTransitionKeys: svc.directTransitionKeys,
     refreshWorkflows: svc.catalog.refreshWorkflows,
     clearServiceState: svc.catalog.clearServiceState,
