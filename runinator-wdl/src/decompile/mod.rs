@@ -249,8 +249,7 @@ fn read_declared_types(metadata: &Value) -> HashMap<String, String> {
             types.insert(id.clone(), text.to_string());
             continue;
         }
-        let json = serde_json::Value::from(value.clone());
-        if let Ok(ty) = serde_json::from_value::<RuninatorType>(json) {
+        if let Ok(ty) = value.decode::<RuninatorType>() {
             types.insert(id.clone(), expr::render_type(&ty));
         }
     }
@@ -273,8 +272,8 @@ fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
             if let Some(text) = value.as_str() {
                 return Some((name.clone(), text.to_string()));
             }
-            let json = serde_json::Value::from(value.clone());
-            serde_json::from_value::<RuninatorType>(json)
+            value
+                .decode::<RuninatorType>()
                 .ok()
                 .map(|ty| (name.clone(), expr::render_type(&ty)))
         })
@@ -282,8 +281,7 @@ fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
 }
 
 fn read_output_type(metadata: &Value) -> Option<runinator_models::types::RuninatorType> {
-    let value = metadata.pointer("/wdl/output_type")?.clone();
-    serde_json::from_value(value.into()).ok()
+    metadata.pointer("/wdl/output_type")?.decode().ok()
 }
 
 /// recover surface-form overrides for top-level workflow parameter fields at `/wdl/input_types`.
@@ -937,7 +935,7 @@ impl<'a> Decompiler<'a> {
         // user-defined predicate edges, preserved in declaration order; an explicit `priority`
         // token is rendered whenever the branch carries one, keeping the round-trip stable.
         for branch in &transitions.branches {
-            let cond = self.cond(&branch.when)?;
+            let cond = self.cond(&branch.when.to_value())?;
             let label = self.target_label(branch.target.as_str());
             self.defer(branch.target.as_str());
             match branch.priority {
@@ -1888,7 +1886,7 @@ impl<'a> Decompiler<'a> {
         let mut header = format!(
             "{}while {}",
             self.block_id_prefix(node),
-            self.cond(&branch.when)?
+            self.cond(&branch.when.to_value())?
         );
         if node.reentry.max_visits > 0 {
             header.push_str(&format!(" limit {}", node.reentry.max_visits));
@@ -1937,7 +1935,10 @@ impl<'a> Decompiler<'a> {
             } else {
                 "} else if".to_string()
             };
-            self.line(&format!("{keyword} {} {{", self.cond(&branch.when)?));
+            self.line(&format!(
+                "{keyword} {} {{",
+                self.cond(&branch.when.to_value())?
+            ));
             self.indent += 1;
             self.emit_region(branch.target.as_str(), merge_ref)?;
             self.indent -= 1;

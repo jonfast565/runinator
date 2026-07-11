@@ -1,5 +1,6 @@
 use runinator_models::value::Value;
-use runinator_models::workflows::{WorkflowNode, WorkflowStatus};
+use runinator_models::workflow_ast::{CompareOp, ConditionNode};
+use runinator_models::workflows::{WorkflowCondition, WorkflowNode, WorkflowStatus};
 
 use crate::compute::IntrinsicLibrary;
 use crate::errors::WorkflowValidationError;
@@ -25,6 +26,90 @@ pub fn evaluate_condition(
     )
 }
 
+/// evaluate a typed node/branch condition in the eager reducer path. `None` (the null condition) is
+/// unconditionally true; otherwise the typed tree is walked directly, without re-parsing a `Value`.
+pub fn evaluate_workflow_condition(
+    condition: &WorkflowCondition,
+    context: &Value,
+) -> Result<bool, WorkflowValidationError> {
+    match condition.node() {
+        None => Ok(true),
+        Some(node) => evaluate_condition_node(
+            node,
+            context,
+            EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
+        ),
+    }
+}
+
+/// walk a typed `ConditionNode`, resolving leaf operands as expressions against `context`. this is
+/// the typed twin of `evaluate_condition_inner`; both fold operands with the same helpers so their
+/// results cannot drift on the canonical shapes the lowerer emits.
+pub(crate) fn evaluate_condition_node(
+    node: &ConditionNode,
+    context: &Value,
+    env: EvalEnv,
+) -> Result<bool, WorkflowValidationError> {
+    match node {
+        ConditionNode::All(items) => {
+            for item in items {
+                if !evaluate_condition_node(item, context, env)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        ConditionNode::Any(items) => {
+            for item in items {
+                if evaluate_condition_node(item, context, env)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        ConditionNode::Not(inner) => Ok(!evaluate_condition_node(inner, context, env)?),
+        ConditionNode::Compare { left, op, right } => {
+            let left = resolve_value_refs_with(left, context, env)?;
+            let right = resolve_value_refs_with(right, context, env)?;
+            apply_compare(*op, &left, &right)
+        }
+        ConditionNode::Exists { left, expected } => {
+            let left = resolve_value_refs_with(left, context, env)?;
+            Ok(*expected != left.is_null())
+        }
+        ConditionNode::Truthy { left } => {
+            let left = resolve_value_refs_with(left, context, env)?;
+            Ok(is_truthy(&left))
+        }
+        // an unrecognized shape; the value evaluator errors on these too.
+        ConditionNode::Other(_) => Err(WorkflowValidationError::InvalidCondition(
+            "condition object is not a recognized shape".into(),
+        )),
+    }
+}
+
+// apply a comparator to two already-resolved operands, mirroring the `evaluate_condition_inner` arms.
+fn apply_compare(
+    op: CompareOp,
+    left: &Value,
+    right: &Value,
+) -> Result<bool, WorkflowValidationError> {
+    match op {
+        CompareOp::Equals => Ok(left == right),
+        CompareOp::NotEquals => Ok(left != right),
+        CompareOp::Contains => contains_value(left, right),
+        CompareOp::In => Ok(right
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == left))),
+        CompareOp::StartsWith => string_match(left, right, |left, right| left.starts_with(right)),
+        CompareOp::EndsWith => string_match(left, right, |left, right| left.ends_with(right)),
+        CompareOp::GreaterThan => compare_value(left, right, |ordering| ordering.is_gt()),
+        CompareOp::GreaterThanOrEqual => compare_value(left, right, |ordering| ordering.is_ge()),
+        CompareOp::LessThan => compare_value(left, right, |ordering| ordering.is_lt()),
+        CompareOp::LessThanOrEqual => compare_value(left, right, |ordering| ordering.is_le()),
+    }
+}
+
 /// evaluate a condition whose operands may include `$call` intrinsics, resolved through `lib`.
 pub fn evaluate_condition_with(
     condition: &Value,
@@ -32,16 +117,6 @@ pub fn evaluate_condition_with(
     lib: &dyn IntrinsicLibrary,
 ) -> Result<bool, WorkflowValidationError> {
     evaluate_condition_inner(condition, context, EvalEnv::lib_only(Some(lib)))
-}
-
-/// evaluate a condition with a full evaluation environment (library + user functions). used by the
-/// compute loop so conditions can call user-defined functions.
-pub(crate) fn evaluate_condition_env(
-    condition: &Value,
-    context: &Value,
-    env: EvalEnv,
-) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(condition, context, env)
 }
 
 fn evaluate_condition_inner(
@@ -227,7 +302,7 @@ pub fn next_transition(
     let mut ordered: Vec<&_> = node.transitions.branches.iter().collect();
     ordered.sort_by_key(|branch| branch.priority.unwrap_or(i64::MAX));
     for branch in ordered {
-        if evaluate_condition(&branch.when, context)? {
+        if evaluate_workflow_condition(&branch.when, context)? {
             return Ok(Some(branch.target.as_str().to_string()));
         }
     }

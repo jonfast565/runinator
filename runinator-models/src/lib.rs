@@ -19,6 +19,7 @@ pub mod telemetry;
 pub mod types;
 pub mod value;
 pub mod web;
+pub mod workflow_ast;
 pub mod workflow_state;
 pub mod workflows;
 

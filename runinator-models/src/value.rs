@@ -626,6 +626,27 @@ impl From<f64> for Value {
 
 // bridges to/from `serde_json` for the byte boundaries (database strings, plugin files) and tests.
 
+impl Value {
+    /// decode this dynamic value into a typed `T` through the json codec. the single sanctioned
+    /// bridge from `Value` to a typed struct, so domain crates do not reach for `serde_json`
+    /// directly (keeping the codec confined to this module).
+    pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.clone().into())
+    }
+
+    /// encode a typed `T` into a dynamic value through the json codec. the inverse of
+    /// [`Value::decode`]; use it instead of `serde_json::to_value(..).map(Value::from)`.
+    pub fn encode<T: serde::Serialize>(value: &T) -> Result<Value, serde_json::Error> {
+        serde_json::to_value(value).map(Value::from)
+    }
+
+    /// parse external json text into a dynamic value. the sanctioned text→`Value` boundary (e.g. the
+    /// `parse_json` intrinsic), so decoders do not call `serde_json::from_str` directly.
+    pub fn from_json_str(text: &str) -> Result<Value, serde_json::Error> {
+        serde_json::from_str::<serde_json::Value>(text).map(Value::from)
+    }
+}
+
 impl From<serde_json::Value> for Value {
     fn from(value: serde_json::Value) -> Self {
         match value {

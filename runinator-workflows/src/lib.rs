@@ -19,13 +19,14 @@ mod validation;
 
 pub use catalog::{enum_catalogs, node_kind_catalog, trigger_kind_catalog};
 pub use compute::{
-    ComputeOutcome, ComputeProgram, ComputeStmt, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES,
-    IntrinsicLibrary, PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures,
-    intrinsic_arity, intrinsic_module, intrinsic_signature, is_higher_order, is_known_intrinsic,
-    parse_program, qualified_intrinsic_name, resolve_std_path, run_program, run_program_with,
+    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary,
+    PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity,
+    intrinsic_module, intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program,
+    qualified_intrinsic_name, resolve_std_path, run_program, run_program_with,
 };
 pub use conditions::{
-    evaluate_condition, evaluate_condition_with, next_transition, validate_condition_value,
+    evaluate_condition, evaluate_condition_with, evaluate_workflow_condition, next_transition,
+    validate_condition_value,
 };
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::{
@@ -45,12 +46,15 @@ pub use refs::expand_workflow_refs;
 pub use run_state::{
     branch_policy_name, join_satisfied, latest_node_run, latest_status, race_winner,
 };
+pub use runinator_models::workflow_ast::{
+    ComputeProgram, ComputeStmt, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,
+    WorkflowValueRef,
+};
 pub use types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
     JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
     PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
-    SwitchParameters, ToggleParameters, TryParameters, WaitParameters, WorkflowExpression,
-    WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
+    SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
 };
 pub use typing::{WorkflowType, validate_workflow_types};
 pub use validation::{
@@ -74,3 +78,5 @@ mod compute_tests;
 mod functions_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workflow_ast_tests;

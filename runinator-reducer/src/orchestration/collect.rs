@@ -56,7 +56,7 @@ pub(super) async fn process_collect_node<T: DatabaseImpl>(
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
         if timed_out_since_created(node, node_run) {
             // emit whatever was collected before timing out.
-            let state = serde_json::from_value::<CollectState>(node_run.state.clone().into()).ok();
+            let state = node_run.state.decode::<CollectState>().ok();
             let items = state.map(|s| s.items).unwrap_or_default();
             let count = items.len();
             let output = CollectOutput {
@@ -79,7 +79,7 @@ pub(super) async fn process_collect_node<T: DatabaseImpl>(
             return Ok(ReadyNodeDisposition::Complete);
         }
         // re-read state (external delivery may have appended items).
-        let state = serde_json::from_value::<CollectState>(node_run.state.clone().into()).ok();
+        let state = node_run.state.decode::<CollectState>().ok();
         let items = state.as_ref().map(|s| s.items.clone()).unwrap_or_default();
         if threshold_reached(items.len(), threshold) {
             let count = items.len();

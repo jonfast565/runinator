@@ -15,8 +15,8 @@ use crate::parameters::{
     parameter_targets, parse_map_parameters, validate_control_node_parameters, value_refs,
 };
 use crate::refs::expand_workflow_refs;
-use crate::types::WorkflowRefSource;
 use crate::typing::validate_workflow_types;
+use runinator_models::workflow_ast::WorkflowRefSource;
 
 pub fn parse_nodes(
     workflow: &WorkflowDefinition,
@@ -106,7 +106,7 @@ pub fn validate_workflow(
                 node.id.as_str().to_string(),
             ));
         }
-        validate_condition(&node.condition)?;
+        validate_condition(&node.condition.to_value())?;
         validate_control_node_parameters(node)?;
         for target in transition_targets(&node.transitions) {
             validate_node_ref(node, &target, NodeReferenceRole::Transition, &node_map)?;

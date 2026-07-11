@@ -82,7 +82,7 @@ pub(super) async fn process_gate_node<T: DatabaseImpl>(
         kind: params.kind,
         status: "pending".into(),
         label: params.label.clone(),
-        condition: params.condition.clone(),
+        condition: params.condition.to_value(),
         metadata: params.metadata.clone(),
     };
     let gate = db.create_gate(record.to_wire_value()?).await?;
@@ -130,7 +130,7 @@ async fn gate_is_open<T: DatabaseImpl>(
     match params.kind {
         GateKind::Condition => {
             let context = runtime_context(db, workflow_run, node_runs).await;
-            runinator_workflows::evaluate_condition(&params.condition, &context)
+            runinator_workflows::evaluate_workflow_condition(&params.condition, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })
         }
         GateKind::Manual | GateKind::External => {

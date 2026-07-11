@@ -14,13 +14,13 @@ use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 
 use crate::compute::{
-    ComputeOutcome, ComputeProgram, IntrinsicLibrary, PureIntrinsics, effectful_signatures,
-    parse_program, run_block,
+    ComputeOutcome, IntrinsicLibrary, PureIntrinsics, effectful_signatures, parse_program,
+    run_block,
 };
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{evaluate_expression_with, parse_expression};
 use crate::keys::REF_LOCAL;
-use crate::types::WorkflowExpression;
+use runinator_models::workflow_ast::{ComputeProgram, WorkflowExpression};
 
 /// a hard ceiling on nested user-function calls, independent of any per-function limit. guards
 /// against runaway recursion that slipped past the front end's annotation checks.

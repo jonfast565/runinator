@@ -116,7 +116,7 @@ pub(super) async fn process_event_source_node<T: DatabaseImpl>(
             return Ok(ReadyNodeDisposition::Complete);
         }
         // check if the current drive carries an inbound event payload (stored in run state).
-        let state = serde_json::from_value::<EventSourceState>(node_run.state.clone().into()).ok();
+        let state = node_run.state.decode::<EventSourceState>().ok();
         let events_processed = state.as_ref().map(|s| s.events_processed).unwrap_or(0);
         let deadline = state.as_ref().and_then(|s| s.deadline_unix);
         if let Some(deadline) = deadline {

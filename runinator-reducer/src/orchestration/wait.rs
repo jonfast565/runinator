@@ -9,7 +9,7 @@ pub(super) async fn process_wait_node<T: DatabaseImpl>(
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let params = runinator_workflows::parse_wait_parameters(node);
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        let wait_state = serde_json::from_value::<WaitState>(node_run.state.clone().into()).ok();
+        let wait_state = node_run.state.decode::<WaitState>().ok();
         let deadline = wait_state
             .as_ref()
             .map(|state| state.deadline_unix)

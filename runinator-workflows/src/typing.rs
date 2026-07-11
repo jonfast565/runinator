@@ -21,7 +21,9 @@ use crate::{
         parse_percentage_parameters, parse_race_parameters, parse_switch_parameters,
         parse_toggle_parameters, parse_try_parameters,
     },
-    types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef},
+};
+use runinator_models::workflow_ast::{
+    WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
 };
 
 pub type WorkflowType = RuninatorType;
@@ -72,9 +74,9 @@ pub fn validate_workflow_types(
     }
 
     for node in nodes {
-        validate_condition_types(&node.condition, &context)?;
+        validate_condition_types(&node.condition.to_value(), &context)?;
         for branch in &node.transitions.branches {
-            validate_condition_types(&branch.when, &context)?;
+            validate_condition_types(&branch.when.to_value(), &context)?;
         }
         validate_node_types(node, &context, &provider_actions)?;
     }
@@ -96,8 +98,7 @@ fn declared_node_output_types(
 
     let mut types = HashMap::new();
     for (node_id, value) in entries {
-        let json: serde_json::Value = value.clone().into();
-        let ty = serde_json::from_value::<WorkflowType>(json).map_err(|err| {
+        let ty = value.decode::<WorkflowType>().map_err(|err| {
             WorkflowValidationError::TypeError(format!(
                 "workflow metadata.wdl.type_hints['{}'] is invalid: {}",
                 node_id, err
@@ -232,7 +233,7 @@ fn validate_node_types(
             let params = parse_switch_parameters(node)?;
             infer_value_type(&params.value, context)?;
             for case in params.cases {
-                validate_condition_types(&case.condition, context)?;
+                validate_condition_types(&case.condition.to_value(), context)?;
             }
             Ok(())
         }

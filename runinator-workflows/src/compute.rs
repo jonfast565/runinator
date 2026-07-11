@@ -3,14 +3,14 @@ use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetad
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 
-use crate::conditions::evaluate_condition_env;
+use crate::conditions::evaluate_condition_node;
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{evaluate_expression_with, parse_expression};
 use crate::functions::{EvalEnv, FunctionTable};
 use crate::keys::{
     REF_LOCAL, STMT_ELSE, STMT_GOTO, STMT_IF, STMT_LET, STMT_RETURN, STMT_THEN, STMT_VALUE,
 };
-use crate::types::WorkflowExpression;
+use runinator_models::workflow_ast::{ComputeProgram, ComputeStmt, ConditionNode};
 
 /// a namespaced, typed library of functions callable from a compute program. the reducer installs
 /// only the pure subset; the worker installs a superset that adds effectful ops.
@@ -22,27 +22,6 @@ pub trait IntrinsicLibrary {
     /// whether `name` is pure (reducer-evaluable).
     fn is_pure(&self, name: &str) -> bool;
 }
-
-/// a single statement in a compute program.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ComputeStmt {
-    Let {
-        name: String,
-        value: WorkflowExpression,
-    },
-    Return(WorkflowExpression),
-    Goto(String),
-    If {
-        condition: Value,
-        then_branch: ComputeProgram,
-        else_branch: ComputeProgram,
-    },
-    Expr(WorkflowExpression),
-}
-
-/// an ordered list of compute statements.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ComputeProgram(pub Vec<ComputeStmt>);
 
 /// the result of running a compute program.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +81,7 @@ fn parse_statement(value: &Value) -> Result<ComputeStmt, WorkflowValidationError
             None => ComputeProgram::default(),
         };
         return Ok(ComputeStmt::If {
-            condition: condition.clone(),
+            condition: ConditionNode::from(condition),
             then_branch,
             else_branch,
         });
@@ -167,7 +146,7 @@ pub(crate) fn run_block(
                 then_branch,
                 else_branch,
             } => {
-                let branch = if evaluate_condition_env(condition, context, env)? {
+                let branch = if evaluate_condition_node(condition, context, env)? {
                     &then_branch.0
                 } else {
                     &else_branch.0
@@ -1088,7 +1067,7 @@ fn stringify(value: &Value) -> String {
         Value::Null => "null".into(),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
-        other => serde_json::to_string(other).unwrap_or_default(),
+        other => other.to_string(),
     }
 }
 
@@ -1419,9 +1398,7 @@ fn intrinsic_from_entries(args: &[Value]) -> Result<Value, WorkflowValidationErr
 
 fn intrinsic_parse_json(args: &[Value]) -> Result<Value, WorkflowValidationError> {
     let text = string_at("parse_json", args, 0)?;
-    serde_json::from_str::<serde_json::Value>(&text)
-        .map(Value::from)
-        .map_err(|e| err("parse_json", e.to_string()))
+    Value::from_json_str(&text).map_err(|e| err("parse_json", e.to_string()))
 }
 
 fn intrinsic_base64_encode(args: &[Value]) -> Result<Value, WorkflowValidationError> {
@@ -1447,7 +1424,7 @@ fn intrinsic_base64_decode(args: &[Value]) -> Result<Value, WorkflowValidationEr
 fn hash_bytes(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
+        other => other.to_string(),
     }
 }
 

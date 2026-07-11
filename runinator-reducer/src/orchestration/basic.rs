@@ -128,7 +128,7 @@ pub(super) async fn process_condition_node<T: DatabaseImpl>(
         )
         .await?;
     let context = runtime_context(db, workflow_run, node_runs).await;
-    let matched = runinator_workflows::evaluate_condition(&node.condition, &context)
+    let matched = runinator_workflows::evaluate_workflow_condition(&node.condition, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let (status, reason) = if matched {
         (WorkflowStatus::Succeeded, "condition_matched")

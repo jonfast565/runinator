@@ -10,6 +10,7 @@ use crate::value::{Map, Value};
 use crate::replicas::{TriggerActorType, TriggerSourceKind};
 use crate::semver::{SemVer, SemVerBump};
 use crate::types::RuninatorType;
+use crate::workflow_ast::ConditionNode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -299,36 +300,43 @@ impl From<WorkflowObject> for Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkflowCondition(Value);
+/// a node/branch condition: a typed `ConditionNode` tree, or `None` for the null "always true" case.
+/// serializes through `Value` so the wire json is byte-identical to the untyped form it replaced.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WorkflowCondition(Option<ConditionNode>);
 
 impl WorkflowCondition {
-    pub fn as_value(&self) -> &Value {
-        &self.0
+    /// the typed condition, or `None` when the condition is null (unconditional).
+    pub fn node(&self) -> Option<&ConditionNode> {
+        self.0.as_ref()
     }
 
-    pub fn into_value(self) -> Value {
-        self.0
+    /// whether there is no condition (the null, always-true case).
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// the wire `Value` form: null when empty, otherwise the condition object.
+    pub fn to_value(&self) -> Value {
+        match &self.0 {
+            None => Value::Null,
+            Some(node) => Value::from(node),
+        }
+    }
+
+    /// build from a wire value: null yields the empty (always-true) condition; an object is parsed
+    /// into the typed tree (unknown shapes are preserved verbatim by `ConditionNode`).
+    pub fn from_value(value: Value) -> Self {
+        match value {
+            Value::Null => Self(None),
+            other => Self(Some(ConditionNode::from(&other))),
+        }
     }
 }
 
 impl From<WorkflowCondition> for Value {
     fn from(value: WorkflowCondition) -> Self {
-        value.into_value()
-    }
-}
-
-impl Default for WorkflowCondition {
-    fn default() -> Self {
-        Self(Value::Null)
-    }
-}
-
-impl Deref for WorkflowCondition {
-    type Target = Value;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_value()
+        value.to_value()
     }
 }
 
@@ -337,7 +345,7 @@ impl Serialize for WorkflowCondition {
     where
         S: Serializer,
     {
-        self.0.serialize(serializer)
+        self.to_value().serialize(serializer)
     }
 }
 
@@ -348,7 +356,7 @@ impl<'de> Deserialize<'de> for WorkflowCondition {
     {
         let value = Value::deserialize(deserializer)?;
         match value {
-            Value::Null | Value::Object(_) => Ok(Self(value)),
+            Value::Null | Value::Object(_) => Ok(Self::from_value(value)),
             _ => Err(serde::de::Error::custom(
                 "condition must be null or an object",
             )),
@@ -358,7 +366,7 @@ impl<'de> Deserialize<'de> for WorkflowCondition {
 
 impl fmt::Display for WorkflowCondition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
+        self.to_value().fmt(formatter)
     }
 }
 
@@ -844,7 +852,7 @@ pub struct WorkflowTransitions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowBranch {
-    pub when: Value,
+    pub when: WorkflowCondition,
     pub target: WorkflowNodeRef,
     /// selection priority for predicate edges; lower numbers are evaluated first. unset branches
     /// keep their declaration order (sorted after any numbered branches).

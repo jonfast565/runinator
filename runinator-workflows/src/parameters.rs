@@ -1,10 +1,11 @@
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
-    WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus, WorkflowWaitSeconds,
+    WorkflowCondition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus,
+    WorkflowWaitSeconds,
 };
 
 use crate::compute::call_pure;
-use crate::conditions::{evaluate_condition, validate_condition};
+use crate::conditions::{evaluate_workflow_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{parse_value_ref, resolve_value_refs};
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
@@ -12,9 +13,10 @@ use crate::types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
     JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
     PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
-    SwitchParameters, ToggleParameters, TryParameters, WaitParameters, WorkflowValueRef,
+    SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
 };
 use runinator_models::orchestration::GateKind;
+use runinator_models::workflow_ast::WorkflowValueRef;
 
 pub fn parse_switch_parameters(
     node: &WorkflowNode,
@@ -53,7 +55,10 @@ pub fn parse_switch_parameters(
                 }
                 Value::Object(condition)
             };
-            Ok(SwitchCase { target, condition })
+            Ok(SwitchCase {
+                target,
+                condition: WorkflowCondition::from_value(condition),
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let default = object
@@ -324,7 +329,8 @@ pub fn parse_gate_parameters(node: &WorkflowNode) -> GateParameters {
         Some("external") => GateKind::External,
         _ => GateKind::Manual,
     };
-    let condition = node.parameters.get("when").cloned().unwrap_or(Value::Null);
+    let condition =
+        WorkflowCondition::from_value(node.parameters.get("when").cloned().unwrap_or(Value::Null));
     let poll_interval_seconds = node
         .parameters
         .get("poll_interval")
@@ -366,7 +372,7 @@ pub fn evaluate_switch(
     context: &Value,
 ) -> Result<Option<String>, WorkflowValidationError> {
     for case in &switch.cases {
-        if evaluate_condition(&case.condition, context)? {
+        if evaluate_workflow_condition(&case.condition, context)? {
             return Ok(Some(case.target.as_str().to_string()));
         }
     }
@@ -384,7 +390,8 @@ pub fn evaluate_toggle(
 ) -> Result<String, WorkflowValidationError> {
     let mut condition = Map::new();
     condition.insert(COND_VALUE.into(), toggle.value.clone());
-    let target = if evaluate_condition(&Value::Object(condition), context)? {
+    let condition = WorkflowCondition::from_value(Value::Object(condition));
+    let target = if evaluate_workflow_condition(&condition, context)? {
         &toggle.on
     } else {
         &toggle.off
@@ -428,7 +435,7 @@ pub(crate) fn validate_control_node_parameters(
         WorkflowNodeKind::Switch => {
             let params = parse_switch_parameters(node)?;
             for case in params.cases {
-                validate_condition(&case.condition)?;
+                validate_condition(&case.condition.to_value())?;
             }
         }
         WorkflowNodeKind::Toggle => {
@@ -594,9 +601,9 @@ pub(crate) fn value_refs(
 ) -> Result<Vec<WorkflowValueRef>, WorkflowValidationError> {
     let mut refs = Vec::new();
     collect_value_refs(&node.parameters, &mut refs)?;
-    collect_value_refs(&node.condition, &mut refs)?;
+    collect_value_refs(&node.condition.to_value(), &mut refs)?;
     for branch in &node.transitions.branches {
-        collect_value_refs(&branch.when, &mut refs)?;
+        collect_value_refs(&branch.when.to_value(), &mut refs)?;
     }
     Ok(refs)
 }

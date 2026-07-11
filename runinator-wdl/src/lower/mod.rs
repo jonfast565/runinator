@@ -161,8 +161,7 @@ fn lower_workflow(
     }
     if let Some(output) = &workflow.output {
         let ty = lowerer.lower_named_type(output)?;
-        let value = serde_json::to_value(&ty)
-            .map(Value::from)
+        let value = Value::encode(&ty)
             .map_err(|err| WdlError::lower(format!("failed to encode output type: {err}")))?;
         wdl.insert("output_type".into(), value);
     }
@@ -475,8 +474,7 @@ impl Lowerer {
         let rendered = crate::format::format_type(type_expr);
         self.declared_types
             .push((id.to_string(), Value::String(rendered)));
-        let hint = serde_json::to_value(&ty)
-            .map(Value::from)
+        let hint = Value::encode(&ty)
             .map_err(|err| WdlError::lower(format!("failed to encode type hint: {err}")))?;
         self.declared_type_hints.push((id.to_string(), hint));
         Ok(())
@@ -497,8 +495,7 @@ impl Lowerer {
             return Ok(());
         }
         let ty = metadata.results_type();
-        let hint = serde_json::to_value(&ty)
-            .map(Value::from)
+        let hint = Value::encode(&ty)
             .map_err(|err| WdlError::lower(format!("failed to encode type hint: {err}")))?;
         self.declared_type_hints.push((id.to_string(), hint));
         Ok(())

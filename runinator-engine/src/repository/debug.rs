@@ -798,7 +798,8 @@ fn transition_targets(node: &runinator_models::workflows::WorkflowNode) -> Vec<S
         .map(Value::from)
         .unwrap_or(Value::Null);
     walk(&transitions_value, &mut targets);
-    walk(&node.condition, &mut targets);
+    let condition_value = node.condition.to_value();
+    walk(&condition_value, &mut targets);
     walk(&node.parameters, &mut targets);
     targets
 }

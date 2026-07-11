@@ -12,7 +12,9 @@ use crate::keys::{
     REF_CONFIG, REF_INPUT, REF_LOCAL, REF_NODE, REF_OUTPUT, REF_PARAMS, REF_PREV, REF_STEPS,
     REF_WORKFLOW,
 };
-use crate::types::{WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef};
+use runinator_models::workflow_ast::{
+    WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
+};
 
 /// resolve refs/arithmetic plus pure `$call` intrinsics against `context`. this is the eager
 /// reducer path: declarative expressions fold here with the pure standard library, so pure calls
@@ -465,9 +467,8 @@ pub(crate) fn evaluate_expression_with(
                     "$to_json_string requires an array or object".into(),
                 ));
             }
-            serde_json::to_string(&value)
-                .map(Value::String)
-                .map_err(|err| WorkflowValidationError::InvalidValueRef(err.to_string()))
+            // `Value`'s `Display` renders the same compact json; keep the codec out of domain logic.
+            Ok(Value::String(value.to_string()))
         }
         WorkflowExpression::Add(items) => fold_arith(
             items,

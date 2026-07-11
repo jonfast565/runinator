@@ -703,9 +703,7 @@ fn parameter_arg_insert(parameter: &ParameterMetadata) -> (String, bool) {
 // render a scalar default as an inline literal, or none when it cannot live inside a snippet field.
 fn scalar_literal(value: &Value) -> Option<String> {
     let literal = match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-            serde_json::to_string(value).ok()?
-        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.to_string(),
         _ => return None,
     };
     // snippet fields are delimited by braces, so a literal containing one cannot be inlined.

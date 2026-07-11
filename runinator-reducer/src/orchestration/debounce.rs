@@ -62,7 +62,7 @@ pub(super) async fn process_debounce_node<T: DatabaseImpl>(
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
-        let state = serde_json::from_value::<DebounceState>(node_run.state.clone().into()).ok();
+        let state = node_run.state.decode::<DebounceState>().ok();
         let deadline = state.as_ref().map(|s| s.deadline_unix).unwrap_or(i64::MAX);
         if !deadline_elapsed(deadline) {
             // re-arm at the current deadline (it may have been pushed by an external reset).
